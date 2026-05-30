@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Document;
+use App\Models\DocumentNote;
 use App\Models\GuidedTemplate;
 use App\Models\PdfAcroForm;
 use App\Models\PdfGroup;
@@ -1300,15 +1301,39 @@ class DocumentController extends Controller
         ) ?? '';
         $textChanged = $text !== '' && $sourceText !== '' && $text !== $sourceText;
 
-        return $textChanged
+        $explicitlyDirty = $textChanged
             || $this->annotationFlagIsTruthy($annotation, 'promotedDirty')
             || $this->annotationFlagIsTruthy($annotation, 'userAuthored')
             || $this->annotationFlagIsTruthy($annotation, 'styleDirty')
             || $this->annotationFlagIsTruthy($annotation, 'userForcedRichText')
             || $this->annotationFlagIsTruthy($annotation, 'movedTextOverlay')
             || $this->annotationFlagIsTruthy($annotation, 'promotedReflowEnabled')
-            || trim((string) ($annotation['richTextHtml'] ?? '')) !== ''
-            || strtolower(trim((string) ($annotation['pdfjsEditorMode'] ?? ''))) === 'rich';
+            || trim((string) ($annotation['richTextHtml'] ?? '')) !== '';
+        if ($explicitlyDirty) {
+            return true;
+        }
+
+        return strtolower(trim((string) ($annotation['pdfjsEditorMode'] ?? ''))) === 'rich'
+            && !$this->promotedAnnotationIsMultiLine($annotation);
+    }
+
+    private function promotedAnnotationIsMultiLine(array $annotation): bool
+    {
+        if (count((array) ($annotation['sourceLineBBoxes'] ?? [])) > 1) {
+            return true;
+        }
+
+        $text = (string) (
+            $annotation['pdfjsSourceText']
+            ?? $annotation['originalText']
+            ?? $annotation['text']
+            ?? ''
+        );
+
+        return count(array_filter(
+            preg_split('/\R/u', $text) ?: [],
+            static fn ($line) => trim((string) $line) !== ''
+        )) > 1;
     }
 
     private function filterAnnotationsForPdfjsVisibleExport(array $annotations): array
@@ -1345,6 +1370,40 @@ class DocumentController extends Controller
     {
         $annotation = is_array($record->annotation_data) ? $record->annotation_data : [];
         return $this->durablePdfStateIdentityKeyFromAnnotation($annotation);
+    }
+
+    private function pdfStateRecordHasAnnotationDebug(PdfState $record): bool
+    {
+        $debug = $record->annotation_debug;
+        if (is_string($debug)) {
+            $decoded = json_decode($debug, true);
+            $debug = is_array($decoded) ? $decoded : null;
+        }
+        if (is_array($debug)) {
+            if (trim((string) ($debug['note'] ?? '')) !== '') {
+                return true;
+            }
+            if (!empty($debug['mask']) && is_array($debug['mask'])) {
+                return true;
+            }
+            if (!empty($debug['images']) && is_array($debug['images'])) {
+                return true;
+            }
+            if (!empty($debug['updated_at'])) {
+                return true;
+            }
+        }
+
+        $annotation = is_array($record->annotation_data) ? $record->annotation_data : [];
+        $embeddedDebug = $annotation['_debug'] ?? null;
+        if (!is_array($embeddedDebug)) {
+            return false;
+        }
+
+        return trim((string) ($embeddedDebug['note'] ?? '')) !== ''
+            || (!empty($embeddedDebug['mask']) && is_array($embeddedDebug['mask']))
+            || (!empty($embeddedDebug['images']) && is_array($embeddedDebug['images']))
+            || !empty($embeddedDebug['updated_at']);
     }
 
     private function promotedSuppressionAnnotationId(string $sourceKey): string
@@ -1484,6 +1543,9 @@ class DocumentController extends Controller
             $staleIds = [];
             foreach ($existingRows as $existingId => $record) {
                 if ($existingId === '' || isset($seenIds[$existingId])) {
+                    continue;
+                }
+                if ($this->pdfStateRecordHasAnnotationDebug($record)) {
                     continue;
                 }
                 $staleIds[] = $record->id;
@@ -1780,6 +1842,10 @@ class DocumentController extends Controller
                 return null;
             }
 
+            if ($this->isUnchangedSyntheticSymbolAnnotation($enriched)) {
+                return null;
+            }
+
             return $enriched;
         }, $annotations)));
 
@@ -1802,6 +1868,35 @@ class DocumentController extends Controller
         }
 
         return $prepared;
+    }
+
+    private function isUnchangedSyntheticSymbolAnnotation(array $annotation): bool
+    {
+        if (strtolower(trim((string) ($annotation['type'] ?? ''))) !== 'text') {
+            return false;
+        }
+
+        if (!$this->annotationFlagIsTruthy($annotation, 'syntheticSymbol')) {
+            return false;
+        }
+
+        foreach (['pdfjsDeleted', 'userCreated', 'userAuthored', 'styleDirty', 'userForcedRichText', 'movedTextOverlay'] as $flag) {
+            if ($this->annotationFlagIsTruthy($annotation, $flag)) {
+                return false;
+            }
+        }
+
+        $text = trim((string) ($annotation['text'] ?? ''));
+        if ($text === '') {
+            return false;
+        }
+
+        $original = trim((string) ($annotation['originalText'] ?? $annotation['pdfjsSourceText'] ?? ''));
+        if ($original !== '' && $original !== $text) {
+            return false;
+        }
+
+        return in_array($text, ['•', '●', '·', '∙', '◦', '▪', '▫'], true);
     }
 
     private function createOriginalBackup(string $storedPath): ?string
@@ -5643,11 +5738,11 @@ class DocumentController extends Controller
     }
 
     /**
-     * Convert HTML content to PDF using fitz.Story (PyMuPDF).
+     * Convert HTML content to PDF using WeasyPrint.
      */
     public function convertHtmlToPdf(Request $request, Document $document)
     {
-        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('weasyprint');
 
         $html = $request->input('html', '');
         $css  = $request->input('css', '');
@@ -5876,14 +5971,6 @@ class DocumentController extends Controller
 
     public function edit(Request $request, Document $document)
     {
-        $mimeType = strtolower((string) ($document->mime_type ?? 'application/pdf'));
-        if (!$request->boolean('legacy') && !str_starts_with($mimeType, 'image/')) {
-            return redirect()->route('documents.editNew', [
-                'document' => $document,
-                'pdfjs' => 1,
-            ]);
-        }
-
         return view('documents.edit', [
             'document' => $document,
             'activeTab' => 'pdf-editor',
@@ -5913,6 +6000,149 @@ class DocumentController extends Controller
         return redirect()->route('documents.editNew', [
             'document' => $document,
             'pdfjs' => 1,
+        ]);
+    }
+
+    private function documentNotesQuery(Document $document)
+    {
+        $ownership = $this->resolveDocumentOwnership($document);
+
+        return DocumentNote::query()
+            ->where('document_id', $document->id)
+            ->where('user_id', $ownership['user_id'])
+            ->where('admin_id', $ownership['admin_id']);
+    }
+
+    private function serializeDocumentNote(DocumentNote $note): array
+    {
+        return [
+            'id' => $note->id,
+            'document_id' => $note->document_id,
+            'page_index' => $note->page_index,
+            'page_number' => $note->page_index !== null ? $note->page_index + 1 : null,
+            'anchor_x' => $note->anchor_x,
+            'anchor_y' => $note->anchor_y,
+            'has_anchor' => $note->page_index !== null && $note->anchor_x !== null && $note->anchor_y !== null,
+            'body' => $note->body,
+            'created_at' => optional($note->created_at)->toIso8601String(),
+            'updated_at' => optional($note->updated_at)->toIso8601String(),
+        ];
+    }
+
+    private function normalizeDocumentNoteAnchor(array $validated): array
+    {
+        $pageIndex = $validated['page_index'] ?? null;
+        $anchorX = array_key_exists('anchor_x', $validated) ? $validated['anchor_x'] : null;
+        $anchorY = array_key_exists('anchor_y', $validated) ? $validated['anchor_y'] : null;
+
+        if ($pageIndex === null || $anchorX === null || $anchorY === null) {
+            return [$pageIndex, null, null];
+        }
+
+        return [$pageIndex, (float) $anchorX, (float) $anchorY];
+    }
+
+    private function ownedDocumentNoteOrFail(Document $document, DocumentNote $note): DocumentNote
+    {
+        $owned = $this->documentNotesQuery($document)
+            ->whereKey($note->id)
+            ->first();
+
+        abort_if($owned === null, 404);
+
+        return $owned;
+    }
+
+    public function getDocumentNotes(Request $request, Document $document)
+    {
+        $notes = $this->documentNotesQuery($document)
+            ->orderByRaw('page_index is null')
+            ->orderBy('page_index')
+            ->latest('updated_at')
+            ->get()
+            ->map(fn (DocumentNote $note) => $this->serializeDocumentNote($note))
+            ->values();
+
+        return response()->json([
+            'success' => true,
+            'notes' => $notes,
+        ]);
+    }
+
+    public function storeDocumentNote(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'body' => ['required', 'string', 'max:20000'],
+            'page_index' => ['nullable', 'integer', 'min:0'],
+            'anchor_x' => ['nullable', 'numeric', 'min:0', 'max:1'],
+            'anchor_y' => ['nullable', 'numeric', 'min:0', 'max:1'],
+        ]);
+
+        $body = trim((string) $validated['body']);
+        if ($body === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Write a note before saving.',
+            ], 422);
+        }
+
+        $ownership = $this->resolveDocumentOwnership($document);
+        [$pageIndex, $anchorX, $anchorY] = $this->normalizeDocumentNoteAnchor($validated);
+        $note = DocumentNote::create([
+            'document_id' => $document->id,
+            'user_id' => $ownership['user_id'],
+            'admin_id' => $ownership['admin_id'],
+            'page_index' => $pageIndex,
+            'anchor_x' => $anchorX,
+            'anchor_y' => $anchorY,
+            'body' => $body,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'note' => $this->serializeDocumentNote($note),
+        ], 201);
+    }
+
+    public function updateDocumentNote(Request $request, Document $document, DocumentNote $note)
+    {
+        $note = $this->ownedDocumentNoteOrFail($document, $note);
+        $validated = $request->validate([
+            'body' => ['required', 'string', 'max:20000'],
+            'page_index' => ['nullable', 'integer', 'min:0'],
+            'anchor_x' => ['nullable', 'numeric', 'min:0', 'max:1'],
+            'anchor_y' => ['nullable', 'numeric', 'min:0', 'max:1'],
+        ]);
+
+        $body = trim((string) $validated['body']);
+        if ($body === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'A note cannot be empty.',
+            ], 422);
+        }
+
+        [$pageIndex, $anchorX, $anchorY] = $this->normalizeDocumentNoteAnchor($validated);
+        $note->fill([
+            'page_index' => $pageIndex,
+            'anchor_x' => $anchorX,
+            'anchor_y' => $anchorY,
+            'body' => $body,
+        ])->save();
+
+        return response()->json([
+            'success' => true,
+            'note' => $this->serializeDocumentNote($note->fresh()),
+        ]);
+    }
+
+    public function deleteDocumentNote(Request $request, Document $document, DocumentNote $note)
+    {
+        $note = $this->ownedDocumentNoteOrFail($document, $note);
+        $note->delete();
+
+        return response()->json([
+            'success' => true,
         ]);
     }
 
@@ -5948,11 +6178,11 @@ class DocumentController extends Controller
             }
             move_uploaded_file($upload->getRealPath(), $tmpIn);
         } else {
-            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+            if (!$document->path || !Storage::exists($document->path)) {
                 @unlink($tmpIn);
-                return response()->json(['error' => 'Original PDF missing'], 404);
+                return response()->json(['error' => 'Current PDF missing'], 404);
             }
-            copy(Storage::path($document->original_backup_path), $tmpIn);
+            copy(Storage::path($document->path), $tmpIn);
         }
         $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_out_') . '.pdf';
         $editsJsonPath = tempnam(sys_get_temp_dir(), 'editpdfjs_edits_') . '.json';
@@ -6025,11 +6255,11 @@ class DocumentController extends Controller
             }
             move_uploaded_file($upload->getRealPath(), $tmpIn);
         } else {
-            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+            if (!$document->path || !Storage::exists($document->path)) {
                 @unlink($tmpIn);
-                return response()->json(['error' => 'Original PDF missing'], 404);
+                return response()->json(['error' => 'Current PDF missing'], 404);
             }
-            copy(Storage::path($document->original_backup_path), $tmpIn);
+            copy(Storage::path($document->path), $tmpIn);
         }
 
         $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_redactout_') . '.pdf';
@@ -6065,6 +6295,177 @@ class DocumentController extends Controller
         return response($bytes, 200, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="source-redacted.pdf"',
+        ]);
+    }
+
+    /**
+     * Irreversibly flatten one shape or direct-draw layer into the current PDF.
+     * Text touched by the layer's bounding box is removed before the visual
+     * layer is stamped, so the burned content cannot be selected or restored
+     * by the editor's annotation undo stack.
+     */
+    public function editPdfjsBurnLayer(Request $request, Document $document)
+    {
+        $annotationRaw = $request->input('annotation');
+        if (is_string($annotationRaw)) {
+            $annotationRaw = json_decode($annotationRaw, true);
+            $request->merge(['annotation' => $annotationRaw]);
+        }
+
+        $validated = $request->validate([
+            'annotation' => ['required', 'array'],
+            'session_id' => ['nullable', 'string'],
+        ]);
+
+        $normalized = $this->normalizeAnnotationsForPersistence($document, [$validated['annotation']]);
+        $annotation = is_array($normalized[0] ?? null) ? $normalized[0] : [];
+        $type = strtolower(trim((string) ($annotation['type'] ?? '')));
+        $isDirectDrawing = $type === 'image'
+            && strtolower(trim((string) ($annotation['imageToolSource'] ?? ''))) === 'direct-draw';
+
+        if ($type !== 'shape' && !$isDirectDrawing) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only shapes and direct drawings can be burned into the PDF.',
+            ], 422);
+        }
+
+        $bbox = [
+            'x' => $annotation['pdfX'] ?? null,
+            'y' => $annotation['pdfY'] ?? null,
+            'w' => $annotation['pdfWidth'] ?? null,
+            'h' => $annotation['pdfHeight'] ?? null,
+        ];
+        if (!is_numeric($bbox['x']) || !is_numeric($bbox['y'])
+            || !is_numeric($bbox['w']) || !is_numeric($bbox['h'])
+            || (float) $bbox['w'] <= 0 || (float) $bbox['h'] <= 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'The layer does not have a valid PDF bounding box.',
+            ], 422);
+        }
+
+        if (!$document->path || !Storage::exists($document->path)) {
+            return response()->json(['success' => false, 'message' => 'Current PDF missing.'], 404);
+        }
+
+        $tempDir = storage_path('app/temp');
+        if (!is_dir($tempDir)) {
+            @mkdir($tempDir, 0775, true);
+        }
+        $token = (string) Str::uuid();
+        $workingPdfPath = $tempDir . '/burn_layer_in_' . $document->id . '_' . $token . '.pdf';
+        $redactedPdfPath = $tempDir . '/burn_layer_out_' . $document->id . '_' . $token . '.pdf';
+        $editsPath = $tempDir . '/burn_layer_edits_' . $document->id . '_' . $token . '.json';
+        $annotationsPath = $tempDir . '/burn_layer_ann_' . $document->id . '_' . $token . '.json';
+        $backupPath = $tempDir . '/burn_layer_backup_' . $document->id . '_' . $token . '.pdf';
+        $cleanup = static function () use ($workingPdfPath, $redactedPdfPath, $editsPath, $annotationsPath, $backupPath): void {
+            foreach ([$workingPdfPath, $redactedPdfPath, $editsPath, $annotationsPath, $backupPath] as $path) {
+                if (is_file($path)) {
+                    @unlink($path);
+                }
+            }
+        };
+
+        $sourcePath = Storage::path($document->path);
+        if ($request->hasFile('pdf')) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid() || !@copy($upload->getRealPath(), $workingPdfPath)) {
+                $cleanup();
+                return response()->json(['success' => false, 'message' => 'Invalid uploaded PDF.'], 422);
+            }
+        } elseif (!@copy($sourcePath, $workingPdfPath)) {
+            $cleanup();
+            return response()->json(['success' => false, 'message' => 'Failed to prepare the PDF working copy.'], 500);
+        }
+
+        $edits = [[
+            'page' => max(0, (int) ($annotation['pageIndex'] ?? 0)),
+            'source_bbox' => array_map(static fn ($value) => (float) $value, $bbox),
+            'redact_bbox_only' => true,
+            'remove_graphics' => false,
+            'fill_white' => false,
+        ]];
+        $prepared = $this->prepareAnnotationsForPython([$annotation]);
+        $prepared = array_map(static function ($entry) use ($document) {
+            if (is_array($entry)) {
+                $entry['__documentId'] = $document->id;
+            }
+            return $entry;
+        }, $prepared);
+
+        if (empty($prepared)
+            || @file_put_contents($editsPath, json_encode($edits, JSON_INVALID_UTF8_SUBSTITUTE)) === false
+            || @file_put_contents($annotationsPath, json_encode($prepared, JSON_INVALID_UTF8_SUBSTITUTE)) === false) {
+            $cleanup();
+            return response()->json(['success' => false, 'message' => 'Failed to prepare the burn payload.'], 500);
+        }
+
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $redactCommand = sprintf(
+            '%s %s --in %s --out %s --edits %s 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg(base_path('python/pdf-editor/redact_pdfjs_source_text.py')),
+            escapeshellarg($workingPdfPath),
+            escapeshellarg($redactedPdfPath),
+            escapeshellarg($editsPath)
+        );
+        $redactOutput = [];
+        $redactExitCode = 0;
+        exec($redactCommand, $redactOutput, $redactExitCode);
+        if ($redactExitCode !== 0 || !is_file($redactedPdfPath)) {
+            $cleanup();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to erase text behind the layer.',
+                'error' => implode("\n", $redactOutput),
+            ], 500);
+        }
+
+        $stampCommand = sprintf(
+            '%s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg(base_path('python/pdf-editor/apply_annotations_direct_new.py')),
+            escapeshellarg($redactedPdfPath),
+            escapeshellarg($annotationsPath)
+        );
+        $stampOutput = [];
+        $stampExitCode = 0;
+        exec($stampCommand, $stampOutput, $stampExitCode);
+        if ($stampExitCode !== 0 || !is_file($redactedPdfPath)) {
+            $cleanup();
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to burn the layer into the PDF.',
+                'error' => implode("\n", $stampOutput),
+            ], 500);
+        }
+
+        @copy($sourcePath, $backupPath);
+        if (!@copy($redactedPdfPath, $sourcePath)) {
+            if (is_file($backupPath)) {
+                @copy($backupPath, $sourcePath);
+            }
+            $cleanup();
+            return response()->json(['success' => false, 'message' => 'Failed to write the burned PDF.'], 500);
+        }
+
+        $sessionId = trim((string) ($validated['session_id'] ?? ''));
+        $annotationId = trim((string) ($annotation['id'] ?? ''));
+        if ($annotationId !== '') {
+            $this->applyAnnotationDeletions($document, $sessionId, [$annotationId], []);
+        }
+
+        $document->size_bytes = @filesize($sourcePath) ?: $document->size_bytes;
+        $document->updated_at = now();
+        $document->saveQuietly();
+        $bytes = file_get_contents($sourcePath);
+        $cleanup();
+
+        return response($bytes, 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'inline; filename="burned-layer.pdf"',
+            'X-Burned-Annotation-Id' => $annotationId,
         ]);
     }
 
@@ -6115,11 +6516,11 @@ class DocumentController extends Controller
             }
             move_uploaded_file($upload->getRealPath(), $tmpIn);
         } else {
-            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+            if (!$document->path || !Storage::exists($document->path)) {
                 @unlink($tmpIn);
-                return response()->json(['error' => 'Original PDF missing'], 404);
+                return response()->json(['error' => 'Current PDF missing'], 404);
             }
-            copy(Storage::path($document->original_backup_path), $tmpIn);
+            copy(Storage::path($document->path), $tmpIn);
         }
 
         $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_moveout_') . '.pdf';
@@ -6204,11 +6605,11 @@ class DocumentController extends Controller
             }
             move_uploaded_file($upload->getRealPath(), $tmpIn);
         } else {
-            if (!$document->original_backup_path || !Storage::exists($document->original_backup_path)) {
+            if (!$document->path || !Storage::exists($document->path)) {
                 @unlink($tmpIn);
-                return response()->json(['error' => 'Original PDF missing'], 404);
+                return response()->json(['error' => 'Current PDF missing'], 404);
             }
-            copy(Storage::path($document->original_backup_path), $tmpIn);
+            copy(Storage::path($document->path), $tmpIn);
         }
 
         $tmpOut = tempnam(sys_get_temp_dir(), 'editpdfjs_reflowout_') . '.pdf';
@@ -10570,6 +10971,156 @@ class DocumentController extends Controller
         ]);
     }
 
+    public function saveAnnotationDebug(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'annotation_id' => 'required|string|max:255',
+            'annotation' => 'nullable|array',
+            'debug' => 'required|array',
+            'debug.note' => 'nullable|string|max:50000',
+            'debug.mask' => 'nullable|array',
+            'debug.mask.pageIndex' => 'nullable|integer|min:0',
+            'debug.mask.x' => 'nullable|numeric',
+            'debug.mask.y' => 'nullable|numeric',
+            'debug.mask.w' => 'nullable|numeric|min:0',
+            'debug.mask.h' => 'nullable|numeric|min:0',
+            'debug.images' => 'nullable|array|max:12',
+            'debug.images.*.name' => 'nullable|string|max:255',
+            'debug.images.*.type' => 'nullable|string|max:100',
+            'debug.images.*.dataUrl' => 'nullable|string|max:5000000',
+            'session_id' => 'nullable|string',
+        ]);
+
+        $sessionId = is_string($validated['session_id'] ?? null)
+            ? trim((string) $validated['session_id'])
+            : '';
+        $annotationId = trim((string) $validated['annotation_id']);
+        $annotation = is_array($validated['annotation'] ?? null) ? $validated['annotation'] : [];
+        $annotation['id'] = trim((string) ($annotation['id'] ?? $annotationId)) ?: $annotationId;
+
+        if (!isset($annotation['pageIndex'])) {
+            $maskPage = $validated['debug']['mask']['pageIndex'] ?? null;
+            $annotation['pageIndex'] = is_numeric($maskPage) ? (int) $maskPage : 0;
+        }
+        if (!isset($annotation['type'])) {
+            $annotation['type'] = 'text';
+        }
+
+        $normalized = $this->normalizeAnnotationsForPersistence($document, [$annotation]);
+        $annotation = $normalized[0] ?? $annotation;
+        $debug = $this->normalizeAnnotationDebugPayload($validated['debug'], $annotationId);
+
+        $record = $this->findPdfStateRecordForAnnotationDebug($document, $sessionId, $annotation);
+        $debugColumnExists = Schema::hasColumn('pdf_state', 'annotation_debug');
+
+        if ($record) {
+            $annotationData = is_array($record->annotation_data) ? $record->annotation_data : [];
+            $record->annotation_data = array_merge($annotationData, $annotation, ['_debug' => $debug]);
+            $record->page_number = is_numeric($annotation['pageIndex'] ?? null) ? (int) $annotation['pageIndex'] : $record->page_number;
+            if ($sessionId !== '') {
+                $record->session_id = $sessionId;
+            }
+            if ($debugColumnExists) {
+                $record->annotation_debug = $debug;
+            }
+            if ((string) $record->state === '') {
+                $record->state = 'saved';
+            }
+            $record->save();
+        } else {
+            $payload = [
+                'document_id' => $document->id,
+                'page_number' => is_numeric($annotation['pageIndex'] ?? null) ? (int) $annotation['pageIndex'] : 0,
+                'annotation_data' => array_merge($annotation, ['_debug' => $debug]),
+                'state' => 'saved',
+                ...$this->pdfStateOwnershipPayload($document, $sessionId),
+            ];
+            if ($debugColumnExists) {
+                $payload['annotation_debug'] = $debug;
+            }
+            $record = PdfState::create($payload);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Annotation debug saved.',
+            'annotation_id' => $annotationId,
+            'db_id' => $record->id,
+            'debug' => $debug,
+        ]);
+    }
+
+    private function normalizeAnnotationDebugPayload(array $debug, string $annotationId): array
+    {
+        $mask = is_array($debug['mask'] ?? null) ? $debug['mask'] : [];
+        $normalizedMask = [];
+        foreach (['pageIndex', 'x', 'y', 'w', 'h'] as $key) {
+            if (!array_key_exists($key, $mask) || !is_numeric($mask[$key])) {
+                continue;
+            }
+            $value = $key === 'pageIndex' ? (int) $mask[$key] : round((float) $mask[$key], 4);
+            if (($key === 'w' || $key === 'h') && $value < 0) {
+                $value = 0;
+            }
+            $normalizedMask[$key] = $value;
+        }
+
+        $images = [];
+        foreach (array_slice(is_array($debug['images'] ?? null) ? $debug['images'] : [], 0, 12) as $image) {
+            if (!is_array($image)) {
+                continue;
+            }
+            $dataUrl = trim((string) ($image['dataUrl'] ?? ''));
+            if ($dataUrl === '' || !str_starts_with($dataUrl, 'data:image/')) {
+                continue;
+            }
+            if (strlen($dataUrl) > 5000000) {
+                continue;
+            }
+            $images[] = [
+                'name' => Str::limit(trim((string) ($image['name'] ?? 'debug-image')), 255, ''),
+                'type' => Str::limit(trim((string) ($image['type'] ?? 'image')), 100, ''),
+                'dataUrl' => $dataUrl,
+            ];
+        }
+
+        return [
+            'annotation_id' => $annotationId,
+            'note' => (string) ($debug['note'] ?? ''),
+            'mask' => $normalizedMask,
+            'images' => $images,
+            'updated_at' => now()->toIso8601String(),
+        ];
+    }
+
+    private function findPdfStateRecordForAnnotationDebug(
+        Document $document,
+        string $sessionId,
+        array $annotation
+    ): ?PdfState {
+        $record = $this->findExistingPdfStateRecordForAnnotation($document, $sessionId, $annotation);
+        if ($record) {
+            return $record;
+        }
+
+        $annotationId = trim((string) ($annotation['id'] ?? ''));
+        $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+        $queryFor = function (string $jsonField, string $value) use ($document): ?PdfState {
+            if ($value === '') {
+                return null;
+            }
+
+            return PdfState::query()
+                ->where('document_id', $document->id)
+                ->where('state', '!=', 'deleted')
+                ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$." . $jsonField . "')) = ?", [$value])
+                ->orderByDesc('updated_at')
+                ->first();
+        };
+
+        return $queryFor('id', $annotationId) ?: $queryFor('promotedSourceKey', $sourceKey);
+    }
+
     /**
      * Mark PdfState rows as deleted for the given annotation ids, plus bulk-mark
      * any rows whose promotedSourceKey matches the explicit list (or is auto-
@@ -10867,8 +11418,8 @@ class DocumentController extends Controller
             $sourcePdfPath = $cleanPath;
             $preservePdfPath = $originalSourcePdfPath;
         } elseif ($usePdfjsVisibleExport) {
-            $sourcePdfPath = $originalSourcePdfPath;
-            $preservePdfPath = $originalSourcePdfPath;
+            $sourcePdfPath = $pdfPath;
+            $preservePdfPath = $pdfPath;
         } elseif ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
             $originalPath = Storage::path($document->original_backup_path);
             if (file_exists($originalPath)) {
@@ -11564,6 +12115,123 @@ class DocumentController extends Controller
             'success' => true,
             'download_token' => $downloadToken,
             'download_name' => $downloadName,
+        ]);
+    }
+
+    public function encryptPdf(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'password' => ['required', 'string', 'min:1', 'max:255', 'confirmed'],
+            'algorithm' => ['required', 'string', 'in:aes-128,aes-256'],
+            'pdf' => ['nullable', 'file', 'mimes:pdf', 'max:51200'],
+        ]);
+
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            return $response;
+        }
+
+        $inputPath = null;
+        $uploadedInput = false;
+        if ($request->hasFile('pdf')) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                return response()->json(['success' => false, 'message' => 'Invalid PDF upload.'], 422);
+            }
+            $inputPath = Storage::path('documents/temp_encrypt_input_' . Str::uuid() . '.pdf');
+            $upload->move(dirname($inputPath), basename($inputPath));
+            $uploadedInput = true;
+        } else {
+            if (!$document->path || !Storage::exists($document->path)) {
+                return response()->json(['success' => false, 'message' => 'Current PDF is missing.'], 404);
+            }
+            $inputPath = Storage::path($document->path);
+        }
+
+        $tempOutputPath = Storage::path('documents/temp_encrypted_' . Str::uuid() . '.pdf');
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $pythonScript = base_path('python/pdf-editor/encrypt_pdf.py');
+        $command = sprintf(
+            '%s %s %s %s --password %s --algorithm %s --json 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($pythonScript),
+            escapeshellarg($inputPath),
+            escapeshellarg($tempOutputPath),
+            escapeshellarg($validated['password']),
+            escapeshellarg($validated['algorithm'])
+        );
+
+        $output = shell_exec($command);
+        if ($uploadedInput && $inputPath && file_exists($inputPath)) {
+            @unlink($inputPath);
+        }
+
+        $result = null;
+        if ($output) {
+            foreach (explode("\n", trim($output)) as $line) {
+                $decoded = json_decode(trim($line), true);
+                if ($decoded !== null) {
+                    $result = $decoded;
+                    break;
+                }
+            }
+        }
+
+        if (!$result || !($result['success'] ?? false) || !file_exists($tempOutputPath)) {
+            if (file_exists($tempOutputPath)) {
+                @unlink($tempOutputPath);
+            }
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Encrypt PDF',
+                    'category' => 'pdf_encrypt',
+                    'details' => ['algorithm' => $validated['algorithm'], 'error' => $result['error'] ?? 'Unknown error'],
+                    'document_id' => $document->id,
+                    'status' => 'failed',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+            return response()->json([
+                'success' => false,
+                'message' => $result['error'] ?? 'PDF encryption failed. Output: ' . ($output ?? 'none'),
+            ], 500);
+        }
+
+        $downloadToken = Str::uuid()->toString();
+        $baseName = pathinfo($document->original_name, PATHINFO_FILENAME);
+        $downloadName = $baseName . '_encrypted.pdf';
+
+        session()->put("converted_download_{$downloadToken}", [
+            'path' => $tempOutputPath,
+            'name' => $downloadName,
+            'content_type' => 'application/pdf',
+            'expires' => now()->addMinutes(10),
+        ]);
+
+        if (Auth::check()) {
+            UserActivity::create([
+                'user_id' => Auth::id(),
+                'action' => 'Encrypt PDF',
+                'category' => 'pdf_encrypt',
+                'details' => [
+                    'algorithm' => $validated['algorithm'],
+                    'file_size' => filesize($tempOutputPath),
+                    'page_count' => $result['page_count'] ?? null,
+                ],
+                'document_id' => $document->id,
+                'status' => 'success',
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+            ]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'download_token' => $downloadToken,
+            'download_name' => $downloadName,
+            'algorithm' => $validated['algorithm'],
+            'page_count' => $result['page_count'] ?? null,
         ]);
     }
 

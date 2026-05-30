@@ -29,9 +29,12 @@ export function drawShapeAnnotation(ann, ctx, scale, canvasHeight) {
         width: Math.max(1, box.w * scale),
         height: Math.max(1, box.h * scale),
     };
-    const strokeWidth = Math.max(1, Number(ann.strokeWidth) || 3);
-    const hasStroke = !ann.strokeTransparent && clamp01(ann.strokeOpacity ?? 1, 1) > 0;
-    const hasFill = !ann.fillTransparent && !isLineShape(ann) && clamp01(ann.fillOpacity ?? 0.22, 0.22) > 0;
+    const rawStrokeWidth = Number(ann.strokeWidth);
+    const strokeWidth = Math.max(0, Number.isFinite(rawStrokeWidth) ? rawStrokeWidth : 3);
+    const hasStroke = strokeWidth > 0 && !ann.strokeTransparent && clamp01(ann.strokeOpacity ?? 1, 1) > 0;
+    const shapeType = normalizeShapeType(ann.shapeType);
+    const openIconShape = shapeType === 'arrow' || shapeType === 'x' || shapeType === 'checkmark';
+    const hasFill = !ann.fillTransparent && !isLineShape(ann) && !openIconShape && clamp01(ann.fillOpacity ?? 0.22, 0.22) > 0;
     const lineGeometry = isLineShape(ann)
         ? {
             lineStartX: clamp01(ann.lineStartX, 0),
@@ -39,7 +42,7 @@ export function drawShapeAnnotation(ann, ctx, scale, canvasHeight) {
             lineEndX: clamp01(ann.lineEndX, 1),
             lineEndY: clamp01(ann.lineEndY, 1),
         }
-        : (normalizeShapeType(ann.shapeType) === 'polygon'
+        : (shapeType === 'polygon'
             ? { polygonPoints: normalizePolygonPointList(ann.polygonPoints, defaultPolygonUnitPoints()) }
             : null);
 

@@ -14,9 +14,9 @@
     <div class="ftb-group">
         <button type="button" class="ftb-btn" id="ftb-sign" title="Sign — create a signature by drawing, typing, or uploading an image">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="m3 21 3.75-.75L18.5 8.5a2.12 2.12 0 1 0-3-3L3.75 17.25z"></path>
-                <path d="m14.5 6.5 3 3"></path>
-                <path d="M2.5 21.5h6"></path>
+                <path d="M3 17.5c2.3-3.6 4.4-5.4 6.2-5.4 1.2 0 1.7.8 1.4 2.3l-.5 2.5c-.3 1.5.1 2.2 1.1 2.2 1.4 0 2.6-1.8 3.8-5.4"></path>
+                <path d="M15 15.4c.9 2.1 2.1 3.1 3.7 3.1 1.1 0 2-.4 2.8-1.1"></path>
+                <path d="M3 21h18"></path>
             </svg>
             <span>Sign</span>
         </button>
@@ -35,14 +35,34 @@
             </svg>
             <span>Shapes</span>
         </button>
-        <button type="button" class="ftb-btn" id="ftb-draw-erase" title="Draw &amp; Erase — sketch a freehand mark or remove annotations">
+        <button type="button" class="ftb-btn" id="ftb-draw-erase" title="Draw — sketch directly on the page">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 20h8"></path>
-                <path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L8 17l-4 1 1-4 9.5-9.5z"></path>
-                <path d="M13 6l5 5"></path>
+                <path d="M9.5 3.5 20.5 14.5"></path>
+                <path d="M16.5 10.5 13 14l-3-3 3.5-3.5"></path>
+                <path d="M7.5 13.5 4 17l3 3 3.5-3.5"></path>
+                <path d="M3 21h8"></path>
             </svg>
-            <span>Draw / Erase</span>
+            <span>Draw</span>
         </button>
+        <button type="button" class="ftb-btn" id="ftb-highlight" title="Highlight — select text or drag over the page">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="m9 11-6 6v3h3l6-6"></path>
+                <path d="m22 12-4.5 4.5-10-10L12 2l10 10z"></path>
+                <path d="M14 19h7"></path>
+            </svg>
+            <span>Highlight</span>
+        </button>
+        @if(request()->query('pdfjs') === '1')
+            <button type="button" class="ftb-btn" id="ftb-notes" title="Notes — save private notes for this PDF">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 4h16v16H4z"></path>
+                    <path d="M8 8h8"></path>
+                    <path d="M8 12h8"></path>
+                    <path d="M8 16h5"></path>
+                </svg>
+                <span>Notes</span>
+            </button>
+        @endif
     </div>
     <div class="ftb-sep"></div>
     <!-- Group 3: Insert -->
@@ -52,18 +72,6 @@
                 <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
             </svg>
             <span>Image</span>
-        </button>
-        <button type="button" class="ftb-btn is-disabled" title="Coming soon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
-            </svg>
-            <span>Arrow</span>
-        </button>
-        <button type="button" class="ftb-btn is-disabled" title="Coming soon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="20 6 9 17 4 12"/>
-            </svg>
-            <span>Check</span>
         </button>
     </div>
 </div>

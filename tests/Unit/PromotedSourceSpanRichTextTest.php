@@ -8,6 +8,34 @@ use Tests\TestCase;
 
 class PromotedSourceSpanRichTextTest extends TestCase
 {
+    public function test_visible_export_filter_keeps_clean_multiline_rich_promoted_text_source_rendered(): void
+    {
+        $annotation = [
+            'id' => 'promoted_1_1',
+            'type' => 'text',
+            'text' => "1234 Company St.\nCompany Town ST 12345",
+            'originalText' => "1234 Company St.\nCompany Town ST 12345",
+            'pdfjsSourceText' => "1234 Company St.\nCompany Town ST 12345",
+            'promotedFromExtraction' => true,
+            'promotedDirty' => false,
+            'pdfjsEditorMode' => 'rich',
+            'sourceLineBBoxes' => [
+                [24, 49.52, 114.5, 59.27],
+                [24, 64.67, 147.27, 74.42],
+            ],
+        ];
+
+        $controller = app(DocumentController::class);
+        $method = (new ReflectionClass($controller))->getMethod('filterAnnotationsForPdfjsVisibleExport');
+        $movedAnnotation = [...$annotation, 'movedTextOverlay' => true];
+
+        $this->assertSame([], $method->invoke($controller, [$annotation]));
+        $this->assertSame(
+            [$movedAnnotation],
+            $method->invoke($controller, [$movedAnnotation])
+        );
+    }
+
     public function test_promoted_number_edit_preserves_source_span_boundaries(): void
     {
         $annotation = [

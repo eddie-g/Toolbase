@@ -176,9 +176,48 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             side_effect=AssertionError("PDF.js source overlays must not receive placeholder backgrounds"),
         ):
             self.module.draw_text(page, annotation, source_masks_already_drawn=True)
+        self.assertEqual(len(page.draw_rect_calls), 0)
+        self.assertEqual(len(page.shape_draw_rect_calls), 0)
+
+    def test_promoted_font_only_overlay_white_text_does_not_get_placeholder_background(self):
+        annotation = {
+            "id": "promoted_1_1",
+            "type": "text",
+            "text": "1234 Company St.\nCompany Town ST 12345",
+            "originalText": "1234 Company St.\nCompany Town ST 12345",
+            "pdfjsSourceText": "1234 Company St.\nCompany Town ST 12345",
+            "promotedFromExtraction": True,
+            "savedTextOverlay": True,
+            "userAuthored": True,
+            "styleDirty": True,
+            "pdfjsSourceX": 24,
+            "pdfjsSourceY": 717,
+            "pdfjsSourceW": 124,
+            "pdfjsSourceH": 22,
+            "pdfX": 24,
+            "pdfY": 717,
+            "pdfWidth": 124,
+            "pdfHeight": 22,
+            "fontFamily": "Helvetica",
+            "fontSize": 9.75,
+            "textColor": "#ffffff",
+            "backgroundColor": "transparent",
+        }
+
+        page = self.FakePage()
+
+        self.assertTrue(self.module.is_pdfjs_visible_overlay_text(annotation))
+        self.assertFalse(self.module.is_redundant_pdfjs_source_overlay(annotation))
+        with patch.object(
+            self.module,
+            "substitute_display_bg_for_invisible_text",
+            side_effect=AssertionError("font-only promoted overlays must not receive placeholder backgrounds"),
+        ):
+            self.module.draw_text(page, annotation, source_masks_already_drawn=True)
 
         self.assertEqual(len(page.draw_rect_calls), 0)
         self.assertEqual(len(page.shape_draw_rect_calls), 0)
+        self.assertGreaterEqual(len(page.insert_text_calls), 1)
 
     def test_draw_text_normalizes_nonbreaking_spaces_before_pdf_write(self):
         annotation = {
@@ -274,6 +313,23 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             self.assertIn("Visible replacement", page.get_text())
         finally:
             doc.close()
+
+    def test_user_created_text_is_not_pdfjs_source_overlay(self):
+        annotation = {
+            "id": "pdfjs_4193_5_new_example",
+            "type": "text",
+            "text": "5-22-2026",
+            "savedTextOverlay": True,
+            "userCreated": True,
+            "userAuthored": True,
+            "skipPdfjsSourceMask": True,
+            "pdfjsSourceX": 396.6,
+            "pdfjsSourceY": 244.5,
+            "pdfjsSourceW": 56.7,
+            "pdfjsSourceH": 15,
+        }
+
+        self.assertFalse(self.module.is_pdfjs_visible_overlay_text(annotation))
 
     def test_pdfjs_visible_export_masks_do_not_punch_moved_replacement_glyphs(self):
         source_pdf = pathlib.Path(__file__).resolve().parents[2] / "public" / "spiders.pdf"
@@ -1047,6 +1103,47 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(len(page.draw_rect_calls), 0)
         self.assertEqual(len(page.shape_draw_rect_calls), 0)
 
+    def test_pdfjs_dirty_promoted_mask_prepass_erases_original_source_lines(self):
+        annotation = {
+            "type": "text",
+            "text": "Replacement text",
+            "originalText": "Original text",
+            "pdfjsSourceText": "Original text",
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "savedTextOverlay": True,
+            "userForcedRichText": True,
+            "pdfX": 40,
+            "pdfY": 690,
+            "pdfWidth": 180,
+            "pdfHeight": 30,
+            "pdfjsSourceX": 40,
+            "pdfjsSourceY": 690,
+            "pdfjsSourceW": 180,
+            "pdfjsSourceH": 30,
+            "fontFamily": "Helvetica",
+            "fontSize": 10,
+            "sourceLineBBoxes": [
+                [40, 72, 220, 84],
+                [40, 84, 220, 96],
+            ],
+        }
+        page = self.FakePage()
+
+        with (
+            patch.object(self.module, "draw_pdfjs_source_mask"),
+            patch.object(self.module, "normalize_exact_source_line_layout", return_value=[]),
+            patch.object(self.module, "erase_promoted_source_text_region") as erase_source,
+        ):
+            self.module.draw_text(page, annotation, mask_only=True)
+
+        erase_source.assert_called_once()
+        erased_lines = erase_source.call_args.args[3]
+        self.assertEqual(
+            [list(line["rect"]) for line in erased_lines],
+            annotation["sourceLineBBoxes"],
+        )
+
     def test_promoted_source_erase_uses_redaction_when_background_is_transparent(self):
         annotation = {
             "promotedFromExtraction": True,
@@ -1200,7 +1297,35 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
 
         self.assertEqual(pixels[0], (255, 255, 255, 48))
         self.assertEqual(pixels[1], (255, 255, 255, 255))
-        self.assertEqual(pixels[2][3], 0)
+        self.assertEqual(pixels[2], (255, 255, 255, 0))
+
+    def test_normalize_direct_draw_white_image_bytes_preserves_alpha_for_translucent_white_stroke(self):
+        image = Image.new("RGBA", (3, 1))
+        image.putdata([
+            (64, 64, 64, 48),
+            (255, 255, 255, 128),
+            (10, 10, 10, 0),
+        ])
+        encoded = io.BytesIO()
+        image.save(encoded, format="PNG")
+
+        normalized = self.module.normalize_direct_draw_white_image_bytes(
+            {
+                "type": "image",
+                "imageToolSource": "direct-draw",
+                "drawStrokeColor": "#ffffff",
+            },
+            encoded.getvalue(),
+        )
+
+        with Image.open(io.BytesIO(normalized)) as result:
+            rgba = result.convert("RGBA")
+            pixel_access = rgba.load()
+            pixels = [pixel_access[x, 0] for x in range(rgba.width)]
+
+        self.assertEqual(pixels[0], (255, 255, 255, 48))
+        self.assertEqual(pixels[1], (255, 255, 255, 128))
+        self.assertEqual(pixels[2], (255, 255, 255, 0))
 
     def test_normalize_direct_draw_white_image_bytes_infers_legacy_white_stroke_without_color_metadata(self):
         image = Image.new("RGBA", (5, 1))
@@ -1237,6 +1362,112 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
                 (255, 255, 255, 72),
             ],
         )
+
+    def test_direct_draw_image_insert_kwargs_uses_white_stream_and_alpha_mask_for_white_stroke(self):
+        image = Image.new("RGBA", (3, 1))
+        image.putdata([
+            (64, 64, 64, 48),
+            (255, 255, 255, 255),
+            (10, 10, 10, 0),
+        ])
+        encoded = io.BytesIO()
+        image.save(encoded, format="PNG")
+
+        kwargs = self.module.direct_draw_image_insert_kwargs(
+            {
+                "type": "image",
+                "imageToolSource": "direct-draw",
+                "drawStrokeColor": "#ffffff",
+            },
+            encoded.getvalue(),
+        )
+
+        self.assertIn("stream", kwargs)
+        self.assertIn("mask", kwargs)
+
+        with Image.open(io.BytesIO(kwargs["stream"])) as stream_image:
+            rgb = stream_image.convert("RGB")
+            stream_pixels = [rgb.getpixel((x, 0)) for x in range(rgb.width)]
+        with Image.open(io.BytesIO(kwargs["mask"])) as mask_image:
+            mask = mask_image.convert("L")
+            mask_pixels = [mask.getpixel((x, 0)) for x in range(mask.width)]
+
+        self.assertEqual(stream_pixels, [(255, 255, 255), (255, 255, 255), (255, 255, 255)])
+        self.assertEqual(mask_pixels, [48, 255, 0])
+
+    def test_draw_signature_prefers_direct_draw_vector_over_image_payload(self):
+        annotation = {
+            "type": "image",
+            "imageToolSource": "direct-draw",
+            "drawStrokeColor": "#dc2626",
+            "dataUrl": "data:image/png;base64,not-used",
+            "pageIndex": 0,
+            "pdfX": 10,
+            "pdfY": 20,
+            "pdfWidth": 100,
+            "pdfHeight": 50,
+            "directDrawVector": {
+                "version": 1,
+                "width": 50,
+                "height": 25,
+                "strokes": [{
+                    "color": "#dc2626",
+                    "opacity": 0.75,
+                    "brushSize": 4,
+                    "points": [{"x": 5, "y": 5}, {"x": 45, "y": 20}],
+                }],
+            },
+        }
+        page = self.FakePage()
+
+        self.module.draw_signature(page, annotation)
+
+        self.assertEqual(len(page.shape_draw_polyline_calls), 1)
+        self.assertEqual(len(page.shape_finish_calls), 1)
+        finish = page.shape_finish_calls[0]
+        self.assertEqual(finish["color"], self.module.hex_to_rgb("#dc2626"))
+        self.assertAlmostEqual(finish["stroke_opacity"], 0.75, places=3)
+        self.assertEqual(finish["lineCap"], 1)
+        self.assertEqual(finish["lineJoin"], 1)
+        self.assertGreater(finish["width"], 0)
+
+    def test_direct_draw_eraser_annotation_is_sorted_above_every_other_layer(self):
+        annotations = [
+            {"type": "shape"},
+            {"type": "image", "imageToolSource": "direct-draw", "directDrawTool": "pen"},
+            {"type": "text"},
+            {"type": "image"},
+            {"type": "signature"},
+            {"type": "image", "imageToolSource": "direct-draw", "directDrawTool": "eraser"},
+        ]
+
+        ordered = sorted(annotations, key=self.module.annotation_layer_order)
+
+        self.assertEqual(ordered[-1]["directDrawTool"], "eraser")
+        self.assertEqual(self.module.annotation_layer_order(ordered[-1]), (1000.0, 4))
+
+    def test_direct_draw_manual_z_index_can_move_strokes_around_text(self):
+        annotations = [
+            {"id": "text", "type": "text", "zIndex": 2},
+            {
+                "id": "eraser-behind",
+                "type": "image",
+                "imageToolSource": "direct-draw",
+                "directDrawTool": "eraser",
+                "zIndex": 1,
+            },
+            {
+                "id": "pen-front",
+                "type": "image",
+                "imageToolSource": "direct-draw",
+                "directDrawTool": "pen",
+                "zIndex": 3,
+            },
+        ]
+
+        ordered = sorted(annotations, key=self.module.annotation_layer_order)
+
+        self.assertEqual([annotation["id"] for annotation in ordered], ["eraser-behind", "text", "pen-front"])
 
     def test_draw_text_with_manual_heading_break_still_wraps_following_paragraph_to_bounds(self):
         annotation = {
@@ -1671,6 +1902,82 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertAlmostEqual(points[2].y, rect.y1, places=3)
         self.assertAlmostEqual(points[3].x, rect.x0, places=3)
         self.assertAlmostEqual(points[3].y, rect.y1, places=3)
+
+    def test_draw_shape_square_snaps_near_page_edges(self):
+        annotation = {
+            "type": "shape",
+            "shapeType": "square",
+            "pdfX": 0,
+            "pdfY": 699.7752,
+            "pdfWidth": 611.097,
+            "pdfHeight": 92.2248,
+            "fillColor": "#585f5a",
+            "fillOpacity": 1,
+            "strokeColor": "#0f172a",
+            "strokeWidth": 1,
+            "strokeOpacity": 0.04,
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_shape(page, annotation)
+
+        self.assertEqual(len(page.shape_draw_rect_calls), 1)
+        bleed_rect = page.shape_draw_rect_calls[0]
+        self.assertAlmostEqual(bleed_rect.x0, 0, places=3)
+        self.assertAlmostEqual(bleed_rect.y0, 0, places=3)
+        self.assertAlmostEqual(bleed_rect.x1, page.rect.x1, places=3)
+        self.assertGreater(bleed_rect.y1, self.module.to_rect(page, annotation).y1)
+
+        self.assertEqual(len(page.shape_draw_polyline_calls), 1)
+        points = page.shape_draw_polyline_calls[0]
+
+        self.assertAlmostEqual(points[0].x, 0, places=3)
+        self.assertAlmostEqual(points[0].y, 0, places=3)
+        self.assertAlmostEqual(points[1].x, page.rect.x1, places=3)
+        self.assertAlmostEqual(points[2].x, page.rect.x1, places=3)
+
+    def test_draw_shape_zero_width_keeps_fill_without_stroke(self):
+        annotation = {
+            "type": "shape",
+            "shapeType": "square",
+            "pdfX": 40,
+            "pdfY": 300,
+            "pdfWidth": 120,
+            "pdfHeight": 60,
+            "fillColor": "#22c55e",
+            "fillOpacity": 0.5,
+            "strokeColor": "#0f172a",
+            "strokeWidth": 0,
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_shape(page, annotation)
+
+        self.assertEqual(len(page.shape_finish_calls), 1)
+        self.assertIsNone(page.shape_finish_calls[0]["color"])
+        self.assertEqual(page.shape_finish_calls[0]["width"], 0)
+        self.assertEqual(page.shape_finish_calls[0]["fill"], self.module.hex_to_rgb("#22c55e"))
+
+    def test_draw_shape_zero_width_line_draws_nothing(self):
+        annotation = {
+            "type": "shape",
+            "shapeType": "line",
+            "pdfX": 40,
+            "pdfY": 300,
+            "pdfWidth": 120,
+            "pdfHeight": 60,
+            "strokeColor": "#0f172a",
+            "strokeWidth": 0,
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_shape(page, annotation)
+
+        self.assertEqual(len(page.shape_draw_line_calls), 0)
+        self.assertEqual(len(page.shape_finish_calls), 0)
 
     def test_should_preserve_promoted_source_lines_respects_reflow_flag(self):
         annotation = {

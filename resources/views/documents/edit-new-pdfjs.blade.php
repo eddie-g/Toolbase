@@ -39,8 +39,17 @@
      data-info-url="{{ route('pdfTests.documentInfo', $document) }}"
      data-fonts-url="{{ route('documents.getFonts', $document) }}"
      data-save-url="{{ route('documents.saveAnnotationState', $document) }}"
+     data-annotation-debug-url="{{ route('documents.annotationDebug.save', $document) }}"
      data-overwrite-url="{{ route('documents.overwriteAnnotationText') }}"
-     data-download-url="{{ route('documents.downloadAnnotatedPdf', $document) }}"></div>
+     data-notes-url="{{ route('documents.notes.index', $document) }}"
+     data-download-url="{{ route('documents.downloadAnnotatedPdf', $document) }}"
+     data-convert-to-pdfa-url="{{ route('documents.convertToPdfA', $document) }}"
+     data-convert-to-word-url="{{ route('documents.convertToWord', $document) }}"
+     data-convert-to-excel-url="{{ route('documents.convertToExcel', $document) }}"
+     data-encrypt-pdf-url="{{ route('documents.encryptPdf', $document) }}"
+     data-download-pdfa-url="{{ route('documents.downloadPdfA') }}"
+     data-download-converted-url="{{ route('documents.downloadConverted') }}"
+     data-log-export-url="{{ route('documents.logExport', $document) }}"></div>
 
 {{-- Same UI partials as /edit-new. The legacy main.js is intentionally NOT
      loaded, so all interactive buttons are inert (visual only) for now.
@@ -50,11 +59,15 @@
 @include('documents.edit-new._floating-toolbar')
 @include('documents.edit-new._shape-panel')
 @include('documents.edit-new._draw-panel')
+@include('documents.edit-new._highlight-panel')
+@include('documents.edit-new._notes-panel')
 @include('documents.edit-new._markup-modal')
 @include('documents.edit-new._signature-modal')
 @include('documents.edit-new._image-modal')
 @include('documents.edit-new._zoom-bar')
 @include('documents.edit-new._format-bar')
+@include('documents.edit-new._convert-modal-pdfjs')
+@include('documents.edit-new._encrypt-modal-pdfjs')
 
 {{-- New PDF.js viewer mount + new viewer's data hooks. The blade's #pages-wrap
      becomes the host for #viewerContainer (CSS overrides #pages-wrap layout
@@ -62,20 +75,24 @@
 <div id="enpv-root"
      data-doc-id="{{ $document->id }}"
      data-csrf="{{ csrf_token() }}"
-     data-pdf-url="{{ route('documents.originalFile', $document) }}"
+     data-pdf-url="{{ route('documents.file', $document) }}"
+     data-current-pdf-url="{{ route('documents.file', $document) }}"
      data-baked-url="{{ route('documents.bakedPdf', $document) }}"
      data-clean-url="{{ route('documents.cleanPdf', $document) }}"
      data-rewrite-url="{{ route('documents.editPdfjsRewriteTj', $document) }}"
      data-redact-url="{{ route('documents.editPdfjsRedactSourceText', $document) }}"
+     data-burn-url="{{ route('documents.editPdfjsBurnLayer', $document) }}"
      data-move-url="{{ route('documents.editPdfjsMoveTj', $document) }}"
-     data-reflow-url="{{ route('documents.editPdfjsReflowText', $document) }}">
+     data-reflow-url="{{ route('documents.editPdfjsReflowText', $document) }}"
+     data-add-blank-page-url="{{ route('documents.addBlankPage', $document) }}"
+     data-reorder-pages-url="{{ route('documents.reorderPages', $document) }}">
     <div id="viewerContainer">
         <div id="viewer" class="pdfViewer"></div>
     </div>
      <div id="enpv-loading-screen" class="enpv-loading-screen" role="status" aria-live="polite">
           <div class="enpv-loading-card">
                <div class="enpv-loading-spinner" aria-hidden="true"></div>
-               <div class="enpv-loading-title">Preparing PDF...</div>
+               <div class="enpv-loading-title">Loading editor...</div>
           </div>
      </div>
 
@@ -100,14 +117,23 @@
          div that hosts the box so coordinates stay correct across zoom. --}}
     <div id="enpv-ann-menu" class="enpv-ann-menu" hidden>
         <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-grip" data-action="move" title="Drag to move">⠿</button>
+                         <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-cut" data-action="cut" title="Cut shape" aria-label="Cut shape">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M20 4 8.12 15.88"></path><path d="M14.47 14.48 20 20"></path><path d="M8.12 8.12 12 12"></path></svg>
+                         </button>
+          <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-burn" data-action="burn" title="Burn into PDF" aria-label="Burn into PDF">
+               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22c4.4 0 8-3.1 8-7.3 0-3-1.8-5.1-4.2-7.2.1 2.1-.8 3.4-2.1 4.1.2-3.7-1.8-6.4-5.2-9.6.2 3.6-1.1 5.7-2.5 7.6C4.8 11.2 4 12.8 4 14.7 4 18.9 7.6 22 12 22Z"></path></svg>
+          </button>
           <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-lock" data-action="lock" title="Lock annotation" aria-label="Lock annotation">
-               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"></rect><path d="M8 11V8a4 4 0 1 1 8 0v3"></path></svg>
+               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="9" rx="2"></rect><path d="M8 11V7a4 4 0 0 1 7.88-1"></path></svg>
           </button>
           <button type="button" class="enpv-ann-menu-btn" data-action="front" title="Bring to front" aria-label="Bring to front">⬆</button>
           <button type="button" class="enpv-ann-menu-btn" data-action="back" title="Send to back" aria-label="Send to back">⬇</button>
           <div class="enpv-ann-menu-divider" aria-hidden="true"></div>
           <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-ok" data-action="edit" title="Edit text" aria-label="Edit text">
                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+          </button>
+          <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-debug" data-action="debug" title="Debug mask" aria-label="Debug mask">
+               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M9 9h6"></path><path d="M9 13h6"></path><path d="M12 17h.01"></path><rect x="5" y="6" width="14" height="15" rx="2"></rect></svg>
           </button>
           <div class="enpv-ann-menu-divider" aria-hidden="true"></div>
           <button type="button" class="enpv-ann-menu-btn" data-action="uppercase" title="UPPERCASE" aria-label="Uppercase"><span>Tt</span></button>
@@ -123,6 +149,125 @@
           <button type="button" class="enpv-ann-menu-btn" data-action="deselect" title="Deselect (Esc)" aria-label="Deselect">✕</button>
     </div>
 </div>
+
+<div class="enpv-page-manager-rail" id="enpv-page-manager-rail">
+     <button type="button" class="enpv-page-manager-open" id="enpv-page-manager-open" title="Manage pages" aria-haspopup="dialog" aria-controls="enpv-page-manager-modal">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+               <rect x="4" y="3" width="12" height="16" rx="2"></rect>
+               <path d="M8 7h4"></path>
+               <path d="M8 11h4"></path>
+               <path d="M18 7h2v14H8v-2"></path>
+          </svg>
+          <span>Pages</span>
+     </button>
+</div>
+
+<div class="enpv-page-manager-modal" id="enpv-page-manager-modal" role="dialog" aria-modal="true" aria-labelledby="enpv-page-manager-title" aria-hidden="true" hidden>
+     <div class="enpv-page-manager-card">
+          <div class="enpv-page-manager-header">
+               <div>
+                    <h2 id="enpv-page-manager-title">Manage Pages</h2>
+                    <p id="enpv-page-manager-count">Loading pages...</p>
+               </div>
+               <button type="button" class="enpv-page-manager-close" id="enpv-page-manager-close" aria-label="Close page manager">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                         <path d="M18 6 6 18"></path>
+                         <path d="m6 6 12 12"></path>
+                    </svg>
+               </button>
+          </div>
+          <div class="enpv-page-manager-toolbar">
+               <button type="button" class="enpv-page-manager-action" id="enpv-page-manager-add">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                         <path d="M12 5v14"></path>
+                         <path d="M5 12h14"></path>
+                    </svg>
+                    <span>Add Page</span>
+               </button>
+               <button type="button" class="enpv-page-manager-action is-danger" id="enpv-page-manager-delete">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                         <path d="M3 6h18"></path>
+                         <path d="M8 6V4h8v2"></path>
+                         <path d="m19 6-.8 14H5.8L5 6"></path>
+                         <path d="M10 11v5"></path>
+                         <path d="M14 11v5"></path>
+                    </svg>
+                    <span>Delete Page</span>
+               </button>
+          </div>
+          <div class="enpv-page-manager-status" id="enpv-page-manager-status" role="status" aria-live="polite"></div>
+          <div class="enpv-page-manager-grid" id="enpv-page-manager-grid"></div>
+     </div>
+</div>
+
+<div class="enpv-layers-rail" id="enpv-layers-rail">
+     <button type="button" class="enpv-layers-open" id="enpv-layers-open" title="Manage layers" aria-expanded="false" aria-controls="enpv-layers-panel">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+               <path d="m12 3-8 4 8 4 8-4-8-4Z"></path>
+               <path d="m4 12 8 4 8-4"></path>
+               <path d="m4 17 8 4 8-4"></path>
+          </svg>
+          <span>Layers</span>
+     </button>
+</div>
+
+<aside class="enpv-layers-panel" id="enpv-layers-panel" aria-hidden="true" hidden>
+     <div class="enpv-layers-header">
+          <h2>Layers</h2>
+          <button type="button" class="enpv-layers-close" id="enpv-layers-close" aria-label="Close layers panel">
+               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M18 6 6 18"></path>
+                    <path d="m6 6 12 12"></path>
+               </svg>
+          </button>
+     </div>
+     <div class="enpv-layers-info">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+               <circle cx="12" cy="12" r="9"></circle>
+               <path d="M12 11v5"></path>
+               <path d="M12 8h.01"></path>
+          </svg>
+          <span>Reorder items to move them to the back or front.</span>
+     </div>
+     <div class="enpv-layers-list" id="enpv-layers-list"></div>
+</aside>
+
+<aside class="enpv-debug-panel" id="enpv-debug-panel" aria-hidden="true" hidden>
+     <div class="enpv-debug-panel__header">
+          <div>
+               <h2>Annotation Debug</h2>
+               <p id="enpv-debug-subtitle">No annotation selected</p>
+          </div>
+          <button type="button" class="enpv-debug-close" id="enpv-debug-close" aria-label="Close debug panel">
+               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M18 6 6 18"></path>
+                    <path d="m6 6 12 12"></path>
+               </svg>
+          </button>
+     </div>
+     <div class="enpv-debug-section">
+          <div class="enpv-debug-section-title">White Mask</div>
+          <div class="enpv-debug-grid">
+               <label>X <input id="enpv-debug-mask-x" type="number" step="0.1"></label>
+               <label>Y <input id="enpv-debug-mask-y" type="number" step="0.1"></label>
+               <label>W <input id="enpv-debug-mask-w" type="number" step="0.1" min="0.1"></label>
+               <label>H <input id="enpv-debug-mask-h" type="number" step="0.1" min="0.1"></label>
+          </div>
+     </div>
+     <div class="enpv-debug-section">
+          <label class="enpv-debug-section-title" for="enpv-debug-note">Notes</label>
+          <textarea id="enpv-debug-note" rows="6" maxlength="50000"></textarea>
+     </div>
+     <div class="enpv-debug-section">
+          <div class="enpv-debug-section-title">Images</div>
+          <input id="enpv-debug-images" type="file" accept="image/*" multiple>
+          <div class="enpv-debug-images" id="enpv-debug-image-list"></div>
+     </div>
+     <div class="enpv-debug-status" id="enpv-debug-status" role="status" aria-live="polite"></div>
+     <div class="enpv-debug-actions">
+          <button type="button" class="enpv-debug-save" id="enpv-debug-save">Save Debug</button>
+     </div>
+</aside>
 
 @vite(['resources/js/edit-new-pdfjs/main.js'])
 

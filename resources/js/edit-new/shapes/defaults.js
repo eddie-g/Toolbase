@@ -17,11 +17,12 @@ import {
 import { clamp01 } from '../util/math.js';
 
 export function currentShapeDefaults() {
+    const strokeWidth = Number(currentShapeStrokeWidth);
     return {
         shapeType: currentShapeType,
         strokeColor: currentShapeStrokeColor,
         strokeOpacity: clamp01(currentShapeStrokeOpacity, 1),
-        strokeWidth: Math.max(1, Number(currentShapeStrokeWidth) || 3),
+        strokeWidth: Math.max(0, Number.isFinite(strokeWidth) ? strokeWidth : 3),
         strokeTransparent: Boolean(currentShapeStrokeTransparent),
         fillColor: currentShapeFillColor,
         fillOpacity: clamp01(currentShapeFillOpacity, 0.22),

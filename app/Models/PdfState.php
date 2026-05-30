@@ -26,12 +26,14 @@ class PdfState extends Model
         'flagged',
         'flag_reason',
         'flag_images',
+        'annotation_debug',
     ];
 
     protected $casts = [
         'annotation_data' => 'array',
         'flagged'         => 'boolean',
         'flag_images'     => 'array',
+        'annotation_debug' => 'array',
     ];
 
     /**

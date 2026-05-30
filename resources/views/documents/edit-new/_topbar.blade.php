@@ -1,4 +1,5 @@
 <div class="top-bar">
+    <a href="{{ route('documents.index') }}" class="doc-top-back-btn" title="Back" aria-label="Back">&#8592;</a>
     <div class="doc-name-wrap" id="doc-name-wrap"
          data-rename-url="{{ route('documents.rename', $document) }}"
          data-original-name="{{ $document->original_name }}">
@@ -37,6 +38,6 @@
     <button id="add-shape-btn" type="button" class="history-btn add-shape-btn" title="Shapes — choose a shape and drag on the page to draw it">Shapes</button>
     <button id="save-btn" type="button" class="save-btn">Save</button>
     <button id="download-pdf-btn" type="button" class="download-btn">Download PDF</button>
-    <a href="{{ route('documents.edit', $document) }}">← Edit</a>
-    <a href="{{ route('documents.index') }}">All documents</a>
+    <a href="{{ route('documents.edit', $document) }}" class="doc-top-edit-link">← Edit</a>
+    <a href="{{ route('documents.index') }}" class="doc-top-documents-link">All documents</a>
 </div>

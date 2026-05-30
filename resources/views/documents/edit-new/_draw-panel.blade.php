@@ -9,7 +9,7 @@
                 <svg viewBox="0 0 24 24"><path d="M4 20h8"></path><path d="M14.5 4.5a2.1 2.1 0 0 1 3 3L8 17l-4 1 1-4 9.5-9.5z"></path><path d="M13 6l5 5"></path></svg>
             </button>
             <button type="button" class="draw-tool-btn" id="draw-tool-eraser" data-draw-direct-tool="eraser" title="Eraser" aria-label="Eraser">
-                <svg viewBox="0 0 24 24"><path d="m7 14 7.5-7.5a2.1 2.1 0 0 1 3 0l1 1a2.1 2.1 0 0 1 0 3L11 18H7z"></path><path d="M5 18h10"></path></svg>
+                <svg viewBox="0 0 24 24"><path d="m7 21-4-4 11.5-11.5a2.8 2.8 0 0 1 4 4L7 21Z"></path><path d="m11 9 4 4"></path><path d="M7 21h13"></path></svg>
             </button>
         </div>
         <div class="draw-tool-panel__slider-wrap">
@@ -22,7 +22,7 @@
             <input type="range" id="draw-tool-opacity" min="10" max="100" step="1" value="100" aria-label="Draw opacity">
             <span class="draw-tool-panel__readout" id="draw-tool-opacity-value">100%</span>
         </div>
-        <div class="draw-tool-panel__stack" style="gap: 8px; width: 100%;">
+        <div class="draw-tool-panel__color-wrap" id="draw-tool-ink-colors">
             <span class="draw-tool-panel__section-label">Color</span>
             <div class="draw-tool-panel__colors">
                 <button type="button" class="draw-color-swatch is-active" data-draw-color="#111827" style="--swatch-color:#111827" aria-label="Black ink"></button>
@@ -33,6 +33,10 @@
                 <button type="button" class="draw-color-swatch" data-draw-color="#7c3aed" style="--swatch-color:#7c3aed" aria-label="Violet ink"></button>
             </div>
             <input type="color" id="draw-tool-color" class="draw-tool-panel__custom-color" value="#111827" aria-label="Custom ink color">
+        </div>
+        <div class="draw-tool-panel__color-wrap" id="draw-tool-eraser-color" hidden>
+            <span class="draw-tool-panel__section-label">Color</span>
+            <button type="button" class="draw-color-swatch is-active" style="--swatch-color:#ffffff" aria-label="White eraser color" disabled></button>
         </div>
     </div>
     <div class="draw-tool-panel__status" id="draw-tool-status">Pen mode is active. Drag directly on the page to draw.</div>

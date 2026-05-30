@@ -41,6 +41,11 @@ class Document extends Model
         return $this->hasMany(UserActivity::class);
     }
 
+    public function notes()
+    {
+        return $this->hasMany(DocumentNote::class);
+    }
+
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);

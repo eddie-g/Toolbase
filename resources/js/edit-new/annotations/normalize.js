@@ -25,9 +25,11 @@ export function normalizeShapeAnnotation(ann) {
     ann.fillColor = normalizeHexColor(ann.fillColor, '#22c55e');
     ann.strokeOpacity = clamp01(ann.strokeOpacity ?? ann.opacity ?? 1, 1);
     ann.fillOpacity = clamp01(ann.fillOpacity ?? (ann.fillTransparent ? 0 : 0.22), ann.fillTransparent ? 0 : 0.22);
-    ann.strokeWidth = Math.max(1, Number(ann.strokeWidth) || 3);
+    const strokeWidth = Number(ann.strokeWidth);
+    ann.strokeWidth = Math.max(0, Number.isFinite(strokeWidth) ? strokeWidth : 3);
     ann.strokeTransparent = Boolean(ann.strokeTransparent);
     ann.fillTransparent = Boolean(ann.fillTransparent);
+    ann.rotation = normalizeShapeRotationDegrees(ann.rotation);
     if (ann.shapeType === 'polygon') {
         ann.polygonPoints = normalizePolygonPointList(ann.polygonPoints, defaultPolygonUnitPoints());
     }
@@ -64,12 +66,21 @@ export function applyShapeStateToAnnotation(ann, shapeState) {
     ann.fillColor = normalized.fillColor;
     ann.fillOpacity = normalized.fillOpacity;
     ann.fillTransparent = normalized.fillTransparent;
+    ann.rotation = normalized.rotation;
     if (isLineShape(normalized)) {
         ann.lineStartX = normalized.lineStartX;
         ann.lineStartY = normalized.lineStartY;
         ann.lineEndX = normalized.lineEndX;
         ann.lineEndY = normalized.lineEndY;
     }
+}
+
+function normalizeShapeRotationDegrees(value) {
+    const angle = Number(value);
+    if (!Number.isFinite(angle)) return 0;
+    let normalized = angle % 360;
+    if (normalized < 0) normalized += 360;
+    return Math.abs(normalized) < 1e-6 ? 0 : normalized;
 }
 
 export function normalizeImageAnnotation(ann) {
@@ -89,8 +100,40 @@ export function normalizeImageAnnotation(ann) {
         ann.drawStrokeColor = normalizeHexColor(ann.drawStrokeColor, '#111827');
     } else {
         delete ann.drawStrokeColor;
+        delete ann.directDrawVector;
+    }
+    if (isDirectDrawAnnotation(ann) && ann.directDrawVector) {
+        ann.directDrawVector = normalizeDirectDrawVector(ann.directDrawVector);
     }
     return ann;
+}
+
+function normalizeDirectDrawVector(vector) {
+    if (!vector || typeof vector !== 'object') return null;
+    const width = Math.max(1, Number(vector.width) || 1);
+    const height = Math.max(1, Number(vector.height) || 1);
+    const strokes = Array.isArray(vector.strokes) ? vector.strokes : [];
+    const normalizedStrokes = strokes.map((stroke) => {
+        const points = Array.isArray(stroke?.points) ? stroke.points : [];
+        const normalizedPoints = points.map((point) => ({
+            x: Math.max(0, Math.min(width, Number(point?.x) || 0)),
+            y: Math.max(0, Math.min(height, Number(point?.y) || 0)),
+        }));
+        if (!normalizedPoints.length) return null;
+        return {
+            color: normalizeHexColor(stroke?.color, '#111827'),
+            opacity: clamp01(stroke?.opacity ?? 1, 1),
+            brushSize: Math.max(0.25, Number(stroke?.brushSize) || 1),
+            points: normalizedPoints,
+        };
+    }).filter(Boolean);
+    if (!normalizedStrokes.length) return null;
+    return {
+        version: 1,
+        width,
+        height,
+        strokes: normalizedStrokes,
+    };
 }
 
 /**

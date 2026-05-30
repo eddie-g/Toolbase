@@ -47,8 +47,13 @@ Route::post('/documents/create-guided-template', [DocumentController::class, 'cr
 Route::get('/documents/{document}/edit', [DocumentController::class, 'edit'])->name('documents.edit');
 Route::get('/documents/{document}/edit-new', [DocumentController::class, 'editNew'])->name('documents.editNew');
 Route::get('/documents/{document}/edit-pdfjs', [DocumentController::class, 'editPdfjs'])->name('documents.editPdfjs');
+Route::get('/documents/{document}/notes', [DocumentController::class, 'getDocumentNotes'])->name('documents.notes.index');
+Route::post('/documents/{document}/notes', [DocumentController::class, 'storeDocumentNote'])->name('documents.notes.store');
+Route::patch('/documents/{document}/notes/{note}', [DocumentController::class, 'updateDocumentNote'])->name('documents.notes.update');
+Route::delete('/documents/{document}/notes/{note}', [DocumentController::class, 'deleteDocumentNote'])->name('documents.notes.destroy');
 Route::post('/documents/{document}/edit-pdfjs/rewrite-tj', [DocumentController::class, 'editPdfjsRewriteTj'])->name('documents.editPdfjsRewriteTj');
 Route::post('/documents/{document}/edit-pdfjs/redact-source-text', [DocumentController::class, 'editPdfjsRedactSourceText'])->name('documents.editPdfjsRedactSourceText');
+Route::post('/documents/{document}/edit-pdfjs/burn-layer', [DocumentController::class, 'editPdfjsBurnLayer'])->name('documents.editPdfjsBurnLayer');
 Route::post('/documents/{document}/edit-pdfjs/move-tj', [DocumentController::class, 'editPdfjsMoveTj'])->name('documents.editPdfjsMoveTj');
 Route::post('/documents/{document}/edit-pdfjs/reflow-text', [DocumentController::class, 'editPdfjsReflowText'])->name('documents.editPdfjsReflowText');
 Route::get('/documents/{document}/edit2', [DocumentController::class, 'edit2'])->name('documents.edit2');
@@ -74,6 +79,7 @@ Route::delete('/documents/{document}/saved-pdf-option', [DocumentController::cla
 Route::post('/documents/{document}/load-saved-pdf', [DocumentController::class, 'loadSavedPdf'])->name('documents.loadSavedPdf');
 Route::post('/documents/{document}/mark-annotations-saved', [DocumentController::class, 'markAnnotationsSaved'])->name('documents.markAnnotationsSaved');
 Route::post('/documents/{document}/delete-annotations', [DocumentController::class, 'deleteAnnotations'])->name('documents.deleteAnnotations');
+Route::post('/documents/{document}/annotation-debug', [DocumentController::class, 'saveAnnotationDebug'])->name('documents.annotationDebug.save');
 Route::post('/documents/{document}/apply-annotations-direct', [DocumentController::class, 'applyAnnotationsDirect'])->name('documents.applyAnnotationsDirect');
 Route::post('/documents/overwrite-annotation-text', [DocumentController::class, 'overwriteAnnotationText'])->name('documents.overwriteAnnotationText');
 Route::post('/documents/{document}/save-annotation-state', [DocumentController::class, 'saveAnnotationState'])->name('documents.saveAnnotationState');
@@ -107,6 +113,7 @@ Route::post('/documents/{document}/screenshot', [DocumentController::class, 'tak
 Route::post('/documents/{document}/convert-to-pdfa', [DocumentController::class, 'convertToPdfA'])->name('documents.convertToPdfA');
 Route::post('/documents/{document}/convert-to-word', [DocumentController::class, 'convertToWord'])->name('documents.convertToWord');
 Route::post('/documents/{document}/convert-to-excel', [DocumentController::class, 'convertToExcel'])->name('documents.convertToExcel');
+Route::post('/documents/{document}/encrypt-pdf', [DocumentController::class, 'encryptPdf'])->name('documents.encryptPdf');
 Route::post('/documents/{document}/split-pdf', [DocumentController::class, 'splitPdf'])->name('documents.splitPdf');
 Route::get('/documents/download-pdfa', [DocumentController::class, 'downloadPdfA'])->name('documents.downloadPdfA');
 Route::get('/documents/download-converted', [DocumentController::class, 'downloadConverted'])->name('documents.downloadConverted');

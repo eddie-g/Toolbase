@@ -86,6 +86,99 @@ def is_pdfjs_source_backed_text_annotation(annotation: Dict[str, Any]) -> bool:
     )
 
 
+def source_overlay_text_was_edited(annotation: Dict[str, Any]) -> bool:
+    """True when a text annotation is anchored to REAL underlying source glyphs
+    (non-empty ``pdfjsSourceText``) that the user CHANGED in place (text differs,
+    not deleted, not moved). Such spans MUST redact/mask the original source or
+    the export shows both the source and the replacement (double text) — even
+    when the span is mis-flagged ``userCreated`` / ``skipPdfjsSourceMask`` by the
+    editor. Genuine standalone user text boxes never carry ``pdfjsSourceText``
+    (it is stripped on creation), so they are excluded by the source-text gate."""
+    if not is_text_annotation(annotation):
+        return False
+    if _boolish(annotation.get("pdfjsDeleted")) or _boolish(annotation.get("movedTextOverlay")):
+        return False
+    source_text = normalize_pdfjs_compare_text(annotation.get("pdfjsSourceText") or "")
+    if not source_text:
+        return False
+    has_source_anchor = (
+        annotation.get("pdfjsSourceX") is not None
+        or annotation.get("pdfjsSourceY") is not None
+        or annotation.get("pdfjsSourceMaskX") is not None
+        or annotation.get("pdfjsAnchorUid") is not None
+    )
+    if not has_source_anchor:
+        return False
+    current_text = normalize_pdfjs_compare_text(annotation.get("text") or "")
+    return bool(current_text and source_text != current_text)
+
+
+def promoted_source_overlay_text_was_edited(annotation: Dict[str, Any]) -> bool:
+    """True when a promoted (extraction) span is anchored to real source text
+    that the user has CHANGED in place (not deleted, not moved). Such an edit
+    MUST redact/mask the underlying source glyphs or the export shows both the
+    original and the replacement (double text)."""
+    if not isinstance(annotation, dict) or not _boolish(annotation.get("promotedFromExtraction")):
+        return False
+    if _boolish(annotation.get("pdfjsDeleted")) or _boolish(annotation.get("movedTextOverlay")):
+        return False
+    has_source_anchor = (
+        annotation.get("pdfjsSourceX") is not None
+        or annotation.get("pdfjsSourceY") is not None
+        or annotation.get("pdfjsSourceMaskX") is not None
+        or annotation.get("pdfjsAnchorUid") is not None
+    )
+    if not has_source_anchor:
+        return False
+    source_text = normalize_pdfjs_compare_text(
+        annotation.get("pdfjsSourceText") or annotation.get("originalText") or ""
+    )
+    current_text = normalize_pdfjs_compare_text(annotation.get("text") or "")
+    return bool(source_text and current_text and source_text != current_text)
+
+
+def promoted_annotation_is_multiline(annotation: Dict[str, Any]) -> bool:
+    source_line_boxes = annotation.get("sourceLineBBoxes")
+    if isinstance(source_line_boxes, list) and len(source_line_boxes) > 1:
+        return True
+
+    text = str(
+        annotation.get("pdfjsSourceText")
+        or annotation.get("originalText")
+        or annotation.get("text")
+        or ""
+    )
+    return len([line for line in re.split(r"\r\n|\r|\n", text) if line.strip()]) > 1
+
+
+def promoted_source_overlay_has_visible_change(annotation: Dict[str, Any]) -> bool:
+    if not isinstance(annotation, dict) or not _boolish(annotation.get("promotedFromExtraction")):
+        return False
+    if (
+        _boolish(annotation.get("pdfjsDeleted"))
+        or _boolish(annotation.get("movedTextOverlay"))
+        or promoted_source_overlay_text_was_edited(annotation)
+    ):
+        return True
+    if any(
+        _boolish(annotation.get(field_name))
+        for field_name in (
+            "promotedDirty",
+            "userAuthored",
+            "styleDirty",
+            "userForcedRichText",
+            "promotedReflowEnabled",
+        )
+    ):
+        return True
+    if sanitize_rich_text_html(annotation.get("richTextHtml") or "").strip():
+        return True
+    return (
+        str(annotation.get("pdfjsEditorMode") or "").strip().lower() == "rich"
+        and not promoted_annotation_is_multiline(annotation)
+    )
+
+
 def is_pdfjs_promoted_source_backed_text_annotation(annotation: Dict[str, Any]) -> bool:
     if not is_text_annotation(annotation) or not _boolish(annotation.get("promotedFromExtraction")):
         return False
@@ -103,20 +196,26 @@ def is_pdfjs_promoted_source_backed_text_annotation(annotation: Dict[str, Any]) 
     ):
         return False
 
-    return _boolish(annotation.get("pdfjsDeleted")) or _boolish(annotation.get("movedTextOverlay"))
+    return promoted_source_overlay_has_visible_change(annotation)
 
 
 def pdfjs_source_edit_requires_redaction(annotation: Dict[str, Any]) -> bool:
     if not is_pdfjs_source_backed_text_annotation(annotation):
         return False
-    if _boolish(annotation.get("skipPdfjsSourceMask")):
+    source_text = normalize_pdfjs_compare_text(annotation.get("pdfjsSourceText") or annotation.get("originalText") or "")
+    current_text = normalize_pdfjs_compare_text(annotation.get("text") or "")
+    # `skipPdfjsSourceMask` only suppresses redaction for standalone user text
+    # boxes that have NO underlying source glyphs. When the span is anchored to
+    # real source text (non-empty `pdfjsSourceText`) that was edited/deleted/
+    # moved, the original MUST be redacted or the export shows both the source
+    # and the replacement (double text). Mirrors the JS contract guard in
+    # resources/js/edit-new-pdfjs/source-edit-contract.js.
+    if _boolish(annotation.get("skipPdfjsSourceMask")) and not source_text:
         return False
     if _boolish(annotation.get("pdfjsDeleted")):
         return True
     if _boolish(annotation.get("movedTextOverlay")):
         return True
-    source_text = normalize_pdfjs_compare_text(annotation.get("pdfjsSourceText") or annotation.get("originalText") or "")
-    current_text = normalize_pdfjs_compare_text(annotation.get("text") or "")
     return bool(source_text and current_text and source_text != current_text)
 
 

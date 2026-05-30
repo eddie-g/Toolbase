@@ -3061,6 +3061,85 @@ import {
         return true;
     }
 
+    function sourceLinesLookLikeWrappedParagraph(lines) {
+        const texts = (Array.isArray(lines) ? lines : [])
+            .map((line) => String(line?.text ?? '').trim())
+            .filter((lineText) => lineText.length > 0);
+        if (texts.length < 2) return false;
+        const joined = texts.join(' ').replace(/\s+/g, ' ').trim();
+        if (joined.length < 80) return false;
+        if (/(?:\.\s*){6,}|_{4,}|\.{4,}/.test(joined)) return false;
+        const hardListLines = texts.filter((lineText) => /^\s*(?:[\u2022\u25cf*\-]|\d+[.)]|[A-Z][.)])\s+/.test(lineText)).length;
+        if (hardListLines >= Math.max(2, Math.ceil(texts.length * 0.45))) return false;
+        const averageWords = texts.reduce((sum, lineText) => sum + lineText.split(/\s+/).filter(Boolean).length, 0) / texts.length;
+        if (averageWords < 4) return false;
+        return /[.!?]/.test(joined);
+    }
+
+    function sourceLineAdvancePx(ann, scale) {
+        const lines = renderableSourceLines(ann)
+            .map((line) => Array.isArray(line?.bbox) ? line.bbox : null)
+            .filter((bbox) => bbox && bbox.length >= 4)
+            .slice()
+            .sort((left, right) => Number(left[1]) - Number(right[1]));
+        const advances = [];
+        for (let index = 1; index < lines.length; index += 1) {
+            const advancePts = Number(lines[index][1]) - Number(lines[index - 1][1]);
+            if (Number.isFinite(advancePts) && advancePts > 0.5) advances.push(advancePts);
+        }
+        if (advances.length) {
+            advances.sort((left, right) => left - right);
+            return advances[Math.floor(advances.length / 2)] * scale;
+        }
+        return 0;
+    }
+
+    function shouldUsePromotedParagraphEditorHTML(ann, editedText) {
+        if (!ann || ann._richHtml) return false;
+        if (ann.promotedFromExtraction !== true) return false;
+        if (ann.userCreated || ann._styleDirty) return false;
+        if (annotationDimensionsChanged(ann)) return false;
+        const lines = renderableSourceLines(ann);
+        if (!sourceLinesLookLikeWrappedParagraph(lines)) return false;
+        for (let index = 0; index < lines.length; index += 1) {
+            if (Math.abs(sourceLineRotationDegrees(ann, index)) > 0.25) return false;
+        }
+        const text = editedText !== undefined ? editedText : String(ann.text ?? '');
+        return annotationTextMatchesSource(ann, text);
+    }
+
+    function renderPromotedParagraphEditorHTML(ann, text, scale) {
+        const style = editableLineStyle(ann, 0);
+        const fontSizePx = style.fontSizePt * fontDisplayScale(scale);
+        const lineHeightPx = Math.max(
+            fontSizePx * 1.18,
+            sourceLineAdvancePx(ann, scale),
+            blockLineHeightPx(ann, 0, scale, style)
+        );
+        const paragraphText = normalizeTextForDomReflow(text !== undefined ? text : String(ann.text ?? ''));
+        const paragraphStyle = [
+            'display:block',
+            'width:100%',
+            'box-sizing:border-box',
+            'font-family:inherit',
+            'font-size:inherit',
+            'font-weight:inherit',
+            'font-style:inherit',
+            'letter-spacing:inherit',
+            'color:inherit',
+            `text-decoration:${ann.underline ? 'underline' : 'none'}`,
+            `line-height:${lineHeightPx.toFixed(2)}px`,
+            `min-height:${lineHeightPx.toFixed(2)}px`,
+            `text-align:${ann.textAlign || 'left'}`,
+            'padding:0',
+            'margin:0',
+            'white-space:normal',
+            'overflow-wrap:normal',
+            'word-break:normal',
+        ].join(';');
+        return `<div data-promoted-paragraph-editor="1" style="${paragraphStyle}">${renderPlainEditorInnerHtml(paragraphText)}</div>`;
+    }
+
     // ── Galley editor (Iceni-style) ──────────────────────────────────────────
     // Builds an absolute-positioned per-source-span DOM inside the active editor
     // for extracted-text annotations. The page overlay canvas continues to paint
@@ -4163,7 +4242,15 @@ import {
                     || annotationTextMatchesSource(ann, editedText)
                     || ann._galleyEdited === true;
                 const _galleyEnabled = (typeof window !== 'undefined') && (window.__editorGalleyMode !== false);
-                if (_galleyEnabled
+                if (_isEditing && shouldUsePromotedParagraphEditorHTML(ann, editedText)) {
+                    ae.dataset.renderMode = 'paragraph';
+                    const paragraphText = editedText !== undefined ? editedText : String(ann.text ?? '');
+                    ae.innerHTML = renderPromotedParagraphEditorHTML(ann, paragraphText, scale);
+                    if (typeof window !== 'undefined' && ann?._uid) {
+                        window.__galleyDbg = window.__galleyDbg || {};
+                        if (!window.__galleyDbg[ann._uid]) window.__galleyDbg[ann._uid] = 'paragraph';
+                    }
+                } else if (_galleyEnabled
                     && _isEditing
                     && _canUseSourceEditorLayout
                     && _galleyExtracted
@@ -6000,10 +6087,15 @@ import {
         if (renderMode === 'galley') {
             reconcileGalleyInput(ae, ann, activeState.pi);
         }
-        const nextText = renderMode === 'galley'
+        let nextText = renderMode === 'galley'
             ? expectedGalleyText(ann, ae)
             : getEditorPlainText(ae);
         const savedText = String(ann.text ?? '');
+        if (renderMode === 'paragraph'
+            && annotationTextMatchesSource(ann, savedText)
+            && annotationTextMatchesSource(ann, nextText)) {
+            nextText = savedText;
+        }
         if (nextText !== savedText) {
             markUserAuthored(ann);
             clearSourceExactFlagsForPlainTextEdit(ann);
@@ -7837,7 +7929,9 @@ import {
                 }
                 const selection = getEditorSelectionOffsets(ae);
                 if (!selection) return;
-                const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
+                const currentText = ae.dataset.renderMode === 'paragraph' && editedTexts[ann._uid] === undefined
+                    ? getEditorPlainText(ae)
+                    : (editedTexts[ann._uid] ?? String(ann.text ?? ''));
                 const beforeText = currentText.slice(0, selection.start);
                 const afterText = currentText.slice(selection.end);
                 const nextText = beforeText + '\n' + afterText;
@@ -7877,7 +7971,9 @@ import {
                 if (_textUndoPending) { _textUndoPending = false; pushUndo(); }
                 const selection = getEditorSelectionOffsets(ae);
                 if (!selection) return;
-                const currentText = editedTexts[ann._uid] ?? String(ann.text ?? '');
+                const currentText = ae.dataset.renderMode === 'paragraph' && editedTexts[ann._uid] === undefined
+                    ? getEditorPlainText(ae)
+                    : (editedTexts[ann._uid] ?? String(ann.text ?? ''));
                 let start = selection.start;
                 let end = selection.end;
 
