@@ -1654,7 +1654,7 @@ class DomainSearchController extends Controller
                 'count' => 'nullable|integer|min:1|max:4',
                 'pro' => 'nullable|boolean',
                 'pro_size' => 'nullable|integer|in:512,1024,1536',
-                'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard,photorealistic,minimalist,minimal_geometric,abstract,monoline,negative_space,tech_gradient,modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light',
+                'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard,photorealistic,minimalist,minimal_geometric,abstract,monoline,negative_space,tech_gradient,evergreen_silhouette,modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light',
                 'bg_color' => 'nullable|string|max:20',
                 'image_model' => 'nullable|string|in:flux,dalle,recraft',
                 'output_format' => 'nullable|string|in:raster,vector',
@@ -1666,9 +1666,10 @@ class DomainSearchController extends Controller
             $outputFormat = $request->input('output_format', 'raster');
 
         if ($imageModel === 'recraft') {
+            $recraftSize = $outputFormat === 'vector' ? '1:1' : '1024x1024';
             $estimate = \App\Services\RecraftPricing::estimateLogoCost(
                 imageCount: (int) $request->input('count', 4),
-                size: '1024x1024',
+                size: $recraftSize,
                 isPro: (bool) $request->input('pro', false),
                 type: $outputFormat,
             );
@@ -1727,7 +1728,7 @@ class DomainSearchController extends Controller
 
             $request->validate([
                 'domain' => 'nullable|string|max:100',
-                'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard,photorealistic,minimal_geometric,abstract,monoline,negative_space,tech_gradient,modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
+                'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard,photorealistic,minimal_geometric,abstract,monoline,negative_space,tech_gradient,evergreen_silhouette,modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
                 'count' => 'nullable|integer|min:1|max:4',
                 'total_count' => 'nullable|integer|min:1|max:4',
                 'batch_index' => 'nullable|integer|min:0|max:3',
@@ -1813,9 +1814,10 @@ class DomainSearchController extends Controller
 
             // Calculate cost estimate using total count for proper pricing
             if ($imageModel === 'recraft') {
+                $recraftSize = $outputFormat === 'vector' ? '1:1' : '1024x1024';
                 $costEstimate = \App\Services\RecraftPricing::estimateLogoCost(
                     imageCount: $totalCount,
-                    size: '1024x1024',
+                    size: $recraftSize,
                     isPro: $isPro,
                     type: $outputFormat,
                 );
@@ -2011,11 +2013,13 @@ class DomainSearchController extends Controller
             // Determine model name for logging
             if ($imageModel === 'recraft') {
                 $formatTag = $outputFormat === 'vector' ? 'vector' : 'raster';
-                $modelName = $isPro ? "recraft-v4-{$formatTag}" : "recraft-v2-{$formatTag}";
-                $imageSize = '1024x1024';
-                $requestType = $isPro
-                    ? ($outputFormat === 'vector' ? 'logo_recraft_v4' : 'logo_recraft_v4_raster')
-                    : ($outputFormat === 'vector' ? 'logo_recraft_vector' : 'logo_recraft_raster');
+                $modelName = $outputFormat === 'vector'
+                    ? 'recraft-v4-vector'
+                    : ($isPro ? "recraft-v4-{$formatTag}" : "recraft-v2-{$formatTag}");
+                $imageSize = $outputFormat === 'vector' ? '1:1' : '1024x1024';
+                $requestType = $outputFormat === 'vector'
+                    ? 'logo_recraft_v4_vector'
+                    : ($isPro ? 'logo_recraft_v4_raster' : 'logo_recraft_raster');
             } elseif ($imageModel === 'dalle') {
                 $modelName = 'gpt-image-1.5';
                 $imageSize = '1024x1024';
@@ -2624,7 +2628,7 @@ class DomainSearchController extends Controller
                 return null;
             }
 
-            $contentType = strtolower((string) $response->header('Content-Type', ''));
+            $contentType = strtolower((string) ($response->header('Content-Type') ?? ''));
             $extension = 'png';
             if (str_contains($contentType, 'jpeg') || str_contains($contentType, 'jpg')) {
                 $extension = 'jpg';
@@ -3273,7 +3277,8 @@ class DomainSearchController extends Controller
             \Storage::disk('public')->put($path, $svgContent);
             
             // Return the public URL
-            $url = \Storage::disk('public')->url($path);
+            $publicStorageUrl = rtrim((string) config('filesystems.disks.public.url', '/storage'), '/');
+            $url = $publicStorageUrl . '/' . ltrim($path, '/');
             
             return response()->json([
                 'success' => true,

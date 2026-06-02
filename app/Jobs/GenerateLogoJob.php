@@ -44,6 +44,7 @@ class GenerateLogoJob implements ShouldQueue
     public ?int $adminId = null;
     public int $logoRequestId;
     public int $priceLogId;
+    private ?int $storageUserId = null;
 
     /**
      * Create a new job instance.
@@ -84,6 +85,8 @@ class GenerateLogoJob implements ShouldQueue
             ]);
             return;
         }
+
+        $this->storageUserId = $this->resolveStorageUserId($logoRequest);
 
         // Mark as processing
         $logoRequest->update(['status' => 'processing']);
@@ -160,6 +163,7 @@ class GenerateLogoJob implements ShouldQueue
             $storedImageUrls = [];
             $storedImagePaths = [];
             $imageUrls = [];
+            $storageUserId = $this->storageUserId ?? $this->resolveStorageUserId($logoRequest);
 
             foreach ($images as $idx => &$img) {
                 $imgUrl = is_array($img) ? ($img['svg_url'] ?? $img['url'] ?? '') : (string) $img;
@@ -172,7 +176,7 @@ class GenerateLogoJob implements ShouldQueue
                 $stored = $this->storeRemoteLogoImage(
                     imageUrl: $imgUrl,
                     requestId: $this->logoRequestId,
-                    userId: $this->userId,
+                    userId: $storageUserId,
                     domain: $domain,
                     index: $idx + 1,
                 );
@@ -207,9 +211,10 @@ class GenerateLogoJob implements ShouldQueue
             // ── Calculate actual cost and charge ──
             $actualImageCount = count($images);
             if ($imageModel === 'recraft') {
+                $recraftSize = $outputFormat === 'vector' ? '1:1' : '1024x1024';
                 $actualCost = RecraftPricing::estimateLogoCost(
                     imageCount: $actualImageCount,
-                    size: '1024x1024',
+                    size: $recraftSize,
                     isPro: $isPro,
                     type: $outputFormat,
                 );
@@ -285,7 +290,7 @@ class GenerateLogoJob implements ShouldQueue
                             'domain' => $domain,
                             'style' => $style,
                             'image_count' => $actualImageCount,
-                            'resolution' => $imageModel === 'recraft' ? '1024x1024' : ($imageModel === 'dalle' ? '1024x1024' : ($isPro ? "{$proSize}x{$proSize}" : '512x512')),
+                            'resolution' => $imageModel === 'recraft' ? ($outputFormat === 'vector' ? '1:1' : '1024x1024') : ($imageModel === 'dalle' ? '1024x1024' : ($isPro ? "{$proSize}x{$proSize}" : '512x512')),
                             'pro' => $isPro,
                             'icon_only' => $iconOnly,
                             'bg_color' => $bgColor,
@@ -364,17 +369,47 @@ class GenerateLogoJob implements ShouldQueue
         }
     }
 
+    public function failed(\Throwable $exception): void
+    {
+        $logoRequest = AiLogoRequest::find($this->logoRequestId);
+        $priceLog = AiLogoPrice::find($this->priceLogId);
+
+        if ($priceLog && $priceLog->status !== 'completed') {
+            $priceLog->update([
+                'status' => 'failed',
+                'actual_cost_usd' => 0,
+            ]);
+        }
+
+        if ($logoRequest && $logoRequest->status !== 'completed') {
+            $isTimeout = $exception instanceof \Illuminate\Queue\TimeoutExceededException;
+            $logoRequest->update([
+                'status' => 'failed',
+                'error_message' => $isTimeout
+                    ? 'Logo generation timed out before completion. Your account was not charged.'
+                    : $this->friendlyErrorMessage($exception->getMessage()),
+            ]);
+        }
+
+        Log::warning('[GenerateLogoJob] Failed - NO CHARGE', [
+            'logo_request_id' => $this->logoRequestId,
+            'price_log_id' => $this->priceLogId,
+            'user_id' => $this->userId,
+            'admin_id' => $this->adminId,
+            'exception' => get_class($exception),
+            'message' => $exception->getMessage(),
+        ]);
+    }
+
     // ──────────────────────────────────────────────────────────────
     //  Model-specific generation methods
     // ──────────────────────────────────────────────────────────────
 
     /**
-     * Generate images via Recraft (v4 Pro or v2 regular, raster or vector).
+     * Generate images via Recraft (v4/v4.1 Pro or v2 regular, raster or vector).
      *
-     * V4 (Pro): unified endpoint /v1/images/generations, model=recraftv4 or recraftv4_vector.
-     *           Both raster and vector supported. `style` and `substyle` are NOT supported by V4.
-     * V2 (Regular): endpoint per type (/raster or /vector), model=recraftv2.
-     *               Supports `style`, `substyle`.
+     * V4/V4.1: unified endpoint /v1/images/generations. Style and substyle are not supported.
+     * V2: endpoint per type (/raster or /vector), with style/substyle support.
      */
     private function generateRecraft(string $prompt, int $imageCount, string $outputFormat, bool $isPro, string $bgColor, bool $iconOnly, ?array $colorPalette, ?string $recraftSubstyle): array
     {
@@ -382,34 +417,44 @@ class GenerateLogoJob implements ShouldQueue
         $recraftKey = config('services.recraft.key');
         $isVector = $outputFormat === 'vector';
 
-        // Use V4 for PRO mode (both raster and vector)
-        // Use V2 for non-PRO mode
-        if ($isPro) {
-            // ── Recraft V4 ────────────────────────────────────────────────
-            // Single unified endpoint; supports both raster and vector.
-            // No `style` or `substyle` parameters supported.
-            $recraftEndpoint = '/v1/images/generations';
-            $recraftModel    = $isVector ? 'recraftv4_vector' : 'recraftv4';
+        $recraftSize = $isVector ? '1:1' : '1024x1024';
+
+        // Use V4 for vector/raster Pro and V2 for regular raster.
+        if ($isVector) {
+            // Recraft V4 standard vector without the expensive Pro Vector tier.
+            $recraftEndpoint = '/v1/images/generations/vector';
 
             $recraftBody = [
                 'prompt'          => $prompt,
-                'model'           => $recraftModel,
+                'model'           => 'recraftv4_vector',
                 'n'               => $imageCount,
-                'size'            => '1024x1024',
+                'size'            => $recraftSize,
+                'response_format' => 'url',
+            ];
+        } elseif ($isPro) {
+            // ── Recraft V4 Raster ─────────────────────────────────────────
+            // Unified endpoint. No `style` or `substyle` parameters supported.
+            $recraftEndpoint = '/v1/images/generations';
+
+            $recraftBody = [
+                'prompt'          => $prompt,
+                'model'           => 'recraftv4',
+                'n'               => $imageCount,
+                'size'            => $recraftSize,
                 'response_format' => 'url',
             ];
         } else {
             // ── Recraft V2 ────────────────────────────────────────────────
             // Separate endpoints per type; supports style/substyle.
-            $recraftEndpoint = $isVector ? '/v1/images/generations/vector' : '/v1/images/generations/raster';
-            $recraftStyle    = $isVector ? 'vector_illustration' : 'digital_illustration';
+            $recraftEndpoint = '/v1/images/generations/raster';
+            $recraftStyle    = 'digital_illustration';
 
             $recraftBody = [
                 'prompt'          => $prompt,
                 'style'           => $recraftStyle,
                 'model'           => 'recraftv2',
                 'n'               => $imageCount,
-                'size'            => '1024x1024',
+                'size'            => $recraftSize,
                 'response_format' => 'url',
             ];
 
@@ -1135,6 +1180,22 @@ class GenerateLogoJob implements ShouldQueue
         return $images;
     }
 
+    private function resolveStorageUserId(?AiLogoRequest $logoRequest = null): int
+    {
+        $requestUserId = (int) ($logoRequest?->user_id ?? 0);
+        if ($requestUserId > 0) {
+            return $requestUserId;
+        }
+        if ($this->userId > 0) {
+            return $this->userId;
+        }
+        if ((int) ($this->adminId ?? 0) > 0) {
+            return (int) $this->adminId;
+        }
+
+        return 0;
+    }
+
     /**
      * Decode a base64 image and store it locally (used for gpt-image-1.5 b64_json responses).
      */
@@ -1153,7 +1214,8 @@ class GenerateLogoJob implements ShouldQueue
             $domain    = $this->params['domain'] ?? null;
             $safeDomain = $domain ? (Str::slug($domain) ?: 'logo') : 'logo';
             $filename  = sprintf('%s-%d-%02d.png', $safeDomain, $this->logoRequestId, $index);
-            $relativePath = sprintf('logos/%d/%d/%s', $this->userId, $this->logoRequestId, $filename);
+            $storageUserId = $this->storageUserId ?? $this->resolveStorageUserId();
+            $relativePath = sprintf('logos/%d/%d/%s', $storageUserId, $this->logoRequestId, $filename);
 
             Storage::disk('public')->put($relativePath, $imageData);
 
@@ -1176,6 +1238,10 @@ class GenerateLogoJob implements ShouldQueue
     private function storeRemoteLogoImage(int $requestId, int $userId, ?string $domain, string $imageUrl, int $index): ?array
     {
         try {
+            if (str_starts_with($imageUrl, 'data:image/')) {
+                return $this->storeDataLogoImage($requestId, $userId, $domain, $imageUrl, $index);
+            }
+
             $response = $this->httpWithResolvedDns($imageUrl, [])->timeout(45)->get($imageUrl);
             if (!$response->successful()) {
                 Log::warning('Failed to download generated logo image', [
@@ -1185,7 +1251,7 @@ class GenerateLogoJob implements ShouldQueue
                 return null;
             }
 
-            $contentType = strtolower((string) $response->header('Content-Type', ''));
+            $contentType = strtolower((string) ($response->header('Content-Type') ?? ''));
             $extension = 'png';
             if (str_contains($contentType, 'jpeg') || str_contains($contentType, 'jpg')) {
                 $extension = 'jpg';
@@ -1206,7 +1272,12 @@ class GenerateLogoJob implements ShouldQueue
             $filename = sprintf('%s-%d-%02d.%s', $safeDomain, $requestId, $index, $extension);
             $relativePath = sprintf('logos/%d/%d/%s', $userId, $requestId, $filename);
 
-            Storage::disk('public')->put($relativePath, $response->body());
+            $body = $response->body();
+            if ($extension === 'svg') {
+                $body = $this->normalizeStoredSvg($body) ?? $body;
+            }
+
+            Storage::disk('public')->put($relativePath, $body);
 
             return [
                 'path' => $relativePath,
@@ -1219,6 +1290,93 @@ class GenerateLogoJob implements ShouldQueue
             ]);
             return null;
         }
+    }
+
+    private function storeDataLogoImage(int $requestId, int $userId, ?string $domain, string $dataUrl, int $index): ?array
+    {
+        if (!preg_match('/^data:(image\/[a-z0-9.+-]+)(?:;charset=[^;]+)?(;base64)?,(.*)$/is', $dataUrl, $matches)) {
+            return null;
+        }
+
+        $mime = strtolower($matches[1]);
+        $isBase64 = !empty($matches[2]);
+        $payload = $matches[3];
+        $body = $isBase64 ? base64_decode($payload, true) : rawurldecode($payload);
+        if ($body === false || $body === '') {
+            return null;
+        }
+
+        $extension = match ($mime) {
+            'image/svg+xml' => 'svg',
+            'image/jpeg', 'image/jpg' => 'jpg',
+            'image/webp' => 'webp',
+            default => 'png',
+        };
+
+        if ($extension === 'svg') {
+            $body = $this->normalizeStoredSvg($body) ?? $body;
+        }
+
+        $safeDomain = $domain ? (Str::slug($domain) ?: 'logo') : 'logo';
+        $filename = sprintf('%s-%d-%02d.%s', $safeDomain, $requestId, $index, $extension);
+        $relativePath = sprintf('logos/%d/%d/%s', $userId, $requestId, $filename);
+
+        Storage::disk('public')->put($relativePath, $body);
+
+        return [
+            'path' => $relativePath,
+            'url' => '/storage/' . $relativePath,
+        ];
+    }
+
+    private function normalizeStoredSvg(string $svgContent, int $maxIntrinsicSize = 512): ?string
+    {
+        try {
+            $dom = new \DOMDocument();
+            $dom->loadXML($svgContent, LIBXML_NOERROR | LIBXML_NOWARNING);
+            $svg = $dom->documentElement;
+            if (!$svg || strtolower($svg->tagName) !== 'svg') {
+                return null;
+            }
+
+            $viewBox = trim($svg->getAttribute('viewBox'));
+            if ($viewBox === '') {
+                $width = $this->parseSvgLength($svg->getAttribute('width'));
+                $height = $this->parseSvgLength($svg->getAttribute('height'));
+                if ($width > 0 && $height > 0) {
+                    $svg->setAttribute('viewBox', '0 0 ' . $this->formatSvgNumber($width) . ' ' . $this->formatSvgNumber($height));
+                    $viewBox = $svg->getAttribute('viewBox');
+                }
+            }
+
+            $parts = preg_split('/[\s,]+/', $viewBox);
+            if (is_array($parts) && count($parts) === 4) {
+                $viewBoxWidth = (float) $parts[2];
+                $viewBoxHeight = (float) $parts[3];
+                if ($viewBoxWidth > 0 && $viewBoxHeight > 0) {
+                    $scale = $maxIntrinsicSize / max($viewBoxWidth, $viewBoxHeight);
+                    $intrinsicWidth = max(1, (int) round($viewBoxWidth * $scale));
+                    $intrinsicHeight = max(1, (int) round($viewBoxHeight * $scale));
+                    $svg->setAttribute('width', (string) $intrinsicWidth);
+                    $svg->setAttribute('height', (string) $intrinsicHeight);
+                    $svg->setAttribute('preserveAspectRatio', 'xMidYMid meet');
+                }
+            }
+
+            return $dom->saveXML($dom->documentElement) ?: null;
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function parseSvgLength(string $value): float
+    {
+        return preg_match('/^-?\d+(?:\.\d+)?/', trim($value), $match) ? (float) $match[0] : 0.0;
+    }
+
+    private function formatSvgNumber(float $value): string
+    {
+        return rtrim(rtrim(sprintf('%.4F', $value), '0'), '.');
     }
 
     /**
@@ -1243,7 +1401,7 @@ class GenerateLogoJob implements ShouldQueue
 
             // Look for the first rect or path that covers the full canvas
             foreach ($svg->childNodes as $node) {
-                if ($node->nodeType !== XML_ELEMENT_NODE) continue;
+                if (!$node instanceof \DOMElement) continue;
 
                 if ($node->nodeName === 'rect') {
                     $w = (float) $node->getAttribute('width');

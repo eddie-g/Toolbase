@@ -11,25 +11,27 @@
         "elegant_serif": "midnight blue and muted gold",
         "script_signature": "rich black and warm gold",
         "tech_mono": "slate gray and neon cyan",
-        "minimal_light": "soft charcoal and light gray"
+        "minimal_light": "soft charcoal and light gray",
+        "evergreen_silhouette": "solid black silhouette on white"
     },
     "default_subject": {
         "icon_only": "logo symbol",
         "with_brand": "clean brand mark",
         "text_only": "wordmark logo"
     },
-    "shape_block": "Hard shape constraint: the entire logo is fully enclosed inside a perfect {SHAPE} container. Nothing extends outside the {Shape}.",
+    "shape_block": "Keep the mark fully inside a clean {shape} container.",
     "no_text": {
-        "icon_only": "No text, no letters, no words, no numbers anywhere in the image.",
+        "icon_only": "No text, letters, words, or numbers.",
         "with_brand": "The ONLY text allowed is exactly \"{brand}\" with correct spelling.",
         "text_only": "The ONLY text allowed is exactly \"{brand}\". No icons or symbols."
     },
     "icon_only": {
-        "minimal_geometric": "Minimal geometric vector logo icon for {subject}. Abstract symbol, clean geometric shapes, modern branding, flat design, solid colors, simple icon mark, scalable SVG style. Colors: {colors}. Background: {bg}. {shape_block} No shadows, no 3D effects, no textures, no cluttered details. Crisp SVG-friendly paths and clean Bezier curves. {no_text}",
-        "abstract": "Abstract vector logo symbol for {subject}. Dynamic shapes, modern branding, simple icon mark, minimal flat design, professional brand logo. Colors: {colors}. Background: {bg}. {shape_block} No shadows, no 3D effects, no textures. Crisp SVG-friendly paths and clean Bezier curves. {no_text}",
-        "monoline": "Monoline vector logo for {subject}. Elegant continuous line design, minimal outline icon, thin strokes, modern branding, simple scalable logo. Colors: {colors}. Background: {bg}. {shape_block} No shadows, no 3D effects, no filled shapes. Line art design with crisp SVG-friendly paths and clean Bezier curves. {no_text}",
-        "negative_space": "Clever negative space vector logo for {subject}. Hidden symbol inside shape, minimal geometric design, modern branding, simple flat colors. Colors: {colors}. Background: {bg}. {shape_block} No shadows, no 3D effects, no textures. Crisp SVG-friendly paths and clean Bezier curves. {no_text}",
-        "tech_gradient": "Modern gradient vector logo for {subject}. Abstract tech symbol, vibrant gradient colors, futuristic branding, smooth geometric shapes. Colors: {colors}. Background: {bg}. {shape_block} No shadows, no 3D effects. Crisp SVG-friendly paths and clean Bezier curves with gradient fills. {no_text}"
+        "minimal_geometric": "Minimal geometric vector logo of {subject}. Keep the exact subject and spatial relationship recognizable, with a strong simple silhouette and clean flat shapes. Colors: {colors}. Background: {bg}. {shape_block} Crisp SVG paths. {no_text}",
+        "abstract": "Abstract vector logo of {subject}. Keep the subject recognizable before abstraction; use simple flat planes and a clear silhouette. Colors: {colors}. Background: {bg}. {shape_block} Avoid unrelated marks. Crisp SVG paths. {no_text}",
+        "monoline": "Monoline vector logo of {subject}. Keep the subject and spatial relationship readable in an elegant continuous-line icon. Colors: {colors}. Background: {bg}. {shape_block} Crisp SVG paths. {no_text}",
+        "negative_space": "Negative-space vector logo of {subject}. Keep the subject readable, with one clear hidden-shape idea and minimal flat geometry. Colors: {colors}. Background: {bg}. {shape_block} Crisp SVG paths. {no_text}",
+        "tech_gradient": "Modern gradient vector logo of {subject}. Keep the subject recognizable, with smooth geometric shapes and controlled gradient fills. Colors: {colors}. Background: {bg}. {shape_block} Crisp SVG paths. {no_text}",
+        "evergreen_silhouette": "Professional evergreen forest silhouette vector logo of {subject}. Create a polished cluster of conifer, pine, and fir trees with varied heights, sharp readable branch edges, a clean unified black silhouette, and a subtle ground base. Use solid black unless user colors override. Background: {bg}. {shape_block} Premium outdoor brand mark, balanced centered composition, crisp SVG paths, no messy blobs, no photorealism, no texture. {no_text}"
     },
     "text_only": {
         "modern_sans": "Text-only vector wordmark logo for \"{brand}\" in a modern sans-serif style. Clean letterforms, balanced spacing, contemporary geometry. Colors: {colors}. Background: {bg}. {shape_block} No icons or symbols. Crisp SVG-friendly paths and clean Bezier curves.",

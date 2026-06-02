@@ -5,6 +5,185 @@
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>Netkit - Open-Source PDF Editor & Admin Dashboard</title>
         @vite(['resources/css/app.css', 'resources/js/app.js'])
+        <style>
+            @keyframes netkit-planet-float {
+                0%, 100% {
+                    transform: translateY(0);
+                }
+                50% {
+                    transform: translateY(-16px);
+                }
+            }
+
+            @keyframes netkit-ring-spin {
+                from {
+                    transform: rotate(0deg);
+                }
+                to {
+                    transform: rotate(360deg);
+                }
+            }
+
+            @keyframes netkit-planet-glow {
+                0%, 100% {
+                    opacity: 0.45;
+                    transform: scale(1);
+                }
+                50% {
+                    opacity: 0.75;
+                    transform: scale(1.08);
+                }
+            }
+
+            @keyframes netkit-star-twinkle {
+                0%, 100% {
+                    opacity: 0.18;
+                    transform: scale(0.8);
+                }
+                50% {
+                    opacity: 0.95;
+                    transform: scale(1.15);
+                }
+            }
+
+            .netkit-hero-planet {
+                position: absolute;
+                top: 50%;
+                left: 50%;
+                width: clamp(260px, 42vw, 540px);
+                height: auto;
+                transform: translate(-50%, -50%);
+                opacity: 0.48;
+                filter: drop-shadow(0 22px 48px rgba(15, 23, 42, 0.28));
+            }
+
+            .netkit-hero-starfield {
+                position: absolute;
+                inset: 0;
+                width: 100%;
+                height: 100%;
+                opacity: 0.85;
+                filter: drop-shadow(0 0 0.6px rgba(226, 232, 255, 0.9));
+            }
+
+            .netkit-wordmark {
+                display: block;
+                width: clamp(680px, 98vw, 1480px);
+                height: auto;
+                margin: 0 auto -0.5rem;
+                position: relative;
+                z-index: 1;
+            }
+
+            .netkit-flow {
+                position: absolute;
+                top: 0;
+                left: 50%;
+                width: clamp(680px, 98vw, 1480px);
+                height: auto;
+                transform: translateX(-50%);
+                pointer-events: none;
+                z-index: 0;
+            }
+
+            .netkit-fill-logo {
+                display: block;
+                width: 75%;
+                max-width: 990px;
+                height: auto;
+                margin: 0 auto 0.25rem;
+                position: relative;
+                z-index: 1;
+            }
+
+            .netkit-home-hero.netkit-hero-circuits,
+            .netkit-home-hero.netkit-hero-fill_logo {
+                background-color: #f8fbff;
+                background-image: linear-gradient(135deg, #ffffff 0%, #eef5ff 48%, #e8eef9 100%);
+            }
+
+            .dark .netkit-home-hero.netkit-hero-circuits,
+            .dark .netkit-home-hero.netkit-hero-fill_logo {
+                background-color: #f8fbff;
+                background-image: linear-gradient(135deg, #ffffff 0%, #eef5ff 48%, #e8eef9 100%);
+            }
+
+            .netkit-hero-circuits .netkit-hero-heading,
+            .netkit-hero-fill_logo .netkit-hero-heading {
+                color: #0f1115;
+            }
+
+            .netkit-hero-circuits .netkit-hero-subtitle,
+            .netkit-hero-fill_logo .netkit-hero-subtitle {
+                color: #3f4651;
+            }
+
+            @media (max-width: 1024px) {
+                .netkit-hero-planet {
+                    width: clamp(230px, 66vw, 420px);
+                    opacity: 0.34;
+                }
+            }
+
+            .netkit-planet-system {
+                animation: netkit-planet-float 7s ease-in-out infinite;
+                transform-origin: center;
+            }
+
+            .netkit-planet-glow {
+                animation: netkit-planet-glow 6s ease-in-out infinite;
+                transform-box: view-box;
+                transform-origin: 220px 220px;
+            }
+
+            .netkit-ring-tilt {
+                transform: rotate(-22deg) scaleY(0.4);
+                transform-box: view-box;
+                transform-origin: 220px 220px;
+            }
+
+            .netkit-ring-spin {
+                transform-box: view-box;
+                transform-origin: 220px 220px;
+            }
+
+            .netkit-ring-spin-fast {
+                animation: netkit-ring-spin 22s linear infinite;
+            }
+
+            .netkit-ring-spin-slow {
+                animation: netkit-ring-spin 34s linear infinite;
+            }
+
+            .netkit-star {
+                animation: netkit-star-twinkle var(--star-duration, 3s) ease-in-out infinite;
+                animation-delay: var(--star-delay, 0s);
+                transform-box: fill-box;
+                transform-origin: center;
+            }
+
+            .netkit-star-spark line {
+                stroke-linecap: round;
+            }
+
+            .netkit-home-hero {
+                background-color: #1b2230;
+            }
+
+            .dark .netkit-home-hero {
+                background-color: #0b0f17;
+            }
+
+            @media (prefers-reduced-motion: reduce) {
+                .netkit-planet-system,
+                .netkit-planet-glow,
+                .netkit-ring-spin-fast,
+                .netkit-ring-spin-slow,
+                .netkit-star {
+                    animation: none;
+                }
+            }
+        </style>
     </head>
     <body class="bg-white dark:bg-gray-900 antialiased">
         <!-- Header -->
@@ -12,22 +191,127 @@
 
 
         <!-- Hero Section -->
-        <section class="pt-32 pb-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-white to-gray-50 dark:from-gray-900 dark:to-gray-800">
-            <div class="container mx-auto">
-                <div class="text-center max-w-4xl mx-auto mb-16">
-                    <h1 class="text-5xl md:text-6xl lg:text-7xl font-bold text-gray-900 dark:text-white mb-6">
-                        Powerful <span class="text-blue-600">AI enabled tools</span><br>for the NET
+        @php
+            $heroBackground = config('home.hero_background', 'fill_logo');
+        @endphp
+        <section class="netkit-home-hero netkit-hero-{{ $heroBackground }} relative overflow-hidden pt-20 pb-4 px-4 sm:px-6 lg:px-8">
+            @if ($heroBackground === 'space')
+            <div class="absolute inset-0 pointer-events-none" aria-hidden="true">
+                @php
+                    $stars = [];
+                    mt_srand(20260531);
+                    for ($i = 0; $i < 130; $i++) {
+                        $stars[] = [
+                            'x' => mt_rand(0, 1000) / 10,
+                            'y' => mt_rand(0, 1000) / 10,
+                            'r' => mt_rand(5, 18) / 100,
+                            'o' => mt_rand(35, 92) / 100,
+                            'd' => mt_rand(35, 85) / 10,
+                            'delay' => mt_rand(0, 50) / 10,
+                            'spark' => $i % 12 === 0,
+                            'len' => mt_rand(35, 95) / 100,
+                        ];
+                    }
+                @endphp
+                <svg class="netkit-hero-starfield" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" role="img" focusable="false">
+                    @foreach ($stars as $s)
+                        @if ($s['spark'])
+                            <g class="netkit-star netkit-star-spark" style="--star-duration: {{ $s['d'] }}s; --star-delay: -{{ $s['delay'] }}s;" transform="translate({{ $s['x'] }} {{ $s['y'] }})" opacity="{{ $s['o'] }}">
+                                <line x1="-{{ $s['len'] }}" y1="0" x2="{{ $s['len'] }}" y2="0" stroke="#ffffff" stroke-width="0.12" />
+                                <line x1="0" y1="-{{ $s['len'] }}" x2="0" y2="{{ $s['len'] }}" stroke="#ffffff" stroke-width="0.12" />
+                                <circle cx="0" cy="0" r="{{ $s['r'] * 1.25 }}" fill="#ffffff" />
+                            </g>
+                        @else
+                            <circle class="netkit-star" style="--star-duration: {{ $s['d'] }}s; --star-delay: -{{ $s['delay'] }}s;" cx="{{ $s['x'] }}" cy="{{ $s['y'] }}" r="{{ $s['r'] }}" fill="#f8fbff" opacity="{{ $s['o'] }}" />
+                        @endif
+                    @endforeach
+                </svg>
+                <svg class="netkit-hero-planet" viewBox="0 0 440 440" role="img" focusable="false">
+                    <defs>
+                        <radialGradient id="planetBody" cx="0.38" cy="0.34" r="0.9">
+                            <stop offset="0" stop-color="#f5e6c5" />
+                            <stop offset="0.4" stop-color="#e3c08a" />
+                            <stop offset="0.72" stop-color="#c89b5f" />
+                            <stop offset="1" stop-color="#8a6638" />
+                        </radialGradient>
+                        <radialGradient id="planetHalo" cx="0.5" cy="0.5" r="0.5">
+                            <stop offset="0" stop-color="#f5d9a8" stop-opacity="0.5" />
+                            <stop offset="0.7" stop-color="#d8b173" stop-opacity="0.18" />
+                            <stop offset="1" stop-color="#d8b173" stop-opacity="0" />
+                        </radialGradient>
+                        <linearGradient id="planetRim" x1="0" y1="0" x2="1" y2="1">
+                            <stop offset="0" stop-color="#fff4dc" stop-opacity="0.9" />
+                            <stop offset="1" stop-color="#c89b5f" stop-opacity="0" />
+                        </linearGradient>
+                        <clipPath id="planetClip">
+                            <circle cx="220" cy="220" r="120" />
+                        </clipPath>
+                    </defs>
+
+                    <g class="netkit-planet-system">
+                        @php
+                            $cx = 220; $cy = 220;
+                            $palette = ['#f5e6c5', '#e3c08a', '#c89b5f', '#e9cd97', '#d8b173', '#fff4dc', '#b78b50'];
+                            $buildRing = function (array $bands, float $seed) use ($cx, $cy, $palette) {
+                                $out = '';
+                                foreach ($bands as $bi => $band) {
+                                    [$radius, $count] = $band;
+                                    for ($i = 0; $i < $count; $i++) {
+                                        $ang = ($i / $count) * 2 * M_PI + $bi * 0.4 + $seed;
+                                        $x = round($cx + $radius * cos($ang), 1);
+                                        $y = round($cy + $radius * sin($ang), 1);
+                                        $sr = round(1.8 + (($i * 7 + $bi * 3) % 5) * 0.55, 1);
+                                        $col = $palette[($i + $bi * 2) % count($palette)];
+                                        $op = round(0.5 + (($i * 3 + $bi) % 5) * 0.1, 2);
+                                        $out .= "<circle cx=\"{$x}\" cy=\"{$y}\" r=\"{$sr}\" fill=\"{$col}\" opacity=\"{$op}\" />";
+                                    }
+                                }
+                                return $out;
+                            };
+                        @endphp
+
+                        <!-- atmospheric halo -->
+                        <circle class="netkit-planet-glow" cx="220" cy="220" r="180" fill="url(#planetHalo)" />
+
+                        <!-- back half of the particle ring (behind planet) -->
+                        <g class="netkit-ring-tilt">
+                            <g class="netkit-ring-spin netkit-ring-spin-slow">
+                                {!! $buildRing([[152, 32], [172, 36], [192, 28]], 0.0) !!}
+                            </g>
+                        </g>
+
+                        <!-- planet -->
+                        <circle cx="220" cy="220" r="120" fill="url(#planetBody)" />
+                        <g clip-path="url(#planetClip)">
+                            <ellipse cx="186" cy="178" rx="54" ry="34" fill="#ffffff" opacity="0.16" />
+                        </g>
+
+                        <!-- front half of the particle ring (in front of planet) -->
+                        <g class="netkit-ring-tilt">
+                            <g class="netkit-ring-spin netkit-ring-spin-fast">
+                                {!! $buildRing([[160, 34], [180, 38], [200, 30]], 0.35) !!}
+                            </g>
+                        </g>
+                    </g>
+                </svg>
+            </div>
+            @endif
+            <div class="relative container mx-auto">
+                @if ($heroBackground === 'circuits')
+                <img class="netkit-flow" src="{{ asset('images/circuits-flow.svg') }}" alt="" aria-hidden="true" />
+                @endif
+                <div class="text-center max-w-4xl mx-auto mb-4">
+                    @if ($heroBackground === 'circuits')
+                    <img class="netkit-wordmark" src="{{ asset('images/circuits-background.svg') }}" alt="Netkit" />
+                    @elseif ($heroBackground === 'fill_logo')
+                    <img class="netkit-fill-logo" src="{{ asset('images/netkit-fill-logo.svg') }}" alt="Netkit" />
+                    @endif
+                    <h1 class="netkit-hero-heading text-5xl md:text-6xl lg:text-7xl font-bold text-white mb-3">
+                        Powerful tools for the net
                     </h1>
-                    <p class="text-xl text-gray-600 dark:text-gray-300 mb-8 max-w-2xl mx-auto">
-                        Netkit aims to provide security driven, customer focused tools that are as affordable as they are powerful.
+                    <p class="netkit-hero-subtitle text-xl text-gray-300 max-w-2xl mx-auto">
+                        Expertly crafted tools, one account to manage them all.
                     </p>
-                    <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-12">
-                        
-                    </div>
-                    <div class="flex items-center justify-center gap-4">
-                       
-                        
-                    </div>
                 </div>
 
                 

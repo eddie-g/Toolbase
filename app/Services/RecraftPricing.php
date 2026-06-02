@@ -9,14 +9,15 @@ class RecraftPricing
     /**
      * Estimate the cost for a Recraft API call.
      *
-     * @param string $type  'raster' or 'vector'
-     * @param string $version 'v4', 'v3', 'v2', or 'tools'
+    * @param string $type    'raster' or 'vector'
+    * @param string $version 'v4_1_pro', 'v4', 'v3', 'v2', or 'tools'
      * @return array{units: int, usd: float}
      */
     public static function estimate(string $type = 'raster', string $version = 'v4'): array
     {
         $map = [
-            'v4' => ['raster' => 40, 'vector' => 40],
+            'v4_1_pro' => ['raster' => 250, 'vector' => 300],
+            'v4' => ['raster' => 40, 'vector' => 80],
             'v3' => ['raster' => 40, 'vector' => 80],
             'v2' => ['raster' => 22, 'vector' => 44],
             'tools' => ['vectorize' => 10, 'remove_bg' => 10],
@@ -34,15 +35,20 @@ class RecraftPricing
      * Estimate the total cost for logo generation via Recraft endpoint with 50% markup.
      *
      * @param int    $imageCount Number of images to generate
-     * @param string $size       Image size (e.g. '1024x1024')
-     * @param bool   $isPro      Use V3 (PRO) or V2 (standard)
+    * @param string $size       Image size or aspect ratio (e.g. '1024x1024' or '1:1')
+    * @param bool   $isPro      Use Pro model family for raster; vector uses standard V4
      * @param string $type       Output format: 'vector' or 'raster'
      * @return array Cost breakdown compatible with AiLogoPrice format
      */
     public static function estimateLogoCost(int $imageCount = 1, string $size = '1024x1024', bool $isPro = false, string $type = 'vector'): array
     {
-        $version = $isPro ? 'v4' : 'v2';
-        $modelName = $isPro ? 'recraft-v4' : 'recraft-v2';
+        if ($type === 'vector') {
+            $version = 'v4';
+            $modelName = 'recraft-v4';
+        } else {
+            $version = $isPro ? 'v4' : 'v2';
+            $modelName = $isPro ? 'recraft-v4' : 'recraft-v2';
+        }
         $modelLabel = "{$modelName}-{$type}";
         
         // Try to get pricing from ai_rates table

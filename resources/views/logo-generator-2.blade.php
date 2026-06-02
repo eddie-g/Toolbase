@@ -147,7 +147,7 @@
                     </div>
 
                     <!-- PRO Mode Toggle -->
-                    <div x-show="!isLunaVectorMode()">
+                    <div x-show="!isLunaVectorMode() && !(selectedModel === 'recraft' && outputFormat === 'vector')">
                         <div class="flex items-center justify-between p-3.5 rounded-xl border-2 transition-all cursor-pointer" :class="proMode ? 'border-amber-400 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'" @click="proMode = !proMode; fetchLogoPrice()">
                             <div class="flex items-center gap-3">
                                 <div class="text-sm font-semibold text-gray-900 dark:text-white" x-text="selectedModel === 'dalle' ? 'HD Quality' : 'PRO Mode'"></div>
@@ -864,7 +864,7 @@
                                     </template>
                                     
                                     <!-- Generated Images -->
-                                    <template x-for="(image, imageIndex) in batch.images" :key="image.url || imageIndex">
+                                    <template x-for="(image, imageIndex) in batch.images" :key="image.editUrl || image.url || imageIndex">
                                         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg transition-shadow">
                                             <!-- Failed Image Placeholder -->
                                             <template x-if="image.failed">
@@ -878,8 +878,8 @@
                                                 </div>
                                             </template>
                                             <!-- Image -->
-                                            <div x-show="!image.failed" class="aspect-square bg-white dark:bg-gray-100 relative group cursor-pointer" @click="zoomImage(image.url)">
-                                                <img :src="image.url" :alt="'Logo ' + (imageIndex + 1)" class="w-full h-full object-contain p-4">
+                                            <div x-show="!image.failed" class="aspect-square bg-white dark:bg-gray-100 relative group cursor-pointer" @click="zoomImage(image.displayUrl || image.url)">
+                                                <img :src="image.displayUrl || image.url" :alt="'Logo ' + (imageIndex + 1)" class="w-full h-full object-contain p-4">
                                                 
                                                 <!-- Metadata Tags Overlay -->
                                                 <div class="absolute top-2 left-2 flex flex-wrap gap-1.5">
@@ -896,14 +896,14 @@
                                     <div x-show="!image.failed" class="p-4">
                                         <div class="grid gap-2" :class="image.isVector ? 'grid-cols-2' : 'grid-cols-1'">
                                             <button 
-                                                @click="saveLogo(image.url)"
+                                                @click="saveLogo(image.editUrl || image.url)"
                                                 class="px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-lg transition-colors"
                                             >
                                                 Save
                                             </button>
                                             <button 
                                                 x-show="image.isVector"
-                                                @click="openEditorTab(image.url)"
+                                                @click="openEditorTab(image.editUrl || image.url)"
                                                 class="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition-colors"
                                             >
                                                 Edit
@@ -1558,6 +1558,16 @@
                                 :class="logoStyle === 'tech_gradient' ? 'text-blue-700' : 'text-gray-600'">Tech Gradient</div>
                             <div class="text-[10px] text-gray-400 mt-0.5">Futuristic</div>
                         </button>
+                        <button type="button" @click="selectStyle('evergreen_silhouette')" x-show="selectedModel === 'recraft' && outputFormat === 'vector' && logoMode !== 'text_only'"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'evergreen_silhouette' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 overflow-hidden">
+                                <img :src="getVectorSampleUrl('evergreen_silhouette')" alt="Evergreen Silhouette sample" class="style-sample-image w-full h-full object-cover" loading="lazy" />
+                            </div>
+                            <div class="text-xs font-semibold"
+                                :class="logoStyle === 'evergreen_silhouette' ? 'text-blue-700' : 'text-gray-600'">Evergreen Silhouette</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">Professional trees</div>
+                        </button>
                         <button type="button" @click="selectStyle('modern_sans')" x-show="outputFormat === 'vector' && logoMode === 'text_only'"
                             class="group rounded-xl border-2 p-3 transition-all text-center"
                             :class="logoStyle === 'modern_sans' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
@@ -1856,14 +1866,14 @@
                                         </div>
 
                                         <div class="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
-                                            <template x-for="(image, imageIndex) in batch.images" :key="image.url || imageIndex">
+                                            <template x-for="(image, imageIndex) in batch.images" :key="image.editUrl || image.url || imageIndex">
                                                 <div 
                                                     x-show="image.isVector && !image.failed"
-                                                    @click="importLogoToEditor(image.url)"
+                                                    @click="importLogoToEditor(image.editUrl || image.url)"
                                                     class="bg-white dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden cursor-pointer hover:border-violet-500 dark:hover:border-violet-400 transition-all hover:shadow-md"
                                                 >
                                                     <div class="aspect-square bg-gray-50 dark:bg-gray-800 p-1">
-                                                        <img :src="image.url" :alt="'Logo ' + (imageIndex + 1)" class="w-full h-full object-contain">
+                                                        <img :src="image.displayUrl || image.url" :alt="'Logo ' + (imageIndex + 1)" class="w-full h-full object-contain">
                                                     </div>
                                                     <div class="p-1 bg-gray-50 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-600 text-center">
                                                         <span 
@@ -2315,6 +2325,9 @@
 
                 selectModel(model) {
                     this.selectedModel = model;
+                    if (model !== 'recraft' && this.logoStyle === 'evergreen_silhouette') {
+                        this.logoStyle = this.outputFormat === 'vector' ? 'minimal_geometric' : 'professional';
+                    }
                     // Set default pro mode based on model
                     if (model === 'dalle') {
                         this.proMode = false;
@@ -2337,7 +2350,7 @@
                         this.activeTab = 'generator';
                     }
 
-                    const vectorStyles = ['minimal_geometric', 'abstract', 'monoline', 'negative_space', 'tech_gradient', 'modern_sans', 'bold_geometric', 'elegant_serif', 'script_signature', 'tech_mono', 'minimal_light'];
+                    const vectorStyles = ['minimal_geometric', 'abstract', 'monoline', 'negative_space', 'tech_gradient', 'evergreen_silhouette', 'modern_sans', 'bold_geometric', 'elegant_serif', 'script_signature', 'tech_mono', 'minimal_light'];
                     if (vectorStyles.includes(this.logoStyle)) {
                         this.logoStyle = 'professional';
                     }
@@ -2402,6 +2415,7 @@
                         monoline: '/images/ray_vector_samples/ray_monoline_vector.png',
                         negative_space: '/images/ray_vector_samples/ray_negative_space_vector.png',
                         tech_gradient: '/images/ray_vector_samples/ray_tech_gradient_vector.png',
+                        evergreen_silhouette: '/images/ray_vector_samples/ray_evergreen_silhouette_vector.svg',
                     };
 
                     const sampleMap = this.selectedModel === 'recraft' ? raySamples : lunaSamples;
@@ -2422,6 +2436,10 @@
                 getEffectiveProSettings() {
                     if (this.isLunaVectorMode()) {
                         return { pro: true, proSize: 512 };
+                    }
+
+                    if (this.selectedModel === 'recraft' && this.outputFormat === 'vector') {
+                        return { pro: false, proSize: 512 };
                     }
 
                     return {
@@ -2631,7 +2649,7 @@
                 },
 
                 getStyleLabel() {
-                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', greetingcard: 'Watercolor', photorealistic: 'Photorealistic', minimal_geometric: 'Minimal Geometric', abstract: 'Abstract', monoline: 'Monoline', negative_space: 'Negative Space', tech_gradient: 'Tech Gradient', modern_sans: 'Modern Sans', bold_geometric: 'Bold Geometric', elegant_serif: 'Elegant Serif', script_signature: 'Script Signature', tech_mono: 'Tech Mono', minimal_light: 'Minimal Light', custom: 'Custom Prompt' };
+                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', greetingcard: 'Watercolor', photorealistic: 'Photorealistic', minimal_geometric: 'Minimal Geometric', abstract: 'Abstract', monoline: 'Monoline', negative_space: 'Negative Space', tech_gradient: 'Tech Gradient', evergreen_silhouette: 'Evergreen Silhouette', modern_sans: 'Modern Sans', bold_geometric: 'Bold Geometric', elegant_serif: 'Elegant Serif', script_signature: 'Script Signature', tech_mono: 'Tech Mono', minimal_light: 'Minimal Light', custom: 'Custom Prompt' };
                     if (labels[this.logoStyle]) return labels[this.logoStyle];
                     if (this.outputFormat === 'vector' && this.logoMode === 'text_only') return 'Modern Sans';
                     return this.outputFormat === 'vector' ? 'Minimal Geometric' : 'Professional';
@@ -2687,6 +2705,38 @@
                     }
                 },
 
+                isDataImageUrl(url) {
+                    return /^data:image\//i.test(String(url || ''));
+                },
+
+                isLocalLogoUrl(url) {
+                    return String(url || '').startsWith('/storage/logos/');
+                },
+
+                isSvgUrl(url) {
+                    return /\.svg(?:[?#]|$)/i.test(String(url || '')) || /^data:image\/svg\+xml/i.test(String(url || ''));
+                },
+
+                displayUrlForGeneratedImage(img) {
+                    if (!img || typeof img !== 'object') return String(img || '');
+                    const storedUrl = img.stored_url || '';
+                    const rawUrl = img.url || '';
+                    const svgUrl = img.svg_url || '';
+
+                    if (storedUrl) return storedUrl;
+                    if (this.isDataImageUrl(rawUrl)) return rawUrl;
+                    if (rawUrl && (!this.isSvgUrl(rawUrl) || this.isLocalLogoUrl(rawUrl))) return rawUrl;
+                    if (svgUrl && this.isLocalLogoUrl(svgUrl)) return svgUrl;
+
+                    return rawUrl || svgUrl;
+                },
+
+                editUrlForGeneratedImage(img) {
+                    if (!img || typeof img !== 'object') return String(img || '');
+                    if (img.stored_url && this.isSvgUrl(img.stored_url)) return img.stored_url;
+                    return img.svg_url || img.stored_url || img.url || '';
+                },
+
                 async generateLogo() {
                     const proSettings = this.getEffectiveProSettings();
 
@@ -2719,10 +2769,11 @@
                     const expectedCount = this.logoCount;
                     
                     // Store metadata for this generation
+                    const isRayVector = this.selectedModel === 'recraft' && this.outputFormat === 'vector';
                     const generationMetadata = {
                         model: this.selectedModel === 'flux' ? 'Luna' : (this.selectedModel === 'recraft' ? 'Ray' : 'Cosmo'),
                         modelId: this.selectedModel,
-                        resolution: proSettings.pro && this.selectedModel === 'flux' ? `${proSettings.proSize}x${proSettings.proSize}` : (this.selectedModel === 'dalle' ? '1024x1024' : '512x512'),
+                        resolution: isRayVector ? 'SVG 1:1' : (proSettings.pro && this.selectedModel === 'flux' ? `${proSettings.proSize}x${proSettings.proSize}` : (this.selectedModel === 'dalle' ? '1024x1024' : '512x512')),
                         price: (this.logoPrice / this.logoCount).toFixed(4),
                         style: this.logoStyle
                     };
@@ -2811,18 +2862,13 @@
                         // Step 2: Poll for completion
                         const completedJobs = new Set();
                         const failedJobs = new Set();
-                        const jobStartTimes = new Map();
-                        const maxPollTime = 5 * 60 * 1000; // 5 minutes
-                        const perJobTimeout = 30 * 1000; // 30 seconds per job
+                        const maxPollTime = 6 * 60 * 1000; // backend job timeout plus a little room
                         const pollStart = Date.now();
                         const pollInterval = 3000; // 3 seconds
 
-                        // Initialize start times for all jobs
-                        pendingJobs.forEach(jobId => jobStartTimes.set(jobId, Date.now()));
-
                         while (completedJobs.size + failedJobs.size < pendingJobs.length) {
                             if (Date.now() - pollStart > maxPollTime) {
-                                this.error = 'Logo generation timed out. Some images may still be processing.';
+                                this.error = 'Logo generation is still processing. Refresh in a moment to check the latest status.';
                                 break;
                             }
 
@@ -2830,24 +2876,6 @@
 
                             for (const jobId of pendingJobs) {
                                 if (completedJobs.has(jobId) || failedJobs.has(jobId)) continue;
-
-                                // Check for per-job timeout
-                                const jobElapsed = Date.now() - jobStartTimes.get(jobId);
-                                if (jobElapsed > perJobTimeout) {
-                                    failedJobs.add(jobId);
-                                    const targetBatch = this.logoBatches.find(b => b.id === batchId);
-                                    if (targetBatch) {
-                                        targetBatch.images.push({
-                                            url: null,
-                                            failed: true,
-                                            error: 'Generation timed out after 30 seconds',
-                                            seed: null,
-                                            isVector: this.outputFormat === 'vector',
-                                            metadata: targetBatch.metadata || {}
-                                        });
-                                    }
-                                    continue;
-                                }
 
                                 try {
                                     const statusRes = await fetch('/domain-search/logo-status/' + jobId, {
@@ -2866,12 +2894,18 @@
                                         completedJobs.add(jobId);
 
                                         const targetBatch = this.logoBatches.find(b => b.id === batchId);
-                                        const newImages = (statusData.images || []).map(img => ({
-                                            url: img.svg_url || img.stored_url || img.url,
-                                            seed: statusData.seed || null,
-                                            isVector: this.outputFormat === 'vector',
-                                            metadata: targetBatch?.metadata || {}
-                                        }));
+                                        const newImages = (statusData.images || []).map(img => {
+                                            const displayUrl = this.displayUrlForGeneratedImage(img);
+                                            const editUrl = this.editUrlForGeneratedImage(img);
+                                            return {
+                                                url: displayUrl,
+                                                displayUrl,
+                                                editUrl,
+                                                seed: statusData.seed || null,
+                                                isVector: this.outputFormat === 'vector',
+                                                metadata: targetBatch?.metadata || {}
+                                            };
+                                        });
                                         
                                         // Add to target batch
                                         if (targetBatch) {
