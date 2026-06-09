@@ -29,7 +29,7 @@
          can host the absolutely-positioned PDFViewer container. --}}
     @vite(['resources/css/edit-new-pdfjs/index.css'])
 </head>
-<body class="enpv-body">
+<body class="enpv-body{{ ($guided ?? false) ? ' enpv-guided' : '' }}">
 
 {{-- Same root + data attrs as edit-new (kept so legacy partials read the
      same dataset shape). The new viewer JS reads the *-url attrs. --}}
@@ -39,6 +39,7 @@
      data-info-url="{{ route('pdfTests.documentInfo', $document) }}"
      data-fonts-url="{{ route('documents.getFonts', $document) }}"
      data-save-url="{{ route('documents.saveAnnotationState', $document) }}"
+     data-save-acro-form-url="{{ route('documents.saveAcroFormState', $document) }}"
      data-annotation-debug-url="{{ route('documents.annotationDebug.save', $document) }}"
      data-overwrite-url="{{ route('documents.overwriteAnnotationText') }}"
      data-notes-url="{{ route('documents.notes.index', $document) }}"
@@ -74,6 +75,9 @@
      so the absolute child fills the available space). --}}
 <div id="enpv-root"
      data-doc-id="{{ $document->id }}"
+     data-guided="{{ ($guided ?? false) ? '1' : '0' }}"
+     data-template-type="{{ $document->template_type ?? '' }}"
+     data-template-slug="{{ $document->template_slug ?? '' }}"
      data-csrf="{{ csrf_token() }}"
      data-pdf-url="{{ route('documents.file', $document) }}"
      data-current-pdf-url="{{ route('documents.file', $document) }}"
@@ -84,6 +88,9 @@
      data-burn-url="{{ route('documents.editPdfjsBurnLayer', $document) }}"
      data-move-url="{{ route('documents.editPdfjsMoveTj', $document) }}"
      data-reflow-url="{{ route('documents.editPdfjsReflowText', $document) }}"
+     data-guided-convert-url="{{ route('documents.convertGuidedAcroForm', $document) }}"
+     data-regenerate-invoice-url="{{ route('documents.regenerateInvoice', $document) }}"
+     data-regenerate-template-url="{{ route('documents.regenerateTemplate', $document) }}"
      data-add-blank-page-url="{{ route('documents.addBlankPage', $document) }}"
      data-reorder-pages-url="{{ route('documents.reorderPages', $document) }}">
     <div id="viewerContainer">
@@ -162,6 +169,8 @@
      </button>
 </div>
 
+@include('documents.edit-new._guided-helper')
+
 <div class="enpv-page-manager-modal" id="enpv-page-manager-modal" role="dialog" aria-modal="true" aria-labelledby="enpv-page-manager-title" aria-hidden="true" hidden>
      <div class="enpv-page-manager-card">
           <div class="enpv-page-manager-header">
@@ -236,7 +245,10 @@
      <div class="enpv-debug-panel__header">
           <div>
                <h2>Annotation Debug</h2>
-               <p id="enpv-debug-subtitle">No annotation selected</p>
+               <p id="enpv-debug-subtitle" class="enpv-debug-subtitle">
+                    <input id="enpv-debug-annotation-id" class="enpv-debug-annotation-id" type="text" value="" readonly aria-label="Annotation id" title="Click to copy annotation id">
+                    <span id="enpv-debug-annotation-label">No annotation selected</span>
+               </p>
           </div>
           <button type="button" class="enpv-debug-close" id="enpv-debug-close" aria-label="Close debug panel">
                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">

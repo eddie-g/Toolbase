@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\CreditTransaction;
 use App\Models\MonthlyPlan;
+use App\Models\User;
 use App\Models\UserSubscription;
 use Illuminate\Http\Request;
 use Stripe\Stripe;
@@ -29,9 +30,12 @@ class CreditController extends Controller
 
         $request->validate([
             'amount' => ['required', 'numeric', 'in:' . implode(',', self::ALLOWED_AMOUNTS)],
+            'source' => ['nullable', 'in:admin,portal'],
         ]);
 
         $amount = (int) $request->input('amount');
+        $source = $request->input('source') === 'portal' ? 'portal' : 'admin';
+        $basePath = $source === 'portal' ? '/portal/add-credits' : '/admin/add-credits';
 
         Stripe::setApiKey(config('services.stripe.secret'));
 
@@ -49,12 +53,13 @@ class CreditController extends Controller
                 'quantity' => 1,
             ]],
             'mode' => 'payment',
-            'success_url' => url('/admin/add-credits') . '?status=success&amount=' . $amount,
-            'cancel_url' => url('/admin/add-credits') . '?status=cancelled',
+            'success_url' => url('/credits/checkout/success') . '?source=' . $source . '&session_id={CHECKOUT_SESSION_ID}',
+            'cancel_url' => url($basePath) . '?status=cancelled',
             'client_reference_id' => (string) $user->id,
             'metadata' => [
                 'user_id' => $user->id,
                 'credit_amount' => $amount,
+                'source' => $source,
             ],
         ]);
 
@@ -62,6 +67,56 @@ class CreditController extends Controller
             'checkout_url' => $session->url,
             'session_id' => $session->id,
         ]);
+    }
+
+    /**
+     * Verify a returned Stripe Checkout session and apply credits.
+     *
+     * Webhooks remain the source of truth in production, but localhost/test
+     * checkout needs an authenticated return path because Stripe cannot post to
+     * localhost without CLI forwarding.
+     */
+    public function checkoutSuccess(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return redirect()->route('login');
+        }
+
+        $request->validate([
+            'session_id' => ['required', 'string'],
+            'source' => ['nullable', 'in:admin,portal'],
+        ]);
+
+        $source = $request->input('source') === 'portal' ? 'portal' : 'admin';
+        $basePath = $source === 'portal' ? '/portal/add-credits' : '/admin/add-credits';
+
+        Stripe::setApiKey(config('services.stripe.secret'));
+
+        try {
+            $session = StripeSession::retrieve($request->input('session_id'));
+        } catch (\Throwable $e) {
+            \Log::error('Stripe checkout return: failed to retrieve session', [
+                'session_id' => $request->input('session_id'),
+                'error' => $e->getMessage(),
+            ]);
+
+            return redirect($basePath . '?status=verification_failed');
+        }
+
+        $result = $this->processCreditCheckoutSession($session, $user->id, 'checkout_return');
+
+        if ($result['status'] === 'credited' || $result['status'] === 'already_processed') {
+            return redirect($basePath . '?status=success&amount=' . $result['amount']);
+        }
+
+        \Log::warning('Stripe checkout return: session was not credited', [
+            'session_id' => $session->id ?? null,
+            'status' => $result['status'],
+            'reason' => $result['reason'] ?? null,
+        ]);
+
+        return redirect($basePath . '?status=verification_failed');
     }
 
     /**
@@ -99,47 +154,15 @@ class CreditController extends Controller
                 return response('OK', 200);
             }
 
-            $userId = $session->metadata->user_id ?? $session->client_reference_id ?? null;
-            $creditAmount = $session->metadata->credit_amount ?? null;
+            $result = $this->processCreditCheckoutSession($session, null, 'webhook');
 
-            if (!$userId || !$creditAmount) {
-                \Log::warning('Stripe webhook: missing user_id or credit_amount', [
-                    'session_id' => $session->id,
-                ]);
+            if ($result['status'] === 'missing_metadata') {
                 return response('Missing metadata', 400);
             }
 
-            $user = \App\Models\User::find($userId);
-            if (!$user) {
-                \Log::warning('Stripe webhook: user not found', ['user_id' => $userId]);
+            if ($result['status'] === 'user_not_found') {
                 return response('User not found', 404);
             }
-
-            // Prevent duplicate processing — check if this session was already handled
-            $existing = CreditTransaction::where('description', 'LIKE', '%' . $session->id . '%')->first();
-            if ($existing) {
-                \Log::info('Stripe webhook: duplicate session, skipping', ['session_id' => $session->id]);
-                return response('Already processed', 200);
-            }
-
-            $creditAmount = (float) $creditAmount;
-
-            CreditTransaction::topup(
-                userId: $user->id,
-                amount: $creditAmount,
-                description: "Stripe deposit \${$creditAmount} (session: {$session->id})",
-                metadata: [
-                    'stripe_session_id' => $session->id,
-                    'stripe_payment_intent' => $session->payment_intent ?? null,
-                    'amount_usd' => $creditAmount,
-                ],
-            );
-
-            \Log::info('Stripe webhook: credits added', [
-                'user_id' => $userId,
-                'amount' => $creditAmount,
-                'session_id' => $session->id,
-            ]);
         }
 
         // Handle subscription cancellation from Stripe
@@ -162,6 +185,85 @@ class CreditController extends Controller
         }
 
         return response('OK', 200);
+    }
+
+    /**
+     * Apply credits from a completed one-time checkout session.
+     */
+    private function processCreditCheckoutSession($session, ?int $expectedUserId = null, string $handledBy = 'webhook'): array
+    {
+        if (($session->mode ?? null) !== 'payment') {
+            return ['status' => 'not_payment_session', 'reason' => 'mode_not_payment'];
+        }
+
+        if (($session->payment_status ?? null) !== 'paid') {
+            return ['status' => 'not_paid', 'reason' => 'payment_status_not_paid'];
+        }
+
+        $userId = $session->metadata->user_id ?? $session->client_reference_id ?? null;
+        $creditAmount = $session->metadata->credit_amount ?? null;
+
+        if (!$userId || !$creditAmount) {
+            \Log::warning('Stripe checkout: missing user_id or credit_amount', [
+                'session_id' => $session->id ?? null,
+            ]);
+
+            return ['status' => 'missing_metadata'];
+        }
+
+        if ($expectedUserId !== null && (int) $userId !== $expectedUserId) {
+            return ['status' => 'wrong_user', 'reason' => 'metadata_user_mismatch'];
+        }
+
+        if (!is_numeric($creditAmount)) {
+            return ['status' => 'invalid_amount', 'reason' => 'amount_not_numeric'];
+        }
+
+        $creditAmount = (float) $creditAmount;
+        if (!in_array($creditAmount, array_map('floatval', self::ALLOWED_AMOUNTS), true)) {
+            return ['status' => 'invalid_amount', 'reason' => 'amount_not_allowed'];
+        }
+
+        $user = User::find($userId);
+        if (!$user) {
+            \Log::warning('Stripe checkout: user not found', ['user_id' => $userId]);
+            return ['status' => 'user_not_found'];
+        }
+
+        $existing = CreditTransaction::where('metadata->stripe_session_id', $session->id)->first();
+        if (!$existing) {
+            $existing = CreditTransaction::where('description', 'LIKE', '%' . $session->id . '%')->first();
+        }
+
+        if ($existing) {
+            \Log::info('Stripe checkout: duplicate session, skipping', [
+                'session_id' => $session->id,
+                'handled_by' => $handledBy,
+            ]);
+
+            return ['status' => 'already_processed', 'amount' => $creditAmount];
+        }
+
+        CreditTransaction::topup(
+            userId: $user->id,
+            amount: $creditAmount,
+            description: "Stripe deposit \${$creditAmount} (session: {$session->id})",
+            metadata: [
+                'stripe_session_id' => $session->id,
+                'stripe_payment_intent' => $session->payment_intent ?? null,
+                'amount_usd' => $creditAmount,
+                'handled_by' => $handledBy,
+            ],
+        );
+
+        \Log::info('Stripe checkout: credits added', [
+            'user_id' => $userId,
+            'amount' => $creditAmount,
+            'session_id' => $session->id,
+            'handled_by' => $handledBy,
+        ]);
+
+        return ['status' => 'credited', 'amount' => $creditAmount];
     }
 
     /**

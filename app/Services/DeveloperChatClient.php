@@ -43,10 +43,14 @@ class DeveloperChatClient
 
         $timeout = $options['timeout'] ?? 120;
 
+        // Pass the API key via the x-goog-api-key header rather than a `?key=`
+        // query parameter, so the credential never appears in request URLs,
+        // HTTP client exception messages, or logs.
         $response = Http::timeout($timeout)
             ->retry(2, 500)
             ->acceptJson()
-            ->post("{$baseUrl}/models/{$model}:generateContent?key={$apiKey}", $payload)
+            ->withHeaders(['x-goog-api-key' => $apiKey])
+            ->post("{$baseUrl}/models/{$model}:generateContent", $payload)
             ->throw();
 
         $body = $response->json();

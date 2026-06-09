@@ -20,7 +20,7 @@ Route::get('/browse-logos', [BrowseLogosController::class, 'index'])->name('brow
 
 Route::get('/dashboard', function () {
     return redirect('/portal');
-})->middleware('auth')->name('user.dashboard');
+})->middleware(['auth', 'verified'])->name('user.dashboard');
 
 Route::get('/docs/logo-generator', function () {
     return view('docs.logo-generator');
@@ -82,6 +82,7 @@ Route::post('/documents/{document}/delete-annotations', [DocumentController::cla
 Route::post('/documents/{document}/annotation-debug', [DocumentController::class, 'saveAnnotationDebug'])->name('documents.annotationDebug.save');
 Route::post('/documents/{document}/apply-annotations-direct', [DocumentController::class, 'applyAnnotationsDirect'])->name('documents.applyAnnotationsDirect');
 Route::post('/documents/overwrite-annotation-text', [DocumentController::class, 'overwriteAnnotationText'])->name('documents.overwriteAnnotationText');
+Route::post('/documents/{document}/save-acro-form-state', [DocumentController::class, 'saveAcroFormState'])->name('documents.saveAcroFormState');
 Route::post('/documents/{document}/save-annotation-state', [DocumentController::class, 'saveAnnotationState'])->name('documents.saveAnnotationState');
 Route::post('/documents/{document}/download-annotated-pdf', [DocumentController::class, 'downloadAnnotatedPdf'])->name('documents.downloadAnnotatedPdf');
 Route::get('/documents/{document}/saved-acro-form-state', [DocumentController::class, 'getSavedAcroFormState'])->name('documents.getSavedAcroFormState');
@@ -107,6 +108,7 @@ Route::post('/documents/{document}/add-blank-page', [DocumentController::class, 
 Route::post('/documents/{document}/rotate-page', [DocumentController::class, 'rotatePage'])->name('documents.rotatePage');
 Route::post('/documents/{document}/regenerate-invoice', [DocumentController::class, 'regenerateInvoice'])->name('documents.regenerateInvoice');
 Route::post('/documents/{document}/regenerate-template', [DocumentController::class, 'regenerateTemplate'])->name('documents.regenerateTemplate');
+Route::post('/documents/{document}/convert-guided-acroform', [DocumentController::class, 'convertGuidedAcroForm'])->name('documents.convertGuidedAcroForm');
 Route::post('/documents/{document}/convert-html-to-pdf', [DocumentController::class, 'convertHtmlToPdf'])->name('documents.convertHtmlToPdf');
 Route::post('/documents/{document}/save-guided-form', [DocumentController::class, 'saveGuidedFormData'])->name('documents.saveGuidedForm');
 Route::post('/documents/{document}/screenshot', [DocumentController::class, 'takeScreenshot'])->name('documents.takeScreenshot');
@@ -175,7 +177,6 @@ Route::get('/ai/add-to-pdf', function() {
 // Domain Search
 Route::get('/domain-search', [DomainSearchController::class, 'index'])->name('domainSearch.index');
 Route::get('/logo-generator', [DomainSearchController::class, 'logoGenerator2'])->name('domainSearch.logoGenerator');
-Route::get('/logo-generator-classic', [DomainSearchController::class, 'logoGenerator'])->name('domainSearch.logoGeneratorClassic');
 Route::get('/svg-editor', function () {
     return view('svg-editor');
 })->name('svgEditor');
@@ -220,6 +221,7 @@ Route::post('/logos/{logoRequest}/save-edited', [DomainSearchController::class, 
 
 // Stripe Credits
 Route::post('/credits/checkout', [CreditController::class, 'createCheckout'])->middleware('auth')->name('credits.checkout');
+Route::get('/credits/checkout/success', [CreditController::class, 'checkoutSuccess'])->middleware('auth')->name('credits.checkout.success');
 Route::post('/subscription/checkout', [CreditController::class, 'createSubscriptionCheckout'])->middleware('auth')->name('subscription.checkout');
 Route::post('/subscription/cancel', [CreditController::class, 'cancelSubscription'])->middleware('auth')->name('subscription.cancel');
 Route::post('/stripe/webhook', [CreditController::class, 'handleWebhook'])->name('stripe.webhook');

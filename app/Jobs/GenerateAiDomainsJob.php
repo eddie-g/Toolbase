@@ -171,7 +171,7 @@ class GenerateAiDomainsJob implements ShouldQueue
             'job_id' => $this->jobId,
             'domain_request_id' => $this->domainRequestId,
             'exception' => get_class($e),
-            'message' => $e->getMessage(),
+            'message' => \App\Support\SecretRedactor::redact($e->getMessage()),
         ]);
     }
 
@@ -181,7 +181,19 @@ class GenerateAiDomainsJob implements ShouldQueue
             return 'AI domain generation timed out before completion. Please try again.';
         }
 
-        return $e->getMessage() ?: 'AI domain generation failed. Please try again.';
+        // Never surface raw HTTP/connection exception messages to users: they can
+        // contain request URLs, headers, or other internal details. Show a safe,
+        // generic message instead.
+        if ($e instanceof \Illuminate\Http\Client\ConnectionException
+            || $e instanceof \Illuminate\Http\Client\RequestException) {
+            return 'The AI service is temporarily unreachable. Please try again in a moment.';
+        }
+
+        // For our own RuntimeExceptions (safe, user-facing messages), pass the
+        // message through but redact any secrets as a defense-in-depth backstop.
+        $message = \App\Support\SecretRedactor::redact($e->getMessage());
+
+        return $message !== '' ? $message : 'AI domain generation failed. Please try again.';
     }
 
     private function buildPrompt(): string

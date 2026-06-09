@@ -123,6 +123,10 @@ class Logos extends Page
                     'prompt' => $logo->original_prompt ?: $logo->prompt,
                     'domain' => $logo->domain,
                     'style' => $logo->style,
+                    'generator' => $this->modelLabel($logo->model),
+                    'model' => $logo->model,
+                    'output_format' => $logo->output_format,
+                    'is_vector' => $logo->output_format === 'vector' || str_ends_with(strtolower((string) parse_url($url, PHP_URL_PATH)), '.svg'),
                     'is_favourited' => (bool) $logo->is_favourited,
                     'is_showcase' => (bool) $logo->is_showcase,
                     'size_bytes' => $sizeBytes,
@@ -137,6 +141,23 @@ class Logos extends Page
             'items' => $items,
             'logos' => $logos, // for pagination links
         ];
+    }
+
+    public function modelLabel(?string $model): string
+    {
+        $model = strtolower((string) $model);
+
+        if (str_contains($model, 'recraft')) {
+            return 'Ray';
+        }
+        if (str_contains($model, 'flux') || str_contains($model, 'nano-banana')) {
+            return 'Luna';
+        }
+        if (str_contains($model, 'gpt-image') || str_contains($model, 'dall-e')) {
+            return 'Cosmo';
+        }
+
+        return 'Cosmo';
     }
 
     private function humanFileSize(?int $bytes): string

@@ -279,9 +279,9 @@
 
             .workspace-grid {
                 display: grid;
-                grid-template-columns: 280px minmax(0, 1fr);
+                grid-template-columns: minmax(0, 1fr);
                 gap: 24px;
-                align-items: stretch;
+                align-items: start;
             }
 
             .section-card {
@@ -295,7 +295,14 @@
             .blank-card {
                 padding: 22px;
                 display: grid;
-                gap: 18px;
+                grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+                gap: 22px;
+                align-items: end;
+            }
+
+            .blank-card-header {
+                display: grid;
+                gap: 12px;
             }
 
             .eyebrow {
@@ -320,6 +327,8 @@
 
             .blank-controls {
                 display: grid;
+                grid-template-columns: minmax(180px, 1fr) minmax(240px, 1fr) auto;
+                align-items: end;
                 gap: 16px;
             }
 
@@ -384,6 +393,7 @@
             .blank-card .button-primary {
                 width: 100%;
                 margin-top: auto;
+                min-height: 44px;
             }
 
             .template-pane {
@@ -413,7 +423,140 @@
 
             .template-gallery {
                 display: grid;
-                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 24px;
+            }
+
+            .template-category-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 16px;
+            }
+
+            .template-category-card {
+                appearance: none;
+                display: grid;
+                grid-template-columns: auto minmax(0, 1fr) auto;
+                align-items: center;
+                gap: 16px;
+                width: 100%;
+                min-height: 116px;
+                padding: 18px;
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                background: #ffffff;
+                color: #0f172a;
+                cursor: pointer;
+                text-align: left;
+                box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+                transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+            }
+
+            .template-category-card:hover {
+                transform: translateY(-2px);
+                border-color: rgba(18, 28, 132, 0.28);
+                box-shadow: 0 20px 42px rgba(15, 23, 42, 0.12);
+            }
+
+            .template-category-icon {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 52px;
+                height: 52px;
+                border-radius: 14px;
+                background: rgba(18, 28, 132, 0.08);
+                color: var(--accent);
+            }
+
+            .template-category-icon svg {
+                width: 26px;
+                height: 26px;
+            }
+
+            .template-category-copy {
+                display: grid;
+                gap: 6px;
+                min-width: 0;
+            }
+
+            .template-category-title {
+                font-size: 21px;
+                font-family: var(--font-display);
+                font-weight: 800;
+                letter-spacing: -0.01em;
+            }
+
+            .template-category-subtitle,
+            .template-group-subtitle {
+                color: var(--muted);
+                font-size: 13px;
+                line-height: 1.45;
+            }
+
+            .template-category-count {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 34px;
+                height: 34px;
+                padding: 0 10px;
+                border-radius: 999px;
+                background: #f1f5f9;
+                color: #334155;
+                font-size: 13px;
+                font-weight: 800;
+            }
+
+            .template-detail-pane[hidden],
+            .template-category-grid[hidden],
+            .template-group[hidden] {
+                display: none !important;
+            }
+
+            .template-group {
+                display: grid;
+                gap: 18px;
+            }
+
+            .template-group-header {
+                display: flex;
+                align-items: center;
+                gap: 14px;
+            }
+
+            .template-group-back {
+                appearance: none;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 38px;
+                height: 38px;
+                border: 1px solid var(--border);
+                border-radius: 999px;
+                background: #ffffff;
+                color: #0f172a;
+                cursor: pointer;
+                box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+                transition: transform 0.16s ease, border-color 0.16s ease;
+            }
+
+            .template-group-back:hover {
+                transform: translateY(-1px);
+                border-color: rgba(18, 28, 132, 0.28);
+            }
+
+            .template-group-title {
+                margin: 0;
+                color: #0f172a;
+                font-size: 22px;
+                font-family: var(--font-display);
+                font-weight: 800;
+                letter-spacing: -0.01em;
+            }
+
+            .template-group-grid {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
                 gap: 16px;
             }
 
@@ -766,10 +909,15 @@
             }
 
             @media (max-width: 1024px) {
-                .workspace-grid,
                 .docs-grid,
-                .template-gallery {
+                .template-group-grid,
+                .template-category-grid {
                     grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+
+                .blank-card,
+                .blank-controls {
+                    grid-template-columns: minmax(0, 1fr);
                 }
             }
 
@@ -784,9 +932,9 @@
                     padding: 20px;
                 }
 
-                .workspace-grid,
                 .docs-grid,
-                .template-gallery {
+                .template-group-grid,
+                .template-category-grid {
                     grid-template-columns: 1fr;
                 }
 
@@ -815,10 +963,6 @@
     </head>
     <body class="min-h-screen antialiased">
         <x-site-header />
-
-        @php
-            $featuredTemplates = $guidedTemplates->take(3);
-        @endphp
 
         <main class="uploader-page">
             <div class="page-container">
@@ -874,8 +1018,8 @@
 
                     <section class="workspace-grid">
                         <div class="section-card blank-card">
-                            <div class="eyebrow">New Project</div>
-                            <div>
+                            <div class="blank-card-header">
+                                <div class="eyebrow">New Project</div>
                                 <h2>Start with Empty PDF</h2>
                             </div>
 
@@ -927,44 +1071,123 @@
                                         <div class="eyebrow">Accelerate Workflow</div>
                                         <h2>Guided Templates</h2>
                                     </div>
-                                    <a href="#templates-gallery" class="template-link">View All Gallery &rarr;</a>
                                 </div>
 
-                                <div class="template-gallery">
-                                    @foreach ($featuredTemplates as $tpl)
-                                        <form class="template-form" action="{{ $tpl->type === 'invoice' ? route('documents.createSimpleInvoice') : route('documents.createFromGuidedTemplate') }}" method="POST">
-                                            @csrf
-                                            @php $defaults = $tpl->defaults ?? []; @endphp
-                                            @if ($tpl->type === 'invoice')
-                                                <input type="hidden" name="company_name" value="{{ $defaults['company_name'] ?? 'Your Company Inc.' }}">
-                                                <input type="hidden" name="company_address" value="{{ $defaults['company_address'] ?? '' }}">
-                                                <input type="hidden" name="customer_name" value="{{ $defaults['customer_name'] ?? 'Customer Name' }}">
-                                                <input type="hidden" name="customer_address" value="{{ $defaults['customer_address'] ?? '' }}">
-                                                <input type="hidden" name="invoice_number" value="{{ $defaults['invoice_number'] ?? '0001001' }}">
-                                                <input type="hidden" name="invoice_date" value="{{ date('m-d-Y') }}">
-                                                <input type="hidden" name="due_date" value="{{ date('m-d-Y', strtotime('+14 days')) }}">
-                                                <input type="hidden" name="terms" value="{{ $defaults['terms'] ?? '' }}">
-                                                <input type="hidden" name="_guided" value="1">
-                                                @if ($tpl->slug !== 'default')
-                                                    <input type="hidden" name="style" value="{{ $tpl->slug }}">
-                                                @endif
-                                            @else
-                                                <input type="hidden" name="_template_type" value="{{ $tpl->type }}">
-                                                <input type="hidden" name="_template_slug" value="{{ $tpl->slug }}">
-                                                <input type="hidden" name="_guided" value="1">
+                                @php
+                                    $workflowGroups = [
+                                        'realestate' => [
+                                            'label' => 'Real Estate',
+                                            'summary' => 'Lease extensions and deposit workflows',
+                                        ],
+                                        'invoice' => [
+                                            'label' => 'Invoice',
+                                            'summary' => 'Clean invoice layouts and billing forms',
+                                        ],
+                                    ];
+                                    $workflowTemplates = collect($guidedTemplates)
+                                        ->whereIn('type', array_keys($workflowGroups))
+                                        ->groupBy('type');
+                                @endphp
+                                <div class="template-gallery" data-template-workflow>
+                                    <div class="template-category-grid" id="template-category-grid">
+                                        @foreach ($workflowGroups as $type => $group)
+                                            @php $templatesForGroup = ($workflowTemplates->get($type) ?? collect())->sortBy('sort_order'); @endphp
+                                            @if ($templatesForGroup->isNotEmpty())
+                                                <button
+                                                    type="button"
+                                                    class="template-category-card"
+                                                    data-template-category-open="{{ $type }}"
+                                                    aria-controls="template-panel-{{ $type }}"
+                                                    aria-expanded="false"
+                                                >
+                                                    <span class="template-category-icon" aria-hidden="true">
+                                                        @if ($type === 'realestate')
+                                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                                <path d="M3 11.5 12 4l9 7.5"></path>
+                                                                <path d="M5 10.5V20h14v-9.5"></path>
+                                                                <path d="M9 20v-6h6v6"></path>
+                                                            </svg>
+                                                        @else
+                                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                                                <path d="M7 3h10v18l-2-1.4-2 1.4-2-1.4-2 1.4-2-1.4V3Z"></path>
+                                                                <path d="M10 8h6"></path>
+                                                                <path d="M10 12h6"></path>
+                                                                <path d="M10 16h3"></path>
+                                                            </svg>
+                                                        @endif
+                                                    </span>
+                                                    <span class="template-category-copy">
+                                                        <span class="template-category-title">{{ $group['label'] }}</span>
+                                                        <span class="template-category-subtitle">{{ $group['summary'] }}</span>
+                                                    </span>
+                                                    <span class="template-category-count">{{ $templatesForGroup->count() }}</span>
+                                                </button>
                                             @endif
+                                        @endforeach
+                                    </div>
 
-                                            <button type="submit" class="template-card">
-                                                <div class="template-preview">
-                                                    {!! $tpl->preview_html !!}
+                                    <div class="template-detail-pane" id="template-detail-pane" hidden>
+                                    @foreach ($workflowGroups as $type => $group)
+                                        @php $templatesForGroup = ($workflowTemplates->get($type) ?? collect())->sortBy('sort_order'); @endphp
+                                        @if ($templatesForGroup->isNotEmpty())
+                                            <section
+                                                class="template-group"
+                                                id="template-panel-{{ $type }}"
+                                                data-template-category-panel="{{ $type }}"
+                                                aria-labelledby="template-group-{{ $type }}"
+                                                hidden
+                                            >
+                                                <div class="template-group-header">
+                                                    <button type="button" class="template-group-back" data-template-category-back aria-label="Back to template categories">
+                                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                                            <path d="m15 18-6-6 6-6"></path>
+                                                        </svg>
+                                                    </button>
+                                                    <div>
+                                                        <h3 class="template-group-title" id="template-group-{{ $type }}">{{ $group['label'] }}</h3>
+                                                        <div class="template-group-subtitle">{{ $group['summary'] }}</div>
+                                                    </div>
                                                 </div>
-                                                <div class="template-meta">
-                                                    <div class="template-title">{{ $tpl->name }}</div>
-                                                    <div class="template-subtitle">{{ $tpl->description }}</div>
+                                                <div class="template-group-grid">
+                                                    @foreach ($templatesForGroup as $tpl)
+                                                        <form class="template-form" action="{{ $tpl->type === 'invoice' ? route('documents.createSimpleInvoice') : route('documents.createFromGuidedTemplate') }}" method="POST">
+                                                            @csrf
+                                                            @php $defaults = $tpl->defaults ?? []; @endphp
+                                                            @if ($tpl->type === 'invoice')
+                                                                <input type="hidden" name="company_name" value="{{ $defaults['company_name'] ?? 'Your Company Inc.' }}">
+                                                                <input type="hidden" name="company_address" value="{{ $defaults['company_address'] ?? '' }}">
+                                                                <input type="hidden" name="customer_name" value="{{ $defaults['customer_name'] ?? 'Customer Name' }}">
+                                                                <input type="hidden" name="customer_address" value="{{ $defaults['customer_address'] ?? '' }}">
+                                                                <input type="hidden" name="invoice_number" value="{{ $defaults['invoice_number'] ?? '0001001' }}">
+                                                                <input type="hidden" name="invoice_date" value="{{ date('m-d-Y') }}">
+                                                                <input type="hidden" name="due_date" value="{{ date('m-d-Y', strtotime('+14 days')) }}">
+                                                                <input type="hidden" name="terms" value="{{ $defaults['terms'] ?? '' }}">
+                                                                <input type="hidden" name="_guided" value="1">
+                                                                @if ($tpl->slug !== 'default')
+                                                                    <input type="hidden" name="style" value="{{ $tpl->slug }}">
+                                                                @endif
+                                                            @else
+                                                                <input type="hidden" name="_template_type" value="{{ $tpl->type }}">
+                                                                <input type="hidden" name="_template_slug" value="{{ $tpl->slug }}">
+                                                                <input type="hidden" name="_guided" value="1">
+                                                            @endif
+
+                                                            <button type="submit" class="template-card">
+                                                                <div class="template-preview">
+                                                                    {!! $tpl->preview_html !!}
+                                                                </div>
+                                                                <div class="template-meta">
+                                                                    <div class="template-title">{{ $tpl->name }}</div>
+                                                                    <div class="template-subtitle">{{ $tpl->description }}</div>
+                                                                </div>
+                                                            </button>
+                                                        </form>
+                                                    @endforeach
                                                 </div>
-                                            </button>
-                                        </form>
+                                            </section>
+                                        @endif
                                     @endforeach
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -997,7 +1220,12 @@
                                         ? route('documents.guided', $document)
                                         : ($document->mode === 'ai'
                                             ? route('documents.ai', $document)
-                                            : route('documents.edit', $document));
+                                            : ($document->mode === 'full_editor'
+                                                ? route('documents.editPdfjs', $document)
+                                                : route('documents.edit', $document)));
+                                    $openNewUrl = $document->mode === 'guided'
+                                        ? route('documents.guided', $document)
+                                        : route('documents.editNew', ['document' => $document, 'pdfjs' => 1]);
                                     $sizeMb = $document->size_bytes > 0 ? number_format($document->size_bytes / (1024 * 1024), 1) : '0.0';
                                     $updatedLabel = optional($document->updated_at)->diffForHumans() ?: 'just now';
                                     $paperClass = $document->mode === 'ai' ? 'ai-mode' : ($document->mode === 'guided' ? 'guided-mode' : '');
@@ -1011,6 +1239,8 @@
                                         <div class="mode-pill">Guided</div>
                                     @elseif($document->mode === 'ai')
                                         <div class="mode-pill">AI</div>
+                                    @elseif($document->mode === 'full_editor')
+                                        <div class="mode-pill">Full Editor</div>
                                     @endif
                                     <div class="doc-preview{{ $previewDataUrl ? ' has-image' : '' }}">
                                         @if ($previewDataUrl)
@@ -1038,7 +1268,7 @@
                                         <div class="doc-actions">
                                             <a href="{{ $editUrl }}" class="doc-link">Open</a>
                                             @if(strtolower((string) config('pdf_editor.layout_mode', 'default')) === 'new_writer')
-                                            <a href="{{ route('documents.editNew', ['document' => $document, 'pdfjs' => 1]) }}" target="_blank" class="doc-link doc-link-outline">Open New</a>
+                                            <a href="{{ $openNewUrl }}" target="_blank" class="doc-link doc-link-outline">Open New</a>
                                             @endif
                                             <form action="{{ route('documents.destroy', $document) }}" method="POST" style="margin:0;">
                                                 @csrf
@@ -1234,22 +1464,14 @@
                     setFile(file);
                 });
 
-                form.addEventListener('submit', (event) => {
-                    event.preventDefault();
-                    clearError();
-
-                    const file = selectedFile || input.files[0];
-                    if (!file) {
-                        showError('Please choose a PDF file before uploading.');
-                        return;
-                    }
-                    if (!isPdf(file)) {
-                        showError('Only PDF files are allowed.');
-                        return;
-                    }
-
+                const sendUpload = (file, extraFields) => {
                     const data = new FormData(form);
                     data.set('document', file);
+                    if (extraFields && typeof extraFields === 'object') {
+                        Object.keys(extraFields).forEach((key) => {
+                            data.set(key, extraFields[key]);
+                        });
+                    }
 
                     submitBtn.disabled = true;
                     progress.style.display = 'flex';
@@ -1271,13 +1493,24 @@
                             return;
                         }
 
+                        let body = null;
+                        try {
+                            body = JSON.parse(xhr.responseText);
+                        } catch (_) {}
+
+                        if (xhr.status === 409 && body && body.duplicate_name) {
+                            submitBtn.disabled = false;
+                            progress.style.display = 'none';
+                            handleDuplicateName(body, file);
+                            return;
+                        }
+
                         submitBtn.disabled = false;
                         progress.style.display = 'none';
                         let message = 'Upload failed. Please try again.';
-                        try {
-                            const body = JSON.parse(xhr.responseText);
+                        if (body) {
                             message = body.errors?.document?.[0] || body.message || message;
-                        } catch (_) {}
+                        }
                         if (shouldShowUploadLimitModal(message)) {
                             showUploadLimitModal();
                         }
@@ -1291,12 +1524,104 @@
                     });
 
                     xhr.send(data);
+                };
+
+                const handleDuplicateName = (body, file) => {
+                    const existingName = body.existing_name || 'this name';
+                    const openExisting = window.confirm(
+                        'A document named "' + existingName + '" already exists.\n\n' +
+                        'Click OK to open the existing document, or Cancel to rename and upload this file as a new document.'
+                    );
+
+                    if (openExisting) {
+                        if (body.existing_url) {
+                            window.location.href = body.existing_url;
+                        }
+                        return;
+                    }
+
+                    const suggested = (file.name || 'document').replace(/\.pdf$/i, '') + ' (copy).pdf';
+                    const newName = window.prompt('Enter a new name for this document:', suggested);
+                    if (newName === null) {
+                        return;
+                    }
+
+                    const trimmed = newName.trim();
+                    if (trimmed === '') {
+                        showError('Document name cannot be empty.');
+                        return;
+                    }
+
+                    clearError();
+                    sendUpload(file, { rename_to: trimmed });
+                };
+
+                form.addEventListener('submit', (event) => {
+                    event.preventDefault();
+                    clearError();
+
+                    const file = selectedFile || input.files[0];
+                    if (!file) {
+                        showError('Please choose a PDF file before uploading.');
+                        return;
+                    }
+                    if (!isPdf(file)) {
+                        showError('Only PDF files are allowed.');
+                        return;
+                    }
+
+                    sendUpload(file, {});
+                });
+            }
+
+            function initTemplateWorkflow() {
+                const categoryGrid = document.getElementById('template-category-grid');
+                const detailPane = document.getElementById('template-detail-pane');
+                const openButtons = Array.from(document.querySelectorAll('[data-template-category-open]'));
+                const panels = Array.from(document.querySelectorAll('[data-template-category-panel]'));
+                const backButtons = Array.from(document.querySelectorAll('[data-template-category-back]'));
+
+                if (!categoryGrid || !detailPane || openButtons.length === 0 || panels.length === 0) {
+                    return;
+                }
+
+                const showCategories = () => {
+                    categoryGrid.hidden = false;
+                    detailPane.hidden = true;
+                    panels.forEach((panel) => {
+                        panel.hidden = true;
+                    });
+                    openButtons.forEach((button) => {
+                        button.setAttribute('aria-expanded', 'false');
+                    });
+                };
+
+                const openCategory = (category) => {
+                    const panel = panels.find((item) => item.dataset.templateCategoryPanel === category);
+                    if (!panel) return;
+
+                    categoryGrid.hidden = true;
+                    detailPane.hidden = false;
+                    panels.forEach((item) => {
+                        item.hidden = item !== panel;
+                    });
+                    openButtons.forEach((button) => {
+                        button.setAttribute('aria-expanded', button.dataset.templateCategoryOpen === category ? 'true' : 'false');
+                    });
+                };
+
+                openButtons.forEach((button) => {
+                    button.addEventListener('click', () => openCategory(button.dataset.templateCategoryOpen));
+                });
+                backButtons.forEach((button) => {
+                    button.addEventListener('click', showCategories);
                 });
             }
 
             document.addEventListener('DOMContentLoaded', () => {
                 updateBulkState();
                 initUploadDropzone();
+                initTemplateWorkflow();
 
                 const uploadModeInput = document.getElementById('document-mode-input');
                 if (uploadModeInput) {

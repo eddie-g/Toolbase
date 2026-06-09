@@ -29,9 +29,57 @@ import sys
 import fitz  # PyMuPDF
 
 
+FIELD_FILL = (0.93, 0.96, 1.0)
+FIELD_BORDER = (0.55, 0.62, 0.78)
+TEXT_FIELD_MULTILINE = 1 << 12
+TEXT_FIELD_READONLY = 1
+
+
 def _fmt(amount):
     """Format a number as $X,XXX.XX"""
     return f"${amount:,.2f}"
+
+
+def _num(value, default=0.0):
+    try:
+        if value in (None, ""):
+            return default
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _text(value):
+    return "" if value is None else str(value)
+
+
+def _add_text_field(page, name, rect, value="", fontsize=9, multiline=False,
+                    readonly=False, align=fitz.TEXT_ALIGN_LEFT,
+                    color=(0.12, 0.12, 0.14), fill_color=FIELD_FILL):
+    widget = fitz.Widget()
+    widget.field_name = name
+    widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+    widget.rect = fitz.Rect(rect)
+    widget.text_font = "Helv"
+    widget.text_fontsize = float(fontsize)
+    widget.text_color = color
+    widget.fill_color = fill_color
+    widget.border_color = FIELD_BORDER
+    widget.border_width = 0.6
+    widget.field_value = _text(value)
+    flags = 0
+    if multiline:
+        flags |= TEXT_FIELD_MULTILINE
+    if readonly:
+        flags |= TEXT_FIELD_READONLY
+    if flags:
+        widget.field_flags = flags
+    try:
+        widget.text_align = align
+    except Exception:
+        pass
+    page.add_widget(widget)
+    return widget
 
 
 # ===================================================================
@@ -66,11 +114,12 @@ def _generate_default(data, page, W, H):
 
     company_name = data.get("company_name", "Your Company Inc.")
     company_addr = data.get("company_address", "1234 Company St.\nCompany Town ST 12345")
-    page.insert_text(fitz.Point(bx + 12, by + 22), company_name,
-                     fontsize=12, fontname="helv", color=BLACK)
-    for i, line in enumerate(company_addr.split("\n")[:3]):
-        page.insert_text(fitz.Point(bx + 12, by + 38 + i * 13), line.strip(),
-                         fontsize=9, fontname="helv", color=GREY)
+    _add_text_field(page, "invoice_company_name",
+                    (bx + 10, by + 8, bx + box_w - 10, by + 28),
+                    company_name, fontsize=12)
+    _add_text_field(page, "invoice_company_address",
+                    (bx + 10, by + 32, bx + box_w - 10, by + box_h - 8),
+                    company_addr, fontsize=9, multiline=True, color=GREY)
 
     # "INVOICE" title
     page.insert_text(fitz.Point(W - M - 155, by + box_h + 30), "INVOICE",
@@ -90,11 +139,12 @@ def _generate_default(data, page, W, H):
 
     customer_name = data.get("customer_name", "Customer Name")
     customer_addr = data.get("customer_address", "1234 Customer St.\nCustomer Town ST 12345")
-    page.insert_text(fitz.Point(M + 12, y_bill + 18), customer_name,
-                     fontsize=11, fontname="helv", color=BLACK)
-    for i, line in enumerate(customer_addr.split("\n")[:3]):
-        page.insert_text(fitz.Point(M + 12, y_bill + 34 + i * 13), line.strip(),
-                         fontsize=9, fontname="helv", color=GREY)
+    _add_text_field(page, "invoice_customer_name",
+                    (M + 10, y_bill + 8, M + box_w - 10, y_bill + 28),
+                    customer_name, fontsize=11)
+    _add_text_field(page, "invoice_customer_address",
+                    (M + 10, y_bill + 32, M + box_w - 10, y_bill + cust_box_h - 8),
+                    customer_addr, fontsize=9, multiline=True, color=GREY)
 
     # Invoice meta (right column)
     inv_number = data.get("invoice_number", "0001001")
@@ -106,10 +156,10 @@ def _generate_default(data, page, W, H):
     meta_box_w   = 86
     meta_y       = y_bill
 
-    for i, (label, val) in enumerate([
-        ("Invoice #", inv_number),
-        ("Invoice Date", inv_date),
-        ("Due Date", due_date),
+    for i, (label, field_name, val) in enumerate([
+        ("Invoice #", "invoice_number", inv_number),
+        ("Invoice Date", "invoice_date", inv_date),
+        ("Due Date", "invoice_due_date", due_date),
     ]):
         ry = meta_y + i * 28
         page.insert_text(fitz.Point(meta_label_x, ry + 14), label,
@@ -118,8 +168,9 @@ def _generate_default(data, page, W, H):
         shape.draw_rect(fitz.Rect(meta_val_x, ry + 2, meta_val_x + meta_box_w, ry + 20))
         shape.finish(fill=WHITE, color=BORDER, width=0.75)
         shape.commit()
-        page.insert_text(fitz.Point(meta_val_x + 6, ry + 15), val,
-                         fontsize=9, fontname="helv", color=DARK)
+        _add_text_field(page, field_name,
+                        (meta_val_x + 4, ry + 4, meta_val_x + meta_box_w - 4, ry + 20),
+                        val, fontsize=9, color=DARK)
 
     # Line-items table
     table_y = y_bill + cust_box_h + 30
@@ -144,14 +195,22 @@ def _generate_default(data, page, W, H):
                      fontsize=8.5, fontname="helv", color=WHITE)
 
     items = data.get("items", [])
+    if not isinstance(items, list):
+        items = []
+    if not items:
+        items = [{}]
     row_h = 22
     y = table_y + hdr_h
     subtotal = 0.0
 
     for idx, item in enumerate(items):
-        qty    = item.get("qty", 0)
-        desc   = item.get("description", "")
-        price  = item.get("unit_price", 0)
+        if not isinstance(item, dict):
+            item = {}
+        qty_raw = item.get("qty", "")
+        desc = item.get("description", "")
+        price_raw = item.get("unit_price", "")
+        qty = _num(qty_raw)
+        price = _num(price_raw)
         amount = round(qty * price, 2)
         subtotal += amount
 
@@ -161,15 +220,22 @@ def _generate_default(data, page, W, H):
         shape.finish(fill=bg, color=bg)
         shape.commit()
 
-        page.insert_text(fitz.Point(col_qty + 12, y + 15), str(qty),
-                         fontsize=9, fontname="helv", color=DARK)
-        d = desc if len(desc) <= 50 else desc[:47] + "..."
-        page.insert_text(fitz.Point(col_desc + 4, y + 15), d,
-                         fontsize=9, fontname="helv", color=DARK)
-        page.insert_text(fitz.Point(col_price + 4, y + 15), _fmt(price),
-                         fontsize=9, fontname="helv", color=DARK)
-        page.insert_text(fitz.Point(col_amt + 4, y + 15), _fmt(amount),
-                         fontsize=9, fontname="helv", color=DARK)
+        qty_value = "" if qty_raw in (None, "") else str(qty_raw)
+        price_value = "" if price_raw in (None, "") else f"{price:.2f}"
+        amount_value = "" if qty_value == "" and price_value == "" else _fmt(amount)
+        _add_text_field(page, f"invoice_item_{idx}_qty",
+                        (col_qty + 6, y + 4, col_desc - 6, y + row_h - 4),
+                        qty_value, fontsize=9, color=DARK, align=fitz.TEXT_ALIGN_RIGHT, fill_color=WHITE)
+        _add_text_field(page, f"invoice_item_{idx}_description",
+                        (col_desc + 2, y + 4, col_price - 8, y + row_h - 4),
+                        desc, fontsize=9, color=DARK, fill_color=WHITE)
+        _add_text_field(page, f"invoice_item_{idx}_unit_price",
+                        (col_price, y + 4, col_amt - 8, y + row_h - 4),
+                        price_value, fontsize=9, color=DARK, align=fitz.TEXT_ALIGN_RIGHT, fill_color=WHITE)
+        _add_text_field(page, f"invoice_item_{idx}_amount",
+                        (col_amt, y + 4, W - M - 6, y + row_h - 4),
+                        amount_value, fontsize=9, color=DARK, readonly=True,
+                        align=fitz.TEXT_ALIGN_RIGHT, fill_color=WHITE)
         y += row_h
 
     shape = page.new_shape()
@@ -179,7 +245,7 @@ def _generate_default(data, page, W, H):
 
     # Discount
     discount_label  = data.get("discount_label", "")
-    discount_amount = float(data.get("discount_amount", 0))
+    discount_amount = _num(data.get("discount_amount", 0))
     y += 14
 
     if discount_label and discount_amount > 0:
@@ -204,8 +270,10 @@ def _generate_default(data, page, W, H):
 
     page.insert_text(fitz.Point(col_price - 74, tot_bar_y + 15), "Total (USD)",
                      fontsize=10, fontname="helv", color=BLACK)
-    page.insert_text(fitz.Point(col_amt + 4, tot_bar_y + 15), _fmt(total),
-                     fontsize=11, fontname="helv", color=BLACK)
+    _add_text_field(page, "invoice_total",
+                    (col_amt, tot_bar_y + 4, W - M - 6, tot_bar_y + 20),
+                    _fmt(total), fontsize=11, color=BLACK, readonly=True,
+                    align=fitz.TEXT_ALIGN_RIGHT, fill_color=WHITE)
 
     y = tot_bar_y + 44
     _draw_terms_boxed(data, page, M, W, H, y, BLACK, WHITE, BORDER, GREY)
@@ -332,9 +400,9 @@ def _generate_bold_red(data, page, W, H):
     subtotal = 0.0
 
     for idx, item in enumerate(items):
-        qty    = item.get("qty", 0)
+        qty    = _num(item.get("qty", 0))
         desc   = item.get("description", "")
-        price  = item.get("unit_price", 0)
+        price  = _num(item.get("unit_price", 0))
         amount = round(qty * price, 2)
         subtotal += amount
 

@@ -123,11 +123,6 @@ class DomainSearchController extends Controller
         ]);
     }
 
-    public function logoGenerator()
-    {
-        return view('logo-generator');
-    }
-
     public function logoGenerator2(Request $request)
     {
         $user = $request->user();
@@ -1567,8 +1562,10 @@ class DomainSearchController extends Controller
 
             $base64Image = base64_encode($imageBytes);
 
-            $response = Http::timeout(30)->post(
-                "{$baseUrl}/models/{$model}:generateContent?key={$apiKey}",
+            $response = Http::timeout(30)
+                ->withHeaders(['x-goog-api-key' => $apiKey])
+                ->post(
+                "{$baseUrl}/models/{$model}:generateContent",
                 [
                     'contents' => [
                         [
@@ -1660,10 +1657,14 @@ class DomainSearchController extends Controller
                 'output_format' => 'nullable|string|in:raster,vector',
                 'image_format' => 'nullable|string|in:png,bmp',
                 'recraft_substyle' => 'nullable|string|max:60',
+                'gen_mode' => 'nullable|string|in:logo,image',
+                'image_size' => 'nullable|string|in:1:1,16:9,9:16',
             ]);
 
             $imageModel = $request->input('image_model', 'flux');
             $outputFormat = $request->input('output_format', 'raster');
+            $genMode = $request->input('gen_mode', 'logo');
+            $genImageSize = $request->input('image_size', '1:1');
 
         if ($imageModel === 'recraft') {
             $recraftSize = $outputFormat === 'vector' ? '1:1' : '1024x1024';
@@ -1747,15 +1748,25 @@ class DomainSearchController extends Controller
                 'font_style' => 'nullable|string|in:modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light',
                 'color_palette' => 'nullable|array|max:5',
                 'color_palette.*' => 'string|max:20',
+                'gen_mode' => 'nullable|string|in:logo,image',
+                'image_size' => 'nullable|string|in:1:1,16:9,9:16',
             ]);
 
             $iconOnly = (bool) $request->input('icon_only', false);
             $textOnly = (bool) $request->input('text_only', false);
             $domain = $request->input('domain') ? trim($request->input('domain')) : null;
             $style = $request->input('style');
+            $genMode = $request->input('gen_mode', 'logo');
+            $genImageSize = $request->input('image_size', '1:1');
+
+            // In image mode there is never logo text, so force icon-only semantics.
+            if ($genMode === 'image') {
+                $iconOnly = true;
+                $textOnly = false;
+            }
 
             // Domain is required for text-only mode and when text is included in logo
-            if (!$iconOnly && !$domain && $style !== 'custom') {
+            if ($genMode !== 'image' && !$iconOnly && !$domain && $style !== 'custom') {
                 return response()->json([
                     'error' => 'Domain name is required when generating logos with text.',
                 ], 422);
@@ -1765,6 +1776,13 @@ class DomainSearchController extends Controller
             $totalCount = $request->input('total_count', $imageCount);
             $batchIndex = $request->input('batch_index', 0);
             $customPrompt = $request->input('custom_prompt');
+
+            // Image mode requires a description to generate from.
+            if ($genMode === 'image' && trim((string) $customPrompt) === '') {
+                return response()->json([
+                    'error' => 'Please describe the image you want to generate.',
+                ], 422);
+            }
 
             // ── Trademark / copyright guard ──────────────────────────────────────
             if ($customPrompt) {
@@ -2010,6 +2028,26 @@ class DomainSearchController extends Controller
                 $prompt = $rawCustom;
             }
 
+            // ── Image mode: override every builder with a general image prompt ──
+            if ($genMode === 'image') {
+                $imageBg = match($bgColor) {
+                    'none'        => '',
+                    'black'       => 'set against a solid black background',
+                    'transparent' => 'on a plain transparent background',
+                    default       => str_starts_with($bgColor, '#')
+                        ? "set against a solid {$bgColor} background"
+                        : 'set against a solid white background',
+                };
+
+                $prompt = \App\Services\ImagePromptBuilder::build(
+                    style:            $style === 'custom' ? 'professional' : $style,
+                    subject:          trim($customPrompt ?? ''),
+                    colorInstruction: $colorInstruction,
+                    bgInstruction:    $imageBg,
+                    imageSize:        $genImageSize,
+                );
+            }
+
             // Determine model name for logging
             if ($imageModel === 'recraft') {
                 $formatTag = $outputFormat === 'vector' ? 'vector' : 'raster';
@@ -2091,6 +2129,8 @@ class DomainSearchController extends Controller
                     'model_name' => $modelName,
                     'logo_shape' => $logoShape,
                     'logo_detail' => $logoDetail,
+                    'gen_mode' => $genMode,
+                    'image_size' => $genImageSize,
                 ],
             );
 
@@ -2210,6 +2250,7 @@ class DomainSearchController extends Controller
         string $service,
         string $modelName,
         string $description,
+        ?array $metadata = null,
     ): void {
         if ($user instanceof Admin) {
             $user->debitBalance($amount);
@@ -2220,6 +2261,7 @@ class DomainSearchController extends Controller
                 service: $service,
                 modelName: $modelName,
                 description: $description,
+                metadata: $metadata,
             );
         }
     }
@@ -2839,69 +2881,85 @@ class DomainSearchController extends Controller
     }
 
     /**
-     * Upscale a logo: background removal → super-resolution upscale.
+     * Upscale a generated raster image with Topaz.
      */
     public function upscaleLogo(Request $request)
     {
         if (!$request->user()) {
             return response()->json([
-                'error' => 'You must be logged in to upscale logos.',
+                'error' => 'You must be logged in to upscale images.',
             ], 401);
         }
 
         $request->validate([
             'image_url' => 'required|string',
+            'upscale_factor' => 'nullable|integer|in:2',
+            'logo_request_id' => 'nullable|integer',
+            'image_index' => 'nullable|integer|min:0',
         ]);
 
+        $user = $request->user();
         $imageUrl = $request->input('image_url');
+        $upscaleFactor = (int) $request->input('upscale_factor', 2);
+        $logoRequest = null;
+        $imageIndex = $request->filled('image_index') ? (int) $request->input('image_index') : null;
+
+        if ($request->filled('logo_request_id')) {
+            $logoRequest = AiLogoRequest::find((int) $request->input('logo_request_id'));
+
+            if (!$logoRequest) {
+                return response()->json([
+                    'error' => 'Logo request not found.',
+                ], 404);
+            }
+
+            if (!$this->isAdmin($user) && (int) $logoRequest->user_id !== (int) $user->id) {
+                return response()->json([
+                    'error' => 'You are not allowed to upscale this image.',
+                ], 403);
+            }
+
+            if ($imageIndex !== null && !array_key_exists($imageIndex, array_values((array) $logoRequest->image_urls))) {
+                return response()->json([
+                    'error' => 'Image index not found for this logo request.',
+                ], 422);
+            }
+        }
+
+        $estimate = AiLogoPrice::estimateUpscaleCost(upscaleFactor: $upscaleFactor);
+        $upscaleCost = (float) $estimate['estimated_cost_usd'];
+
+        if ((float) $user->credit_balance < $upscaleCost) {
+            return response()->json([
+                'error' => 'Insufficient balance. Upscaling costs ~$' . number_format($upscaleCost, 2) . '. Please add credits.',
+                'credit_balance' => (float) $user->credit_balance,
+                'estimated_cost' => $upscaleCost,
+            ], 402);
+        }
+
         $falKey = config('services.fal.key');
 
         $startTime = microtime(true);
 
         try {
-            // Step 1: Remove background
-            $birefnetUrl = 'https://fal.run/fal-ai/birefnet';
-            $bgResponse = $this->httpWithResolvedDns($birefnetUrl, [
+            $falImageInput = $this->prepareFalImageInput($imageUrl);
+            $topazUrl = 'https://fal.run/fal-ai/topaz/upscale/image';
+            $upscaleResponse = $this->httpWithResolvedDns($topazUrl, [
                 'Authorization' => 'Key ' . $falKey,
                 'Content-Type' => 'application/json',
             ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
                 return $e instanceof \Illuminate\Http\Client\ConnectionException
                     || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-            })->timeout(60)->post($birefnetUrl, [
-                'image_url' => $imageUrl,
-                'model' => 'General Use (Light)',
-                'operating_resolution' => '1024x1024',
+            })->timeout(300)->post($topazUrl, [
+                'image_url' => $falImageInput,
+                'upscale_factor' => $upscaleFactor,
+                'model' => 'Standard V2',
                 'output_format' => 'png',
-            ]);
-
-            if (!$bgResponse->successful()) {
-                $bgError = $bgResponse->json('detail') ?? $bgResponse->json('message') ?? 'Unknown error';
-                \Log::error('Background removal failed', ['status' => $bgResponse->status(), 'body' => $bgResponse->body()]);
-                return response()->json([
-                    'error' => 'Background removal failed: ' . $bgError,
-                ], 500);
-            }
-
-            $bgData = $bgResponse->json();
-            $transparentUrl = $bgData['image']['url'] ?? null;
-
-            if (!$transparentUrl) {
-                return response()->json([
-                    'error' => 'Background removal returned no image.',
-                ], 500);
-            }
-
-            // Step 2: Upscale with Aura SR (2x sharpening)
-            $auraSrUrl = 'https://fal.run/fal-ai/aura-sr';
-            $upscaleResponse = $this->httpWithResolvedDns($auraSrUrl, [
-                'Authorization' => 'Key ' . $falKey,
-                'Content-Type' => 'application/json',
-            ])->retry(3, 2000, function (\Exception $e, \Illuminate\Http\Client\PendingRequest $request) {
-                return $e instanceof \Illuminate\Http\Client\ConnectionException
-                    || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
-            })->timeout(180)->post($auraSrUrl, [
-                'image_url' => $transparentUrl,
-                'upscaling_factor' => 2,
+                'subject_detection' => 'All',
+                'face_enhancement' => false,
+                'sharpen' => 0.2,
+                'denoise' => 0.1,
+                'fix_compression' => 0.2,
             ]);
 
             if (!$upscaleResponse->successful()) {
@@ -2914,6 +2972,8 @@ class DomainSearchController extends Controller
 
             $upscaleData = $upscaleResponse->json();
             $upscaledUrl = $upscaleData['image']['url'] ?? null;
+            $upscaledWidth = $upscaleData['image']['width'] ?? null;
+            $upscaledHeight = $upscaleData['image']['height'] ?? null;
 
             if (!$upscaledUrl) {
                 return response()->json([
@@ -2921,38 +2981,125 @@ class DomainSearchController extends Controller
                 ], 500);
             }
 
+            $storedUpscale = $this->storeUpscaledImage((int) $user->id, $upscaledUrl);
+            $servedUpscaledUrl = $storedUpscale['url'] ?? $upscaledUrl;
+
+            if ($logoRequest && $imageIndex !== null) {
+                $imageUrls = array_values((array) $logoRequest->image_urls);
+                $imageUrls[$imageIndex] = $servedUpscaledUrl;
+                $logoRequest->update([
+                    'image_urls' => $imageUrls,
+                    'storage_type' => $storedUpscale ? 'path' : ($logoRequest->storage_type ?: 'url'),
+                ]);
+            }
+
             $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
 
-            // Log the upscale cost
             AiLogoPrice::create([
-                'user_id' => $request->user()->id,
+                'user_id' => $user->id,
                 'session' => session()->getId(),
-                'user_email' => $request->user()->email,
-                'request_type' => 'logo_upscale',
-                'model_name' => 'fal-ai/aura-sr + bria/background-removal',
+                'user_email' => $user->email,
+                'request_type' => 'image_upscale',
+                'model_name' => 'fal-ai/topaz/upscale/image',
                 'image_count' => 1,
-                'image_size' => 'upscaled_4x',
+                'image_size' => $upscaleFactor . 'x upscale',
                 'num_inference_steps' => 0,
                 'guidance_scale' => 0,
-                'cost_per_image' => 0.01,
-                'estimated_cost_usd' => 0.01,
-                'actual_cost_usd' => 0.01,
+                'cost_per_image' => $upscaleCost,
+                'estimated_cost_usd' => $upscaleCost,
+                'actual_cost_usd' => $upscaleCost,
                 'status' => 'completed',
-                'prompt_preview' => 'Upscale: bg-removal → aura-sr 4x',
+                'prompt_preview' => 'Upscale image via Topaz ' . $upscaleFactor . 'x',
                 'response_time_ms' => $elapsedMs,
             ]);
 
+            $this->debitUserBalance(
+                $user,
+                $upscaleCost,
+                'image_upscale',
+                'fal-ai/topaz/upscale/image',
+                'Image upscale ' . $upscaleFactor . 'x',
+                [
+                    'original_url' => $imageUrl,
+                    'upscaled_url' => $servedUpscaledUrl,
+                    'provider_url' => $upscaledUrl,
+                    'upscale_factor' => $upscaleFactor,
+                    'width' => $upscaledWidth,
+                    'height' => $upscaledHeight,
+                ],
+            );
+
+            $user->refresh();
+
             return response()->json([
                 'original_url' => $imageUrl,
-                'transparent_url' => $transparentUrl,
-                'upscaled_url' => $upscaledUrl,
+                'upscaled_url' => $servedUpscaledUrl,
+                'provider_url' => $upscaledUrl,
+                'logo_request_id' => $logoRequest ? (int) $logoRequest->id : null,
+                'image_index' => $imageIndex,
+                'width' => $upscaledWidth,
+                'height' => $upscaledHeight,
+                'cost' => $upscaleCost,
+                'credit_balance' => (float) $user->credit_balance,
                 'processing_time_ms' => $elapsedMs,
             ]);
         } catch (\Exception $e) {
-            \Log::error('Logo upscale error: ' . $e->getMessage());
+            \Log::error('Image upscale error: ' . $e->getMessage());
             return response()->json([
                 'error' => 'Upscale failed: ' . $e->getMessage(),
             ], 500);
+        }
+    }
+
+    private function prepareFalImageInput(string $imageUrl): string
+    {
+        if (str_starts_with($imageUrl, '/storage/')) {
+            $localPath = storage_path('app/public/' . substr($imageUrl, 9));
+            if (!file_exists($localPath)) {
+                throw new \RuntimeException('Source image not found on disk.');
+            }
+
+            $mime = mime_content_type($localPath) ?: 'image/png';
+            return 'data:' . $mime . ';base64,' . base64_encode(file_get_contents($localPath));
+        }
+
+        return $imageUrl;
+    }
+
+    private function storeUpscaledImage(int $userId, string $imageUrl): ?array
+    {
+        try {
+            $response = $this->httpWithResolvedDns($imageUrl, [])->timeout(60)->get($imageUrl);
+            if (!$response->successful()) {
+                \Log::warning('Failed to download upscaled image', [
+                    'status' => $response->status(),
+                    'image_url' => $imageUrl,
+                ]);
+                return null;
+            }
+
+            $contentType = strtolower((string) ($response->header('Content-Type') ?? ''));
+            $extension = match (true) {
+                str_contains($contentType, 'jpeg'), str_contains($contentType, 'jpg') => 'jpg',
+                str_contains($contentType, 'webp') => 'webp',
+                default => 'png',
+            };
+
+            $filename = sprintf('upscaled-%s-%s.%s', now()->format('YmdHis'), Str::random(6), $extension);
+            $relativePath = sprintf('logos/%d/upscaled/%s', $userId, $filename);
+
+            Storage::disk('public')->put($relativePath, $response->body());
+
+            return [
+                'path' => $relativePath,
+                'url' => '/storage/' . $relativePath,
+            ];
+        } catch (\Throwable $e) {
+            \Log::warning('Exception while storing upscaled image', [
+                'image_url' => $imageUrl,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
         }
     }
 

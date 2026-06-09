@@ -6,6 +6,9 @@
         <title>Netkit - Open-Source PDF Editor & Admin Dashboard</title>
         @vite(['resources/css/app.css', 'resources/js/app.js'])
         <style>
+            .nkheader{
+                font-size:30px;
+            }
             @keyframes netkit-planet-float {
                 0%, 100% {
                     transform: translateY(0);
@@ -62,15 +65,20 @@
                 inset: 0;
                 width: 100%;
                 height: 100%;
-                opacity: 0.85;
+                opacity: 0.78;
                 filter: drop-shadow(0 0 0.6px rgba(226, 232, 255, 0.9));
+            }
+
+            .netkit-hero-night-sky {
+                opacity: 0;
+                transition: opacity 260ms ease;
             }
 
             .netkit-wordmark {
                 display: block;
-                width: clamp(680px, 98vw, 1480px);
+                width: clamp(180px, 22vw, 320px);
                 height: auto;
-                margin: 0 auto -0.5rem;
+                margin: 0 auto 0.5rem;
                 position: relative;
                 z-index: 1;
             }
@@ -88,12 +96,24 @@
 
             .netkit-fill-logo {
                 display: block;
-                width: 75%;
-                max-width: 990px;
+                width: 60.75%;
+                max-width: 802px;
                 height: auto;
                 margin: 0 auto 0.25rem;
                 position: relative;
                 z-index: 1;
+            }
+
+            .netkit-fill-logo-dark {
+                display: none;
+            }
+
+            .dark .netkit-fill-logo-light {
+                display: none;
+            }
+
+            .dark .netkit-fill-logo-dark {
+                display: block;
             }
 
             .netkit-home-hero.netkit-hero-circuits,
@@ -104,8 +124,31 @@
 
             .dark .netkit-home-hero.netkit-hero-circuits,
             .dark .netkit-home-hero.netkit-hero-fill_logo {
-                background-color: #f8fbff;
-                background-image: linear-gradient(135deg, #ffffff 0%, #eef5ff 48%, #e8eef9 100%);
+                background-color: #050816;
+                background-image:
+                    linear-gradient(180deg, rgba(5, 8, 22, 0.08) 0%, rgba(5, 8, 22, 0.22) 58%, rgba(17, 24, 39, 0.72) 100%),
+                    url('/images/sky_bg_dark_mode.png');
+                background-position: center;
+                background-size: cover;
+                background-repeat: no-repeat;
+            }
+
+            .dark .netkit-home-hero.netkit-hero-circuits .netkit-hero-night-sky,
+            .dark .netkit-home-hero.netkit-hero-fill_logo .netkit-hero-night-sky {
+                opacity: 0.72;
+                mix-blend-mode: screen;
+            }
+
+            .dark .netkit-home-hero.netkit-hero-circuits .netkit-hero-starfield,
+            .dark .netkit-home-hero.netkit-hero-fill_logo .netkit-hero-starfield {
+                opacity: 0.9;
+                filter:
+                    drop-shadow(0 0 1px rgba(255, 255, 255, 0.95))
+                    drop-shadow(0 0 6px rgba(147, 197, 253, 0.45));
+            }
+
+            .netkit-home-hero.netkit-hero-space .netkit-hero-night-sky {
+                opacity: 1;
             }
 
             .netkit-hero-circuits .netkit-hero-heading,
@@ -116,6 +159,18 @@
             .netkit-hero-circuits .netkit-hero-subtitle,
             .netkit-hero-fill_logo .netkit-hero-subtitle {
                 color: #3f4651;
+            }
+
+            .dark .netkit-hero-circuits .netkit-hero-heading,
+            .dark .netkit-hero-fill_logo .netkit-hero-heading {
+                color: #ffffff;
+                text-shadow: 0 2px 18px rgba(15, 23, 42, 0.55);
+            }
+
+            .dark .netkit-hero-circuits .netkit-hero-subtitle,
+            .dark .netkit-hero-fill_logo .netkit-hero-subtitle {
+                color: #e5edff;
+                text-shadow: 0 1px 14px rgba(15, 23, 42, 0.5);
             }
 
             @media (max-width: 1024px) {
@@ -179,8 +234,10 @@
                 .netkit-planet-glow,
                 .netkit-ring-spin-fast,
                 .netkit-ring-spin-slow,
-                .netkit-star {
+                .netkit-star,
+                .netkit-hero-night-sky {
                     animation: none;
+                    transition: none;
                 }
             }
         </style>
@@ -192,27 +249,30 @@
 
         <!-- Hero Section -->
         @php
+            $netkitAnimationCookie = 'netkit_intro_seen';
+            $showNetkitAnimation = ! request()->cookies->has($netkitAnimationCookie);
+            $netkitLogoLight = asset('images/' . ($showNetkitAnimation ? 'netkit-fill-logo.svg' : 'netkit-fill-logo-static.svg'));
+            $netkitLogoDark = asset('images/' . ($showNetkitAnimation ? 'netkit-fill-logo-dark.svg' : 'netkit-fill-logo-dark-static.svg'));
+            $netkitLogoStaticLight = asset('images/netkit-fill-logo-static.svg');
+            $netkitLogoStaticDark = asset('images/netkit-fill-logo-dark-static.svg');
             $heroBackground = config('home.hero_background', 'fill_logo');
+            $stars = [];
+            mt_srand(20260531);
+            for ($i = 0; $i < 130; $i++) {
+                $stars[] = [
+                    'x' => mt_rand(0, 1000) / 10,
+                    'y' => mt_rand(0, 1000) / 10,
+                    'r' => mt_rand(5, 18) / 100,
+                    'o' => mt_rand(35, 92) / 100,
+                    'd' => mt_rand(35, 85) / 10,
+                    'delay' => mt_rand(0, 50) / 10,
+                    'spark' => $i % 12 === 0,
+                    'len' => mt_rand(35, 95) / 100,
+                ];
+            }
         @endphp
         <section class="netkit-home-hero netkit-hero-{{ $heroBackground }} relative overflow-hidden pt-20 pb-4 px-4 sm:px-6 lg:px-8">
-            @if ($heroBackground === 'space')
-            <div class="absolute inset-0 pointer-events-none" aria-hidden="true">
-                @php
-                    $stars = [];
-                    mt_srand(20260531);
-                    for ($i = 0; $i < 130; $i++) {
-                        $stars[] = [
-                            'x' => mt_rand(0, 1000) / 10,
-                            'y' => mt_rand(0, 1000) / 10,
-                            'r' => mt_rand(5, 18) / 100,
-                            'o' => mt_rand(35, 92) / 100,
-                            'd' => mt_rand(35, 85) / 10,
-                            'delay' => mt_rand(0, 50) / 10,
-                            'spark' => $i % 12 === 0,
-                            'len' => mt_rand(35, 95) / 100,
-                        ];
-                    }
-                @endphp
+            <div class="netkit-hero-night-sky absolute inset-0 pointer-events-none" aria-hidden="true">
                 <svg class="netkit-hero-starfield" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" role="img" focusable="false">
                     @foreach ($stars as $s)
                         @if ($s['spark'])
@@ -226,6 +286,7 @@
                         @endif
                     @endforeach
                 </svg>
+                @if ($heroBackground === 'space')
                 <svg class="netkit-hero-planet" viewBox="0 0 440 440" role="img" focusable="false">
                     <defs>
                         <radialGradient id="planetBody" cx="0.38" cy="0.34" r="0.9">
@@ -294,29 +355,60 @@
                         </g>
                     </g>
                 </svg>
-            </div>
-            @endif
-            <div class="relative container mx-auto">
-                @if ($heroBackground === 'circuits')
-                <img class="netkit-flow" src="{{ asset('images/circuits-flow.svg') }}" alt="" aria-hidden="true" />
                 @endif
+            </div>
+            <div class="relative container mx-auto">
                 <div class="text-center max-w-4xl mx-auto mb-4">
                     @if ($heroBackground === 'circuits')
-                    <img class="netkit-wordmark" src="{{ asset('images/circuits-background.svg') }}" alt="Netkit" />
+                    <img class="netkit-fill-logo netkit-fill-logo-light" src="{{ $netkitLogoLight }}" data-netkit-intro-logo data-static-src="{{ $netkitLogoStaticLight }}" alt="Netkit" />
+                    <img class="netkit-fill-logo netkit-fill-logo-dark" src="{{ $netkitLogoDark }}" data-netkit-intro-logo data-static-src="{{ $netkitLogoStaticDark }}" alt="Netkit" />
                     @elseif ($heroBackground === 'fill_logo')
-                    <img class="netkit-fill-logo" src="{{ asset('images/netkit-fill-logo.svg') }}" alt="Netkit" />
+                    <img class="netkit-fill-logo netkit-fill-logo-light" src="{{ $netkitLogoLight }}" data-netkit-intro-logo data-static-src="{{ $netkitLogoStaticLight }}" alt="Netkit" />
+                    <img class="netkit-fill-logo netkit-fill-logo-dark" src="{{ $netkitLogoDark }}" data-netkit-intro-logo data-static-src="{{ $netkitLogoStaticDark }}" alt="Netkit" />
                     @endif
-                    <h1 class="netkit-hero-heading text-5xl md:text-6xl lg:text-7xl font-bold text-white mb-3">
-                        Powerful tools for the net
+                    <h1 class="netkit-hero-heading leading-tight font-bold text-white py-4 mb-3 nkheader">
+                        Expertly crafted tools, one place to manage them all
                     </h1>
-                    <p class="netkit-hero-subtitle text-xl text-gray-300 max-w-2xl mx-auto">
-                        Expertly crafted tools, one account to manage them all.
-                    </p>
                 </div>
 
                 
             </div>
         </section>
+
+        <script>
+            (() => {
+                const COOKIE_NAME = 'netkit_intro_seen';
+                const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24;
+                const ANIMATION_DURATION_MS = 3600;
+
+                const hasCookie = () => document.cookie
+                    .split(';')
+                    .some((cookie) => cookie.trim().startsWith(`${COOKIE_NAME}=`));
+
+                const setCookie = () => {
+                    document.cookie = `${COOKIE_NAME}=1; max-age=${COOKIE_MAX_AGE_SECONDS}; path=/; samesite=lax`;
+                };
+
+                const showStaticLogo = () => {
+                    document.querySelectorAll('[data-netkit-intro-logo]').forEach((logo) => {
+                        const staticSrc = logo.getAttribute('data-static-src');
+                        if (staticSrc && logo.getAttribute('src') !== staticSrc) {
+                            logo.setAttribute('src', staticSrc);
+                        }
+                    });
+                };
+
+                if (hasCookie()) {
+                    showStaticLogo();
+                    return;
+                }
+
+                window.setTimeout(() => {
+                    showStaticLogo();
+                    setCookie();
+                }, ANIMATION_DURATION_MS);
+            })();
+        </script>
 
         <!-- Logo Generator Showcase Section -->
         <section id="pdf-features" class="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-white via-slate-50 to-white dark:from-gray-900 dark:via-gray-900 dark:to-gray-900">
@@ -326,8 +418,7 @@
                         <div class="lg:col-span-2 space-y-5">
                             <div class="flex flex-wrap items-center justify-between gap-3">
                                 <div>
-                                    <p class="text-xs font-semibold tracking-[0.2em] uppercase text-blue-600 dark:text-blue-400">Live Logo Studio</p>
-                                    <h2 class="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">Modern Logo Preview Gallery</h2>
+                                    <h2 class="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">Logo Generator Showcase</h2>
                                 </div>
                                 <div class="inline-flex rounded-xl border border-slate-200 dark:border-gray-700 bg-slate-100/80 dark:bg-gray-900/70 p-1" id="logo-mode-switch">
                                     <button type="button" class="logo-mode-btn px-4 py-2 text-sm font-semibold rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" data-mode="vector">Vector</button>

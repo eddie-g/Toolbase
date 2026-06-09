@@ -69,7 +69,7 @@
                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 008 10.172V5L7 4z"/>
                                 </svg>
-                                <span class="hidden sm:inline">Logo</span>
+                                <span class="hidden sm:inline">Vector</span>
                             </div>
                         </button>
                     </div>
@@ -308,7 +308,19 @@
 
                     <!-- AI Model Selector -->
                     <div>
-                        <h3 class="text-sm font-semibold text-gray-900 mb-3">AI Model</h3>
+                        <div class="flex items-center justify-between mb-3">
+                            <h3 class="text-sm font-semibold text-gray-900">AI Model</h3>
+                            <!-- Content mode switch: Logo vs Image (image/raster workMode only) -->
+                            <div x-show="workMode === 'image'" x-transition
+                                class="inline-flex rounded-lg border border-gray-200 overflow-hidden">
+                                <button type="button" @click="genMode = 'logo'"
+                                    class="px-3 py-1 text-xs font-semibold transition-all"
+                                    :class="genMode === 'logo' ? 'bg-violet-600 text-white' : 'bg-white text-gray-500 hover:text-gray-700'">Logo</button>
+                                <button type="button" @click="genMode = 'image'"
+                                    class="px-3 py-1 text-xs font-semibold transition-all"
+                                    :class="genMode === 'image' ? 'bg-violet-600 text-white' : 'bg-white text-gray-500 hover:text-gray-700'">Image</button>
+                            </div>
+                        </div>
                         <div class="space-y-2">
                             <!-- Fast: Luna -->
                             <button 
@@ -506,6 +518,21 @@
                                     aria-label="Pick background color"
                                 />
                             </div>
+                        </div>
+                    </div>
+
+                    <!-- Image Size (image content mode only) -->
+                    <div x-show="workMode === 'image' && genMode === 'image'" x-transition>
+                        <label class="block text-sm font-semibold text-gray-900 mb-2">Image Size</label>
+                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                            <template x-for="sz in imageSizeOptions()" :key="sz.id">
+                                <button type="button" @click="imageSize = sz.id; fetchLogoPrice()"
+                                    class="px-2 py-3 bg-white border rounded-lg hover:bg-gray-50 text-center transition-all"
+                                    :class="imageSize === sz.id ? 'ring-2 ring-blue-500 border-blue-300' : 'border-gray-300'">
+                                    <span class="block text-sm font-semibold text-gray-900" x-text="sz.label"></span>
+                                    <span class="block text-xs text-gray-400" x-text="sz.id"></span>
+                                </button>
+                            </template>
                         </div>
                     </div>
 
@@ -879,7 +906,7 @@
                                             </template>
                                             <!-- Image -->
                                             <div x-show="!image.failed" class="aspect-square bg-white dark:bg-gray-100 relative group cursor-pointer" @click="zoomImage(image.displayUrl || image.url)">
-                                                <img :src="image.displayUrl || image.url" :alt="'Logo ' + (imageIndex + 1)" class="w-full h-full object-contain p-4">
+                                                <img :src="image.displayUrl || image.url" :alt="'Logo ' + (imageIndex + 1)" class="w-full h-full object-contain p-4" loading="lazy">
                                                 
                                                 <!-- Metadata Tags Overlay -->
                                                 <div class="absolute top-2 left-2 flex flex-wrap gap-1.5">
@@ -894,7 +921,7 @@
 
                                             <!-- Actions -->
                                     <div x-show="!image.failed" class="p-4">
-                                        <div class="grid gap-2" :class="image.isVector ? 'grid-cols-2' : 'grid-cols-1'">
+                                        <div class="grid grid-cols-2 gap-2">
                                             <button 
                                                 @click="saveLogo(image.editUrl || image.url)"
                                                 class="px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-lg transition-colors"
@@ -908,6 +935,13 @@
                                             >
                                                 Edit
                                             </button>
+                                            <button
+                                                x-show="!image.isVector"
+                                                @click="upscaleGeneratedImage(batchIndex, imageIndex)"
+                                                :disabled="image.upscaling"
+                                                class="px-3 py-2 bg-sky-600 hover:bg-sky-700 disabled:bg-sky-400 disabled:cursor-wait text-white text-sm font-medium rounded-lg transition-colors"
+                                                x-text="image.upscaling ? 'Upsizing...' : 'Upsize ($' + upscalePrice.toFixed(2) + ')'"
+                                            ></button>
                                         </div>
                                     </div>
                                         </div>
@@ -925,7 +959,7 @@
                             <template x-for="idea in similarIdeas" :key="idea.id">
                                 <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow">
                                     <div class="aspect-square bg-gray-100 relative cursor-pointer" @click="zoomImage(idea.prompt_outputs[0].url)">
-                                        <img :src="idea.prompt_outputs[0].url" :alt="idea.query" class="w-full h-full object-contain p-4">
+                                        <img :src="idea.prompt_outputs[0].url" :alt="idea.query" class="w-full h-full object-contain p-4" loading="lazy">
                                     </div>
                                     <div class="p-4">
                                         <p class="text-sm text-gray-700 line-clamp-2" x-text="idea.query"></p>
@@ -2263,12 +2297,15 @@
                 workMode: 'logo', // 'image' or 'logo'
                 outputFormat: 'vector',
                 imageFormat: 'png',
+                genMode: 'logo', // 'logo' or 'image' content (image/raster workMode only)
+                imageSize: '1:1', // '1:1' | '16:9' | '9:16'
                 seed: null,
 
                 // State
                 logoBatches: [],
                 generating: false,
                 logoPrice: 0,
+                upscalePrice: @js((float) \App\Models\AiLogoPrice::estimateUpscaleCost()['cost_per_image']),
                 creditBalance: @js((float) ($logoUser->credit_balance ?? 0)),
                 error: null,
                 showStyleModal: false,
@@ -2365,6 +2402,7 @@
                 switchToLogoMode() {
                     this.workMode = 'logo';
                     this.outputFormat = 'vector';
+                    this.genMode = 'logo';
 
                     if (this.logoMode === 'icon_text') {
                         this.logoMode = 'icon_only';
@@ -2446,6 +2484,20 @@
                         pro: this.proMode,
                         proSize: this.proMode ? parseInt(this.proSize) : 1024,
                     };
+                },
+
+                imageSizeOptions() {
+                    return [
+                        { id: '1:1', label: 'Square' },
+                        { id: '16:9', label: 'Landscape' },
+                        { id: '9:16', label: 'Portrait' },
+                    ];
+                },
+
+                imageSizeResolutionLabel() {
+                    if (this.imageSize === '16:9') return this.selectedModel === 'dalle' ? '1536x1024' : (this.selectedModel === 'recraft' ? '1820x1024' : '16:9');
+                    if (this.imageSize === '9:16') return this.selectedModel === 'dalle' ? '1024x1536' : (this.selectedModel === 'recraft' ? '1024x1820' : '9:16');
+                    return this.selectedModel === 'dalle' ? '1024x1024' : (this.selectedModel === 'recraft' ? '1024x1024' : '1:1');
                 },
 
                 getSelectedPaletteColors() {
@@ -2687,6 +2739,8 @@
                                 image_model: this.selectedModel,
                                 output_format: this.outputFormat,
                                 image_format: this.outputFormat === 'raster' && this.selectedModel === 'dalle' ? this.imageFormat : null,
+                                gen_mode: this.workMode === 'image' && this.genMode === 'image' ? 'image' : 'logo',
+                                image_size: this.workMode === 'image' && this.genMode === 'image' ? this.imageSize : null,
                                 recraft_substyle: null
                             })
                         });
@@ -2737,6 +2791,84 @@
                     return img.svg_url || img.stored_url || img.url || '';
                 },
 
+                updateGeneratedImage(batchIndex, imageIndex, updates) {
+                    const batch = this.logoBatches[batchIndex];
+                    if (!batch || !batch.images || !batch.images[imageIndex]) return;
+
+                    const images = batch.images.map((image, idx) => idx === imageIndex ? { ...image, ...updates } : image);
+                    this.logoBatches[batchIndex] = { ...batch, images };
+                },
+
+                async upscaleGeneratedImage(batchIndex, imageIndex) {
+                    const batch = this.logoBatches[batchIndex];
+                    const image = batch?.images?.[imageIndex];
+                    if (!image || image.failed || image.isVector || image.upscaling) return;
+
+                    const sourceUrl = image.displayUrl || image.editUrl || image.url;
+                    if (!sourceUrl) {
+                        this.error = 'No image URL is available to upscale.';
+                        return;
+                    }
+
+                    this.error = null;
+                    this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: true });
+                    const abortController = new AbortController();
+                    const timeoutHandle = window.setTimeout(() => abortController.abort(), 180000);
+
+                    try {
+                        const response = await fetch('/domain-search/upscale-logo', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                image_url: sourceUrl,
+                                upscale_factor: 2,
+                            }),
+                            signal: abortController.signal,
+                        });
+
+                        const data = await response.json().catch(() => ({ error: 'Server returned invalid response.' }));
+                        if (!response.ok) {
+                            this.error = data.error || 'Upsize failed.';
+                            if (data.credit_balance !== undefined) {
+                                this.creditBalance = parseFloat(data.credit_balance);
+                            }
+                            this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: false });
+                            return;
+                        }
+
+                        const resolution = data.width && data.height ? `${data.width}x${data.height}` : '2x upscale';
+                        this.updateGeneratedImage(batchIndex, imageIndex, {
+                            url: data.upscaled_url,
+                            displayUrl: data.upscaled_url,
+                            editUrl: data.upscaled_url,
+                            upscaledUrl: data.upscaled_url,
+                            originalUrl: sourceUrl,
+                            upscaling: false,
+                            metadata: {
+                                ...(image.metadata || batch.metadata || {}),
+                                resolution,
+                                upscaled: true,
+                            },
+                        });
+
+                        if (data.credit_balance !== undefined) {
+                            this.creditBalance = parseFloat(data.credit_balance);
+                        }
+                    } catch (err) {
+                        this.error = err.name === 'AbortError'
+                            ? 'Upsize is taking longer than expected. Please try again in a moment.'
+                            : (err.message || 'Upsize failed.');
+                        this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: false });
+                    } finally {
+                        window.clearTimeout(timeoutHandle);
+                        this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: false });
+                    }
+                },
+
                 async generateLogo() {
                     const proSettings = this.getEffectiveProSettings();
 
@@ -2761,8 +2893,16 @@
                         }
                     }
                     
-                    this.error = null;
-                    this.generating = true;
+	                    this.error = null;
+
+	                    const estimatedTotalCost = Number(this.logoPrice || 0);
+	                    const availableCreditBalance = Number(this.creditBalance || 0);
+	                    if (estimatedTotalCost > 0 && availableCreditBalance < estimatedTotalCost) {
+	                        this.error = 'Insufficient balance. Please add credits before generating logos.';
+	                        return;
+	                    }
+
+	                    this.generating = true;
                     
                     // Create a new batch at the beginning with loading placeholders
                     const batchId = Date.now();
@@ -2770,10 +2910,11 @@
                     
                     // Store metadata for this generation
                     const isRayVector = this.selectedModel === 'recraft' && this.outputFormat === 'vector';
+                    const isImageContentBatch = this.workMode === 'image' && this.genMode === 'image';
                     const generationMetadata = {
                         model: this.selectedModel === 'flux' ? 'Luna' : (this.selectedModel === 'recraft' ? 'Ray' : 'Cosmo'),
                         modelId: this.selectedModel,
-                        resolution: isRayVector ? 'SVG 1:1' : (proSettings.pro && this.selectedModel === 'flux' ? `${proSettings.proSize}x${proSettings.proSize}` : (this.selectedModel === 'dalle' ? '1024x1024' : '512x512')),
+                        resolution: isImageContentBatch ? this.imageSizeResolutionLabel() : (isRayVector ? 'SVG 1:1' : (proSettings.pro && this.selectedModel === 'flux' ? `${proSettings.proSize}x${proSettings.proSize}` : (this.selectedModel === 'dalle' ? '1024x1024' : '512x512'))),
                         price: (this.logoPrice / this.logoCount).toFixed(4),
                         style: this.logoStyle
                     };
@@ -2793,6 +2934,7 @@
                         const pendingJobs = [];
 
                         for (let i = 0; i < totalCount; i++) {
+                            const isImageContent = this.workMode === 'image' && this.genMode === 'image';
                             const payload = {
                                 domain: (this.logoMode === 'icon_text' || this.logoMode === 'text_only') ? this.logoDomain : null,
                                 custom_prompt: this.logoPrompt || '',
@@ -2802,15 +2944,17 @@
                                 batch_index: i,
                                 pro: proSettings.pro,
                                 pro_size: proSettings.proSize,
-                                icon_only: this.logoMode === 'icon_only',
-                                text_only: this.logoMode === 'text_only',
+                                icon_only: isImageContent ? false : this.logoMode === 'icon_only',
+                                text_only: isImageContent ? false : this.logoMode === 'text_only',
                                 bg_color: this.backgroundColor,
                                 image_model: this.selectedModel,
                                 output_format: this.outputFormat,
                                 image_format: this.outputFormat === 'raster' && this.selectedModel === 'dalle' ? this.imageFormat : null,
                                 color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
-                                logo_shape: this.shapeContainer || 'none',
-                                logo_detail: this.detailLevel || 'medium'
+                                logo_shape: isImageContent ? null : (this.shapeContainer || 'none'),
+                                logo_detail: this.detailLevel || 'medium',
+                                gen_mode: isImageContent ? 'image' : 'logo',
+                                image_size: isImageContent ? this.imageSize : null
                             };
 
                             const response = await fetch('/domain-search/generate-logo', {
@@ -2825,12 +2969,16 @@
                             if (!response.ok) {
                                 const data = await response.json().catch(() => ({ error: 'Server error' }));
                                 this.error = data.error || 'Failed to queue logo generation';
-                                if (data.credit_balance !== undefined) {
-                                    this.creditBalance = parseFloat(data.credit_balance);
-                                }
-                                if (response.status === 402) break;
-                                continue;
-                            }
+	                                if (data.credit_balance !== undefined) {
+	                                    this.creditBalance = parseFloat(data.credit_balance);
+	                                }
+	                                if (response.status === 402) {
+	                                    this.logoBatches = this.logoBatches.filter(batch => batch.id !== batchId);
+	                                    this.generating = false;
+	                                    return;
+	                                }
+	                                continue;
+	                            }
 
                             const data = await response.json().catch(() => {
                                 console.error('Failed to parse generation response as JSON');
@@ -2851,13 +2999,14 @@
                             }
                         }
 
-                        if (pendingJobs.length === 0) {
-                            if (!this.error) {
-                                this.error = 'Failed to queue logo generation. Please try again.';
-                            }
-                            this.generating = false;
-                            return;
-                        }
+	                        if (pendingJobs.length === 0) {
+	                            if (!this.error) {
+	                                this.error = 'Failed to queue logo generation. Please try again.';
+	                            }
+	                            this.logoBatches = this.logoBatches.filter(batch => batch.id !== batchId);
+	                            this.generating = false;
+	                            return;
+	                        }
 
                         // Step 2: Poll for completion
                         const completedJobs = new Set();
@@ -2893,7 +3042,8 @@
                                     if (statusData.status === 'completed') {
                                         completedJobs.add(jobId);
 
-                                        const targetBatch = this.logoBatches.find(b => b.id === batchId);
+                                        const batchIdx = this.logoBatches.findIndex(b => b.id === batchId);
+                                        const existingBatch = batchIdx !== -1 ? this.logoBatches[batchIdx] : null;
                                         const newImages = (statusData.images || []).map(img => {
                                             const displayUrl = this.displayUrlForGeneratedImage(img);
                                             const editUrl = this.editUrlForGeneratedImage(img);
@@ -2903,13 +3053,16 @@
                                                 editUrl,
                                                 seed: statusData.seed || null,
                                                 isVector: this.outputFormat === 'vector',
-                                                metadata: targetBatch?.metadata || {}
+                                                metadata: existingBatch?.metadata || {}
                                             };
                                         });
-                                        
-                                        // Add to target batch
-                                        if (targetBatch) {
-                                            targetBatch.images.push(...newImages);
+
+                                        // Replace batch object to ensure Alpine detects the nested array change
+                                        if (batchIdx !== -1) {
+                                            this.logoBatches[batchIdx] = {
+                                                ...this.logoBatches[batchIdx],
+                                                images: [...this.logoBatches[batchIdx].images, ...newImages]
+                                            };
                                         }
 
                                         if (statusData.credit_balance !== undefined) {
@@ -2919,17 +3072,20 @@
                                         failedJobs.add(jobId);
                                         this.error = statusData.error || 'Logo generation failed.';
 
-                                        // Add failed image to batch
-                                        const targetBatch = this.logoBatches.find(b => b.id === batchId);
-                                        if (targetBatch) {
-                                            targetBatch.images.push({
-                                                url: null,
-                                                failed: true,
-                                                error: statusData.error || 'Generation failed',
-                                                seed: null,
-                                                isVector: this.outputFormat === 'vector',
-                                                metadata: targetBatch.metadata || {}
-                                            });
+                                        // Replace batch object to ensure Alpine detects the nested array change
+                                        const batchIdx = this.logoBatches.findIndex(b => b.id === batchId);
+                                        if (batchIdx !== -1) {
+                                            this.logoBatches[batchIdx] = {
+                                                ...this.logoBatches[batchIdx],
+                                                images: [...this.logoBatches[batchIdx].images, {
+                                                    url: null,
+                                                    failed: true,
+                                                    error: statusData.error || 'Generation failed',
+                                                    seed: null,
+                                                    isVector: this.outputFormat === 'vector',
+                                                    metadata: this.logoBatches[batchIdx].metadata || {}
+                                                }]
+                                            };
                                         }
 
                                         if (statusData.credit_balance !== undefined) {
@@ -2943,25 +3099,30 @@
                         }
 
                         // Check if target batch has images
-                        const targetBatch = this.logoBatches.find(b => b.id === batchId);
-                        if (targetBatch) {
-                            targetBatch.loading = false;
-                            if (targetBatch.images.length > 0) {
+                        const finalBatchIdx = this.logoBatches.findIndex(b => b.id === batchId);
+                        if (finalBatchIdx !== -1) {
+                            const finalBatch = this.logoBatches[finalBatchIdx];
+                            this.logoBatches[finalBatchIdx] = { ...finalBatch, loading: false };
+                            if (finalBatch.images.length > 0) {
                                 this.queueSimilarIdeasLookup();
                             }
                         }
-                        
+
                         this.generating = false;
                     } catch (err) {
-                        this.error = err.message || 'An error occurred while generating logos';
-                        this.generating = false;
-                        
-                        // Mark batch as not loading
-                        const targetBatch = this.logoBatches.find(b => b.id === batchId);
-                        if (targetBatch) {
-                            targetBatch.loading = false;
-                        }
-                    }
+	                        this.error = err.message || 'An error occurred while generating logos';
+	                        this.generating = false;
+
+	                        // Remove empty placeholder batches; keep batches that already contain job results.
+	                        const finalBatchIdx = this.logoBatches.findIndex(b => b.id === batchId);
+	                        if (finalBatchIdx !== -1) {
+	                            if ((this.logoBatches[finalBatchIdx].images || []).length === 0) {
+	                                this.logoBatches.splice(finalBatchIdx, 1);
+	                            } else {
+	                                this.logoBatches[finalBatchIdx] = { ...this.logoBatches[finalBatchIdx], loading: false };
+	                            }
+	                        }
+	                    }
                 },
 
                 async saveLogo(url) {

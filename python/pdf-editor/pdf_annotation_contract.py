@@ -110,7 +110,10 @@ def source_overlay_text_was_edited(annotation: Dict[str, Any]) -> bool:
     if not has_source_anchor:
         return False
     current_text = normalize_pdfjs_compare_text(annotation.get("text") or "")
-    return bool(current_text and source_text != current_text)
+    # Clearing the span to empty (current_text == "") is an in-place edit too:
+    # the user removed the source text to redact it, so the original glyphs must
+    # still be masked/redacted even when `skipPdfjsSourceMask` is mis-flagged.
+    return bool(source_text != current_text)
 
 
 def promoted_source_overlay_text_was_edited(annotation: Dict[str, Any]) -> bool:
@@ -216,7 +219,10 @@ def pdfjs_source_edit_requires_redaction(annotation: Dict[str, Any]) -> bool:
         return True
     if _boolish(annotation.get("movedTextOverlay")):
         return True
-    return bool(source_text and current_text and source_text != current_text)
+    # Clearing the overlay to empty (current_text == "") is a redaction of the
+    # source glyphs: an empty replacement against a non-empty source must still
+    # redact, otherwise the original text survives in the downloaded PDF.
+    return bool(source_text and source_text != current_text)
 
 
 def pdfjs_source_edit_replacement_text(annotation: Dict[str, Any]) -> str:

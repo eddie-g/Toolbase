@@ -22,6 +22,16 @@
                 </div>
             </div>
         </div>
+    @elseif(request('status') === 'verification_failed')
+        <div class="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 p-4 mb-6">
+            <div class="flex items-center gap-3">
+                <x-heroicon-o-exclamation-triangle class="w-6 h-6 text-red-500" />
+                <div>
+                    <p class="font-semibold text-red-800 dark:text-red-200">Payment verification failed</p>
+                    <p class="text-sm text-red-600 dark:text-red-400">We could not verify the completed Stripe session. Please try again.</p>
+                </div>
+            </div>
+        </div>
     @endif
 
     {{-- Current Balance --}}
@@ -57,7 +67,7 @@
                                 'X-CSRF-TOKEN': document.querySelector('meta[name=csrf-token]')?.content || '{{ csrf_token() }}',
                                 'Accept': 'application/json',
                             },
-                            body: JSON.stringify({ amount }),
+                            body: JSON.stringify({ amount, source: 'admin' }),
                         });
                         const data = await response.json();
                         if (data.checkout_url) {

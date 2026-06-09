@@ -2,7 +2,8 @@
 """
 Generate a PDF document from a guided template.
 
-Supports template types: newsletter, nda_agreement, purchase_order.
+Supports template types: newsletter, nda_agreement, purchase_order, lease_extension,
+security_deposit_return.
 Reads JSON payload from stdin, writes PDF to the path given as argv[1].
 """
 import json
@@ -56,6 +57,145 @@ def _draw_wrapped_text(page, text, rect, font=None, fontsize=10, color=(0, 0, 0)
     return y
 
 
+# ─── AcroForm fill-in fields ──────────────────────────────────────────────────
+#
+# Guided templates embed real AcroForm text-field widgets at every fillable
+# spot. The PDF.js editor (annotationMode=ENABLE_FORMS) renders these as
+# typeable inputs by default and persists what the user types — so the guided
+# document opens with ready-to-fill fields, mirroring the old guided cards.
+
+# A light highlight + underline makes fields obviously typeable.
+_FIELD_FILL = (0.93, 0.96, 1.0)
+_FIELD_BORDER = (0.55, 0.62, 0.78)
+_TX_MULTILINE_FLAG = 1 << 12  # PDF text field "multiline" flag
+
+# Maps our fitz.Font objects to the standard PDF font name a widget needs.
+_WIDGET_FONT_NAMES = {
+    "helv": "Helv",
+    "hebo": "HeBo",
+    "tiro": "TiRo",
+    "tibo": "TiBo",
+    "tiit": "TiIt",
+}
+
+
+def _widget_font_name(font) -> str:
+    try:
+        name = (font.name or "").lower()
+    except Exception:
+        name = ""
+    for key, widget_name in _WIDGET_FONT_NAMES.items():
+        if key in name:
+            return widget_name
+    return "Helv"
+
+
+class _Field:
+    """An inline fill-in field placeholder for _flow_fields()."""
+    __slots__ = ("name", "value", "min_w")
+
+    def __init__(self, name, value="", min_w=70):
+        self.name = name
+        self.value = "" if value is None else str(value)
+        self.min_w = min_w
+
+
+def _add_text_field(page, name, rect, value="", fontsize=11, font_name="Helv",
+                    multiline=False, color=(0, 0, 0), align=fitz.TEXT_ALIGN_LEFT,
+                    fill_color=_FIELD_FILL, border_color=_FIELD_BORDER, border_width=0.6):
+    """Add an AcroForm text widget. Returns the created widget."""
+    widget = fitz.Widget()
+    widget.field_name = name
+    widget.field_type = fitz.PDF_WIDGET_TYPE_TEXT
+    widget.rect = fitz.Rect(rect)
+    widget.text_font = font_name
+    widget.text_fontsize = float(fontsize)
+    widget.text_color = color
+    widget.fill_color = fill_color
+    widget.border_color = border_color
+    widget.border_width = border_width
+    try:
+        widget.text_align = align
+    except Exception:
+        pass
+    if multiline:
+        widget.field_flags = _TX_MULTILINE_FLAG
+    widget.field_value = "" if value is None else str(value)
+    page.add_widget(widget)
+    return widget
+
+
+def _flow_fields(page, parts, x, y, width, font, fontsize=11, color=(0, 0, 0),
+                 lineheight=1.4, indent=0, gap_after=8, indent_all_lines=False,
+                 field_fill_color=_FIELD_FILL, field_border_color=_FIELD_BORDER,
+                 field_border_width=0.6, field_pad=5.0):
+    """Render a paragraph that mixes static text (str) with inline fill-in
+    fields (_Field). Static words wrap normally; each _Field becomes an inline
+    AcroForm widget sized to hold its value. Returns y after the last line."""
+    space_w = font.text_length(" ", fontsize=fontsize)
+    pad = field_pad
+
+    tokens = []
+    for part in parts:
+        if isinstance(part, _Field):
+            vw = font.text_length(part.value or "", fontsize=fontsize)
+            tokens.append(("field", part, max(part.min_w, vw + pad * 2)))
+        else:
+            for word in str(part).split():
+                tokens.append(("word", word, font.text_length(word, fontsize=fontsize)))
+
+    line = []
+    avail = width - indent
+    is_first_line = True
+
+    def flush():
+        nonlocal y, is_first_line, line, avail
+        line_indent = indent if (is_first_line or indent_all_lines) else 0
+        cx = x + line_indent
+        tw = fitz.TextWriter(page.rect)
+        pending_fields = []
+        for i, tok in enumerate(line):
+            needs_space = i > 0 and not (
+                tok[0] == "word"
+                and isinstance(tok[1], str)
+                and tok[1][:1] in {".", ",", ";", ":", ")"}
+            )
+            if needs_space:
+                cx += space_w
+            if tok[0] == "word":
+                tw.append((cx, y + fontsize), tok[1], font=font, fontsize=fontsize)
+                cx += tok[2]
+            else:
+                field = tok[1]
+                w = tok[2]
+                rect = fitz.Rect(cx, y + fontsize * 0.05, cx + w, y + fontsize * 1.25)
+                pending_fields.append((field, rect))
+                cx += w
+        tw.write_text(page, color=color)
+        for field, rect in pending_fields:
+            _add_text_field(page, field.name, rect, value=field.value,
+                            fontsize=fontsize, font_name=_widget_font_name(font), color=color,
+                            fill_color=field_fill_color, border_color=field_border_color,
+                            border_width=field_border_width)
+        y += fontsize * lineheight
+        is_first_line = False
+        line = []
+        avail = width - (indent if indent_all_lines else 0)
+
+    for tok in tokens:
+        w = tok[2]
+        add = w + (space_w if line else 0)
+        if line and (sum((space_w if i else 0) + t[2] for i, t in enumerate(line)) + add) > avail:
+            flush()
+            line = [tok]
+        else:
+            line.append(tok)
+    if line:
+        flush()
+
+    return y + gap_after
+
+
 # ─── Newsletter Generator ────────────────────────────────────────────────────
 
 def generate_newsletter(data: dict, output_path: str, slug: str = "newsletter_classic"):
@@ -64,16 +204,16 @@ def generate_newsletter(data: dict, output_path: str, slug: str = "newsletter_cl
     page = doc.new_page(width=W, height=H)
     M = 50  # margin
 
-    title = data.get("newsletter_title", "Monthly Newsletter")
-    edition = data.get("edition", "Vol. 1 — Issue 1")
+    title = data.get("newsletter_title", "")
+    edition = data.get("edition", "")
     date_str = data.get("date", datetime.now().strftime("%B %Y"))
-    company = data.get("company_name", "Your Company Inc.")
-    headline = data.get("headline", "Big Exciting Headline Goes Here")
-    intro = data.get("intro_text", "Welcome to this month's newsletter!")
-    s1_title = data.get("section1_title", "Featured Story")
-    s1_body = data.get("section1_body", "Lorem ipsum dolor sit amet...")
-    s2_title = data.get("section2_title", "Upcoming Events")
-    s2_body = data.get("section2_body", "Event details go here...")
+    company = data.get("company_name", "")
+    headline = data.get("headline", "")
+    intro = data.get("intro_text", "")
+    s1_title = data.get("section1_title", "")
+    s1_body = data.get("section1_body", "")
+    s2_title = data.get("section2_title", "")
+    s2_body = data.get("section2_body", "")
     footer = data.get("footer_text", f"© {datetime.now().year} {company}. All rights reserved.")
 
     if slug == "newsletter_modern":
@@ -83,6 +223,7 @@ def generate_newsletter(data: dict, output_path: str, slug: str = "newsletter_cl
         _generate_classic_newsletter(page, W, H, M, title, edition, date_str, company,
                                       headline, intro, s1_title, s1_body, s2_title, s2_body, footer)
 
+    doc.need_appearances(True)
     doc.save(output_path)
     doc.close()
 
@@ -98,31 +239,25 @@ def _generate_classic_newsletter(page, W, H, M, title, edition, date_str, compan
     header_rect = fitz.Rect(0, 0, W, 80)
     page.draw_rect(header_rect, color=None, fill=blue)
 
-    tw = fitz.TextWriter(page.rect)
-    tw.append((M, 35), title, font=FONT_HEBO, fontsize=22)
-    tw.write_text(page, color=(1, 1, 1))
+    _add_text_field(page, "nl_title", fitz.Rect(M, 20, W - M, 42),
+                    value=title, fontsize=20, font_name="HeBo", color=(1, 1, 1))
+    _add_text_field(page, "nl_edition", fitz.Rect(M, 46, M + 220, 62),
+                    value=(f"{edition}  ·  {date_str}" if edition else date_str),
+                    fontsize=10, font_name="Helv", color=dark)
+    _add_text_field(page, "nl_company", fitz.Rect(W - M - 200, 46, W - M, 62),
+                    value=company, fontsize=10, font_name="HeBo", color=dark, align=fitz.TEXT_ALIGN_RIGHT)
 
-    tw = fitz.TextWriter(page.rect)
-    tw.append((M, 55), f"{edition}  ·  {date_str}", font=FONT_HELV, fontsize=10)
-    tw.write_text(page, color=(1, 1, 1, 0.7))
-
-    tw = fitz.TextWriter(page.rect)
-    tw.append((W - M - fitz.get_text_length(company, fontname="hebo", fontsize=10), 55),
-              company, font=FONT_HEBO, fontsize=10)
-    tw.write_text(page, color=(1, 1, 1, 0.85))
-
-    y = 110
+    y = 104
 
     # ── Headline ──
-    tw = fitz.TextWriter(page.rect)
-    tw.append((M, y), headline, font=FONT_HEBO, fontsize=20)
-    tw.write_text(page, color=dark)
-    y += 30
+    _add_text_field(page, "nl_headline", fitz.Rect(M, y, W - M, y + 28),
+                    value=headline, fontsize=18, font_name="HeBo", color=dark)
+    y += 40
 
     # ── Intro ──
-    y = _draw_wrapped_text(page, intro, fitz.Rect(M, y, W - M, y + 200),
-                           font=FONT_HELV, fontsize=11, color=gray, lineheight=1.5)
-    y += 20
+    _add_text_field(page, "nl_intro", fitz.Rect(M, y, W - M, y + 70),
+                    value=intro, fontsize=11, font_name="Helv", color=gray, multiline=True)
+    y += 86
 
     # ── Divider ──
     page.draw_line(fitz.Point(M, y), fitz.Point(W - M, y), color=_hex("#e2e8f0"), width=1)
@@ -131,30 +266,27 @@ def _generate_classic_newsletter(page, W, H, M, title, edition, date_str, compan
     # ── Two-column sections ──
     col_w = (W - 2 * M - 24) / 2
 
-    for i, (sec_title, sec_body) in enumerate([(s1_title, s1_body), (s2_title, s2_body)]):
+    for i, (sec_field, sec_title, sec_body) in enumerate([
+        ("nl_section1", s1_title, s1_body),
+        ("nl_section2", s2_title, s2_body),
+    ]):
         col_x = M + i * (col_w + 24)
 
         # Section card background
         card_rect = fitz.Rect(col_x, y, col_x + col_w, y + 220)
         page.draw_rect(card_rect, color=_hex("#bfdbfe"), fill=light_blue, width=0.5, radius=0.1)
 
-        # Section title
-        tw = fitz.TextWriter(page.rect)
-        tw.append((col_x + 12, y + 22), sec_title, font=FONT_HEBO, fontsize=12)
-        tw.write_text(page, color=blue)
-
-        # Section body
-        _draw_wrapped_text(page, sec_body,
-                           fitz.Rect(col_x + 12, y + 36, col_x + col_w - 12, y + 210),
-                           font=FONT_HELV, fontsize=10, color=gray, lineheight=1.5)
+        _add_text_field(page, f"{sec_field}_title", fitz.Rect(col_x + 10, y + 10, col_x + col_w - 10, y + 28),
+                        value=sec_title, fontsize=12, font_name="HeBo", color=blue)
+        _add_text_field(page, f"{sec_field}_body", fitz.Rect(col_x + 10, y + 34, col_x + col_w - 10, y + 212),
+                        value=sec_body, fontsize=10, font_name="Helv", color=gray, multiline=True)
 
     y += 240
 
     # ── Footer ──
     page.draw_line(fitz.Point(M, H - 60), fitz.Point(W - M, H - 60), color=_hex("#e2e8f0"), width=0.5)
-    tw = fitz.TextWriter(page.rect)
-    tw.append((M, H - 40), footer, font=FONT_HELV, fontsize=8)
-    tw.write_text(page, color=gray)
+    _add_text_field(page, "nl_footer", fitz.Rect(M, H - 52, W - M, H - 36),
+                    value=footer, fontsize=8, font_name="Helv", color=gray)
 
 
 def _generate_modern_newsletter(page, W, H, M, title, edition, date_str, company,
@@ -171,13 +303,11 @@ def _generate_modern_newsletter(page, W, H, M, title, edition, date_str, company
     # Blend overlay
     page.draw_rect(fitz.Rect(half - 60, 0, half + 60, 90), color=None, fill=_hex("#5b31d4"), overlay=True)
 
-    tw = fitz.TextWriter(page.rect)
-    tw.append((M, 38), title, font=FONT_HEBO, fontsize=24)
-    tw.write_text(page, color=(1, 1, 1))
-
-    tw = fitz.TextWriter(page.rect)
-    tw.append((M, 62), f"{edition}  ·  {date_str}", font=FONT_HELV, fontsize=10)
-    tw.write_text(page, color=(1, 1, 1, 0.7))
+    _add_text_field(page, "nl_title", fitz.Rect(M, 22, W - M - 80, 46),
+                    value=title, fontsize=22, font_name="HeBo", color=(1, 1, 1))
+    _add_text_field(page, "nl_edition", fitz.Rect(M, 52, M + 240, 68),
+                    value=(f"{edition}  ·  {date_str}" if edition else date_str),
+                    fontsize=10, font_name="Helv", color=dark)
 
     # Pill button
     pill_text = "Read →"
@@ -188,22 +318,24 @@ def _generate_modern_newsletter(page, W, H, M, title, edition, date_str, company
     tw.append((pill_rect.x0 + 10, 46), pill_text, font=FONT_HEBO, fontsize=9)
     tw.write_text(page, color=(1, 1, 1))
 
-    y = 118
+    y = 110
 
     # ── Headline ──
-    tw = fitz.TextWriter(page.rect)
-    tw.append((M, y), headline, font=FONT_HEBO, fontsize=20)
-    tw.write_text(page, color=dark)
-    y += 28
+    _add_text_field(page, "nl_headline", fitz.Rect(M, y, W - M, y + 28),
+                    value=headline, fontsize=18, font_name="HeBo", color=dark)
+    y += 40
 
     # ── Intro ──
-    y = _draw_wrapped_text(page, intro, fitz.Rect(M, y, W - M, y + 200),
-                           font=FONT_HELV, fontsize=11, color=gray, lineheight=1.5)
-    y += 24
+    _add_text_field(page, "nl_intro", fitz.Rect(M, y, W - M, y + 70),
+                    value=intro, fontsize=11, font_name="Helv", color=gray, multiline=True)
+    y += 86
 
     # ── Card sections ──
     card_colors = [purple, blue]
-    for i, (sec_title, sec_body) in enumerate([(s1_title, s1_body), (s2_title, s2_body)]):
+    for i, (sec_field, sec_title, sec_body) in enumerate([
+        ("nl_section1", s1_title, s1_body),
+        ("nl_section2", s2_title, s2_body),
+    ]):
         card_rect = fitz.Rect(M, y, W - M, y + 100)
         page.draw_rect(card_rect, color=_hex("#e2e8f0"), fill=(1, 1, 1), width=0.75, radius=0.15)
 
@@ -211,22 +343,16 @@ def _generate_modern_newsletter(page, W, H, M, title, edition, date_str, company
         bar_rect = fitz.Rect(M + 6, y + 10, M + 10, y + 90)
         page.draw_rect(bar_rect, color=None, fill=card_colors[i], radius=0.05)
 
-        # Title
-        tw = fitz.TextWriter(page.rect)
-        tw.append((M + 20, y + 28), sec_title, font=FONT_HEBO, fontsize=12)
-        tw.write_text(page, color=dark)
-
-        # Body
-        _draw_wrapped_text(page, sec_body,
-                           fitz.Rect(M + 20, y + 38, W - M - 16, y + 92),
-                           font=FONT_HELV, fontsize=10, color=gray, lineheight=1.4)
+        _add_text_field(page, f"{sec_field}_title", fitz.Rect(M + 18, y + 14, W - M - 14, y + 32),
+                        value=sec_title, fontsize=12, font_name="HeBo", color=dark)
+        _add_text_field(page, f"{sec_field}_body", fitz.Rect(M + 18, y + 36, W - M - 14, y + 94),
+                        value=sec_body, fontsize=10, font_name="Helv", color=gray, multiline=True)
         y += 116
 
     # ── Footer ──
     page.draw_line(fitz.Point(M, H - 60), fitz.Point(W - M, H - 60), color=_hex("#e2e8f0"), width=0.5)
-    tw = fitz.TextWriter(page.rect)
-    tw.append((M, H - 40), footer, font=FONT_HELV, fontsize=8)
-    tw.write_text(page, color=gray)
+    _add_text_field(page, "nl_footer", fitz.Rect(M, H - 52, W - M, H - 36),
+                    value=footer, fontsize=8, font_name="Helv", color=gray)
 
 
 # ─── NDA Agreement Generator ─────────────────────────────────────────────────
@@ -309,14 +435,14 @@ def generate_nda(data: dict, output_path: str):
     LINE_H = 1.35
     CONTENT_W = W - 2 * M
 
-    effective_date = data.get("effective_date", datetime.now().strftime("%B %d, %Y"))
-    party1 = data.get("party1_name", "Your Company Inc.")
-    party1_addr = data.get("party1_address", "1234 Company St.\nCompany Town, ST 12345")
-    party2 = data.get("party2_name", "Recipient Name")
-    party2_addr = data.get("party2_address", "5678 Recipient Rd.\nRecipient City, ST 67890")
-    purpose = data.get("purpose", "exploring a potential business relationship between the parties")
-    term_years = data.get("term_years", "2")
-    governing_law = data.get("governing_law", "State of Delaware")
+    effective_date = data.get("effective_date", "")
+    party1 = data.get("party1_name", "")
+    party1_addr = data.get("party1_address", "")
+    party2 = data.get("party2_name", "")
+    party2_addr = data.get("party2_address", "")
+    purpose = data.get("purpose", "")
+    term_years = data.get("term_years", "") or "2"
+    governing_law = data.get("governing_law", "") or "State of Delaware"
 
     page = _nda_new_page(doc, W, H, M)
     y = 60
@@ -329,8 +455,11 @@ def generate_nda(data: dict, output_path: str):
     _nda_centered(page, W, y, "NON-DISCLOSURE AND CONFIDENTIALITY AGREEMENT", font=FONT_TIBO, fontsize=TITLE_SIZE, color=BLACK)
     y += 30
 
-    # ── Date line ──
-    _nda_centered(page, W, y, f"Effective Date: {effective_date}", font=FONT_TIRO, fontsize=BODY_SIZE, color=BLACK)
+    # ── Date line (label + fill-in field) ──
+    _nda_write(page, M, y, "Effective Date:", font=FONT_TIBO, fontsize=BODY_SIZE, color=BLACK)
+    _add_text_field(page, "nda_effective_date",
+                    fitz.Rect(M + 90, y - BODY_SIZE, M + 290, y + 4),
+                    value=effective_date, fontsize=BODY_SIZE, font_name="TiRo")
     y += 28
 
     # ── Horizontal rule ──
@@ -338,35 +467,45 @@ def generate_nda(data: dict, output_path: str):
     y += 22
 
     # ── Parties Introduction ──
-    intro = (
-        f'This Non-Disclosure and Confidentiality Agreement (this "Agreement") is entered into '
-        f'as of {effective_date} (the "Effective Date"), by and between:'
+    y = _flow_fields(
+        page,
+        [
+            'This Non-Disclosure and Confidentiality Agreement (this "Agreement") is entered into as of',
+            _Field("nda_effective_date", effective_date, min_w=140),
+            '(the "Effective Date"), by and between:',
+        ],
+        M, y, W - 2 * M, FONT_TIRO, fontsize=BODY_SIZE, lineheight=LINE_H,
     )
-    y = _nda_wrapped(page, intro, fitz.Rect(M, y, W - M, y + 200),
-                     font=FONT_TIRO, fontsize=BODY_SIZE, color=BLACK, lineheight=LINE_H)
-    y += 12
+    y += 4
 
     # Party 1 block
-    party1_block = (
-        f'{party1} ("Disclosing Party"), with a principal place of business at '
-        f'{party1_addr.replace(chr(10), ", ")};'
+    y = _flow_fields(
+        page,
+        [
+            _Field("nda_party1_name", party1, min_w=170),
+            '("Disclosing Party"), with a principal place of business at',
+            _Field("nda_party1_address", party1_addr.replace(chr(10), ", "), min_w=200),
+            ';',
+        ],
+        M + 36, y, W - M - (M + 36), FONT_TIRO, fontsize=BODY_SIZE, lineheight=LINE_H,
     )
-    y = _nda_wrapped(page, party1_block, fitz.Rect(M + 36, y, W - M, y + 200),
-                     font=FONT_TIRO, fontsize=BODY_SIZE, color=BLACK, lineheight=LINE_H)
-    y += 8
 
     # "and"
     _nda_write(page, M, y + BODY_SIZE, "and", font=FONT_TIRO, fontsize=BODY_SIZE, color=BLACK)
     y += BODY_SIZE * LINE_H + 8
 
     # Party 2 block
-    party2_block = (
-        f'{party2} ("Receiving Party"), with a principal place of business at '
-        f'{party2_addr.replace(chr(10), ", ")}.'
+    y = _flow_fields(
+        page,
+        [
+            _Field("nda_party2_name", party2, min_w=170),
+            '("Receiving Party"), with a principal place of business at',
+            _Field("nda_party2_address", party2_addr.replace(chr(10), ", "), min_w=200),
+            '.',
+        ],
+        M + 36, y, W - M - (M + 36), FONT_TIRO, fontsize=BODY_SIZE, lineheight=LINE_H,
     )
-    y = _nda_wrapped(page, party2_block, fitz.Rect(M + 36, y, W - M, y + 200),
-                     font=FONT_TIRO, fontsize=BODY_SIZE, color=BLACK, lineheight=LINE_H)
-    y += 14
+    y += 6
 
     # Collectively
     _nda_write(page, M, y + BODY_SIZE,
@@ -386,13 +525,15 @@ def generate_nda(data: dict, output_path: str):
                      font=FONT_TIRO, fontsize=BODY_SIZE, color=BLACK, lineheight=LINE_H, indent=36)
     y += 8
 
-    recital_b = (
-        f'WHEREAS, the Receiving Party desires to receive certain Confidential Information '
-        f'for the purpose of {purpose}; and'
+    y = _flow_fields(
+        page,
+        [
+            'WHEREAS, the Receiving Party desires to receive certain Confidential Information for the purpose of',
+            _Field("nda_purpose", purpose, min_w=200),
+            '; and',
+        ],
+        M, y, W - 2 * M, FONT_TIRO, fontsize=BODY_SIZE, lineheight=LINE_H, indent=36,
     )
-    y = _nda_wrapped(page, recital_b, fitz.Rect(M, y, W - M, y + 200),
-                     font=FONT_TIRO, fontsize=BODY_SIZE, color=BLACK, lineheight=LINE_H, indent=36)
-    y += 8
 
     recital_c = (
         'WHEREAS, the Disclosing Party is willing to disclose such Confidential Information '
@@ -559,9 +700,9 @@ def generate_nda(data: dict, output_path: str):
     # ── Right signature (Receiving Party) ──
     rx = M + sig_w + 60
 
-    for sx, party_name, party_label in [
-        (lx, party1, "DISCLOSING PARTY"),
-        (rx, party2, "RECEIVING PARTY"),
+    for sx, party_name, party_label, party_slug in [
+        (lx, party1, "DISCLOSING PARTY", "disclosing"),
+        (rx, party2, "RECEIVING PARTY", "receiving"),
     ]:
         _nda_write(page, sx, y, party_label, font=FONT_TIBO, fontsize=9, color=BLACK)
         sy = y + 20
@@ -570,18 +711,25 @@ def generate_nda(data: dict, output_path: str):
         page.draw_line(fitz.Point(sx, sy + 24), fitz.Point(sx + sig_w, sy + 24), color=BLACK, width=0.75)
         _nda_write(page, sx, sy + 36, "Signature", font=FONT_TIRO, fontsize=9, color=BLACK)
 
-        # Name line
-        page.draw_line(fitz.Point(sx, sy + 56), fitz.Point(sx + sig_w, sy + 56), color=BLACK, width=0.75)
-        _nda_write(page, sx, sy + 68, f"Name: {party_name}", font=FONT_TIRO, fontsize=9, color=BLACK)
+        # Name field
+        _nda_write(page, sx, sy + 68, "Name:", font=FONT_TIRO, fontsize=9, color=BLACK)
+        _add_text_field(page, f"nda_sig_name_{party_slug}",
+                        fitz.Rect(sx + 34, sy + 56, sx + sig_w, sy + 71),
+                        value=party_name, fontsize=9, font_name="TiRo")
 
-        # Title line
-        page.draw_line(fitz.Point(sx, sy + 88), fitz.Point(sx + sig_w, sy + 88), color=BLACK, width=0.75)
+        # Title field
         _nda_write(page, sx, sy + 100, "Title:", font=FONT_TIRO, fontsize=9, color=BLACK)
+        _add_text_field(page, f"nda_sig_title_{party_slug}",
+                        fitz.Rect(sx + 30, sy + 88, sx + sig_w, sy + 103),
+                        value="", fontsize=9, font_name="TiRo")
 
-        # Date line
-        page.draw_line(fitz.Point(sx, sy + 120), fitz.Point(sx + sig_w, sy + 120), color=BLACK, width=0.75)
+        # Date field
         _nda_write(page, sx, sy + 132, "Date:", font=FONT_TIRO, fontsize=9, color=BLACK)
+        _add_text_field(page, f"nda_sig_date_{party_slug}",
+                        fitz.Rect(sx + 30, sy + 120, sx + sig_w, sy + 135),
+                        value="", fontsize=9, font_name="TiRo")
 
+    doc.need_appearances(True)
     doc.save(output_path)
     doc.close()
 
@@ -601,18 +749,20 @@ def generate_purchase_order(data: dict, output_path: str):
     light = _hex("#64748b")
     rule_color = _hex("#e2e8f0")
 
-    po_number = data.get("po_number", "PO-2026-001")
+    po_number = data.get("po_number", "")
     po_date = data.get("po_date", datetime.now().strftime("%m-%d-%Y"))
     delivery_date = data.get("delivery_date", "")
     company_name = data.get("company_name", "Your Company Inc.")
     company_addr = data.get("company_address", "1234 Company St.\nCompany Town, ST 12345")
-    vendor_name = data.get("vendor_name", "Vendor Name")
-    vendor_addr = data.get("vendor_address", "5678 Vendor Rd.\nVendor City, ST 67890")
+    vendor_name = data.get("vendor_name", "")
+    vendor_addr = data.get("vendor_address", "")
     ship_to = data.get("ship_to", f"{company_name}\n{company_addr}")
     terms = data.get("terms", "Net 30")
     notes = data.get("notes", "")
     items = data.get("items", [
-        {"qty": 1, "description": "Sample Item", "unit_price": 0.00},
+        {"qty": 1, "description": "", "unit_price": 0.00},
+        {"qty": "", "description": "", "unit_price": ""},
+        {"qty": "", "description": "", "unit_price": ""},
     ])
 
     # ── Header ──
@@ -623,9 +773,8 @@ def generate_purchase_order(data: dict, output_path: str):
     tw.append((M, 32), "PURCHASE ORDER", font=FONT_HEBO, fontsize=18)
     tw.write_text(page, color=(1, 1, 1))
 
-    tw = fitz.TextWriter(page.rect)
-    tw.append((M, 52), po_number, font=FONT_HELV, fontsize=10)
-    tw.write_text(page, color=(1, 1, 1, 0.7))
+    _add_text_field(page, "po_number", fitz.Rect(M, 42, M + 160, 58),
+                    value=po_number, fontsize=10, font_name="Helv")
 
     # Date box
     date_box = fitz.Rect(W - M - 120, 14, W - M, 56)
@@ -635,18 +784,17 @@ def generate_purchase_order(data: dict, output_path: str):
     tw.append((date_box.x0 + 10, 30), "Date", font=FONT_HELV, fontsize=8)
     tw.write_text(page, color=(1, 1, 1, 0.7))
 
-    tw = fitz.TextWriter(page.rect)
-    tw.append((date_box.x0 + 10, 46), po_date, font=FONT_HEBO, fontsize=10)
-    tw.write_text(page, color=(1, 1, 1))
+    _add_text_field(page, "po_date", fitz.Rect(date_box.x0 + 8, 36, date_box.x1 - 8, 52),
+                    value=po_date, fontsize=10, font_name="Helv")
 
     y = 90
 
     # ── Vendor & Ship To boxes ──
     box_w = (W - 2 * M - 24) / 2
 
-    for i, (box_label, box_name, box_addr) in enumerate([
-        ("VENDOR", vendor_name, vendor_addr),
-        ("SHIP TO", ship_to.split("\n")[0], "\n".join(ship_to.split("\n")[1:]))
+    for i, (box_label, box_field, box_name, box_addr) in enumerate([
+        ("VENDOR", "po_vendor", vendor_name, vendor_addr),
+        ("SHIP TO", "po_ship_to", ship_to.split("\n")[0], "\n".join(ship_to.split("\n")[1:]))
     ]):
         bx = M + i * (box_w + 24)
         box_rect = fitz.Rect(bx, y, bx + box_w, y + 70)
@@ -656,26 +804,25 @@ def generate_purchase_order(data: dict, output_path: str):
         tw.append((bx + 12, y + 18), box_label, font=FONT_HEBO, fontsize=8)
         tw.write_text(page, color=teal)
 
-        tw = fitz.TextWriter(page.rect)
-        tw.append((bx + 12, y + 34), box_name, font=FONT_HEBO, fontsize=10)
-        tw.write_text(page, color=dark)
-
-        _draw_wrapped_text(page, box_addr, fitz.Rect(bx + 12, y + 40, bx + box_w - 12, y + 65),
-                           font=FONT_HELV, fontsize=9, color=gray, lineheight=1.4)
+        _add_text_field(page, f"{box_field}_name", fitz.Rect(bx + 10, y + 22, bx + box_w - 10, y + 38),
+                        value=box_name, fontsize=10, font_name="HeBo", color=dark)
+        _add_text_field(page, f"{box_field}_address", fitz.Rect(bx + 10, y + 40, bx + box_w - 10, y + 66),
+                        value=box_addr, fontsize=9, font_name="Helv", color=gray, multiline=True)
 
     y += 90
 
     # ── Terms & Delivery ──
     tw = fitz.TextWriter(page.rect)
-    tw.append((M, y + 10), f"Payment Terms: {terms}", font=FONT_HELV, fontsize=9)
+    tw.append((M, y + 10), "Payment Terms:", font=FONT_HELV, fontsize=9)
     tw.write_text(page, color=gray)
+    _add_text_field(page, "po_terms", fitz.Rect(M + 76, y, M + 216, y + 14),
+                    value=terms, fontsize=9, font_name="Helv", color=gray)
 
-    if delivery_date:
-        tw = fitz.TextWriter(page.rect)
-        delivery_text = f"Delivery Date: {delivery_date}"
-        tw.append((W - M - fitz.get_text_length(delivery_text, fontname="helv", fontsize=9), y + 10),
-                  delivery_text, font=FONT_HELV, fontsize=9)
-        tw.write_text(page, color=gray)
+    tw = fitz.TextWriter(page.rect)
+    tw.append((W - M - 200, y + 10), "Delivery Date:", font=FONT_HELV, fontsize=9)
+    tw.write_text(page, color=gray)
+    _add_text_field(page, "po_delivery_date", fitz.Rect(W - M - 130, y, W - M, y + 14),
+                    value=delivery_date, fontsize=9, font_name="Helv", color=gray)
 
     y += 30
 
@@ -689,6 +836,7 @@ def generate_purchase_order(data: dict, output_path: str):
         (M + (W - 2*M) * 0.62 + 8, "Unit Price", 0.18),
         (M + (W - 2*M) * 0.82 + 8, "Amount", 0.18),
     ]
+    col_x = [c[0] for c in cols]
     for cx, label, _ in cols:
         tw = fitz.TextWriter(page.rect)
         tw.append((cx, y + 16), label, font=FONT_HEBO, fontsize=8)
@@ -698,9 +846,15 @@ def generate_purchase_order(data: dict, output_path: str):
     total = 0.0
 
     for idx, item in enumerate(items):
-        qty = float(item.get("qty", 0))
+        try:
+            qty = float(item.get("qty", 0) or 0)
+        except (TypeError, ValueError):
+            qty = 0.0
         desc = item.get("description", "")
-        price = float(item.get("unit_price", 0))
+        try:
+            price = float(item.get("unit_price", 0) or 0)
+        except (TypeError, ValueError):
+            price = 0.0
         amount = qty * price
         total += amount
 
@@ -708,11 +862,19 @@ def generate_purchase_order(data: dict, output_path: str):
         row_rect = fitz.Rect(M, y, W - M, y + 22)
         page.draw_rect(row_rect, color=None, fill=row_bg)
 
-        row_data = [desc, str(int(qty)) if qty == int(qty) else f"{qty:.1f}", f"${price:,.2f}", f"${amount:,.2f}"]
-        for i, (cx, _, __) in enumerate(cols):
-            tw = fitz.TextWriter(page.rect)
-            tw.append((cx, y + 15), row_data[i], font=FONT_HELV, fontsize=9)
-            tw.write_text(page, color=dark if i == 0 else gray)
+        qty_str = "" if not item.get("qty") else (str(int(qty)) if qty == int(qty) else f"{qty:.1f}")
+        price_str = "" if not item.get("unit_price") else f"{price:,.2f}"
+        amount_str = f"${amount:,.2f}" if amount else ""
+
+        _add_text_field(page, f"po_item{idx}_desc", fitz.Rect(col_x[0] - 4, y + 3, col_x[1] - 8, y + 19),
+                        value=desc, fontsize=9, font_name="Helv", color=dark)
+        _add_text_field(page, f"po_item{idx}_qty", fitz.Rect(col_x[1] - 4, y + 3, col_x[2] - 8, y + 19),
+                        value=qty_str, fontsize=9, font_name="Helv", color=gray)
+        _add_text_field(page, f"po_item{idx}_price", fitz.Rect(col_x[2] - 4, y + 3, col_x[3] - 8, y + 19),
+                        value=price_str, fontsize=9, font_name="Helv", color=gray)
+        tw = fitz.TextWriter(page.rect)
+        tw.append((col_x[3], y + 15), amount_str, font=FONT_HELV, fontsize=9)
+        tw.write_text(page, color=gray)
 
         page.draw_line(fitz.Point(M, y + 22), fitz.Point(W - M, y + 22), color=rule_color, width=0.5)
         y += 22
@@ -733,14 +895,13 @@ def generate_purchase_order(data: dict, output_path: str):
     tw.write_text(page, color=(1, 1, 1))
 
     # ── Notes ──
-    if notes:
-        y += 52
-        tw = fitz.TextWriter(page.rect)
-        tw.append((M, y), "Notes:", font=FONT_HEBO, fontsize=9)
-        tw.write_text(page, color=dark)
-        y += 4
-        _draw_wrapped_text(page, notes, fitz.Rect(M, y, W - M, y + 100),
-                           font=FONT_HELV, fontsize=9, color=gray, lineheight=1.5)
+    y += 52
+    tw = fitz.TextWriter(page.rect)
+    tw.append((M, y), "Notes:", font=FONT_HEBO, fontsize=9)
+    tw.write_text(page, color=dark)
+    y += 6
+    _add_text_field(page, "po_notes", fitz.Rect(M, y, W - M, y + 70),
+                    value=notes, fontsize=9, font_name="Helv", color=gray, multiline=True)
 
     # ── Signature ──
     sig_y = H - 100
@@ -753,7 +914,488 @@ def generate_purchase_order(data: dict, output_path: str):
     tw = fitz.TextWriter(page.rect)
     tw.append((W - M - 180, sig_y + 14), "Date", font=FONT_HELV, fontsize=8)
     tw.write_text(page, color=light)
+    _add_text_field(page, "po_sig_date", fitz.Rect(W - M - 180, sig_y - 16, W - M, sig_y - 2),
+                    value="", fontsize=9, font_name="Helv", color=dark)
 
+    doc.need_appearances(True)
+    doc.save(output_path)
+    doc.close()
+
+
+# ─── Lease Extension Generator ───────────────────────────────────────────────
+
+def _first_value(data: dict, keys, default: str = "") -> str:
+    for key in keys:
+        value = data.get(key)
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return default
+
+
+def _lease_centered(page, W, y, text, font=FONT_TIBO, fontsize=12):
+    tw = fitz.TextWriter(page.rect)
+    text_w = font.text_length(text, fontsize=fontsize)
+    tw.append(((W - text_w) / 2, y), text, font=font, fontsize=fontsize)
+    tw.write_text(page, color=(0, 0, 0))
+
+
+def _lease_write(page, x, y, text, font=FONT_TIRO, fontsize=11):
+    tw = fitz.TextWriter(page.rect)
+    tw.append((x, y), text, font=font, fontsize=fontsize)
+    tw.write_text(page, color=(0, 0, 0))
+
+
+def _lease_paragraph(page, text, x, y, width, fontsize=11, indent=0):
+    return _draw_wrapped_text(
+        page,
+        text,
+        fitz.Rect(x + indent, y, x + width, y + 120),
+        font=FONT_TIRO,
+        fontsize=fontsize,
+        color=(0, 0, 0),
+        lineheight=1.55,
+    ) + 8
+
+
+def generate_lease_extension(data: dict, output_path: str):
+    W, H = 612, 792
+    M = 50
+    doc = fitz.open()
+
+    agreement_date = _first_value(data, ["glex-agreement-date", "agreement_date", "agreementDate"], "")
+    landlord = _first_value(data, ["glex-landlord-name", "glex-company-name", "landlord_name", "landlordName"], "")
+    landlord_state = _first_value(data, ["glex-landlord-state", "glex-company-state", "landlord_state", "landlordState"], "")
+    landlord_address = _first_value(data, ["glex-landlord-address", "glex-company-address", "landlord_address", "landlordAddress"], "")
+    tenant1 = _first_value(data, ["glex-tenant1-name", "tenant1_name", "tenant1Name"], "")
+    tenant2 = _first_value(data, ["glex-tenant2-name", "tenant2_name", "tenant2Name"], "")
+    tenant_state = _first_value(data, ["glex-tenant-state", "tenant_state", "tenantState"], "")
+    tenant_address = _first_value(data, ["glex-tenant-address", "tenant_address", "tenantAddress"], "")
+    property_address = _first_value(data, ["glex-property-address", "property_address", "propertyAddress"], "")
+    premises_description = _first_value(data, ["glex-premises-description", "premises_description", "premisesDescription"], "")
+    original_date = _first_value(data, ["glex-original-lease-date", "original_lease_date", "originalLeaseDate"], "")
+    extension_period = _first_value(data, ["glex-extension-period", "extension_period", "extensionPeriod"], "")
+    start_date = _first_value(data, ["glex-extension-start-date", "extension_start_date", "extensionStartDate"], "")
+    end_date = _first_value(data, ["glex-extension-end-date", "extension_end_date", "extensionEndDate"], "")
+    rent = _first_value(data, ["glex-new-rent", "new_rent", "newRent"], "")
+    tenant_names = tenant1 if not tenant2 else f"{tenant1}; {tenant2}"
+
+    rent_text = rent
+    try:
+        rent_text = f"{float(rent):,.2f}"
+    except (TypeError, ValueError):
+        pass
+
+    page = doc.new_page(width=W, height=H)
+    content_w = W - (2 * M)
+    field_fill = (0.93, 0.96, 1.0)
+    field_border = (0.70, 0.76, 0.88)
+    line_color = (0.05, 0.05, 0.05)
+    body_size = 9
+
+    def write(x, y, text, font=FONT_HELV, size=body_size):
+        tw = fitz.TextWriter(page.rect)
+        tw.append((x, y), text, font=font, fontsize=size)
+        tw.write_text(page, color=(0, 0, 0))
+
+    def wrapped(text, x, y, width, size=body_size, indent=0, lineheight=1.22):
+        return _draw_wrapped_text(
+            page,
+            text,
+            fitz.Rect(x + indent, y, x + width, y + 80),
+            font=FONT_HELV,
+            fontsize=size,
+            color=(0, 0, 0),
+            lineheight=lineheight,
+        )
+
+    def flow(parts, x, y, width, indent=0, gap=0):
+        return _flow_fields(
+            page,
+            parts,
+            x,
+            y,
+            width,
+            FONT_HELV,
+            fontsize=body_size,
+            lineheight=1.22,
+            indent=indent,
+            indent_all_lines=bool(indent),
+            gap_after=gap,
+            field_fill_color=None,
+            field_border_color=None,
+            field_border_width=0,
+            field_pad=1.0,
+        )
+
+    def text_field(name, rect, value="", size=body_size, multiline=False, transparent=True):
+        if transparent:
+            return _add_text_field(
+                page,
+                name,
+                rect,
+                value=value,
+                fontsize=size,
+                font_name="Helv",
+                multiline=multiline,
+                fill_color=None,
+                border_color=None,
+                border_width=0,
+            )
+        return _add_text_field(
+            page,
+            name,
+            rect,
+            value=value,
+            fontsize=size,
+            font_name="Helv",
+            multiline=multiline,
+            fill_color=field_fill,
+            border_color=field_border,
+            border_width=0.4,
+        )
+
+    _lease_centered(page, W, 70, "EXTENSION OF LEASE AGREEMENT", font=FONT_HEBO, fontsize=15)
+    page.draw_line(fitz.Point(M, 86), fitz.Point(W - M, 86), color=line_color, width=1.7)
+
+    flow(
+        [
+            'This Extension of Lease Agreement (the "Agreement") is made and effective',
+            _Field("lease_agreement_date", agreement_date, min_w=42),
+            ".",
+        ],
+        M,
+        114,
+        content_w,
+    )
+
+    label_x = M
+    text_x = 176
+    y = 158
+    write(label_x, y, "BETWEEN:", font=FONT_HEBO)
+    y = flow(
+        [
+            _Field("lease_landlord_name", landlord, min_w=128),
+            ' (the "Landlord"), a corporation organized and existing under the laws of the',
+            _Field("lease_landlord_state", landlord_state, min_w=82),
+            ", with its head office located at:",
+        ],
+        text_x,
+        y - 9,
+        W - M - text_x,
+    ) + 8
+    text_field("lease_landlord_address", fitz.Rect(text_x, y, W - M, y + 24), landlord_address, multiline=True)
+    y += 56
+
+    write(label_x, y, "AND:", font=FONT_HEBO)
+    y = flow(
+        [
+            _Field("lease_tenant_names", tenant_names, min_w=118),
+            ' (the "Tenant"), an individual with his main address located at OR a corporation organized and existing under the laws of the',
+            _Field("lease_tenant_state", tenant_state, min_w=82),
+            ", with its head office located at:",
+        ],
+        text_x,
+        y - 9,
+        W - M - text_x,
+    ) + 8
+    text_field("lease_tenant_address", fitz.Rect(text_x, y, W - M, y + 24), tenant_address, multiline=True)
+
+    y = 350
+    write(M, y, "RECITALS", font=FONT_HEBO)
+    y += 22
+    flow(
+        [
+            "This Agreement is relative to a certain Lease Agreement for premises known as",
+            _Field("lease_premises_description", premises_description, min_w=62),
+            "located at",
+            _Field("lease_property_address", property_address.replace("\n", ", "), min_w=56),
+            "and dated",
+            _Field("lease_original_date", original_date, min_w=82),
+            ".",
+        ],
+        M,
+        y - 9,
+        content_w,
+    )
+
+    y = 430
+    write(M, y, "TERMS", font=FONT_HEBO)
+    y += 20
+
+    number_x = M + 22
+    term_x = M + 42
+    term_w = W - M - term_x
+    terms = [
+        (
+            "1.",
+            [
+                "For good consideration, Landlord and Tenant each agree to extend the term of said Lease for a period of",
+                _Field("lease_extension_period", extension_period, min_w=76),
+                "commencing on",
+                _Field("lease_start_date", start_date, min_w=82),
+                "terminating on",
+                _Field("lease_end_date", end_date, min_w=82),
+                ", with no further right of renewal or extension beyond said termination date.",
+            ],
+        ),
+        (
+            "2.",
+            [
+                "During the extended term, Tenant shall pay Landlord rent of",
+                _Field("lease_new_rent", rent_text, min_w=70),
+                "payable in advance.",
+            ],
+        ),
+    ]
+    for number, parts in terms:
+        write(number_x, y, number)
+        y = flow(parts, term_x, y - 9, term_w, gap=7)
+
+    write(number_x, y, "3.")
+    y = wrapped(
+        "It is further provided, however, that all other terms of the Lease shall continue during this extended term as if set forth herein.",
+        term_x,
+        y - 9,
+        term_w,
+    ) + 8
+    write(number_x, y, "4.")
+    y = wrapped(
+        "This agreement shall be binding upon and shall inure to the benefit of the parties, their successors, assigns and personal representatives.",
+        term_x,
+        y - 9,
+        term_w,
+    ) + 12
+
+    wrapped(
+        "IN WITNESS WHEREOF, the parties have executed this Agreement as of the date first above written.",
+        M,
+        y,
+        content_w,
+    )
+
+    sig_block_shift_y = -54
+    sig_y = 668 + sig_block_shift_y
+    left_x = M
+    right_x = 344
+    sig_w = 252
+    write(left_x, sig_y, "LANDLORD")
+    write(right_x, sig_y, "TENANT")
+
+    def signature_column(x, slug, printed_value):
+        def sy(value):
+            return value + sig_block_shift_y
+
+        page.draw_line(fitz.Point(x, sy(711)), fitz.Point(x + sig_w, sy(711)), color=line_color, width=0.8)
+        text_field(f"lease_sig_authorized_{slug}", fitz.Rect(x, sy(691), x + sig_w, sy(710)), "", transparent=True)
+        write(x, sy(723), "Authorized Signature", size=8)
+        page.draw_line(fitz.Point(x, sy(752)), fitz.Point(x + sig_w, sy(752)), color=line_color, width=0.8)
+        text_field(f"lease_sig_name_title_{slug}", fitz.Rect(x, sy(732), x + sig_w, sy(751)), printed_value, size=8, transparent=True)
+        write(x, sy(764), "Print Name and Title", size=8)
+
+    signature_column(left_x, "landlord", landlord)
+    signature_column(right_x, "tenant", tenant_names)
+
+    page.draw_line(fitz.Point(M, 776 + sig_block_shift_y), fitz.Point(W - M, 776 + sig_block_shift_y), color=line_color, width=0.8)
+    write(M, 787 + sig_block_shift_y, "Arbitration Agreement", size=8)
+    footer = "Page 1 of 1"
+    footer_w = FONT_HELV.text_length(footer, fontsize=8)
+    write(W - M - footer_w, 787, footer, size=8)
+
+    doc.need_appearances(True)
+    doc.save(output_path)
+    doc.close()
+
+
+# ─── Security Deposit Return Generator ───────────────────────────────────────
+
+def _money_value(value, default="0.00") -> str:
+    try:
+        return f"{float(str(value).replace('$', '').replace(',', '') or 0):,.2f}"
+    except (TypeError, ValueError):
+        return default
+
+
+def generate_security_deposit_return(data: dict, output_path: str):
+    W, H = 612, 792
+    M = 44
+    doc = fitz.open()
+    page = doc.new_page(width=W, height=H)
+
+    navy = _hex("#1e3a5f")
+    blue_light = _hex("#eef4ff")
+    gray = _hex("#4b5563")
+    rule = _hex("#d1d5db")
+    dark = _hex("#111827")
+    white = (1, 1, 1)
+
+    landlord_name = data.get("landlord_name", "Landlord Name")
+    landlord_address = data.get("landlord_address", "1234 Landlord Ave.\nCity, ST 12345")
+    tenant_name = data.get("tenant_name", "Tenant Name")
+    tenant_address = data.get("tenant_address", "456 Tenant St., Apt 2")
+    city_prov_postal = data.get("city_prov_postal", "City, Province  A1B 2C3")
+    tenancy_began = data.get("tenancy_began", "")
+    keys_turned_in = data.get("keys_turned_in", "")
+    total_deposits = _money_value(data.get("total_deposits", "0.00"))
+    notes = data.get("notes", data.get("sdr_notes", ""))
+    signature_landlord = data.get("signature_landlord", data.get("sdr_signature_landlord", ""))
+    signature_tenant = data.get("signature_tenant", data.get("sdr_signature_tenant", ""))
+    signature_date_landlord = data.get("signature_date_landlord", data.get("sdr_signature_date_landlord", ""))
+    signature_date_tenant = data.get("signature_date_tenant", data.get("sdr_signature_date_tenant", ""))
+    deductions = data.get("deductions") or [
+        {"type": "", "description": "", "cost": ""},
+    ]
+
+    def write(x, y, text, font=FONT_HELV, size=9, color=dark):
+        tw = fitz.TextWriter(page.rect)
+        tw.append((x, y), str(text), font=font, fontsize=size)
+        tw.write_text(page, color=color)
+
+    def field(name, rect, value="", size=9, multiline=False, align=fitz.TEXT_ALIGN_LEFT):
+        return _add_text_field(
+            page,
+            name,
+            rect,
+            value=value,
+            fontsize=size,
+            font_name="Helv",
+            multiline=multiline,
+            color=dark,
+            align=align,
+            fill_color=_FIELD_FILL,
+            border_color=_FIELD_BORDER,
+            border_width=0.55,
+        )
+
+    page.draw_rect(fitz.Rect(0, 0, W, 76), color=None, fill=navy)
+    title = "SECURITY DEPOSIT RETURN"
+    title_w = FONT_HEBO.text_length(title, fontsize=17)
+    write((W - title_w) / 2, 32, title, font=FONT_HEBO, size=17, color=white)
+    subtitle = "Itemized Statement of Deposit, Deductions, and Refund"
+    subtitle_w = FONT_HELV.text_length(subtitle, fontsize=9)
+    write((W - subtitle_w) / 2, 52, subtitle, size=9, color=(0.86, 0.91, 0.96))
+
+    y = 104
+    col_gap = 24
+    col_w = (W - 2 * M - col_gap) / 2
+
+    for x, label, name, address_name, party, address in [
+        (M, "LANDLORD", "sdr_landlord_name", "sdr_landlord_address", landlord_name, landlord_address),
+        (M + col_w + col_gap, "TENANT", "sdr_tenant_name", "sdr_tenant_address", tenant_name, tenant_address),
+    ]:
+        page.draw_rect(fitz.Rect(x, y, x + col_w, y + 92), color=rule, fill=(1, 1, 1), width=0.7)
+        write(x + 12, y + 20, label, font=FONT_HEBO, size=8, color=navy)
+        field(name, fitz.Rect(x + 10, y + 27, x + col_w - 10, y + 47), party, size=11)
+        field(address_name, fitz.Rect(x + 10, y + 52, x + col_w - 10, y + 86), address, size=9, multiline=True)
+
+    y += 120
+    write(M, y, "Property / Tenancy Information", font=FONT_HEBO, size=10, color=navy)
+    y += 16
+    label_w = 118
+    row_h = 28
+    rows = [
+        ("Property Address", "sdr_property_address", city_prov_postal),
+        ("Tenancy Began", "sdr_tenancy_began", tenancy_began),
+        ("Keys Turned In", "sdr_keys_turned_in", keys_turned_in),
+        ("Total Deposits Held", "sdr_total_deposits", total_deposits),
+    ]
+    for label, name, value in rows:
+        page.draw_rect(fitz.Rect(M, y, W - M, y + row_h), color=rule, fill=(1, 1, 1), width=0.45)
+        write(M + 10, y + 18, label, font=FONT_HEBO, size=8, color=gray)
+        align = fitz.TEXT_ALIGN_RIGHT if name == "sdr_total_deposits" else fitz.TEXT_ALIGN_LEFT
+        field(name, fitz.Rect(M + label_w, y + 6, W - M - 10, y + 22), value, size=9, align=align)
+        y += row_h
+
+    y += 26
+    write(M, y, "Itemized Deductions", font=FONT_HEBO, size=10, color=navy)
+    y += 14
+    table_x = M
+    table_w = W - 2 * M
+    type_w = 100
+    cost_w = 92
+    desc_w = table_w - type_w - cost_w
+    header_h = 24
+    page.draw_rect(fitz.Rect(table_x, y, table_x + table_w, y + header_h), color=None, fill=navy)
+    write(table_x + 10, y + 16, "Type", font=FONT_HEBO, size=8, color=white)
+    write(table_x + type_w + 10, y + 16, "Description", font=FONT_HEBO, size=8, color=white)
+    write(table_x + type_w + desc_w + 10, y + 16, "Cost", font=FONT_HEBO, size=8, color=white)
+    y += header_h
+
+    total_deductions = 0.0
+    deduction_count = max(1, min(8, len(deductions)))
+    for idx in range(deduction_count):
+        item = deductions[idx] if idx < len(deductions) and isinstance(deductions[idx], dict) else {}
+        item_type = item.get("type", "")
+        desc = item.get("description", "")
+        cost_raw = item.get("cost", "")
+        try:
+            cost = float(str(cost_raw).replace("$", "").replace(",", "") or 0)
+        except (TypeError, ValueError):
+            cost = 0.0
+        total_deductions += cost
+        row_bg = blue_light if idx % 2 == 0 else (1, 1, 1)
+        page.draw_rect(fitz.Rect(table_x, y, table_x + table_w, y + 26), color=rule, fill=row_bg, width=0.35)
+        field(f"sdr_deduction_{idx}_type", fitz.Rect(table_x + 8, y + 5, table_x + type_w - 8, y + 21), item_type, size=8)
+        field(f"sdr_deduction_{idx}_description", fitz.Rect(table_x + type_w + 8, y + 5, table_x + type_w + desc_w - 8, y + 21), desc, size=8)
+        field(
+            f"sdr_deduction_{idx}_cost",
+            fitz.Rect(table_x + type_w + desc_w + 8, y + 5, table_x + table_w - 8, y + 21),
+            "" if cost_raw in ("", None) else _money_value(cost_raw, ""),
+            size=8,
+            align=fitz.TEXT_ALIGN_RIGHT,
+        )
+        y += 26
+
+    y += 24
+    summary_x = W - M - 230
+    summary_label_w = 138
+    deposits = float(total_deposits.replace(",", "") or 0)
+    refund_due = deposits - total_deductions
+    summary_rows = [
+        ("Total Deposits", "sdr_summary_total_deposits", f"${deposits:,.2f}"),
+        ("Total Deductions", "sdr_summary_total_deductions", f"${total_deductions:,.2f}"),
+        ("Refund Due", "sdr_refund_due", f"${refund_due:,.2f}"),
+    ]
+    for idx, (label, name, value) in enumerate(summary_rows):
+        fill = navy if idx == 2 else (1, 1, 1)
+        color = white if idx == 2 else dark
+        page.draw_rect(fitz.Rect(summary_x, y, W - M, y + 28), color=navy, fill=fill, width=0.65)
+        write(summary_x + 10, y + 18, label, font=FONT_HEBO, size=9, color=color)
+        field(
+            name,
+            fitz.Rect(summary_x + summary_label_w, y + 6, W - M - 8, y + 22),
+            value,
+            size=9,
+            align=fitz.TEXT_ALIGN_RIGHT,
+        )
+        y += 28
+
+    note_y = y + 24
+    write(M, note_y, "Notes / Explanation", font=FONT_HEBO, size=9, color=navy)
+    field("sdr_notes", fitz.Rect(M, note_y + 8, W - M, note_y + 58), notes, size=9, multiline=True)
+
+    sig_y = H - 88
+    sig_w = 220
+    for x, label, slug in [
+        (M, "Landlord / Agent Signature", "landlord"),
+        (W - M - sig_w, "Tenant Acknowledgment", "tenant"),
+    ]:
+        signature_value = signature_landlord if slug == "landlord" else signature_tenant
+        signature_date_value = signature_date_landlord if slug == "landlord" else signature_date_tenant
+        signature_rect = fitz.Rect(x, sig_y - 24, x + sig_w, sig_y - 2)
+        field(f"sdr_signature_{slug}", signature_rect, signature_value, size=9)
+        page.draw_line(fitz.Point(x, sig_y), fitz.Point(x + sig_w, sig_y), color=dark, width=0.8)
+        write(x, sig_y + 15, label, size=8, color=gray)
+
+        date_y = sig_y + 36
+        write(x, date_y + 13, "Date:", size=8, color=gray)
+        field(
+            f"sdr_signature_date_{slug}",
+            fitz.Rect(x + 42, date_y, x + sig_w, date_y + 18),
+            signature_date_value,
+            size=8,
+        )
+
+    doc.need_appearances(True)
     doc.save(output_path)
     doc.close()
 
@@ -773,6 +1415,10 @@ def main():
 
     if template_type == "newsletter":
         generate_newsletter(data, output_path, slug=template_slug)
+    elif template_type == "realestate" and template_slug == "security_deposit_return":
+        generate_security_deposit_return(data, output_path)
+    elif template_type == "realestate" and template_slug == "lease_extension":
+        generate_lease_extension(data, output_path)
     elif template_slug == "nda_agreement":
         generate_nda(data, output_path)
     elif template_slug == "purchase_order":

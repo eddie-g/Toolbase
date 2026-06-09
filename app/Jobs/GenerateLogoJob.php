@@ -111,15 +111,15 @@ class GenerateLogoJob implements ShouldQueue
         $modelName = $this->params['model_name'];
         $logoShape = $this->params['logo_shape'] ?? 'none';
         $logoDetail = $this->params['logo_detail'] ?? 'max';
+        $imageSize = $this->params['image_size'] ?? '1:1';
 
         try {
             if ($imageModel === 'recraft') {
-                $result = $this->generateRecraft($prompt, $imageCount, $outputFormat, $isPro, $bgColor, $iconOnly, $colorPalette, $recraftSubstyle);
+                $result = $this->generateRecraft($prompt, $imageCount, $outputFormat, $isPro, $bgColor, $iconOnly, $colorPalette, $recraftSubstyle, $imageSize);
             } elseif ($imageModel === 'dalle') {
-                $result = $this->generateDalle($prompt, $imageCount, $isPro, $outputFormat);
+                $result = $this->generateDalle($prompt, $imageCount, $isPro, $outputFormat, $imageSize);
             } elseif ($imageModel === 'flux' && $outputFormat === 'raster') {
-                // For raster flux images, use nano-banana-2
-                $result = $this->generateNanoBanana2($prompt, $imageCount);
+                $result = $this->generateNanoBanana2($prompt, $imageCount, $imageSize);
             } elseif ($isPro) {
                 $result = $this->generateFluxPro($prompt, $imageCount, $proSize);
             } else {
@@ -411,13 +411,19 @@ class GenerateLogoJob implements ShouldQueue
      * V4/V4.1: unified endpoint /v1/images/generations. Style and substyle are not supported.
      * V2: endpoint per type (/raster or /vector), with style/substyle support.
      */
-    private function generateRecraft(string $prompt, int $imageCount, string $outputFormat, bool $isPro, string $bgColor, bool $iconOnly, ?array $colorPalette, ?string $recraftSubstyle): array
+    private function generateRecraft(string $prompt, int $imageCount, string $outputFormat, bool $isPro, string $bgColor, bool $iconOnly, ?array $colorPalette, ?string $recraftSubstyle, string $imageSize = '1:1'): array
     {
         $recraftBaseUrl = config('services.recraft.base_url', 'https://external.api.recraft.ai');
         $recraftKey = config('services.recraft.key');
         $isVector = $outputFormat === 'vector';
 
-        $recraftSize = $isVector ? '1:1' : '1024x1024';
+        // Raster images honor the requested aspect ratio (Recraft-valid sizes).
+        $recraftRasterSize = match ($imageSize) {
+            '16:9'  => '1820x1024',
+            '9:16'  => '1024x1820',
+            default => '1024x1024',
+        };
+        $recraftSize = $isVector ? '1:1' : $recraftRasterSize;
 
         // Use V4 for vector/raster Pro and V2 for regular raster.
         if ($isVector) {
@@ -599,9 +605,9 @@ class GenerateLogoJob implements ShouldQueue
      * Generate images via GPT Image 1.5.
      * Routes to the new gpt-image-1.5 model. DALL-E 3 is preserved as generateDalle3() below.
      */
-    private function generateDalle(string $prompt, int $imageCount, bool $isPro, string $outputFormat = 'raster'): array
+    private function generateDalle(string $prompt, int $imageCount, bool $isPro, string $outputFormat = 'raster', string $imageSize = '1:1'): array
     {
-        return $this->generateGptImage15($prompt, $imageCount, $isPro, $outputFormat);
+        return $this->generateGptImage15($prompt, $imageCount, $isPro, $outputFormat, $imageSize);
     }
 
     /**
@@ -612,10 +618,17 @@ class GenerateLogoJob implements ShouldQueue
      * 
      * If outputFormat is 'vector', will vectorize PNG to SVG after generation.
      */
-    private function generateGptImage15(string $prompt, int $imageCount, bool $isPro, string $outputFormat = 'raster'): array
+    private function generateGptImage15(string $prompt, int $imageCount, bool $isPro, string $outputFormat = 'raster', string $imageSize = '1:1'): array
     {
         $quality = $isPro ? 'high' : 'medium';
         $allImages = [];
+
+        // Map aspect ratio to a GPT Image 1.5 supported size.
+        $gptSize = match ($imageSize) {
+            '16:9'  => '1536x1024',
+            '9:16'  => '1024x1536',
+            default => '1024x1024',
+        };
 
         for ($i = 0; $i < $imageCount; $i++) {
             $apiUrl = config('services.openai.base_url') . '/images/generations';
@@ -629,7 +642,7 @@ class GenerateLogoJob implements ShouldQueue
                 'model'   => 'gpt-image-1.5',
                 'prompt'  => $prompt,
                 'n'       => 1,
-                'size'    => '1024x1024',
+                'size'    => $gptSize,
                 'quality' => $quality,
             ]);
 
@@ -862,6 +875,7 @@ class GenerateLogoJob implements ShouldQueue
     {
         $endpoint = 'https://fal.run/fal-ai/flux-2-flex';
         $allImages = [];
+        $fluxImageSize = ['width' => $proSize, 'height' => $proSize];
 
         for ($i = 0; $i < $imageCount; $i++) {
             $proResponse = $this->httpWithResolvedDns($endpoint, [
@@ -872,10 +886,7 @@ class GenerateLogoJob implements ShouldQueue
                     || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
             })->timeout(120)->post($endpoint, [
                 'prompt' => $prompt,
-                'image_size' => [
-                    'width' => $proSize,
-                    'height' => $proSize,
-                ],
+                'image_size' => $fluxImageSize,
                 'num_images' => 1,
                 'num_inference_steps' => 28,
                 'guidance_scale' => 3.5,
@@ -993,8 +1004,9 @@ class GenerateLogoJob implements ShouldQueue
     /**
      * Generate images via Nano Banana 2.
      */
-    private function generateNanoBanana2(string $prompt, int $imageCount): array
+    private function generateNanoBanana2(string $prompt, int $imageCount, string $imageSize = '1:1'): array
     {
+        $aspectRatio = in_array($imageSize, ['1:1', '16:9', '9:16'], true) ? $imageSize : '1:1';
         $endpoint = 'https://fal.run/fal-ai/nano-banana-2';
         $response = $this->httpWithResolvedDns($endpoint, [
             'Authorization' => 'Key ' . config('services.fal.key'),
@@ -1006,7 +1018,7 @@ class GenerateLogoJob implements ShouldQueue
             'prompt' => $prompt,
             'num_images' => $imageCount,
             'resolution' => '1K',
-            'aspect_ratio' => '1:1',
+            'aspect_ratio' => $aspectRatio,
             'output_format' => 'png',
             'sync_mode' => true,
         ]);
