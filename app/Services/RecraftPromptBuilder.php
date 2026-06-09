@@ -50,6 +50,14 @@ class RecraftPromptBuilder
         return str_replace($search, $replace, $template);
     }
 
+    private static function normalizeSubject(string $subject): string
+    {
+        $subject = trim($subject);
+        $subject = preg_replace('/\s+/', ' ', $subject) ?? $subject;
+
+        return rtrim($subject, " \t\n\r\0\x0B.");
+    }
+
     public static function defaultColors(string $style): string
     {
         $tpl = self::templates('raster'); // Both configs have same default_colors
@@ -95,7 +103,7 @@ class RecraftPromptBuilder
         }
 
         $subjectValue = trim($subject) !== ''
-            ? trim($subject)
+            ? self::normalizeSubject($subject)
             : ($tpl['default_subject'][$mode] ?? 'logo symbol');
 
         $shapeBlock = '';

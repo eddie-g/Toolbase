@@ -14,7 +14,10 @@
         "laravel/sanctum": "^4.3",
         "laravel/socialite": "^5.24",
         "laravel/tinker": "^2.10.1",
-        "stripe/stripe-php": "^19.3"
+        "resend/resend-php": "^0.10|^1.0",
+        "stripe/stripe-php": "^19.3",
+        "symfony/http-client": "^7.0",
+        "symfony/resend-mailer": "^7.0"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",

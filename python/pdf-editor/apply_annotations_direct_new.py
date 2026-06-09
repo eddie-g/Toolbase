@@ -831,6 +831,12 @@ PDFJS_SOURCE_MASK_PADDING_X_PTS = 2.0
 PDFJS_SOURCE_MASK_PADDING_Y_PTS = 1.0
 PDFJS_SOURCE_MASK_PADDING_PTS = PDFJS_SOURCE_MASK_PADDING_X_PTS
 PDFJS_SOURCE_MASK_NEIGHBOR_GAP_PTS = 0.1
+# Max baseline drift (pts) for a redaction neighbour word to count as being on
+# the SAME text line as the target. Beyond this it is treated as a different
+# (vertically overlapping) line, so the redact rect is shrunk vertically rather
+# than horizontally. Tight-leading forms stack lines ~8pt apart, so 2pt cleanly
+# separates same-line words (≈0pt drift) from adjacent lines.
+_SHRINK_SAME_LINE_BASELINE_TOL_PTS = 2.0
 
 
 def _boolish(value: Any) -> bool:
@@ -1404,24 +1410,34 @@ def pdfjs_source_text_redaction_rects(page: fitz.Page, ann: Dict[str, Any], sour
     if not source_text:
         return [source_rect]
 
-    candidates: list[fitz.Rect] = []
+    matches: list[fitz.Rect] = []
     try:
-        matches = page.search_for(source_text)
+        matches = [fitz.Rect(match) & page.rect for match in page.search_for(source_text)]
     except Exception:
         matches = []
+    matches = [match for match in matches if not match.is_empty]
+
+    candidates: list[fitz.Rect] = []
     for match in matches:
-        match_rect = fitz.Rect(match) & page.rect
-        if not match_rect.is_empty and _rect_intersection_ratio(match_rect, source_rect) >= 0.55:
-            candidates.append(match_rect)
+        if _rect_intersection_ratio(match, source_rect) >= 0.55:
+            candidates.append(match)
 
     if candidates:
         return candidates
+    if matches:
+        try:
+            occurrence = int(ann.get("pdfjsSourceOccurrence") or ann.get("occurrence") or 0)
+        except Exception:
+            occurrence = 0
+        if occurrence < 0:
+            occurrence = 0
+        if occurrence < len(matches):
+            return [matches[occurrence]]
+        return [matches[-1]]
     return [source_rect]
 
 
 def pdfjs_source_text_needs_redaction(ann: Dict[str, Any]) -> bool:
-    if _boolish(ann.get("movedTextOverlay")) and not _boolish(ann.get("pdfjsDeleted")):
-        return False
     return pdfjs_source_edit_requires_redaction(ann)
 
 
@@ -1885,7 +1901,7 @@ def draw_pdfjs_source_mask(page: fitz.Page, ann: Dict[str, Any]) -> None:
         overall = overall | piece
     moved_fill = sample_pdfjs_moved_source_mask_fill(page, overall) if moved_overlay else None
     preserve_rule_cutouts = not (moved_overlay and moved_fill is not None and _pdfjs_rgb_luminance(moved_fill) < 100)
-    do_rule_split = preserve_rule_cutouts and (moved_overlay or _boolish(ann.get("pdfjsDeleted")))
+    do_rule_split = preserve_rule_cutouts
     for base in base_pieces:
         if base is None or base.is_empty:
             continue
@@ -6716,16 +6732,34 @@ def _shrink_redact_rect_to_avoid_neighbors(
         # Skip if the word no longer intersects what's left of the rect.
         if x1 <= shrunk.x0 or x0 >= shrunk.x1 or y1 <= shrunk.y0 or y0 >= shrunk.y1:
             continue
-        # Build edge-shrink candidates. Each entry is (edge, new_value, cost).
-        candidates = []
+        # Build edge-shrink candidates, grouped by axis. Each entry is
+        # (edge, new_value, cost).
+        x_candidates = []
+        y_candidates = []
         if y0 >= shrunk.y0:
-            candidates.append(("y1", y0 - 0.05, shrunk.y1 - y0))
+            y_candidates.append(("y1", y0 - 0.05, shrunk.y1 - y0))
         if y1 <= shrunk.y1:
-            candidates.append(("y0", y1 + 0.05, y1 - shrunk.y0))
+            y_candidates.append(("y0", y1 + 0.05, y1 - shrunk.y0))
         if x0 >= shrunk.x0:
-            candidates.append(("x1", x0 - 0.05, shrunk.x1 - x0))
+            x_candidates.append(("x1", x0 - 0.05, shrunk.x1 - x0))
         if x1 <= shrunk.x1:
-            candidates.append(("x0", x1 + 0.05, x1 - shrunk.x0))
+            x_candidates.append(("x0", x1 + 0.05, x1 - shrunk.x0))
+        # Choose the shrink axis from the neighbor's line relationship rather
+        # than raw area cost. A neighbor that shares the target's baseline
+        # (same y-extent) is an adjacent word on the SAME line: pull the rect
+        # in horizontally. A neighbor with an offset baseline is a DIFFERENT
+        # line whose bbox merely overlaps because tight leading makes glyph
+        # boxes taller than the line pitch: pull the rect in vertically.
+        # Picking by area cost (the old behaviour) could squeeze the rect
+        # horizontally between two different-line neighbours and leave a stray
+        # glyph (e.g. the trailing "n" of "...Instructions On") behind.
+        same_line = (
+            abs(y0 - original.y0) <= _SHRINK_SAME_LINE_BASELINE_TOL_PTS
+            and abs(y1 - original.y1) <= _SHRINK_SAME_LINE_BASELINE_TOL_PTS
+        )
+        preferred = x_candidates if same_line else y_candidates
+        fallback = y_candidates if same_line else x_candidates
+        candidates = preferred or fallback
         # If the word engulfs the rect on every side, no edge move can
         # evict it. Skip rather than crash.
         if not candidates:
@@ -7534,6 +7568,16 @@ def draw_text(
         line_height = 0.0
     color = hex_to_rgb(render_ann.get("textColor") or "#000000")
     background = str(render_ann.get("backgroundColor") or "").strip().lower()
+    if (
+        pdfjs_visible_overlay
+        and _boolish(render_ann.get("movedTextOverlay"))
+        and not _boolish(render_ann.get("styleDirty"))
+        and not _boolish(render_ann.get("userForcedRichText"))
+        and not _boolish(render_ann.get("backgroundColorExplicit"))
+        and not _boolish(render_ann.get("hasCustomBackground"))
+        and not _boolish(render_ann.get("userCreated"))
+    ):
+        background = "transparent"
     background_color = None if not background or background == "transparent" else hex_to_rgb(background)
     # PDF.js source overlays are drawn over the original PDF/background masks;
     # the generic white-text placeholder creates bogus dark boxes on colored bands.

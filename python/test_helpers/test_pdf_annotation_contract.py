@@ -222,6 +222,47 @@ class PdfAnnotationContractTests(unittest.TestCase):
         self.assertFalse(self.module.source_overlay_text_was_edited(annotation))
         self.assertFalse(self.module.pdfjs_source_edit_requires_redaction(annotation))
 
+    def test_cleared_source_span_to_empty_requires_redaction(self):
+        # Regression (doc 4368, pdfjs_4368_0_0:10, address redaction): clearing
+        # a source-backed overlay to empty IS a redaction. The empty replacement
+        # must still redact the original glyphs, otherwise the downloaded PDF
+        # keeps the original text (selectable + visible = "NOT REDACTED").
+        annotation = {
+            "id": "pdfjs_4368_0_0:10",
+            "type": "text",
+            "savedTextOverlay": True,
+            "userCreated": False,
+            "skipPdfjsSourceMask": False,
+            "pdfjsSourceX": 126.61875,
+            "pdfjsSourceY": 571.3592,
+            "pdfjsSourceW": 225.9800,
+            "pdfjsSourceH": 15.0525,
+            "pdfjsSourceText": "1810 Dublin Drive, League City, TX, 77573",
+            "originalText": "1810 Dublin Drive, League City, TX, 77573",
+            "text": "",
+        }
+
+        self.assertTrue(self.module.source_overlay_text_was_edited(annotation))
+        self.assertTrue(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
+    def test_cleared_source_span_to_empty_redacts_even_when_skip_mask_misflagged(self):
+        # Same as above but the editor mis-flagged skipPdfjsSourceMask: an
+        # emptied source-backed span must still redact the original glyphs.
+        annotation = {
+            "id": "pdfjs_4368_0_0:10",
+            "type": "text",
+            "userCreated": True,
+            "savedTextOverlay": True,
+            "skipPdfjsSourceMask": True,
+            "pdfjsAnchorUid": "0:10",
+            "pdfjsSourceX": 126.61875,
+            "pdfjsSourceText": "1810 Dublin Drive, League City, TX, 77573",
+            "text": "",
+        }
+
+        self.assertTrue(self.module.source_overlay_text_was_edited(annotation))
+        self.assertTrue(self.module.pdfjs_source_edit_requires_redaction(annotation))
+
     def test_pdfjs_source_edit_replacement_text_uses_saved_text_only(self):
         annotation = {
             "id": "pdfjs_4037_0_source:0:53",

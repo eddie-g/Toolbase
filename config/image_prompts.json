@@ -1,0 +1,23 @@
+{
+    "_comment": "Image-mode (non-logo) prompt templates for the Logo Generator's 'Image' mode. Edit strings here; variable substitution happens at runtime. Variables: {style_direction} (art-direction phrase for the selected style), {subject} (user description), {size} (composition/aspect phrase), {colors} (color instruction or empty), {bg} (background phrase or empty).",
+    "template": "A high-quality {style_direction} image of {subject}. {size}. Only include the requested subject and explicitly requested supporting elements; do not add people, buildings, vehicles, mountains, terrain, horizon lines, foreground objects, or extra scenery unless the description asks for them. {colors}{bg}Rich detail, balanced lighting, professional composition. Do not include any logos, watermarks, captions, or text or lettering unless it is explicitly part of the described subject.",
+    "default_subject": "an evocative, visually striking scene",
+    "style_direction": {
+        "professional": "clean, modern, polished commercial-quality",
+        "fantasy": "epic fantasy art style, magical and ornate, painterly",
+        "future": "futuristic sci-fi, sleek high-tech, dramatic",
+        "retro": "vintage retro, nostalgic color grading, classic",
+        "minimalist": "minimalist, lots of negative space, simple and clean",
+        "greetingcard": "hand-painted watercolor illustration, soft washes and paper texture",
+        "photorealistic": "photorealistic, professional photography, sharp focus and natural lighting",
+        "chrome": "glossy 3D chrome render, reflective metallic surfaces, studio-lit",
+        "8bit": "retro 8-bit pixel-art, vibrant palette",
+        "dotmatrix": "stippled dot-art illustration",
+        "lego": "glossy toy-plastic render"
+    },
+    "size_direction": {
+        "1:1": "Square 1:1 aspect ratio",
+        "16:9": "Wide 16:9 aspect ratio with horizontal framing",
+        "9:16": "Tall 9:16 aspect ratio with vertical framing"
+    }
+}

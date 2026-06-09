@@ -9,7 +9,7 @@
 @php
     $homeHref = $homeHref ?? route('home');
     $heightClass = $compact ? 'h-16' : 'h-20';
-    $logoSizeClass = $compact ? 'h-8 w-8' : 'h-10 w-10';
+    $logoSizeClass = $compact ? 'h-12 w-12' : 'h-16 w-16';
     $brandSizeClass = $compact ? 'text-xl' : 'text-2xl';
     $iconSizeClass = $compact ? 'h-5 w-5' : 'h-6 w-6';
     $loginPaddingClass = $compact ? 'px-4 py-2' : 'px-6 py-2.5';
@@ -25,9 +25,8 @@
     <div class="container mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex items-center justify-between {{ $heightClass }}">
             <a href="{{ $homeHref }}" class="flex items-center gap-3" style="text-decoration:none;">
-                <svg class="{{ $logoSizeClass }} text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                </svg>
+                <img src="{{ asset('images/netkit_logo_black.svg') }}" alt="{{ $brand }} logo" class="{{ $logoSizeClass }} object-contain dark:hidden">
+                <img src="{{ asset('images/netkit_logo_white.svg') }}" alt="{{ $brand }} logo" class="{{ $logoSizeClass }} object-contain hidden dark:block">
                 <span id="header_logo" class="{{ $brandSizeClass }} font-bold text-gray-900 dark:text-white">{{ $brand }}</span>
             </a>
 
@@ -37,7 +36,6 @@
                     <a href="/domain-search" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Domain Search</a>
                     <a href="/logo-generator" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Logo Generator</a>
                     <a href="/prices" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Prices</a>
-                    <a href="{{ route('docs.logoGenerator') }}" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Docs</a>
                     <a href="/browse-logos" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Browse Logos</a>
                 </nav>
             @endif
@@ -126,7 +124,6 @@
                             <a @click="mobileMenuOpen = false" href="/domain-search" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Domain Search</a>
                             <a @click="mobileMenuOpen = false" href="/logo-generator" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Logo Generator</a>
                             <a @click="mobileMenuOpen = false" href="/prices" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Prices</a>
-                            <a @click="mobileMenuOpen = false" href="{{ route('docs.logoGenerator') }}" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Docs</a>
                             <a @click="mobileMenuOpen = false" href="/browse-logos" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Browse Logos</a>
                         </nav>
                     @endif

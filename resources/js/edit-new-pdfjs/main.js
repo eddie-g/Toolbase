@@ -75,6 +75,10 @@ const downloadPdfButton = document.getElementById('download-pdf-btn');
 const saveButton = document.getElementById('save-btn');
 const undoButton = document.getElementById('undo-btn');
 const redoButton = document.getElementById('redo-btn');
+const docNameWrap = document.getElementById('doc-name-wrap');
+const docNameDisplay = document.getElementById('doc-name-display');
+const docNameInput = document.getElementById('doc-name-input');
+const docNameEditButton = document.getElementById('doc-name-edit-btn');
 const addTextButton = document.getElementById('add-text-btn');
 const floatingAddTextButton = document.getElementById('ftb-add-text');
 const addShapeButton = document.getElementById('add-shape-btn');
@@ -82,6 +86,7 @@ const floatingAddShapeButton = document.getElementById('ftb-add-shape');
 const floatingAddImageButton = document.getElementById('ftb-add-image');
 const floatingDrawButton = document.getElementById('ftb-draw-erase');
 const floatingHighlightButton = document.getElementById('ftb-highlight');
+const floatingGuidedConvertButton = document.getElementById('ftb-guided-convert');
 const saveStatus = document.getElementById('save-status');
 const saveToast = document.getElementById('save-toast');
 const annFormatBar = document.getElementById('ann-format-bar');
@@ -158,6 +163,9 @@ const layersOpenButton = document.getElementById('enpv-layers-open');
 const layersPanel = document.getElementById('enpv-layers-panel');
 const layersCloseButton = document.getElementById('enpv-layers-close');
 const layersList = document.getElementById('enpv-layers-list');
+const guidedHelperOpenButton = document.getElementById('enpv-guided-helper-open');
+const guidedHelperPanel = document.getElementById('enpv-guided-helper-panel');
+const guidedHelperCloseButton = document.getElementById('enpv-guided-helper-close');
 let draggedLayerAnnotationId = '';
 let renderedLayersPanelSignature = '';
 
@@ -168,16 +176,128 @@ const REDACT_URL = root.dataset.redactUrl;
 const BURN_URL = root.dataset.burnUrl;
 const MOVE_URL = root.dataset.moveUrl;
 const REFLOW_URL = root.dataset.reflowUrl;
+const GUIDED_CONVERT_URL = root.dataset.guidedConvertUrl;
+const REGENERATE_INVOICE_URL = root.dataset.regenerateInvoiceUrl;
+const REGENERATE_TEMPLATE_URL = root.dataset.regenerateTemplateUrl;
 const ADD_BLANK_PAGE_URL = root.dataset.addBlankPageUrl;
 const REORDER_PAGES_URL = root.dataset.reorderPagesUrl;
+const IS_GUIDED_MODE = root.dataset.guided === '1';
+const TEMPLATE_TYPE = String(root.dataset.templateType || '').trim();
+const TEMPLATE_SLUG = String(root.dataset.templateSlug || '').trim();
 const CSRF = root.dataset.csrf;
 const DOC_ID = root.dataset.docId;
 const INFO_URL = editNewRoot?.dataset?.infoUrl;
 const FONTS_URL = editNewRoot?.dataset?.fontsUrl || (DOC_ID ? `/documents/${encodeURIComponent(DOC_ID)}/fonts` : '');
 const SAVE_URL = editNewRoot?.dataset?.saveUrl;
+const SAVE_ACRO_FORM_URL = editNewRoot?.dataset?.saveAcroFormUrl;
 const ANNOTATION_DEBUG_URL = editNewRoot?.dataset?.annotationDebugUrl;
 const OVERWRITE_TEXT_URL = editNewRoot?.dataset?.overwriteUrl || '/documents/overwrite-annotation-text';
 const DOWNLOAD_URL = editNewRoot?.dataset?.downloadUrl;
+
+function installDocumentRename() {
+    const renameUrl = docNameWrap?.dataset?.renameUrl || '';
+    if (!renameUrl || !docNameDisplay || !docNameInput) return;
+
+    let currentName = docNameWrap.dataset.originalName || docNameDisplay.textContent.trim();
+    let editing = false;
+    let saving = false;
+
+    const setName = (name) => {
+        currentName = String(name || '').trim() || currentName;
+        docNameDisplay.textContent = currentName;
+        docNameInput.value = currentName;
+        docNameWrap.dataset.originalName = currentName;
+        document.title = currentName;
+    };
+
+    const enterEdit = () => {
+        if (editing || saving) return;
+        editing = true;
+        docNameInput.value = currentName;
+        docNameDisplay.style.display = 'none';
+        docNameInput.style.display = '';
+        docNameInput.focus();
+        docNameInput.select();
+    };
+
+    const leaveEdit = () => {
+        editing = false;
+        docNameInput.style.display = 'none';
+        docNameDisplay.style.display = '';
+    };
+
+    const saveName = async () => {
+        if (!editing || saving) return;
+        const proposed = docNameInput.value.trim();
+        if (!proposed) {
+            setStatus('Document name cannot be empty.', true);
+            docNameInput.focus();
+            return;
+        }
+        if (proposed === currentName) {
+            leaveEdit();
+            return;
+        }
+
+        saving = true;
+        setSaveStatus('Renaming...');
+        try {
+            const response = await fetch(renameUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'X-CSRF-TOKEN': CSRF,
+                },
+                body: JSON.stringify({ name: proposed }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.success === false) {
+                throw new Error(data.message || 'Failed to rename document.');
+            }
+            setName(data.original_name || proposed);
+            leaveEdit();
+            setSaveStatus('Saved');
+            setStatus('Document renamed.');
+        } catch (error) {
+            setSaveStatus('Rename failed', true);
+            setStatus(error?.message || 'Failed to rename document.', true);
+            docNameInput.focus();
+            docNameInput.select();
+        } finally {
+            saving = false;
+        }
+    };
+
+    const cancelEdit = () => {
+        if (!editing || saving) return;
+        docNameInput.value = currentName;
+        leaveEdit();
+    };
+
+    docNameDisplay.addEventListener('click', enterEdit);
+    docNameEditButton?.addEventListener('click', enterEdit);
+    docNameDisplay.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            enterEdit();
+        }
+    });
+    docNameInput.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') {
+            ev.preventDefault();
+            saveName();
+        } else if (ev.key === 'Escape') {
+            ev.preventDefault();
+            cancelEdit();
+        }
+    });
+    docNameInput.addEventListener('blur', () => {
+        if (editing && !saving) saveName();
+    });
+
+    setName(currentName);
+}
 
 let currentPdfDoc = null;
 let currentPdfBytes = null;
@@ -195,6 +315,8 @@ const redoStack = [];
 const debugPanel = document.getElementById('enpv-debug-panel');
 const debugCloseButton = document.getElementById('enpv-debug-close');
 const debugSubtitle = document.getElementById('enpv-debug-subtitle');
+const debugAnnotationIdInput = document.getElementById('enpv-debug-annotation-id');
+const debugAnnotationLabel = document.getElementById('enpv-debug-annotation-label');
 const debugMaskXInput = document.getElementById('enpv-debug-mask-x');
 const debugMaskYInput = document.getElementById('enpv-debug-mask-y');
 const debugMaskWInput = document.getElementById('enpv-debug-mask-w');
@@ -216,6 +338,11 @@ let saveToastTimer = null;
 let autoSaveTimer = 0;
 let saveInFlight = false;
 let saveAgainAfterCurrent = false;
+let acroFormSaveTimer = 0;
+let acroFormSaveInFlight = false;
+let acroFormSaveAgainAfterCurrent = false;
+let latestAcroFormEntriesSnapshot = [];
+let pendingAcroFormEntriesOverride = null;
 let suppressAutoSaveForNavigation = false;
 const AUTO_SAVE_DELAY_MS = 1800;
 let annotationBoxesLoadPromise = null;
@@ -333,6 +460,8 @@ function setSaveStatus(text, isError = false) {
     saveStatus.style.color = isError ? '#fca5a5' : '';
 }
 
+installDocumentRename();
+
 function scheduleAutoSave() {
     if (suppressAutoSaveForNavigation) return;
     if (!SAVE_URL) return;
@@ -345,11 +474,22 @@ function scheduleAutoSave() {
 }
 
 function cancelPendingAutoSaveForNavigation() {
+    if (SAVE_ACRO_FORM_URL) {
+        latestAcroFormEntriesSnapshot = collectRenderedAcroFormEntriesSnapshot();
+        if (latestAcroFormEntriesSnapshot.length) {
+            persistAcroFormStateOnly({ entries: latestAcroFormEntriesSnapshot, beacon: true });
+        }
+    }
     suppressAutoSaveForNavigation = true;
     saveAgainAfterCurrent = false;
+    acroFormSaveAgainAfterCurrent = false;
     if (autoSaveTimer) {
         window.clearTimeout(autoSaveTimer);
         autoSaveTimer = 0;
+    }
+    if (acroFormSaveTimer) {
+        window.clearTimeout(acroFormSaveTimer);
+        acroFormSaveTimer = 0;
     }
 }
 
@@ -364,6 +504,27 @@ function markManualSaveNeeded() {
     setStatus('Unsaved changes. Autosaving…');
     scheduleAutoSave();
 }
+
+function isAcroFormControl(target) {
+    return Boolean(target?.matches?.('.annotationLayer input, .annotationLayer textarea, .annotationLayer select'));
+}
+
+function handleAcroFormControlEdit(event) {
+    if (!isAcroFormControl(event.target)) return;
+    latestAcroFormEntriesSnapshot = collectRenderedAcroFormEntriesSnapshot();
+    markManualSaveNeeded();
+    scheduleAcroFormStateSave();
+}
+
+document.addEventListener('input', handleAcroFormControlEdit, true);
+document.addEventListener('change', handleAcroFormControlEdit, true);
+document.addEventListener('focusout', (event) => {
+    if (!isAcroFormControl(event.target)) return;
+    latestAcroFormEntriesSnapshot = collectRenderedAcroFormEntriesSnapshot();
+    persistAcroFormStateOnly().catch((err) => {
+        console.warn('Failed to save AcroForm state on blur', err);
+    });
+}, true);
 
 function flashSaveToast(message) {
     if (!saveToast) return;
@@ -843,10 +1004,26 @@ function closeLayersPanel() {
 
 function openLayersPanel() {
     if (!layersPanel) return;
+    closeGuidedHelperPanel();
     renderLayersPanel();
     layersPanel.hidden = false;
     layersPanel.setAttribute('aria-hidden', 'false');
     layersOpenButton?.setAttribute('aria-expanded', 'true');
+}
+
+function closeGuidedHelperPanel() {
+    if (!guidedHelperPanel) return;
+    guidedHelperPanel.hidden = true;
+    guidedHelperPanel.setAttribute('aria-hidden', 'true');
+    guidedHelperOpenButton?.setAttribute('aria-expanded', 'false');
+}
+
+function openGuidedHelperPanel() {
+    if (!guidedHelperPanel) return;
+    closeLayersPanel();
+    guidedHelperPanel.hidden = false;
+    guidedHelperPanel.setAttribute('aria-hidden', 'false');
+    guidedHelperOpenButton?.setAttribute('aria-expanded', 'true');
 }
 
 function scrollViewerToLayerPanelAnnotation(annotation) {
@@ -1085,6 +1262,16 @@ layersOpenButton?.addEventListener('click', () => {
     else openLayersPanel();
 });
 layersCloseButton?.addEventListener('click', closeLayersPanel);
+guidedHelperOpenButton?.addEventListener('click', () => {
+    if (guidedHelperPanel?.hidden === false) closeGuidedHelperPanel();
+    else openGuidedHelperPanel();
+});
+guidedHelperCloseButton?.addEventListener('click', closeGuidedHelperPanel);
+window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && guidedHelperPanel?.hidden === false) {
+        closeGuidedHelperPanel();
+    }
+});
 
 function setPageManagerStatus(message = '', isError = false) {
     if (!pageManagerStatus) return;
@@ -2468,6 +2655,10 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
             zIndex: Number.parseInt(box.style.zIndex || box.dataset.zIndex || existingAnnotation.zIndex || '6', 10) || 6,
         });
     }
+    if (box.dataset.sourceSpanDisplayActive === '1') {
+        clearSourceFidelitySpanEditMarkup(box);
+    }
+    restoreSourceTypographyForBox(box, existingAnnotation, scale);
     const baseRect = {
         x: Number.parseFloat(box.dataset.baseBboxX || '') || Number.parseFloat(box.dataset.sourceBboxX || '0') || 0,
         y: Number.parseFloat(box.dataset.baseBboxY || '') || Number.parseFloat(box.dataset.sourceBboxY || '0') || 0,
@@ -2477,8 +2668,15 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     const tc = box.querySelector('.enpv-text-content');
     syncRichTextBoxTypographyFromContent(box);
     const cs = tc ? window.getComputedStyle(tc) : window.getComputedStyle(box);
-    const fontSizePts = Number.parseFloat(box.dataset.fontSizePts || '') || (Number.parseFloat(cs.fontSize || '') / scale) || Number(existingAnnotation?.fontSize) || 12;
-    const lineHeightPx = Number.parseFloat(cs.lineHeight || '');
+    const preserveSourceTypography = shouldUseSourceTypographyForBox(box, existingAnnotation);
+    const sourceFontSizePts = sourceFidelityFontSizePtsForBox(box, scale);
+    const sourceLineHeightPts = sourceFidelityLineHeightPtsForBox(box, scale);
+    const fontSizePts = (preserveSourceTypography && Number.isFinite(sourceFontSizePts) && sourceFontSizePts > 0)
+        ? sourceFontSizePts
+        : (Number.parseFloat(box.dataset.fontSizePts || '') || (Number.parseFloat(cs.fontSize || '') / scale) || Number(existingAnnotation?.fontSize) || 12);
+    const lineHeightPx = (preserveSourceTypography && Number.isFinite(sourceLineHeightPts) && sourceLineHeightPts > 0)
+        ? sourceLineHeightPts * scale
+        : Number.parseFloat(cs.lineHeight || '');
     const annotationId = String(existingAnnotation?.id || box.dataset.annotationId || buildPdfjsAnnotationId(pageIndex, box.dataset.uid || '0'));
     const sourceText = isStandaloneUserTextBox ? '' : String(existingAnnotation?.pdfjsSourceText || box.dataset.baseText || box.dataset.originalText || '');
     let textValue = textContentForBox(box);
@@ -2517,9 +2715,11 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         || cs.color
         || '#000000',
     );
-    const hasCustomBackground = box.classList.contains('has-custom-bg')
-        || (box.dataset.backgroundColor && box.dataset.backgroundColor !== 'transparent'
-            && cssColorToHex(box.dataset.backgroundColor, '') !== '#ffffff');
+    const dropInheritedMovedBackground = shouldDropInheritedMovedSourceBackground(existingAnnotation, box);
+    const hasCustomBackground = !dropInheritedMovedBackground
+        && (box.classList.contains('has-custom-bg')
+            || (box.dataset.backgroundColor && box.dataset.backgroundColor !== 'transparent'
+                && cssColorToHex(box.dataset.backgroundColor, '') !== '#ffffff'));
     const backgroundColor = hasCustomBackground
         ? String(
             box.dataset.backgroundColor
@@ -3277,6 +3477,19 @@ function explicitSourceMaskNeedsAscenderPadding(source) {
     return candidates.every((value) => String(value ?? '').trim() === '');
 }
 
+function shouldDropInheritedMovedSourceBackground(annotation = null, box = null) {
+    const moved = box?.dataset?.movedTextOverlay === '1' || boolish(annotation?.movedTextOverlay);
+    if (!moved) return false;
+    const sourceBacked = !isUserCreatedTextAnnotation(annotation)
+        && box?.dataset?.userCreated !== '1'
+        && box?.dataset?.skipPdfjsSourceMask !== '1';
+    if (!sourceBacked) return false;
+    if (box?.dataset?.styleDirty === '1' || boolish(annotation?.styleDirty)) return false;
+    if (box?.dataset?.userForcedRichText === '1' || boolish(annotation?.userForcedRichText)) return false;
+    if (boolish(annotation?.backgroundColorExplicit) || boolish(annotation?.hasCustomBackground)) return false;
+    return true;
+}
+
 function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = null) {
     if (!box) return;
     const fontSizePts = Number(annotation?.fontSize ?? annotation?.requestedFontSize ?? box.dataset.fontSizePts);
@@ -3315,7 +3528,9 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
         || '#000000',
     );
     box.style.setProperty('--enpv-text-color', color);
-    const backgroundColor = String(annotation?.backgroundColor || '').trim();
+    const backgroundColor = shouldDropInheritedMovedSourceBackground(annotation, box)
+        ? 'transparent'
+        : String(annotation?.backgroundColor || '').trim();
     const isDefaultWhiteBackground = cssColorToHex(backgroundColor, '') === '#ffffff'
         && !boolish(annotation?.backgroundColorExplicit)
         && !boolish(annotation?.hasCustomBackground);
@@ -3595,8 +3810,11 @@ function applySourceFidelityTextFit(box, tc) {
     );
     if (!(targetWidth > 0) || !(measuredContentWidth > 0)) return;
     if (sourceLayoutWidth > 0 && measuredContentWidth > sourceLayoutWidth * 1.35) return;
-    const fitScaleX = Math.min(sourceScaleX, targetWidth / measuredContentWidth);
+    let fitScaleX = Math.min(sourceScaleX, targetWidth / measuredContentWidth);
     if (!(fitScaleX > 0) || !Number.isFinite(fitScaleX)) return;
+    if (box.dataset.sourceFidelityEditing === '1' && fitScaleX > 0.98 && fitScaleX <= 1.02) {
+        fitScaleX = 1;
+    }
     tc.style.width = `${measuredContentWidth}px`;
     tc.style.transformOrigin = '0 0';
     if (isVertical) {
@@ -3704,6 +3922,47 @@ function applySourceFidelityTypography(box, options = {}) {
         tc.style.height = isVertical ? lineHeightPx : 'auto';
         tc.style.minHeight = lineHeightPx;
         tc.style.overflow = 'visible';
+    }
+}
+
+function sourceFidelityFontSizePtsForBox(box, scale = 1) {
+    const sourceFontSizePx = Number.parseFloat(box?.dataset?.sourceFontSizePx || '');
+    const resolvedScale = Number.parseFloat(scale || '') || Number.parseFloat(box?.dataset?.renderScale || '') || 1;
+    if (Number.isFinite(sourceFontSizePx) && sourceFontSizePx > 0 && resolvedScale > 0) {
+        return sourceFontSizePx / resolvedScale;
+    }
+    return NaN;
+}
+
+function sourceFidelityLineHeightPtsForBox(box, scale = 1) {
+    const sourceLineHeightPx = Number.parseFloat(box?.dataset?.sourceLineHeightPx || '');
+    const resolvedScale = Number.parseFloat(scale || '') || Number.parseFloat(box?.dataset?.renderScale || '') || 1;
+    if (Number.isFinite(sourceLineHeightPx) && sourceLineHeightPx > 0 && resolvedScale > 0) {
+        return sourceLineHeightPx / resolvedScale;
+    }
+    return NaN;
+}
+
+function shouldUseSourceTypographyForBox(box, annotation = null) {
+    if (!box) return false;
+    if (!box.dataset.sourceFontSizePx && !box.dataset.sourceFontFamily && !box.dataset.sourceTransform) return false;
+    if (box.dataset.styleDirty === '1' || boolish(annotation?.styleDirty)) return false;
+    if (box.dataset.userForcedRichText === '1' || boolish(annotation?.userForcedRichText)) return false;
+    const mode = String(box.dataset.editorMode || annotation?.pdfjsEditorMode || 'source').trim().toLowerCase();
+    return mode !== 'rich';
+}
+
+function restoreSourceTypographyForBox(box, annotation = null, scale = 1) {
+    if (!shouldUseSourceTypographyForBox(box, annotation)) return;
+    const fontSizePts = sourceFidelityFontSizePtsForBox(box, scale);
+    const lineHeightPts = sourceFidelityLineHeightPtsForBox(box, scale);
+    const resolvedScale = Number.parseFloat(scale || '') || Number.parseFloat(box?.dataset?.renderScale || '') || 1;
+    if (Number.isFinite(fontSizePts) && fontSizePts > 0 && resolvedScale > 0) {
+        box.dataset.fontSizePts = String(fontSizePts);
+        box.style.setProperty('--enpv-font-size', `${fontSizePts * resolvedScale}px`);
+    }
+    if (Number.isFinite(lineHeightPts) && lineHeightPts > 0 && resolvedScale > 0) {
+        box.style.setProperty('--enpv-line-height', `${lineHeightPts * resolvedScale}px`);
     }
 }
 
@@ -3988,11 +4247,12 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
     const currentText = String(tc.textContent || '').replace(/\s+/g, ' ').trim();
     reconstructed = reconstructed.replace(/\s+/g, ' ').trim();
     if (currentText && currentText !== reconstructed) {
-        const whitespaceOnlySourceDifference = purpose === 'display'
-            && currentText.replace(/\s+/g, '') === reconstructed.replace(/\s+/g, '');
+        const whitespaceOnlySourceDifference = currentText.replace(/\s+/g, '') === reconstructed.replace(/\s+/g, '');
         if (!whitespaceOnlySourceDifference) {
             items = remapSourceRunItemsForCurrentText(items, currentText);
             if (!Array.isArray(items) || items.length < 2) return false;
+        } else if (purpose !== 'display') {
+            return false;
         }
     }
 
@@ -4127,6 +4387,122 @@ function boxHasSourceTypography(box) {
 function boxTextHasNewline(box) {
     const text = selectedBoxTextElement(box)?.textContent || '';
     return /\r|\n/.test(String(text));
+}
+
+function sourceSpanRunsForBox(box) {
+    const raw = box?.dataset?.sourceSpanRuns;
+    if (!raw) return [];
+    try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+        return [];
+    }
+}
+
+function sourceSpanRunLineMetrics(box) {
+    const runs = sourceSpanRunsForBox(box)
+        .map((run) => ({
+            left: Number(run.leftPx),
+            top: Number(run.topPx),
+            bottom: Number(run.bottomPx),
+        }))
+        .filter((run) => [run.left, run.top, run.bottom].every(Number.isFinite));
+    if (!runs.length) return null;
+    const tops = Array.from(new Set(runs.map((run) => Math.round(run.top * 1000) / 1000)))
+        .sort((a, b) => a - b);
+    const deltas = [];
+    for (let i = 1; i < tops.length; i += 1) {
+        const delta = tops[i] - tops[i - 1];
+        if (delta > 1) deltas.push(delta);
+    }
+    const boxLeft = Number.parseFloat(box?.style?.left || '');
+    const boxTop = Number.parseFloat(box?.style?.top || '');
+    const minLeft = Math.min(...runs.map((run) => run.left));
+    // Detect a hanging indent: a leading marker run (e.g. "5.") sits to the
+    // left of the body, and every continuation line aligns at a common,
+    // deeper inset. The display canvas shows this outdent exactly; the simple
+    // single-padding edit layout would otherwise collapse it to flush-left.
+    let bodyInsetPx = null;
+    let hangingTextIndentPx = 0;
+    if (Number.isFinite(boxLeft) && tops.length >= 2) {
+        // Group runs into visual lines by their top position.
+        const sorted = runs.slice().sort((a, b) => a.top - b.top);
+        const lines = [];
+        for (const run of sorted) {
+            const line = lines.length ? lines[lines.length - 1] : null;
+            const overlaps = line && run.top < line.bottom - 0.5 && run.bottom > line.top + 0.5;
+            if (!line || !overlaps) {
+                lines.push({ top: run.top, bottom: run.bottom, minLeft: run.left });
+            } else {
+                line.top = Math.min(line.top, run.top);
+                line.bottom = Math.max(line.bottom, run.bottom);
+                line.minLeft = Math.min(line.minLeft, run.left);
+            }
+        }
+        if (lines.length >= 2) {
+            const markerLeft = minLeft;
+            const bodyLeft = Math.min(...lines.slice(1).map((line) => line.minLeft));
+            // Only treat it as a hanging indent when the body column is clearly
+            // deeper than the marker (avoids nudging ordinary flush blocks).
+            if (Number.isFinite(bodyLeft) && bodyLeft - markerLeft >= 6) {
+                bodyInsetPx = Math.max(0, bodyLeft - boxLeft);
+                hangingTextIndentPx = markerLeft - bodyLeft;
+            }
+        }
+    }
+    return {
+        leftInsetPx: Number.isFinite(boxLeft) ? Math.max(0, Math.min(24, minLeft - boxLeft)) : 0,
+        topInsetPx: Number.isFinite(boxTop) ? Math.max(0, Math.min(24, Math.min(...runs.map((run) => run.top)) - boxTop)) : 0,
+        lineStepPx: deltas.length ? medianNumber(deltas, 0) : 0,
+        bodyInsetPx,
+        hangingTextIndentPx,
+    };
+}
+
+function applyPromotedSourceBlockEditLayout(box) {
+    if (!box?.classList?.contains('is-promoted-source-block')) return false;
+    const tc = selectedBoxTextElement(box);
+    if (!tc) return false;
+    const metrics = sourceSpanRunLineMetrics(box);
+    if (!metrics) return false;
+    if (metrics.lineStepPx > 0) {
+        box.style.setProperty('--enpv-line-height', `${metrics.lineStepPx}px`);
+        tc.style.lineHeight = `${metrics.lineStepPx}px`;
+    }
+    // When the source has an outdented marker (e.g. "5." hanging left of an
+    // indented body), reproduce that hanging indent so the editor matches the
+    // display canvas: body/continuation lines align at the body column while
+    // the marker hangs left via a negative first-line text-indent.
+    if (metrics.bodyInsetPx != null) {
+        const padLeft = metrics.bodyInsetPx;
+        tc.style.paddingLeft = `${padLeft}px`;
+        tc.style.textIndent = `${metrics.hangingTextIndentPx}px`;
+        tc.style.paddingTop = `${metrics.topInsetPx}px`;
+        tc.style.width = `calc(100% - ${padLeft}px)`;
+        tc.style.height = `calc(100% - ${metrics.topInsetPx}px)`;
+    } else {
+        tc.style.paddingLeft = `${metrics.leftInsetPx}px`;
+        tc.style.paddingTop = `${metrics.topInsetPx}px`;
+        tc.style.width = `calc(100% - ${metrics.leftInsetPx}px)`;
+        tc.style.height = `calc(100% - ${metrics.topInsetPx}px)`;
+    }
+    box.dataset.promotedSourceBlockExactEditLayout = '1';
+    return true;
+}
+
+function clearPromotedSourceBlockEditLayout(box) {
+    if (!box || box.dataset.promotedSourceBlockExactEditLayout !== '1') return;
+    const tc = selectedBoxTextElement(box);
+    if (tc) {
+        tc.style.paddingLeft = '';
+        tc.style.paddingTop = '';
+        tc.style.textIndent = '';
+        tc.style.width = '';
+        tc.style.height = '';
+        tc.style.lineHeight = '';
+    }
+    delete box.dataset.promotedSourceBlockExactEditLayout;
 }
 
 function editorModeForBox(box) {
@@ -5467,6 +5843,9 @@ function createShapeOverlayBox(annotation, pageIndex, viewport, scale, allowInte
     box.dataset.locked = ann.locked ? '1' : '0';
     box.dataset.zIndex = String(Number(ann.zIndex) || 2);
     box.dataset.userCreated = '1';
+    if (ann.guidedLeaseUnderline === true) {
+        box.dataset.guidedLeaseUnderline = '1';
+    }
     applyShapeAnnotationToBoxDataset(box, ann);
     box.style.left = `${rect.left}px`;
     box.style.top = `${rect.top}px`;
@@ -5555,6 +5934,7 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     box.style.zIndex = box.dataset.zIndex;
     box.classList.toggle('is-locked', annotation.locked === true);
     applyAnnotationTypographyToBox(box, annotation, scale);
+    restoreSourceTypographyForBox(box, annotation, scale);
 
     const tc = document.createElement('div');
     tc.className = 'enpv-text-content';
@@ -6418,10 +6798,52 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
         mask.style.top = `${rect.top}px`;
         mask.style.width = `${rect.width}px`;
         mask.style.height = `${rect.height}px`;
-        mask.replaceChildren();
-        mask.style.background = samplePageSurroundingBackgroundColor(pageDiv, rect, '')
+        const background = samplePageSurroundingBackgroundColor(pageDiv, rect, '')
             || samplePageBackgroundColor(pageDiv, rect)
             || '#ffffff';
+        // Carve the committed mask around overlapping neighbours, exactly like
+        // the live-drag path below. Without subtracting the protected
+        // neighbour rects here, a committed move paints a SOLID rectangle over
+        // its whole source region and visually clips any annotation whose
+        // bbox overlaps it (tight-leading rows stack so neighbouring lines
+        // overlap). The neighbour only reappeared after a click promoted it
+        // above the mask layer.
+        const protectedRects = movedOverlayProtectedRectsForBox(box, rect);
+        const cutRects = [
+            ...protectedRects,
+            ...movedOverlayRuleGapRectsForMask(rect, pageDiv),
+        ];
+        if (!cutRects.length) {
+            mask.replaceChildren();
+            mask.style.background = background;
+            return true;
+        }
+        const pieces = subtractRects([{
+            left: rect.left,
+            top: rect.top,
+            right: rect.left + rect.width,
+            bottom: rect.top + rect.height,
+        }], cutRects);
+        if (!pieces.length) {
+            // The whole source region overlaps protected neighbours; paint
+            // nothing so we never cover them.
+            mask.replaceChildren();
+            mask.style.background = 'transparent';
+            return true;
+        }
+        mask.style.background = 'transparent';
+        mask.replaceChildren(...pieces.map((piece) => {
+            const seg = document.createElement('div');
+            seg.className = 'enpv-source-mask-run';
+            seg.style.position = 'absolute';
+            seg.style.left = `${piece.left - rect.left}px`;
+            seg.style.top = `${piece.top - rect.top}px`;
+            seg.style.width = `${piece.width}px`;
+            seg.style.height = `${piece.height}px`;
+            seg.style.background = background;
+            seg.style.pointerEvents = 'none';
+            return seg;
+        }));
         return true;
     }
     const items = movedOverlayRunItemsForBox(box, pageDiv);
@@ -7144,6 +7566,21 @@ function endDebugPanelDrag(ev) {
     debugPanel?.classList.remove('is-dragging');
 }
 
+async function copyDebugAnnotationId() {
+    const id = String(debugAnnotationIdInput?.value || '').trim();
+    if (!id) return;
+    try {
+        debugAnnotationIdInput?.select?.();
+        debugAnnotationIdInput?.setSelectionRange?.(0, id.length);
+    } catch (_) { /* noop */ }
+    try {
+        await navigator.clipboard?.writeText?.(id);
+        setDebugPanelStatus('Annotation id copied.');
+    } catch (_) {
+        setDebugPanelStatus('Annotation id selected. Press Ctrl+C / Cmd+C to copy.');
+    }
+}
+
 async function openAnnotationDebugPanel(box) {
     if (!box || !debugPanel) return;
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
@@ -7162,9 +7599,17 @@ async function openAnnotationDebugPanel(box) {
     activeDebugBoxUid = box.dataset.uid || null;
     activeDebugMask = defaultDebugMaskForBox(box, annotation);
     activeDebugImages = Array.isArray(debug.images) ? debug.images.map((image) => ({ ...image })) : [];
-    if (debugSubtitle) {
+    const annotationId = String(box.dataset.annotationId || annotation.id || 'annotation');
+    if (debugAnnotationIdInput) {
+        debugAnnotationIdInput.value = annotationId;
+        debugAnnotationIdInput.title = `Click to copy ${annotationId}`;
+    }
+    if (debugAnnotationLabel) {
         const label = String(annotation.text || annotation.originalText || box.dataset.originalText || box.dataset.annotationId || '').replace(/\s+/g, ' ').trim();
-        debugSubtitle.textContent = `${box.dataset.annotationId || annotation.id || 'annotation'}${label ? ` - ${label.slice(0, 80)}` : ''}`;
+        debugAnnotationLabel.textContent = label ? `- ${label.slice(0, 80)}` : '';
+    } else if (debugSubtitle) {
+        const label = String(annotation.text || annotation.originalText || box.dataset.originalText || box.dataset.annotationId || '').replace(/\s+/g, ' ').trim();
+        debugSubtitle.textContent = `${annotationId}${label ? ` - ${label.slice(0, 80)}` : ''}`;
     }
     if (debugNoteInput) debugNoteInput.value = String(debug.note || '');
     writeDebugMaskInputs(activeDebugMask);
@@ -8173,6 +8618,67 @@ function placePendingImageAtPointer(event) {
     cancelImagePlacement({ showStatus: false });
 }
 
+function findExistingAnnotationBoxForSpan(spanEl, pageIndex, layer = null) {
+    const persistentId = String(spanEl?.dataset?.enpvPersistentId || '').trim();
+    if (!persistentId || !Number.isFinite(pageIndex) || pageIndex < 0) return null;
+    const selector = [
+        `.enpv-annotation-box[data-annotation-id="${cssEscape(persistentId)}"]`,
+        `.enpv-annotation-box[data-persisted-annotation-id="${cssEscape(persistentId)}"]`,
+    ].join(',');
+    return layer?.querySelector?.(selector)
+        || pdfViewer.getPageView(pageIndex)?.div?.querySelector?.(selector)
+        || null;
+}
+
+function spanCenterCoveredByEditableOverlay(spanEl) {
+    const rect = spanEl?.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const hit = document.elementFromPoint(rect.left + (rect.width / 2), rect.top + (rect.height / 2));
+    const box = hit?.closest?.('.enpv-annotation-box') || null;
+    return Boolean(box && !box.classList.contains('enpv-shape-box'));
+}
+
+function spanCoveredByRenderedPromotedSourceBlock(spanEl, pageIndex) {
+    const rect = spanEl?.getBoundingClientRect?.();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return false;
+    const pageDiv = pdfViewer.getPageView(pageIndex)?.div;
+    if (!pageDiv) return false;
+    const targetText = spanEl.dataset.enpvOriginal || spanEl.textContent || '';
+    const centerX = rect.left + (rect.width / 2);
+    const centerY = rect.top + (rect.height / 2);
+    return Array.from(pageDiv.querySelectorAll('.enpv-annotation-box.is-promoted-source-block')).some((box) => {
+        const blockRect = box.getBoundingClientRect();
+        if (centerX < blockRect.left
+            || centerX > blockRect.right
+            || centerY < blockRect.top
+            || centerY > blockRect.bottom) return false;
+        const blockText = box.querySelector('.enpv-text-content')?.textContent || box.dataset.baseText || '';
+        return textCanBelongToPromotedSourceBlock(blockText, targetText);
+    });
+}
+
+function appendMissingEditableSourceHandlesForPage(pageIndex, layer, textLayerEl, options = {}) {
+    if (!layer || !textLayerEl || !Number.isFinite(pageIndex) || pageIndex < 0) return;
+    const pageView = pdfViewer.getPageView(pageIndex);
+    const viewport = pageView?.viewport;
+    const scale = Number(viewport?.scale) || Number(pdfViewer.currentScale) || 1;
+    const promotedSourceBlockOwners = Array.isArray(options.promotedSourceBlockOwners)
+        ? options.promotedSourceBlockOwners
+        : [];
+    const spans = Array.from(textLayerEl.querySelectorAll(`span[data-enpv-page="${pageIndex}"][data-enpv-group-anchor="1"]`));
+    for (const span of spans) {
+        if (!String(span.textContent || span.dataset.enpvOriginal || '').trim()) continue;
+        if (span.dataset.enpvMovedSourceHidden === '1'
+            || span.dataset.enpvPromotedBlockHidden === '1'
+            || span.dataset.enpvDeletedSource === '1') continue;
+        const group = sourceGroupForSpan(span);
+        if (group && promotedSourceBlocksOwnSourceGroup(promotedSourceBlockOwners, group, viewport, scale)) continue;
+        if (findExistingAnnotationBoxForSpan(span, pageIndex, layer)) continue;
+        if (spanCenterCoveredByEditableOverlay(span)) continue;
+        createAnnotationBoxFromSpan(span);
+    }
+}
+
 function removeAddTextPreview() {
     if (addTextCreationState?.previewEl) addTextCreationState.previewEl.remove();
     addTextCreationState = null;
@@ -8180,16 +8686,27 @@ function removeAddTextPreview() {
 
 function createAnnotationBoxFromSpan(spanEl) {
     if (!spanEl) return null;
+    // Source rows already claimed by a promoted/moved overlay must not spawn a
+    // separate on-demand source editor box (that would draw the row twice).
+    if (spanEl.dataset.enpvPromotedBlockHidden === '1'
+        || spanEl.dataset.enpvMovedSourceHidden === '1') return null;
     const pageIndex = Number.parseInt(spanEl.dataset.enpvPage || '-1', 10);
     if (!Number.isFinite(pageIndex) || pageIndex < 0) return null;
     const pageView = pdfViewer.getPageView(pageIndex);
     const viewport = pageView?.viewport;
     const textLayerEl = pageView?.textLayer?.div || pageView?.textLayer?.textLayerDiv;
     if (!pageView?.div || !viewport || !textLayerEl) return null;
+    if (spanCoveredByRenderedPromotedSourceBlock(spanEl, pageIndex)) {
+        spanEl.dataset.enpvPromotedBlockHidden = '1';
+        return null;
+    }
 
     const scale = Number(viewport.scale) || Number(pdfViewer.currentScale) || 1;
     const layer = ensureAnnotationBoxLayer(pageIndex, scale);
     if (!layer) return null;
+
+    const existingPersistentBox = findExistingAnnotationBoxForSpan(spanEl, pageIndex, layer);
+    if (existingPersistentBox) return existingPersistentBox;
 
     const sourceInfo = sourceInfoForSpan(spanEl);
     if (!sourceInfo) return null;
@@ -8287,6 +8804,7 @@ function createAnnotationBoxFromSpan(spanEl) {
     );
     box.style.setProperty('--enpv-text-color', matchedTextColor);
     if (matchedAnnotation) applyAnnotationTypographyToBox(box, matchedAnnotation, scale);
+    restoreSourceTypographyForBox(box, matchedAnnotation, scale);
 
     const tc = document.createElement('div');
     tc.className = 'enpv-text-content';
@@ -8389,6 +8907,11 @@ function promoteSourceBoxToMovedOverlay(box) {
     }
     rememberSourceMaskRectForCurrentBox(box);
     box.dataset.movedTextOverlay = '1';
+    if (shouldDropInheritedMovedSourceBackground(persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null, box)) {
+        box.dataset.backgroundColor = 'transparent';
+        box.style.setProperty('--enpv-bg-color', 'transparent');
+        box.classList.remove('has-custom-bg');
+    }
     box.classList.remove('is-source-handle');
     box.classList.add('is-persisted-overlay');
     // Source-fidelity typography assumes a single short source run (white-space:
@@ -8400,6 +8923,7 @@ function promoteSourceBoxToMovedOverlay(box) {
     if (editorModeForBox(box) !== 'rich') {
         applySourceFidelityTypography(box);
         applySourceFidelitySpanEditMarkup(box, { purpose: 'display' });
+        restoreSourceTypographyForBox(box, persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null, Number.parseFloat(box.parentElement?.dataset?.scale || '') || Number.parseFloat(box.dataset.renderScale || '') || 1);
         refreshAttachedSourceFidelityTextFit(box);
     }
     attachSourceMaskForBox(box);
@@ -8736,6 +9260,7 @@ function liveSourceGroupItems(group, layerEl) {
 }
 
 function refreshSourceGroupTextFromDom(group, layerEl) {
+    if (group?.syntheticSourceText) return group;
     const items = liveSourceGroupItems(group, layerEl);
     if (!items.length) return group;
     const text = buildSourceGroupText(items);
@@ -8843,6 +9368,47 @@ function isStandaloneControlGlyphItem(item) {
     const text = String(item?.text || '').trim();
     if (!text || text.length > 2) return false;
     return /^[\u2022\u25A0-\u25A3\u25AA-\u25AC\u25CF\u25E6\u2610-\u2612\u2713-\u2718\uF0A3\uF0B7\uF0FC\uF0FE]+$/.test(text);
+}
+
+function isSourceUnderlineRuleText(text) {
+    const normalized = String(text || '').replace(/\s+/g, '');
+    return normalized.length >= 1 && /^_+$/.test(normalized);
+}
+
+function sourceTextSegmentsWithoutUnderlineRules(text, rect) {
+    const raw = String(text || '');
+    if (!rect || raw.indexOf('_') < 0) return null;
+    const ranges = [];
+    let start = -1;
+    for (let i = 0; i < raw.length; i += 1) {
+        const isUnderline = raw[i] === '_';
+        if (!isUnderline && start < 0) start = i;
+        if ((isUnderline || i === raw.length - 1) && start >= 0) {
+            const end = isUnderline ? i : i + 1;
+            let trimStart = start;
+            let trimEnd = end;
+            while (trimStart < trimEnd && /\s/.test(raw[trimStart])) trimStart += 1;
+            while (trimEnd > trimStart && /\s/.test(raw[trimEnd - 1])) trimEnd -= 1;
+            if (trimEnd > trimStart) ranges.push([trimStart, trimEnd]);
+            start = -1;
+        }
+    }
+    if (!ranges.length) return [];
+    if (ranges.length === 1 && ranges[0][0] === 0 && ranges[0][1] === raw.length) return null;
+    const total = Math.max(1, raw.length);
+    return ranges.map(([rangeStart, rangeEnd]) => {
+        const left = rect.left + (rect.width * (rangeStart / total));
+        const right = rect.left + (rect.width * (rangeEnd / total));
+        return {
+            text: raw.slice(rangeStart, rangeEnd),
+            rect: {
+                ...rect,
+                left,
+                right,
+                width: Math.max(1, right - left),
+            },
+        };
+    });
 }
 
 function isStandaloneLowercaseLineLabelItem(item) {
@@ -8987,8 +9553,9 @@ function collectSourceTextGroups(layerEl, pageIndex, pageDiv = null) {
     const layerRect = layerEl.getBoundingClientRect();
     const rawItems = Array.from(layerEl.querySelectorAll('span'))
         .filter((span) => !span.classList.contains('markedContent'))
-        .map((span, order) => {
+        .flatMap((span, order) => {
             const text = String(span.textContent || '');
+            if (isSourceUnderlineRuleText(text)) return null;
             const rect = textLayerRelativeRect(span, layerRect);
             if (!text || !rect) return null;
             const hasText = text.trim() !== '';
@@ -8996,7 +9563,7 @@ function collectSourceTextGroups(layerEl, pageIndex, pageDiv = null) {
             if (!visibleInk) return null;
             const cs = window.getComputedStyle(span);
             const transform = cs.transform && cs.transform !== 'none' ? cs.transform : '';
-            return {
+            const baseItem = {
                 span,
                 text,
                 rect,
@@ -9009,6 +9576,15 @@ function collectSourceTextGroups(layerEl, pageIndex, pageDiv = null) {
                 transformScaleX: sourceTransformScaleX(transform),
                 isVertical: sourceItemTransformIsVertical(transform),
             };
+            const segments = sourceTextSegmentsWithoutUnderlineRules(text, rect);
+            if (!segments) return [baseItem];
+            return segments.map((segment, segmentIndex) => ({
+                ...baseItem,
+                text: segment.text,
+                rect: segment.rect,
+                order: order + (segmentIndex / 100),
+                syntheticSourceText: true,
+            }));
         })
         .filter(Boolean);
 
@@ -9076,6 +9652,7 @@ function collectSourceTextGroups(layerEl, pageIndex, pageDiv = null) {
                     spans: current.map((item) => item.span),
                     relatedSpans,
                     anchor: current[0].span,
+                    syntheticSourceText: current.some((item) => item.syntheticSourceText),
                 });
             }
             current = [];
@@ -9126,7 +9703,8 @@ function collectSourceTextGroups(layerEl, pageIndex, pageDiv = null) {
                 line,
             );
             const splitMixedTypography = shouldSplitMixedTypography(previous, item, gapFromPrevious);
-            if (isSeparatedByGap || isSeparatedByVerticalRule || splitAroundControlGlyph || splitAfterLowercaseLineLabel || splitAfterNumberedLineLabel || splitBetweenLabelAndNumericColumn || splitBetweenProseColumns || splitShortLeadingColumn || splitMixedTypography) {
+            const splitAfterSyntheticUnderline = Boolean(previous?.syntheticSourceText);
+            if (isSeparatedByGap || isSeparatedByVerticalRule || splitAroundControlGlyph || splitAfterLowercaseLineLabel || splitAfterNumberedLineLabel || splitBetweenLabelAndNumericColumn || splitBetweenProseColumns || splitShortLeadingColumn || splitMixedTypography || splitAfterSyntheticUnderline) {
                 flush();
             }
             current.push(item);
@@ -9394,6 +9972,7 @@ eventBus.on('textlayerrendered', (evt) => {
 // available for the suppress-overlap pass below.
 eventBus.on('annotationlayerrendered', (evt) => {
     applyAcroFormEntriesToDom(evt.pageNumber - 1);
+    enhanceGuidedDateFields(evt.pageNumber - 1);
     renderAnnotationBoxLayer(evt.pageNumber - 1);
 });
 
@@ -9572,7 +10151,13 @@ async function loadAnnotationBoxesOnce() {
         // pdf.js form fields with previously-saved values, and b) the
         // Save round-trip preserves entries the user didn't touch this
         // session (server normalizes by `key`).
-        acroFormEntries = Array.isArray(data.acro_form_entries) ? data.acro_form_entries : [];
+        if (Array.isArray(pendingAcroFormEntriesOverride)) {
+            acroFormEntries = pendingAcroFormEntriesOverride;
+            pendingAcroFormEntriesOverride = null;
+        } else {
+            acroFormEntries = Array.isArray(data.acro_form_entries) ? data.acro_form_entries : [];
+        }
+        latestAcroFormEntriesSnapshot = acroFormEntries;
         applyAcroFormEntriesToStorage().catch((err) => {
             console.warn('Failed to apply persisted AcroForm values to pdf.js storage', err);
         });
@@ -9715,6 +10300,393 @@ function applyAcroFormEntriesToDom(pageIndex = null) {
             el.value = rawValue == null ? '' : (Array.isArray(rawValue) ? rawValue.join('\n') : String(rawValue));
         }
     });
+    enhanceGuidedDateFields(pageIndex);
+}
+
+const GUIDED_DATE_FIELD_NAMES = new Set([
+    'sdr_tenancy_began',
+    'sdr_keys_turned_in',
+]);
+const GUIDED_DATE_MONTHS = [
+    'January',
+    'February',
+    'March',
+    'April',
+    'May',
+    'June',
+    'July',
+    'August',
+    'September',
+    'October',
+    'November',
+    'December',
+];
+const GUIDED_DATE_MONTHS_SHORT = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+];
+let guidedDatePickerEl = null;
+let guidedDatePickerState = null;
+
+function textIndicatesGuidedDateField(value) {
+    const text = String(value || '').trim().toLowerCase();
+    if (!text) return false;
+    return /(^|[_\-\s])date($|[_\-\s])/.test(text)
+        || /\b(began|commenc(?:e|ing)|terminat(?:e|ing))\b/.test(text);
+}
+
+function isGuidedDateField(el) {
+    if (!IS_GUIDED_MODE || !el || el instanceof HTMLSelectElement) return false;
+    if (!el.matches?.('.annotationLayer input, .annotationLayer textarea')) return false;
+    const type = String(el.getAttribute('type') || 'text').toLowerCase();
+    if (type && !['text', ''].includes(type)) return false;
+    if (el.disabled || el.readOnly) return false;
+
+    const fieldName = String(el.getAttribute('name') || '').trim();
+    if (GUIDED_DATE_FIELD_NAMES.has(fieldName)) return true;
+    const host = el.closest('[data-annotation-id]');
+    const labelText = [
+        fieldName,
+        el.id,
+        el.getAttribute('aria-label'),
+        el.getAttribute('title'),
+        el.getAttribute('placeholder'),
+        host?.getAttribute?.('aria-label'),
+        host?.getAttribute?.('title'),
+    ].filter(Boolean).join(' ');
+    if (textIndicatesGuidedDateField(labelText)) return true;
+
+    const value = String(el.value || '').trim().toLowerCase();
+    return value === '[date]' || value === 'date';
+}
+
+function enhanceGuidedDateFields(pageIndex = null) {
+    if (!IS_GUIDED_MODE) return;
+    const selector = pageIndex == null
+        ? '.annotationLayer input, .annotationLayer textarea'
+        : `.page[data-page-number="${Number(pageIndex) + 1}"] .annotationLayer input, `
+            + `.page[data-page-number="${Number(pageIndex) + 1}"] .annotationLayer textarea`;
+    document.querySelectorAll(selector).forEach((el) => {
+        if (!isGuidedDateField(el)) return;
+        el.classList.add('enpv-guided-date-field');
+        el.setAttribute('autocomplete', 'off');
+        el.setAttribute('aria-haspopup', 'dialog');
+    });
+}
+
+function guidedDateAtLocalNoon(year, month, day) {
+    return new Date(Number(year), Number(month), Number(day), 12, 0, 0, 0);
+}
+
+function parseGuidedDateValue(value) {
+    const raw = String(value || '').trim();
+    if (!raw || raw === '[DATE]') return null;
+    const iso = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (iso) {
+        const date = guidedDateAtLocalNoon(iso[1], Number(iso[2]) - 1, iso[3]);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    const slash = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (slash) {
+        const year = Number(slash[3]) < 100 ? Number(slash[3]) + 2000 : Number(slash[3]);
+        const date = guidedDateAtLocalNoon(year, Number(slash[1]) - 1, slash[2]);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return guidedDateAtLocalNoon(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
+function formatGuidedDate(date) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+    return `${GUIDED_DATE_MONTHS_SHORT[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()}`;
+}
+
+function sameGuidedCalendarDay(left, right) {
+    return left instanceof Date
+        && right instanceof Date
+        && left.getFullYear() === right.getFullYear()
+        && left.getMonth() === right.getMonth()
+        && left.getDate() === right.getDate();
+}
+
+function ensureGuidedDatePicker() {
+    if (guidedDatePickerEl) return guidedDatePickerEl;
+    const picker = document.createElement('div');
+    picker.id = 'enpv-guided-date-picker';
+    picker.className = 'enpv-guided-date-picker';
+    picker.setAttribute('role', 'dialog');
+    picker.setAttribute('aria-label', 'Choose date');
+    picker.hidden = true;
+    document.body.appendChild(picker);
+    guidedDatePickerEl = picker;
+    return picker;
+}
+
+function positionGuidedDatePicker() {
+    const picker = guidedDatePickerEl;
+    const input = guidedDatePickerState?.input;
+    if (!picker || picker.hidden || !input) return;
+    const rect = input.getBoundingClientRect();
+    const pickerWidth = Math.max(286, Math.min(340, Math.max(rect.width, 286)));
+    picker.style.width = `${pickerWidth}px`;
+
+    const pickerHeight = picker.offsetHeight || 336;
+    const gap = 8;
+    const fitsBelow = rect.bottom + gap + pickerHeight <= window.innerHeight - 10;
+    const top = fitsBelow
+        ? rect.bottom + gap
+        : Math.max(10, rect.top - gap - pickerHeight);
+    const left = Math.max(10, Math.min(window.innerWidth - pickerWidth - 10, rect.left));
+    picker.style.left = `${left}px`;
+    picker.style.top = `${top}px`;
+}
+
+function renderGuidedDatePicker() {
+    const picker = ensureGuidedDatePicker();
+    const state = guidedDatePickerState;
+    if (!state?.input) return;
+
+    const firstOfMonth = guidedDateAtLocalNoon(state.viewYear, state.viewMonth, 1);
+    const firstWeekday = firstOfMonth.getDay();
+    const daysInMonth = new Date(state.viewYear, state.viewMonth + 1, 0).getDate();
+    const selected = state.selectedDate;
+    const today = guidedDateAtLocalNoon(
+        new Date().getFullYear(),
+        new Date().getMonth(),
+        new Date().getDate(),
+    );
+
+    const monthOptions = GUIDED_DATE_MONTHS.map((month, index) => (
+        `<option value="${index}"${index === state.viewMonth ? ' selected' : ''}>${month}</option>`
+    )).join('');
+
+    let dayButtons = '';
+    for (let i = 0; i < firstWeekday; i += 1) {
+        dayButtons += '<span class="enpv-guided-date-empty" aria-hidden="true"></span>';
+    }
+    for (let day = 1; day <= daysInMonth; day += 1) {
+        const date = guidedDateAtLocalNoon(state.viewYear, state.viewMonth, day);
+        const classes = [
+            'enpv-guided-date-day',
+            sameGuidedCalendarDay(date, selected) ? 'is-selected' : '',
+            sameGuidedCalendarDay(date, today) ? 'is-today' : '',
+        ].filter(Boolean).join(' ');
+        dayButtons += `<button type="button" class="${classes}" data-day="${day}" aria-label="${formatGuidedDate(date)}">${day}</button>`;
+    }
+
+    picker.innerHTML = `
+        <div class="enpv-guided-date-header">
+            <button type="button" class="enpv-guided-date-nav" data-action="prev" aria-label="Previous month">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"></path></svg>
+            </button>
+            <label class="enpv-guided-date-month">
+                <span class="sr-only">Month</span>
+                <select>${monthOptions}</select>
+            </label>
+            <label class="enpv-guided-date-year">
+                <span class="sr-only">Year</span>
+                <input type="number" min="1900" max="2100" step="1" value="${state.viewYear}">
+            </label>
+            <button type="button" class="enpv-guided-date-nav" data-action="next" aria-label="Next month">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"></path></svg>
+            </button>
+        </div>
+        <div class="enpv-guided-date-weekdays" aria-hidden="true">
+            <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+        </div>
+        <div class="enpv-guided-date-grid">${dayButtons}</div>
+    `;
+
+    picker.querySelector('[data-action="prev"]')?.addEventListener('click', () => {
+        const next = guidedDateAtLocalNoon(state.viewYear, state.viewMonth - 1, 1);
+        state.viewYear = next.getFullYear();
+        state.viewMonth = next.getMonth();
+        renderGuidedDatePicker();
+    });
+    picker.querySelector('[data-action="next"]')?.addEventListener('click', () => {
+        const next = guidedDateAtLocalNoon(state.viewYear, state.viewMonth + 1, 1);
+        state.viewYear = next.getFullYear();
+        state.viewMonth = next.getMonth();
+        renderGuidedDatePicker();
+    });
+    picker.querySelector('.enpv-guided-date-month select')?.addEventListener('change', (event) => {
+        state.viewMonth = Number.parseInt(event.target.value || '0', 10) || 0;
+        renderGuidedDatePicker();
+    });
+    picker.querySelector('.enpv-guided-date-year input')?.addEventListener('change', (event) => {
+        const year = Number.parseInt(event.target.value || '', 10);
+        state.viewYear = Number.isFinite(year) ? Math.max(1900, Math.min(2100, year)) : new Date().getFullYear();
+        renderGuidedDatePicker();
+    });
+    picker.querySelectorAll('.enpv-guided-date-day').forEach((button) => {
+        button.addEventListener('click', () => {
+            const day = Number.parseInt(button.dataset.day || '', 10);
+            if (!Number.isFinite(day)) return;
+            commitGuidedDateSelection(guidedDateAtLocalNoon(state.viewYear, state.viewMonth, day));
+        });
+    });
+
+    positionGuidedDatePicker();
+}
+
+function openGuidedDatePicker(input) {
+    if (!isGuidedDateField(input)) return;
+    const parsed = parseGuidedDateValue(input.value);
+    const base = parsed || new Date();
+    guidedDatePickerState = {
+        input,
+        selectedDate: parsed,
+        viewYear: base.getFullYear(),
+        viewMonth: base.getMonth(),
+    };
+    const picker = ensureGuidedDatePicker();
+    picker.hidden = false;
+    input.classList.add('is-guided-date-open');
+    renderGuidedDatePicker();
+}
+
+function closeGuidedDatePicker() {
+    guidedDatePickerState?.input?.classList?.remove('is-guided-date-open');
+    guidedDatePickerState = null;
+    if (guidedDatePickerEl) guidedDatePickerEl.hidden = true;
+}
+
+function commitGuidedDateSelection(date) {
+    const input = guidedDatePickerState?.input;
+    if (!input) return;
+    input.value = formatGuidedDate(date);
+    const host = input.closest('[data-annotation-id]');
+    const annotationId = String(host?.dataset?.annotationId || '').trim();
+    if (annotationId && currentPdfDoc?.annotationStorage?.setValue) {
+        try { currentPdfDoc.annotationStorage.setValue(annotationId, { value: input.value }); } catch (_) { /* noop */ }
+    }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    latestAcroFormEntriesSnapshot = collectRenderedAcroFormEntriesSnapshot();
+    scheduleAcroFormStateSave(250);
+    closeGuidedDatePicker();
+    input.focus();
+}
+
+function installGuidedDatePickerControls() {
+    if (!IS_GUIDED_MODE) return;
+    document.addEventListener('focusin', (event) => {
+        if (isGuidedDateField(event.target)) openGuidedDatePicker(event.target);
+    }, true);
+    document.addEventListener('click', (event) => {
+        if (isGuidedDateField(event.target)) openGuidedDatePicker(event.target);
+    }, true);
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && guidedDatePickerState) closeGuidedDatePicker();
+    }, true);
+    document.addEventListener('pointerdown', (event) => {
+        if (!guidedDatePickerState || !guidedDatePickerEl) return;
+        const path = event.composedPath?.() || [];
+        if (path.includes(guidedDatePickerEl) || path.includes(guidedDatePickerState.input)) return;
+        closeGuidedDatePicker();
+    }, true);
+    container?.addEventListener?.('scroll', positionGuidedDatePicker, { passive: true });
+    window.addEventListener('scroll', positionGuidedDatePicker, { passive: true });
+    window.addEventListener('resize', positionGuidedDatePicker);
+    enhanceGuidedDateFields();
+}
+
+installGuidedDatePickerControls();
+
+function collectAcroFormDomValues() {
+    const byAnnotationId = new Map();
+    const byFieldName = new Map();
+    document.querySelectorAll('.annotationLayer input, .annotationLayer textarea, .annotationLayer select').forEach((el) => {
+        const host = el.closest('[data-annotation-id]');
+        const annotationId = String(host?.dataset?.annotationId || '').trim();
+        const fieldName = String(el.getAttribute('name') || '').trim();
+        const type = String(el.getAttribute('type') || '').toLowerCase();
+        let value;
+        if (type === 'checkbox') {
+            value = el.checked ? String(el.value || '1') : '';
+        } else if (type === 'radio') {
+            if (!el.checked) return;
+            value = String(el.value || '');
+        } else if (el instanceof HTMLSelectElement && el.multiple) {
+            value = Array.from(el.selectedOptions).map((option) => String(option.value || ''));
+        } else {
+            value = String(el.value ?? '');
+        }
+        const payload = { value };
+        if (annotationId) byAnnotationId.set(annotationId, payload);
+        if (fieldName) byFieldName.set(fieldName, payload);
+    });
+    return { byAnnotationId, byFieldName };
+}
+
+function acroFormControlValue(el) {
+    const type = String(el?.getAttribute?.('type') || '').toLowerCase();
+    if (type === 'checkbox') {
+        return el.checked ? String(el.value || '1') : '';
+    }
+    if (type === 'radio') {
+        if (!el.checked) return null;
+        return String(el.value || '');
+    }
+    if (el instanceof HTMLSelectElement && el.multiple) {
+        return Array.from(el.selectedOptions).map((option) => String(option.value || ''));
+    }
+    return String(el?.value ?? '');
+}
+
+function collectRenderedAcroFormEntriesSnapshot() {
+    const existingByKey = new Map();
+    for (const entry of (Array.isArray(acroFormEntries) ? acroFormEntries : [])) {
+        if (!entry) continue;
+        const key = String(entry.key || entry.fieldName || '').trim();
+        if (key) existingByKey.set(key, entry);
+    }
+
+    const entriesByKey = new Map(existingByKey);
+    document.querySelectorAll('.annotationLayer input, .annotationLayer textarea, .annotationLayer select').forEach((el) => {
+        const value = acroFormControlValue(el);
+        if (value === null) return;
+        const host = el.closest('[data-annotation-id]');
+        const annotationId = String(host?.dataset?.annotationId || '').trim();
+        const fieldName = String(el.getAttribute('name') || '').trim();
+        const key = fieldName || annotationId;
+        if (!key) return;
+        const existing = existingByKey.get(key) || existingByKey.get(fieldName) || existingByKey.get(annotationId) || {};
+        const type = String(el.getAttribute('type') || '').toLowerCase();
+        const pageNumber = Number.parseInt(el.closest('.page')?.dataset?.pageNumber || '', 10);
+        const pageIndex = Number.isFinite(pageNumber) && pageNumber > 0
+            ? pageNumber - 1
+            : (Number.isFinite(Number(existing.pageIndex)) ? Number(existing.pageIndex) : null);
+        entriesByKey.set(key, {
+            ...existing,
+            key,
+            fieldName: fieldName || String(existing.fieldName || key),
+            pageIndex,
+            fieldType: String(existing.fieldType || (type === 'checkbox' || type === 'radio' ? 'BTN' : 'TX')).toUpperCase(),
+            checkBox: type === 'checkbox' || existing.checkBox === true,
+            radioButton: type === 'radio' || existing.radioButton === true,
+            combo: el instanceof HTMLSelectElement || existing.combo === true,
+            multiLine: el instanceof HTMLTextAreaElement || existing.multiLine === true,
+            multiSelect: (el instanceof HTMLSelectElement && el.multiple) || existing.multiSelect === true,
+            exportValue: String(existing.exportValue || el.value || ''),
+            rect: existing.rect || null,
+            textColor: existing.textColor || null,
+            value,
+        });
+    });
+
+    return Array.from(entriesByKey.values());
 }
 
 // Snapshot the live AcroForm state out of pdf.js's annotationStorage and
@@ -9723,8 +10695,12 @@ function applyAcroFormEntriesToDom(pageIndex = null) {
 // echoed by documentInfo, so the round-trip is loss-less.
 async function collectAcroFormEntriesForSave() {
     if (!currentPdfDoc) return Array.isArray(acroFormEntries) ? acroFormEntries : [];
+    if (document.activeElement?.matches?.('.annotationLayer input, .annotationLayer textarea, .annotationLayer select')) {
+        document.activeElement.blur();
+    }
     const storage = currentPdfDoc.annotationStorage;
     const storageMap = (storage && typeof storage.getAll === 'function') ? (storage.getAll() || {}) : {};
+    const domValues = collectAcroFormDomValues();
     const existingByKey = new Map();
     for (const entry of (Array.isArray(acroFormEntries) ? acroFormEntries : [])) {
         if (!entry) continue;
@@ -9739,27 +10715,41 @@ async function collectAcroFormEntriesForSave() {
         if (seenKeys.has(key)) return; // dedupe widgets that share a field
         seenKeys.add(key);
         const stored = storageMap[w.id];
+        const domValue = (w.id && domValues.byAnnotationId.get(String(w.id)))
+            || (w.fieldName && domValues.byFieldName.get(String(w.fieldName)))
+            || null;
         const existing = existingByKey.get(key) || existingByKey.get(String(w.fieldName || '')) || null;
         const isCheck = w.checkBox === true;
         const isRadio = w.radioButton === true;
         let value;
-        if (stored && Object.prototype.hasOwnProperty.call(stored, 'value')) {
+        if (domValue && Object.prototype.hasOwnProperty.call(domValue, 'value')) {
+            value = domValue.value;
+        } else if (stored && Object.prototype.hasOwnProperty.call(stored, 'value')) {
             value = stored.value;
-            if (isCheck) {
-                value = stored.value ? (w.exportValue || '1') : '';
-            } else if (isRadio) {
-                value = stored.value ? String(stored.value) : '';
-            } else if (Array.isArray(value)) {
-                value = value.map((s) => String(s ?? ''));
-            } else if (value == null) {
-                value = '';
-            } else {
-                value = String(value);
-            }
         } else if (existing) {
             value = existing.value;
         } else {
             return; // never touched and no prior entry — skip
+        }
+        if (domValue && Object.prototype.hasOwnProperty.call(domValue, 'value')) {
+            if (isCheck) {
+                value = domValue.value ? (w.exportValue || domValue.value || '1') : '';
+            } else if (isRadio) {
+                value = domValue.value ? String(domValue.value) : '';
+            }
+        } else if (stored && Object.prototype.hasOwnProperty.call(stored, 'value')) {
+            if (isCheck) {
+                value = stored.value ? (w.exportValue || '1') : '';
+            } else if (isRadio) {
+                value = stored.value ? String(stored.value) : '';
+            }
+        }
+        if (Array.isArray(value)) {
+            value = value.map((s) => String(s ?? ''));
+        } else if (value == null) {
+            value = '';
+        } else if (!isCheck && !isRadio) {
+            value = String(value);
         }
         out.push({
             key,
@@ -9785,6 +10775,583 @@ async function collectAcroFormEntriesForSave() {
     }
     return out;
 }
+
+function acroFormStatePayload(entries = null) {
+    const acroEntries = Array.isArray(entries)
+        ? entries
+        : (latestAcroFormEntriesSnapshot.length ? latestAcroFormEntriesSnapshot : collectRenderedAcroFormEntriesSnapshot());
+    return {
+        _token: CSRF,
+        session_id: getSessionId(),
+        acro_form_entries: acroEntries,
+    };
+}
+
+function scheduleAcroFormStateSave(delayMs = 700) {
+    if (!SAVE_ACRO_FORM_URL || suppressAutoSaveForNavigation) return;
+    if (acroFormSaveTimer) window.clearTimeout(acroFormSaveTimer);
+    acroFormSaveTimer = window.setTimeout(() => {
+        acroFormSaveTimer = 0;
+        persistAcroFormStateOnly().catch((err) => {
+            console.warn('Failed to save AcroForm state', err);
+        });
+    }, delayMs);
+}
+
+async function persistAcroFormStateOnly(options = {}) {
+    if (!SAVE_ACRO_FORM_URL) return false;
+    if (acroFormSaveInFlight) {
+        acroFormSaveAgainAfterCurrent = true;
+        return false;
+    }
+    if (acroFormSaveTimer) {
+        window.clearTimeout(acroFormSaveTimer);
+        acroFormSaveTimer = 0;
+    }
+
+    const entries = options.entries || latestAcroFormEntriesSnapshot || [];
+    const payload = acroFormStatePayload(entries.length ? entries : collectRenderedAcroFormEntriesSnapshot());
+    if (!Array.isArray(payload.acro_form_entries) || payload.acro_form_entries.length === 0) {
+        return false;
+    }
+
+    if (options.beacon === true && navigator.sendBeacon) {
+        const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
+        return navigator.sendBeacon(SAVE_ACRO_FORM_URL, blob);
+    }
+
+    acroFormSaveInFlight = true;
+    try {
+        const response = await fetch(SAVE_ACRO_FORM_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            keepalive: options.keepalive === true,
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': CSRF,
+            },
+            body: JSON.stringify(payload),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result?.success) {
+            throw new Error(result?.message || result?.error || `AcroForm save failed (${response.status})`);
+        }
+        if (result.session_id && String(result.session_id).trim()) {
+            safeLocalStorageSet(`edit_new_session_${DOC_ID}`, String(result.session_id).trim());
+        }
+        acroFormEntries = Array.isArray(payload.acro_form_entries) ? payload.acro_form_entries : [];
+        latestAcroFormEntriesSnapshot = acroFormEntries;
+        setSaveStatus('Saved');
+        setStatus('Form fields saved.');
+        return true;
+    } finally {
+        acroFormSaveInFlight = false;
+        if (acroFormSaveAgainAfterCurrent && !suppressAutoSaveForNavigation) {
+            acroFormSaveAgainAfterCurrent = false;
+            scheduleAcroFormStateSave(150);
+        }
+    }
+}
+
+function isCleanModernGuidedInvoice() {
+    if (!IS_GUIDED_MODE) return false;
+    if (TEMPLATE_TYPE === 'invoice') return true;
+    return Boolean(
+        invoiceField('invoice_total')
+        || document.querySelector('.annotationLayer input[name^="invoice_item_"], .annotationLayer textarea[name^="invoice_item_"]')
+    );
+}
+
+function invoiceField(name) {
+    return document.querySelector(`.annotationLayer input[name="${CSS.escape(name)}"], .annotationLayer textarea[name="${CSS.escape(name)}"]`);
+}
+
+function invoiceFieldValue(name) {
+    return String(invoiceField(name)?.value ?? '').trim();
+}
+
+function parseInvoiceNumber(value) {
+    const cleaned = String(value ?? '').replace(/[^0-9.-]/g, '');
+    const number = Number.parseFloat(cleaned);
+    return Number.isFinite(number) ? number : 0;
+}
+
+function formatInvoiceMoney(value) {
+    return '$' + Number(value || 0).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
+}
+
+function collectInvoiceRowIndexes() {
+    const indexes = new Set();
+    document.querySelectorAll('.annotationLayer input[name], .annotationLayer textarea[name]').forEach((el) => {
+        const match = String(el.getAttribute('name') || '').match(/^invoice_item_(\d+)_(qty|description|unit_price|amount)$/);
+        if (match) indexes.add(Number(match[1]));
+    });
+    return Array.from(indexes).sort((a, b) => a - b);
+}
+
+function visibleInvoiceFieldRect(element) {
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 1 || rect.height <= 1) return null;
+    return rect;
+}
+
+function positionGuidedInvoiceRowAddButton() {
+    const button = document.getElementById('enpv-guided-invoice-row-add');
+    if (!button || !isCleanModernGuidedInvoice()) return;
+
+    const indexes = collectInvoiceRowIndexes();
+    const lastIndex = indexes.length ? indexes[indexes.length - 1] : 0;
+    const amountField = invoiceField(`invoice_item_${lastIndex}_amount`);
+    const unitPriceField = invoiceField(`invoice_item_${lastIndex}_unit_price`);
+    const totalField = invoiceField('invoice_total');
+    const anchor = [amountField, unitPriceField, totalField].find((field) => visibleInvoiceFieldRect(field));
+
+    if (!anchor) {
+        button.hidden = true;
+        return;
+    }
+
+    const rect = visibleInvoiceFieldRect(anchor);
+    if (!rect) {
+        button.hidden = true;
+        return;
+    }
+
+    const topChrome = 66;
+    const visible = rect.bottom > topChrome
+        && rect.top < window.innerHeight - 8
+        && rect.right > 0
+        && rect.left < window.innerWidth;
+    if (!visible) {
+        button.hidden = true;
+        return;
+    }
+
+    button.hidden = false;
+    const size = button.offsetWidth || 36;
+    const left = Math.max(8, rect.right + 12);
+    const top = Math.max(topChrome, Math.min(window.innerHeight - size - 8, rect.top + (rect.height / 2) - (size / 2)));
+    button.style.left = `${left}px`;
+    button.style.top = `${top}px`;
+}
+
+function updateGuidedInvoiceTotals(options = {}) {
+    if (!isCleanModernGuidedInvoice()) return;
+    const rowIndexes = collectInvoiceRowIndexes();
+    if (!rowIndexes.length) {
+        positionGuidedInvoiceRowAddButton();
+        return;
+    }
+    let subtotal = 0;
+    for (const index of rowIndexes) {
+        const qty = parseInvoiceNumber(invoiceFieldValue(`invoice_item_${index}_qty`));
+        const unitPrice = parseInvoiceNumber(invoiceFieldValue(`invoice_item_${index}_unit_price`));
+        const amount = Math.round(qty * unitPrice * 100) / 100;
+        const amountField = invoiceField(`invoice_item_${index}_amount`);
+        if (amountField) {
+            const shouldShow = invoiceFieldValue(`invoice_item_${index}_qty`) !== ''
+                || invoiceFieldValue(`invoice_item_${index}_unit_price`) !== '';
+            amountField.value = shouldShow ? formatInvoiceMoney(amount) : '';
+        }
+        subtotal += amount;
+    }
+    const total = Math.max(subtotal, 0);
+    const totalField = invoiceField('invoice_total');
+    if (totalField) totalField.value = formatInvoiceMoney(total);
+
+    const totalLabel = document.getElementById('enpv-guided-invoice-total');
+    if (totalLabel) totalLabel.textContent = formatInvoiceMoney(total);
+
+    latestAcroFormEntriesSnapshot = collectRenderedAcroFormEntriesSnapshot();
+    if (options.save !== false) scheduleAcroFormStateSave(500);
+    positionGuidedInvoiceRowAddButton();
+}
+
+function collectGuidedInvoicePayload() {
+    const indexes = collectInvoiceRowIndexes();
+    const items = indexes.map((index) => ({
+        qty: invoiceFieldValue(`invoice_item_${index}_qty`) === '' ? null : parseInvoiceNumber(invoiceFieldValue(`invoice_item_${index}_qty`)),
+        description: invoiceFieldValue(`invoice_item_${index}_description`),
+        unit_price: invoiceFieldValue(`invoice_item_${index}_unit_price`) === '' ? null : parseInvoiceNumber(invoiceFieldValue(`invoice_item_${index}_unit_price`)),
+    }));
+
+    return {
+        company_name: invoiceFieldValue('invoice_company_name'),
+        company_address: invoiceFieldValue('invoice_company_address'),
+        customer_name: invoiceFieldValue('invoice_customer_name'),
+        customer_address: invoiceFieldValue('invoice_customer_address'),
+        invoice_number: invoiceFieldValue('invoice_number'),
+        invoice_date: invoiceFieldValue('invoice_date'),
+        due_date: invoiceFieldValue('invoice_due_date'),
+        items,
+        style: 'default',
+    };
+}
+
+function guidedInvoicePayloadToAcroEntries(payload) {
+    const entries = [
+        ['invoice_company_name', payload.company_name],
+        ['invoice_company_address', payload.company_address],
+        ['invoice_customer_name', payload.customer_name],
+        ['invoice_customer_address', payload.customer_address],
+        ['invoice_number', payload.invoice_number],
+        ['invoice_date', payload.invoice_date],
+        ['invoice_due_date', payload.due_date],
+    ].map(([fieldName, value]) => ({
+        key: fieldName,
+        fieldName,
+        pageIndex: 0,
+        fieldType: 'TX',
+        value: value ?? '',
+    }));
+
+    let total = 0;
+    (payload.items || []).forEach((item, index) => {
+        const qty = Number(item?.qty || 0);
+        const unitPrice = Number(item?.unit_price || 0);
+        const amount = Math.round(qty * unitPrice * 100) / 100;
+        total += amount;
+        [
+            [`invoice_item_${index}_qty`, item?.qty ?? ''],
+            [`invoice_item_${index}_description`, item?.description ?? ''],
+            [`invoice_item_${index}_unit_price`, item?.unit_price ?? ''],
+            [`invoice_item_${index}_amount`, item?.qty == null && item?.unit_price == null ? '' : formatInvoiceMoney(amount)],
+        ].forEach(([fieldName, value]) => {
+            entries.push({
+                key: fieldName,
+                fieldName,
+                pageIndex: 0,
+                fieldType: 'TX',
+                value: value ?? '',
+            });
+        });
+    });
+    entries.push({
+        key: 'invoice_total',
+        fieldName: 'invoice_total',
+        pageIndex: 0,
+        fieldType: 'TX',
+        value: formatInvoiceMoney(total),
+    });
+    return entries;
+}
+
+async function addGuidedInvoiceRow() {
+    if (!REGENERATE_INVOICE_URL) return;
+    updateGuidedInvoiceTotals({ save: false });
+    const payload = collectGuidedInvoicePayload();
+    payload.items.push({ qty: null, description: '', unit_price: null });
+    const nextEntries = guidedInvoicePayloadToAcroEntries(payload);
+    setStatus('Adding invoice row...');
+    setSaveStatus('Regenerating...');
+
+    const response = await fetch(REGENERATE_INVOICE_URL, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'X-CSRF-TOKEN': CSRF,
+        },
+        body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result?.success) {
+        throw new Error(result?.error || result?.message || `Failed to add invoice row (${response.status})`);
+    }
+
+    acroFormEntries = nextEntries;
+    latestAcroFormEntriesSnapshot = nextEntries;
+    pendingAcroFormEntriesOverride = nextEntries;
+    await persistAcroFormStateOnly({ entries: nextEntries });
+
+    const reloadUrl = new URL(result.file_url || PDF_URL, window.location.origin);
+    reloadUrl.searchParams.set('_', String(Date.now()));
+    await loadPdfFromUrl(reloadUrl.toString());
+    setSaveStatus('Saved');
+    setStatus('Invoice row added.');
+}
+
+function installGuidedInvoiceControls() {
+    if (!IS_GUIDED_MODE) return;
+    if (document.getElementById('enpv-guided-invoice-row-add')) return;
+
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.id = 'enpv-guided-invoice-row-add';
+    addButton.className = 'enpv-guided-invoice-row-add';
+    addButton.title = 'Add invoice row';
+    addButton.setAttribute('aria-label', 'Add invoice row');
+    addButton.textContent = '+';
+    addButton.hidden = true;
+    document.body.appendChild(addButton);
+
+    addButton.addEventListener('click', () => {
+        addGuidedInvoiceRow().catch((error) => {
+            console.error(error);
+            setSaveStatus('Add row failed', true);
+            setStatus(error?.message || 'Failed to add invoice row.', true);
+            showError(error?.message || 'Failed to add invoice row.');
+        });
+    });
+
+    document.addEventListener('input', (event) => {
+        const fieldName = String(event.target?.getAttribute?.('name') || '');
+        if (fieldName === 'invoice_total' || /^invoice_item_\d+_amount$/.test(fieldName)) return;
+        if (fieldName.startsWith('invoice_')) updateGuidedInvoiceTotals();
+    }, true);
+    document.addEventListener('change', (event) => {
+        const fieldName = String(event.target?.getAttribute?.('name') || '');
+        if (fieldName.startsWith('invoice_')) updateGuidedInvoiceTotals();
+    }, true);
+
+    eventBus.on('annotationlayerrendered', () => updateGuidedInvoiceTotals({ save: false }));
+    eventBus.on('pagerendered', () => window.setTimeout(() => updateGuidedInvoiceTotals({ save: false }), 50));
+    container?.addEventListener?.('scroll', positionGuidedInvoiceRowAddButton, { passive: true });
+    window.addEventListener('scroll', positionGuidedInvoiceRowAddButton, { passive: true });
+    window.addEventListener('resize', positionGuidedInvoiceRowAddButton);
+    window.setTimeout(() => updateGuidedInvoiceTotals({ save: false }), 500);
+}
+
+installGuidedInvoiceControls();
+
+function isSecurityDepositGuidedTemplate() {
+    if (!IS_GUIDED_MODE) return false;
+    if (TEMPLATE_TYPE === 'realestate' && TEMPLATE_SLUG === 'security_deposit_return') return true;
+    return Boolean(
+        document.querySelector('.annotationLayer input[name^="sdr_deduction_"], .annotationLayer textarea[name^="sdr_deduction_"]')
+    );
+}
+
+function sdrField(name) {
+    return document.querySelector(`.annotationLayer input[name="${CSS.escape(name)}"], .annotationLayer textarea[name="${CSS.escape(name)}"]`);
+}
+
+function sdrFieldValue(name) {
+    return String(sdrField(name)?.value ?? '').trim();
+}
+
+function collectSecurityDepositRowIndexes() {
+    const indexes = new Set();
+    document.querySelectorAll('.annotationLayer input[name], .annotationLayer textarea[name]').forEach((el) => {
+        const match = String(el.getAttribute('name') || '').match(/^sdr_deduction_(\d+)_(type|description|cost)$/);
+        if (match) indexes.add(Number(match[1]));
+    });
+    return Array.from(indexes).sort((a, b) => a - b);
+}
+
+function positionSecurityDepositRowAddButton() {
+    const button = document.getElementById('enpv-guided-sdr-row-add');
+    if (!button || !isSecurityDepositGuidedTemplate()) return;
+
+    const indexes = collectSecurityDepositRowIndexes();
+    const lastIndex = indexes.length ? indexes[indexes.length - 1] : 0;
+    const anchor = [
+        sdrField(`sdr_deduction_${lastIndex}_cost`),
+        sdrField(`sdr_deduction_${lastIndex}_description`),
+        sdrField(`sdr_deduction_${lastIndex}_type`),
+        sdrField('sdr_summary_total_deductions'),
+    ].find((field) => visibleInvoiceFieldRect(field));
+
+    if (!anchor) {
+        button.hidden = true;
+        return;
+    }
+
+    const rect = visibleInvoiceFieldRect(anchor);
+    if (!rect) {
+        button.hidden = true;
+        return;
+    }
+
+    const topChrome = 66;
+    const visible = rect.bottom > topChrome
+        && rect.top < window.innerHeight - 8
+        && rect.right > 0
+        && rect.left < window.innerWidth;
+    if (!visible) {
+        button.hidden = true;
+        return;
+    }
+
+    button.hidden = false;
+    const size = button.offsetWidth || 36;
+    const preferredLeft = rect.right + 10 + size > window.innerWidth - 8
+        ? rect.left - size - 10
+        : rect.right + 10;
+    button.style.left = `${Math.max(8, Math.min(window.innerWidth - size - 8, preferredLeft))}px`;
+    button.style.top = `${Math.max(topChrome, Math.min(window.innerHeight - size - 8, rect.top + (rect.height / 2) - (size / 2)))}px`;
+}
+
+function updateSecurityDepositTotals(options = {}) {
+    if (!isSecurityDepositGuidedTemplate()) return;
+    const deposits = parseInvoiceNumber(sdrFieldValue('sdr_total_deposits'));
+    let totalDeductions = 0;
+    for (const index of collectSecurityDepositRowIndexes()) {
+        totalDeductions += parseInvoiceNumber(sdrFieldValue(`sdr_deduction_${index}_cost`));
+    }
+    const refund = deposits - totalDeductions;
+    const totalDepositsField = sdrField('sdr_summary_total_deposits');
+    const totalDeductionsField = sdrField('sdr_summary_total_deductions');
+    const refundField = sdrField('sdr_refund_due');
+    if (totalDepositsField) totalDepositsField.value = formatInvoiceMoney(deposits);
+    if (totalDeductionsField) totalDeductionsField.value = formatInvoiceMoney(totalDeductions);
+    if (refundField) refundField.value = formatInvoiceMoney(refund);
+
+    latestAcroFormEntriesSnapshot = collectRenderedAcroFormEntriesSnapshot();
+    if (options.save !== false) scheduleAcroFormStateSave(500);
+    positionSecurityDepositRowAddButton();
+}
+
+function collectSecurityDepositPayload() {
+    const indexes = collectSecurityDepositRowIndexes();
+    return {
+        template_type: 'realestate',
+        template_slug: 'security_deposit_return',
+        landlord_name: sdrFieldValue('sdr_landlord_name'),
+        landlord_address: sdrFieldValue('sdr_landlord_address'),
+        tenant_name: sdrFieldValue('sdr_tenant_name'),
+        tenant_address: sdrFieldValue('sdr_tenant_address'),
+        city_prov_postal: sdrFieldValue('sdr_property_address'),
+        tenancy_began: sdrFieldValue('sdr_tenancy_began'),
+        keys_turned_in: sdrFieldValue('sdr_keys_turned_in'),
+        total_deposits: sdrFieldValue('sdr_total_deposits'),
+        notes: sdrFieldValue('sdr_notes'),
+        signature_landlord: sdrFieldValue('sdr_signature_landlord'),
+        signature_tenant: sdrFieldValue('sdr_signature_tenant'),
+        signature_date_landlord: sdrFieldValue('sdr_signature_date_landlord'),
+        signature_date_tenant: sdrFieldValue('sdr_signature_date_tenant'),
+        deductions: indexes.map((index) => ({
+            type: sdrFieldValue(`sdr_deduction_${index}_type`),
+            description: sdrFieldValue(`sdr_deduction_${index}_description`),
+            cost: sdrFieldValue(`sdr_deduction_${index}_cost`),
+        })),
+    };
+}
+
+function securityDepositPayloadToAcroEntries(payload) {
+    const deposits = parseInvoiceNumber(payload.total_deposits);
+    let totalDeductions = 0;
+    const entries = [
+        ['sdr_landlord_name', payload.landlord_name],
+        ['sdr_landlord_address', payload.landlord_address],
+        ['sdr_tenant_name', payload.tenant_name],
+        ['sdr_tenant_address', payload.tenant_address],
+        ['sdr_property_address', payload.city_prov_postal],
+        ['sdr_tenancy_began', payload.tenancy_began],
+        ['sdr_keys_turned_in', payload.keys_turned_in],
+        ['sdr_total_deposits', payload.total_deposits],
+        ['sdr_notes', payload.notes],
+        ['sdr_signature_landlord', payload.signature_landlord],
+        ['sdr_signature_tenant', payload.signature_tenant],
+        ['sdr_signature_date_landlord', payload.signature_date_landlord],
+        ['sdr_signature_date_tenant', payload.signature_date_tenant],
+    ].map(([fieldName, value]) => ({
+        key: fieldName,
+        fieldName,
+        pageIndex: 0,
+        fieldType: 'TX',
+        value: value ?? '',
+    }));
+
+    (payload.deductions || []).forEach((item, index) => {
+        totalDeductions += parseInvoiceNumber(item?.cost);
+        [
+            [`sdr_deduction_${index}_type`, item?.type ?? ''],
+            [`sdr_deduction_${index}_description`, item?.description ?? ''],
+            [`sdr_deduction_${index}_cost`, item?.cost ?? ''],
+        ].forEach(([fieldName, value]) => {
+            entries.push({ key: fieldName, fieldName, pageIndex: 0, fieldType: 'TX', value: value ?? '' });
+        });
+    });
+    entries.push({ key: 'sdr_summary_total_deposits', fieldName: 'sdr_summary_total_deposits', pageIndex: 0, fieldType: 'TX', value: formatInvoiceMoney(deposits) });
+    entries.push({ key: 'sdr_summary_total_deductions', fieldName: 'sdr_summary_total_deductions', pageIndex: 0, fieldType: 'TX', value: formatInvoiceMoney(totalDeductions) });
+    entries.push({ key: 'sdr_refund_due', fieldName: 'sdr_refund_due', pageIndex: 0, fieldType: 'TX', value: formatInvoiceMoney(deposits - totalDeductions) });
+    return entries;
+}
+
+async function addSecurityDepositRow() {
+    if (!REGENERATE_TEMPLATE_URL) return;
+    updateSecurityDepositTotals({ save: false });
+    const payload = collectSecurityDepositPayload();
+    payload.deductions.push({ type: '', description: '', cost: '' });
+    const nextEntries = securityDepositPayloadToAcroEntries(payload);
+    setStatus('Adding deduction row...');
+    setSaveStatus('Regenerating...');
+
+    const response = await fetch(REGENERATE_TEMPLATE_URL, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'X-CSRF-TOKEN': CSRF,
+        },
+        body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result?.success) {
+        throw new Error(result?.error || result?.message || `Failed to add deduction row (${response.status})`);
+    }
+
+    acroFormEntries = nextEntries;
+    latestAcroFormEntriesSnapshot = nextEntries;
+    pendingAcroFormEntriesOverride = nextEntries;
+    await persistAcroFormStateOnly({ entries: nextEntries });
+
+    const reloadUrl = new URL(result.file_url || PDF_URL, window.location.origin);
+    reloadUrl.searchParams.set('_', String(Date.now()));
+    await loadPdfFromUrl(reloadUrl.toString());
+    setSaveStatus('Saved');
+    setStatus('Deduction row added.');
+}
+
+function installSecurityDepositControls() {
+    if (!IS_GUIDED_MODE) return;
+    if (document.getElementById('enpv-guided-sdr-row-add')) return;
+
+    const addButton = document.createElement('button');
+    addButton.type = 'button';
+    addButton.id = 'enpv-guided-sdr-row-add';
+    addButton.className = 'enpv-guided-sdr-row-add';
+    addButton.title = 'Add deduction row';
+    addButton.setAttribute('aria-label', 'Add deduction row');
+    addButton.textContent = '+';
+    addButton.hidden = true;
+    document.body.appendChild(addButton);
+
+    addButton.addEventListener('click', () => {
+        addSecurityDepositRow().catch((error) => {
+            console.error(error);
+            setSaveStatus('Add row failed', true);
+            setStatus(error?.message || 'Failed to add deduction row.', true);
+            showError(error?.message || 'Failed to add deduction row.');
+        });
+    });
+
+    document.addEventListener('input', (event) => {
+        const fieldName = String(event.target?.getAttribute?.('name') || '');
+        if (fieldName.startsWith('sdr_')) updateSecurityDepositTotals();
+    }, true);
+    document.addEventListener('change', (event) => {
+        const fieldName = String(event.target?.getAttribute?.('name') || '');
+        if (fieldName.startsWith('sdr_')) updateSecurityDepositTotals();
+    }, true);
+
+    eventBus.on('annotationlayerrendered', () => updateSecurityDepositTotals({ save: false }));
+    eventBus.on('pagerendered', () => window.setTimeout(() => updateSecurityDepositTotals({ save: false }), 50));
+    container?.addEventListener?.('scroll', positionSecurityDepositRowAddButton, { passive: true });
+    window.addEventListener('scroll', positionSecurityDepositRowAddButton, { passive: true });
+    window.addEventListener('resize', positionSecurityDepositRowAddButton);
+    window.setTimeout(() => updateSecurityDepositTotals({ save: false }), 500);
+}
+
+installSecurityDepositControls();
 
 function pageNeedsOverlayProtection(pageIndex) {
     const annotations = annotationBoxesByPage.get(pageIndex) || [];
@@ -9952,12 +11519,86 @@ function sourceGroupsForPromotedSourceBlock(annotation, pageIndex, viewport, sca
         .map((entry) => entry.group);
 }
 
+function promotedSourceBlockText(annotation) {
+    return normalizeVisualLineComparableText(annotation?.pdfjsSourceText || annotation?.originalText || annotation?.text || '');
+}
+
+function textCanBelongToPromotedSourceBlock(blockText, targetText) {
+    const block = normalizeVisualLineComparableText(blockText);
+    const target = normalizeVisualLineComparableText(targetText);
+    if (!block || !target) return true;
+    return block.includes(target) || target.includes(block);
+}
+
+function promotedSourceBlockOwnsPdfRect(owner, targetRect, targetText = '') {
+    if (!owner?.sourceBox || !targetRect) return false;
+    const overlap = pdfRectOverlapArea(owner.sourceBox, targetRect);
+    if (overlap <= 0) return false;
+    const targetRatio = overlap / Math.max(0.0001, pdfRectArea(targetRect));
+    if (targetRatio < 0.35) return false;
+    return textCanBelongToPromotedSourceBlock(owner.text || '', targetText);
+}
+
+function promotedSourceBlockOwnerForSourceGroup(owners, group, viewport, scale) {
+    if (!Array.isArray(owners) || !owners.length || !group || !viewport || !(scale > 0)) return null;
+    const groupRect = sourceGroupPdfRect(group, viewport, scale);
+    if (!groupRect) return null;
+    const groupText = group.text || group.visualText || '';
+    return owners.find((owner) => promotedSourceBlockOwnsPdfRect(owner, groupRect, groupText)) || null;
+}
+
+function promotedSourceBlocksOwnSourceGroup(owners, group, viewport, scale) {
+    return Boolean(promotedSourceBlockOwnerForSourceGroup(owners, group, viewport, scale));
+}
+
+function markSourceGroupOwnedByPromotedSourceBlock(group, owner) {
+    if (!group || !owner) return;
+    const spans = [
+        ...(group.spans || []),
+        ...(group.relatedSpans || []),
+    ].filter(Boolean);
+    for (const span of spans) {
+        span.dataset.enpvPromotedBlockHidden = '1';
+        if (owner.annotationId) span.dataset.enpvPersistentId = String(owner.annotationId);
+    }
+}
+
+function promotedSourceBlockLooksLikeParagraph(annotation, groups) {
+    if (!Array.isArray(groups) || groups.length < 2) return false;
+    const sourceText = String(annotation?.pdfjsSourceText || annotation?.originalText || annotation?.text || '');
+    const lineTexts = groups
+        .map((group) => String(group?.text || group?.visualText || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+    if (lineTexts.length < 2) return false;
+    if (lineTexts.some((text) => isSourceUnderlineRuleText(text) || /_{2,}/.test(text))) return false;
+    if (sourceText && /_{2,}/.test(sourceText)) return false;
+    if (groups.some((group) => group?.syntheticSourceText)) return false;
+
+    const joined = lineTexts.join(' ');
+    const wordCount = (joined.match(/[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?/g) || []).length;
+    const sentencePunctuationCount = (joined.match(/[.!?;,]/g) || []).length;
+    const formLabelCount = lineTexts.filter((text) => {
+        if (/^[A-Za-z][A-Za-z0-9\s/&()'.-]{1,48}:\s*$/.test(text)) return true;
+        if (/^[A-Za-z][A-Za-z0-9\s/&()'.-]{1,48}:\s+\S/.test(text) && text.length < 90) return true;
+        return /\b(?:Name|Address|Date|Place|Relationship|spouse|deceased|Termination|Marriage)\b[^.!?]{0,50}:/.test(text);
+    }).length;
+    if (formLabelCount > 0 && formLabelCount / lineTexts.length >= 0.25) return false;
+
+    const continuationLineCount = lineTexts.slice(1).filter((text) => /^[a-z(]/.test(text)).length;
+    return wordCount >= 18
+        && sentencePunctuationCount >= 2
+        && (lineTexts.length >= 3 || continuationLineCount >= 1);
+}
+
 function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale, sourceGroups, textLayerEl) {
     const sourceBox = promotedSourceBlockPdfBox(annotation);
     const rect = pdfRectToCanvasRect(sourceBox, viewport, scale);
     if (!rect || rect.width <= 0 || rect.height <= 0) return null;
     const groups = sourceGroupsForPromotedSourceBlock(annotation, pageIndex, viewport, scale, sourceGroups);
-    if (groups.length < 2 && !promotedSourceBlockHasMultipleLines(annotation)) return null;
+    // Keep true paragraph blocks editable as one box, but do not let form rows
+    // with fill-in rules/labels become a giant promoted-block handle.
+    if (groups.length > 0 && !promotedSourceBlockLooksLikeParagraph(annotation, groups)) return null;
+    if (!promotedSourceBlockHasMultipleLines(annotation)) return null;
     const sourcePageHeight = Number(annotation.sourcePageHeight || annotation.pdfjsSourcePageHeight || (Number(viewport.height) / scale));
     const annotationId = String(annotation.id || buildPdfjsAnnotationId(pageIndex, `promoted-block:${groups[0]?.index || 0}`));
     const uid = `promoted-block:${annotationId}`;
@@ -10028,6 +11669,7 @@ function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale,
     );
     box.style.setProperty('--enpv-text-color', matchedTextColor);
     applyAnnotationTypographyToBox(box, annotation, scale);
+    restoreSourceTypographyForBox(box, annotation, scale);
 
     const tc = document.createElement('div');
     tc.className = 'enpv-text-content';
@@ -10043,6 +11685,50 @@ function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale,
     addEditableBoxChrome(box);
 
     return { box, rect, groups, sourceBox, spans: allSpans };
+}
+
+// A promoted paragraph that the user moved or restyled renders as a single
+// persisted overlay (is-persisted-overlay) instead of a source-block handle.
+// Its underlying multi-line source text still lives in the pdf.js text layer,
+// so unless the overlay explicitly claims those spans the on-demand source
+// editor spawns a separate editable box per row (e.g.
+// pdfjs_<doc>_<page>_<page>:<n>), drawing the paragraph twice. Mark every
+// source-block span as owned/hidden by the overlay so both the live text layer
+// and the on-demand editor skip them. Returns owner descriptors so edit mode
+// can also exclude the rows from source-handle creation.
+function hideSourceSpansForMovedPromotedOverlays(pageIndex, viewport, scale, textLayerEl, pageDiv, annotations) {
+    if (!textLayerEl || !viewport || !(scale > 0)) return [];
+    const blocks = (Array.isArray(annotations) ? annotations : []).filter((annotation) => (
+        isPromotedExtractionAnnotation(annotation)
+        && !boolish(annotation.pdfjsDeleted)
+        && annotation._pdfjsCanvasRewritten !== true
+        && pdfjsPromotedOverlayShouldRenderAsPersistedOverlay(annotation)
+        && promotedSourceBlockHasMultipleLines(annotation)
+    ));
+    if (!blocks.length) return [];
+    const sourceGroups = getSourceGroupsForPage(pageIndex, textLayerEl, pageDiv)
+        .filter((group) => String(group.text || '').trim() !== '');
+    if (!sourceGroups.length) return [];
+    const owners = [];
+    for (const annotation of blocks) {
+        const groups = sourceGroupsForPromotedSourceBlock(annotation, pageIndex, viewport, scale, sourceGroups);
+        if (!groups.length) continue;
+        const annotationId = String(annotation.id || '');
+        for (const group of groups) {
+            for (const span of [...(group.spans || []), ...(group.relatedSpans || [])]) {
+                if (!span) continue;
+                span.dataset.enpvPromotedBlockHidden = '1';
+                if (annotationId) span.dataset.enpvPersistentId = annotationId;
+            }
+        }
+        owners.push({
+            annotationId,
+            sourceBox: promotedSourceBlockPdfBox(annotation),
+            text: promotedSourceBlockText(annotation),
+            groups,
+        });
+    }
+    return owners;
 }
 
 function renderAnnotationBoxLayer(pageIndex) {
@@ -10184,7 +11870,9 @@ function renderAnnotationBoxLayer(pageIndex) {
         const allowInteraction = editModeOn || document.body.classList.contains('enpv-shape-on');
         const rendered = createShapeOverlayBox(annotation, pageIndex, viewport, scale, allowInteraction);
         if (!rendered) continue;
-        persistedOverlayRects.push(rendered.rect);
+        if (annotation.guidedLeaseUnderline !== true) {
+            persistedOverlayRects.push(rendered.rect);
+        }
         layer.appendChild(rendered.box);
     }
     for (const annotation of directDrawAnnotations) {
@@ -10244,6 +11932,7 @@ function renderAnnotationBoxLayer(pageIndex) {
     }
 
     if (!editModeOn) {
+        hideSourceSpansForMovedPromotedOverlays(pageIndex, viewport, scale, textLayerEl, pageDiv, visiblePromotedTextAnnotations);
         appendPromotedFallbackOverlays(layer, promotedFallbackTextAnnotations, pageIndex, viewport, scale, editModeOn, sourceMaskLayer);
         if (shapeCreationState?.active && shapeCreationState.pageIndex === pageIndex && shapeCreationState.previewAnn) {
             const preview = createShapeOverlayBox(shapeCreationState.previewAnn, pageIndex, viewport, scale, false);
@@ -10319,20 +12008,22 @@ function renderAnnotationBoxLayer(pageIndex) {
         annotation._renderMatched = false;
     });
     function intersectsWidget(r) {
+        const tolerance = 5;
         for (const w of widgetRects) {
             const ix0 = Math.max(r.left, w.left);
             const iy0 = Math.max(r.top, w.top);
             const ix1 = Math.min(r.right, w.right);
             const iy1 = Math.min(r.bottom, w.bottom);
-            // Any overlap at all: never paint a draggable box over an
-            // acroform widget. Form fields are locked from being moved
-            // so giving them a draggable box would be misleading.
-            if (ix1 > ix0 && iy1 > iy0) return true;
+            // Meaningful overlap: never paint a draggable box over an
+            // acroform widget. Ignore tiny edge contact caused by source-handle
+            // line-height expansion so nearby PDF text still becomes editable.
+            if ((ix1 - ix0) > tolerance && (iy1 - iy0) > tolerance) return true;
         }
         return false;
     }
 
     const promotedSourceBlockGroups = new Set();
+    const promotedSourceBlockOwners = [];
     for (const annotation of promotedSourceBlockCandidates) {
         if (preRenderedSourceOwners.ownerFor(annotation)) continue;
         const rendered = createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale, sourceGroups, textLayerEl);
@@ -10353,6 +12044,11 @@ function renderAnnotationBoxLayer(pageIndex) {
             bottom: rendered.rect.top + rendered.rect.height,
         })) continue;
         rendered.groups.forEach((group) => promotedSourceBlockGroups.add(group));
+        promotedSourceBlockOwners.push({
+            annotationId: renderedBlockId,
+            sourceBox: rendered.sourceBox,
+            text: promotedSourceBlockText(annotation),
+        });
         persistedOverlayRects.push(rendered.rect);
         layer.appendChild(rendered.box);
         // Hide the live text-layer spans this block paints over so the
@@ -10362,9 +12058,30 @@ function renderAnnotationBoxLayer(pageIndex) {
         });
     }
 
+    // Moved/restyled promoted paragraphs render as persisted overlays (not
+    // block handles) but still own their multi-line source rows. Claim those
+    // rows so they are not re-rendered as individual source handles behind the
+    // overlay.
+    const movedPromotedSourceBlockOwners = hideSourceSpansForMovedPromotedOverlays(
+        pageIndex, viewport, scale, textLayerEl, pageDiv, visiblePromotedTextAnnotations,
+    );
+    for (const owner of movedPromotedSourceBlockOwners) {
+        promotedSourceBlockOwners.push({
+            annotationId: owner.annotationId,
+            sourceBox: owner.sourceBox,
+            text: owner.text,
+        });
+        owner.groups.forEach((group) => promotedSourceBlockGroups.add(group));
+    }
+
     for (const group of sourceGroups) {
         if (promotedSourceBlockGroups.has(group)) continue;
         refreshSourceGroupTextFromDom(group, textLayerEl);
+        const promotedSourceBlockOwner = promotedSourceBlockOwnerForSourceGroup(promotedSourceBlockOwners, group, viewport, scale);
+        if (promotedSourceBlockOwner) {
+            markSourceGroupOwnedByPromotedSourceBlock(group, promotedSourceBlockOwner);
+            continue;
+        }
         const span = group.anchor;
         const spanRect = sourceGroupClientRect(group, textLayerEl);
         if (!span || !spanRect) continue;
@@ -10378,10 +12095,10 @@ function renderAnnotationBoxLayer(pageIndex) {
         if (!paintedRect || paintedRect.width <= 0 || paintedRect.height <= 0) continue;
         const groupFsPx = parseFloat(window.getComputedStyle(span)?.fontSize || '') || spanRect.height || paintedRect.height;
         const rect = expandSourceRectToGlyphLine(paintedRect, groupFsPx, group, sourceGroups);
-        if (persistedOverlayRects.some((overlayRect) => rectsOverlap(rect, overlayRect))) continue;
+        if (persistedOverlayRects.some((overlayRect) => rectsOverlap(rect, overlayRect, 5))) continue;
         if (intersectsWidget({
-            left: rect.left, top: rect.top,
-            right: rect.left + rect.width, bottom: rect.top + rect.height,
+            left: paintedRect.left, top: paintedRect.top,
+            right: paintedRect.left + paintedRect.width, bottom: paintedRect.top + paintedRect.height,
         })) continue;
 
         const sourceBbox = {
@@ -10400,6 +12117,23 @@ function renderAnnotationBoxLayer(pageIndex) {
             true,
             uid,
         );
+        if (matchedAnnotation
+            && boolish(matchedAnnotation.savedTextOverlay)
+            && !boolish(matchedAnnotation.pdfjsDeleted)
+            && !isPromotedExtractionAnnotation(matchedAnnotation)
+            && !pdfjsSourceOverlayShouldUseSourceBoxInEditMode(matchedAnnotation, editModeOn)) {
+            const rendered = createPersistedOverlayBox(matchedAnnotation, pageIndex, viewport, scale, true);
+            if (rendered) {
+                for (const sourceSpan of group.spans || [span]) {
+                    if (sourceSpan) sourceSpan.dataset.enpvPersistentId = String(matchedAnnotation.id || '');
+                }
+                persistedOverlayRects.push(rendered.maskRect || rendered.rect);
+                if (rendered.mask) (sourceMaskLayer || layer).appendChild(rendered.mask);
+                layer.appendChild(rendered.box);
+                refreshAttachedSourceFidelityTextFit(rendered.box);
+                continue;
+            }
+        }
 
         const offset = annotationOffsetsPts.get(uid);
         const handleUid = sourceHandleUid(pageIndex, uid, matchedAnnotation);
@@ -10464,6 +12198,7 @@ function renderAnnotationBoxLayer(pageIndex) {
         );
         box.style.setProperty('--enpv-text-color', matchedTextColor);
         if (matchedAnnotation) applyAnnotationTypographyToBox(box, matchedAnnotation, scale);
+        restoreSourceTypographyForBox(box, matchedAnnotation, scale);
 
         // Inner contenteditable element — initially read-only (only
         // becomes editable when the box is selected) so single-clicks
@@ -10516,6 +12251,7 @@ function renderAnnotationBoxLayer(pageIndex) {
     }
 
     appendEditorAnnotationLayer(pageDiv, layer);
+    appendMissingEditableSourceHandlesForPage(pageIndex, layer, textLayerEl, { promotedSourceBlockOwners });
     scheduleHideTextLayerSpansUnderCleanPromotedBoxes(layer);
     removeSourceMasksOverlappingAcroWidgets(layer, pageDiv);
     fitPersistedRichOverlayBoxesToContent(layer);
@@ -11248,6 +12984,36 @@ function hideAnnotationFormatBar() {
     annFormatBar?.classList.remove('is-visible');
 }
 
+function positionAnnotationFormatBarUnderMenu(box = null) {
+    if (!annFormatBar || !annFormatBar.classList.contains('is-visible')) return;
+    const margin = 8;
+    const viewportWidth = Math.max(document.documentElement?.clientWidth || 0, window.innerWidth || 0);
+    const viewportHeight = Math.max(document.documentElement?.clientHeight || 0, window.innerHeight || 0);
+    if (!viewportWidth || !viewportHeight) return;
+
+    const preferredWidth = Math.min(900, Math.max(320, viewportWidth - (margin * 2)));
+    annFormatBar.style.width = `${preferredWidth}px`;
+    annFormatBar.style.transform = 'none';
+
+    const menuVisible = annMenu && !annMenu.hidden && annMenu.isConnected;
+    const anchorRect = menuVisible
+        ? annMenu.getBoundingClientRect()
+        : box?.getBoundingClientRect?.();
+    if (!anchorRect) return;
+
+    const measuredWidth = Math.min(annFormatBar.offsetWidth || preferredWidth, viewportWidth - (margin * 2));
+    const measuredHeight = annFormatBar.offsetHeight || 86;
+    const centeredLeft = anchorRect.left + (anchorRect.width / 2) - (measuredWidth / 2);
+    const maxLeft = Math.max(margin, viewportWidth - measuredWidth - margin);
+    const left = Math.max(margin, Math.min(maxLeft, centeredLeft));
+    const preferredTop = anchorRect.bottom + 6;
+    const maxTop = Math.max(margin, viewportHeight - measuredHeight - margin);
+    const top = Math.max(margin, Math.min(maxTop, preferredTop));
+
+    annFormatBar.style.left = `${left}px`;
+    annFormatBar.style.top = `${top}px`;
+}
+
 function selectedBoxFontFamily(box) {
     if (!box) return '';
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
@@ -11377,6 +13143,7 @@ function updateAnnotationFormatBarForBox(box) {
         if (control) control.disabled = locked;
     });
     annFormatBar.classList.add('is-visible');
+    requestAnimationFrame(() => positionAnnotationFormatBarUnderMenu(box));
 }
 
 function stripInlineStylePropertiesFromBox(box, properties) {
@@ -12452,6 +14219,7 @@ function positionAnnMenuOver(box) {
     annMenu.style.top = `${finalTop}px`;
     annMenu.classList.toggle('is-below', menuBelow);
     annMenu.classList.toggle('is-top-gutter', false);
+    positionAnnotationFormatBarUnderMenu(box);
 }
 
 function selectAnnBox(box) {
@@ -12522,9 +14290,12 @@ function beginEditMode(box) {
         || Number.parseFloat(box.style.height || '')
         || box.offsetHeight
         || 1;
+    // Source-backed boxes reveal their editable text as soon as .is-editing is
+    // applied. Put the source mask in place first so clean promoted blocks do
+    // not flash or settle into double text over the original PDF canvas.
+    attachSourceMaskForBox(box);
     box.classList.add('is-editing');
     selectedAnnBoxIsEditing = true;
-    attachSourceMaskForBox(box);
     box.dataset.preEditHeight = `${preEditHeightPx}px`;
     box.style.minHeight = '';
     box.style.height = `${preEditHeightPx}px`;
@@ -12553,6 +14324,9 @@ function beginEditMode(box) {
         const hasSourceMetrics = Boolean(box.dataset.sourceFontFamily || box.dataset.sourceTransform || box.dataset.sourceFontSizePx);
         const mode = editorModeForBox(box);
         setBoxEditorMode(box, mode);
+        if (mode === 'rich') {
+            applyPromotedSourceBlockEditLayout(box);
+        }
         if (mode === 'source' && hasSourceMetrics && !hasNewline) {
             applySourceFidelityTypography(box, { editing: true });
             // Per-span edit markup: preserve mixed font-weights and visible
@@ -12602,6 +14376,7 @@ function endEditMode(box) {
         // post-edit source-fidelity render path see plain text only.
         clearSourceFidelitySpanEditMarkup(box);
     }
+    clearPromotedSourceBlockEditLayout(box);
     // Re-apply per-span display markup so post-edit rendering keeps the
     // mixed font-weights captured from the original PDF text layer.
     if (!isRichTextCommit && box.classList.contains('is-source-fidelity')) {
@@ -13950,6 +15725,24 @@ debugPanel?.querySelector('.enpv-debug-panel__header')?.addEventListener('pointe
 debugPanel?.addEventListener('pointermove', updateDebugPanelDrag);
 debugPanel?.addEventListener('pointerup', endDebugPanelDrag);
 debugPanel?.addEventListener('pointercancel', endDebugPanelDrag);
+debugAnnotationIdInput?.addEventListener('pointerdown', (ev) => {
+    ev.stopPropagation();
+});
+debugAnnotationIdInput?.addEventListener('focus', () => {
+    try {
+        debugAnnotationIdInput.select();
+        debugAnnotationIdInput.setSelectionRange(0, debugAnnotationIdInput.value.length);
+    } catch (_) { /* noop */ }
+});
+debugAnnotationIdInput?.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    copyDebugAnnotationId().catch(() => {});
+});
+debugAnnotationIdInput?.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    copyDebugAnnotationId().catch(() => {});
+});
 window.addEventListener('resize', () => {
     if (!debugPanel || debugPanel.hidden || debugPanel.style.right !== 'auto') return;
     const rect = debugPanel.getBoundingClientRect();
@@ -13987,6 +15780,7 @@ window.addEventListener('pointerdown', (ev) => {
     if (ev.target?.closest('#ann-format-bar')) return;
     if (ev.target?.closest('#shape-tool-panel')) return;
     if (ev.target?.closest('#enpv-layers-panel')) return;
+    if (ev.target?.closest('#enpv-guided-helper-panel')) return;
     if (ev.target?.closest('#enpv-debug-panel')) return;
     if (ev.target?.closest('.enpv-debug-mask-preview')) return;
     const selected = findSelectedBox();
@@ -14064,6 +15858,8 @@ function onSpanClick(ev) {
     const box = createAnnotationBoxFromSpan(ev.currentTarget);
     if (box) {
         selectAnnBox(box);
+    } else if (ev.currentTarget?.dataset?.enpvPromotedBlockHidden === '1') {
+        return;
     } else if (ev.currentTarget?.dataset?.enpvDeletedSource === '1') {
         return;
     } else {
@@ -14086,6 +15882,7 @@ function onSpanDblClick(ev) {
     ev.preventDefault();
     const box = createAnnotationBoxFromSpan(ev.currentTarget);
     if (!box) {
+        if (ev.currentTarget?.dataset?.enpvPromotedBlockHidden === '1') return;
         if (ev.currentTarget?.dataset?.enpvDeletedSource === '1') return;
         showError('Could not create an annotation box for this text run.');
         return;
@@ -14769,9 +16566,12 @@ async function saveAnnotationStateToDb(options = {}) {
         if (result.session_id && String(result.session_id).trim()) {
             safeLocalStorageSet(`edit_new_session_${DOC_ID}`, String(result.session_id).trim());
         }
-        setSaveStatus(annotationsPayload.length ? 'Saved' : 'No changes');
-        setStatus(annotationsPayload.length ? 'Annotation state saved.' : 'No annotation changes to save.');
-        flashSaveToast(annotationsPayload.length ? 'Saved' : 'No changes to save');
+        acroFormEntries = Array.isArray(acroPayload) ? acroPayload : [];
+        latestAcroFormEntriesSnapshot = acroFormEntries;
+        const savedChangeCount = annotationsPayload.length + acroFormEntries.length;
+        setSaveStatus(savedChangeCount ? 'Saved' : 'No changes');
+        setStatus(savedChangeCount ? 'Document state saved.' : 'No changes to save.');
+        flashSaveToast(savedChangeCount ? 'Saved' : 'No changes to save');
         pendingDeletedAnnotationIds.clear();
     } catch (err) {
         console.error(err);
@@ -15125,6 +16925,39 @@ for (const button of editModeButtons) {
     });
 }
 setEditMode(false);
+
+if (floatingGuidedConvertButton) {
+    floatingGuidedConvertButton.addEventListener('click', async () => {
+        if (!GUIDED_CONVERT_URL) return;
+        if (floatingGuidedConvertButton.disabled) return;
+        floatingGuidedConvertButton.disabled = true;
+        floatingGuidedConvertButton.classList.add('is-busy');
+        setStatus('Converting form fields to editable text...');
+        try {
+            const acroPayload = await collectAcroFormEntriesForSave();
+            const response = await fetch(GUIDED_CONVERT_URL, {
+                method: 'POST',
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': CSRF,
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({ acro_form_entries: acroPayload }),
+            });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success) {
+                throw new Error(result.error || result.message || 'Conversion failed.');
+            }
+            setStatus('Converted. Opening editable PDF...');
+            window.location.href = result.edit_url || window.location.href;
+        } catch (error) {
+            floatingGuidedConvertButton.disabled = false;
+            floatingGuidedConvertButton.classList.remove('is-busy');
+            setStatus(error?.message || 'Conversion failed.', true);
+        }
+    });
+}
 
 for (const button of addTextButtons) {
     button.addEventListener('click', () => {

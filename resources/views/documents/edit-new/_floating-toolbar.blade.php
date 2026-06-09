@@ -2,12 +2,25 @@
 <div class="floating-tool-bar" id="floating-tool-bar">
     <!-- Group 1: Selection tools -->
     <div class="ftb-group">
-        <button type="button" class="ftb-btn ftb-edit-mode" id="ftb-edit-mode" title="Edit PDF — click annotations to edit text">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
-            </svg>
-            <span>Edit PDF</span>
-        </button>
+        @unless($guided ?? false)
+            <button type="button" class="ftb-btn ftb-edit-mode" id="ftb-edit-mode" title="Edit PDF — click annotations to edit text">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+                </svg>
+                <span>Edit PDF</span>
+            </button>
+        @endunless
+        @if($guided ?? false)
+            <button type="button" class="ftb-btn ftb-guided-convert" id="ftb-guided-convert" title="Convert fields into editable text">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 4h16v16H4z"></path>
+                    <path d="M8 8h8"></path>
+                    <path d="M8 12h5"></path>
+                    <path d="m14 15 2 2 4-4"></path>
+                </svg>
+                <span>Convert</span>
+            </button>
+        @endif
     </div>
     <div class="ftb-sep"></div>
     <!-- Group 2: Annotation tools -->

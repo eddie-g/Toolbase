@@ -5087,6 +5087,141 @@
                 </div>
                 @endif
 
+                @if (($templateType ?? 'invoice') === 'realestate' && ($templateSlug ?? '') === 'lease_extension')
+                @php $td = array_merge($templateDefaults ?? [], is_array($formData ?? null) ? $formData : []); @endphp
+                <!-- ── Lease Extension Agreement Card ───────────────────────── -->
+                <div id="guided-lease-extension-card" style="background: #fff; border-radius: 4px; box-shadow: 0 2px 16px rgba(0,0,0,0.12); padding: 60px 64px 48px; color: #111; font-family: Georgia, 'Times New Roman', Times, serif; max-width: 760px; margin: 0 auto; line-height: 1.6; font-size: 13px;">
+                    <input type="hidden" id="glex-template-type" value="realestate">
+                    <input type="hidden" id="glex-template-slug" value="lease_extension">
+
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <h1 style="font-family: Georgia, 'Times New Roman', Times, serif; font-size: 18px; font-weight: bold; letter-spacing: 2px; color: #000; margin: 0; text-transform: uppercase;">Lease Extension Agreement</h1>
+                    </div>
+
+                    <p style="margin: 0 0 14px; text-align: justify;">
+                        This Lease Extension Agreement (&ldquo;Agreement&rdquo;) is entered into on
+                        <input id="glex-agreement-date" type="text" value="{{ $td['glex-agreement-date'] ?? '[DATE]' }}" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 2px 4px; width: 180px; background: rgba(37,99,235,0.05);">
+                        by and between:
+                    </p>
+
+                    <div style="border-top: 1px solid #111; border-bottom: 1px solid #111; padding: 18px 0; margin: 20px 0;">
+                        <div style="display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: center; margin-bottom: 12px;">
+                            <strong style="font-size: 12px; letter-spacing: 0.5px;">LANDLORD:</strong>
+                            <input id="glex-landlord-name" type="text" value="{{ $td['glex-landlord-name'] ?? '[YOUR COMPANY NAME]' }}" placeholder="Landlord full legal name" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 4px; width: 100%; background: rgba(37,99,235,0.05);">
+                        </div>
+                        <div style="display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: center; margin-bottom: 12px;">
+                            <strong style="font-size: 12px; letter-spacing: 0.5px;">LANDLORD STATE:</strong>
+                            <input id="glex-landlord-state" type="text" value="{{ $td['glex-landlord-state'] ?? '[STATE/PROVINCE]' }}" placeholder="State/Province" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 4px; width: 100%; background: rgba(37,99,235,0.05);">
+                        </div>
+                        <div style="display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: start; margin-bottom: 12px;">
+                            <strong style="font-size: 12px; letter-spacing: 0.5px; padding-top: 4px;">LANDLORD ADDRESS:</strong>
+                            <textarea id="glex-landlord-address" rows="2" placeholder="Complete address" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 4px; width: 100%; resize: vertical; background: rgba(37,99,235,0.05);">{{ $td['glex-landlord-address'] ?? '[YOUR COMPLETE ADDRESS]' }}</textarea>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: center; margin-bottom: 12px;">
+                            <strong style="font-size: 12px; letter-spacing: 0.5px;">TENANT 1:</strong>
+                            <input id="glex-tenant1-name" type="text" value="{{ $td['glex-tenant1-name'] ?? '[TENANT NAME]' }}" placeholder="Tenant full legal name" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 4px; width: 100%; background: rgba(37,99,235,0.05);">
+                        </div>
+                        <div style="display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: center; margin-bottom: 12px;">
+                            <strong style="font-size: 12px; letter-spacing: 0.5px;">TENANT 2:</strong>
+                            <input id="glex-tenant2-name" type="text" value="{{ $td['glex-tenant2-name'] ?? '' }}" placeholder="Optional second tenant" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 4px; width: 100%; background: rgba(37,99,235,0.05);">
+                        </div>
+                        <div style="display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: center; margin-bottom: 12px;">
+                            <strong style="font-size: 12px; letter-spacing: 0.5px;">TENANT STATE:</strong>
+                            <input id="glex-tenant-state" type="text" value="{{ $td['glex-tenant-state'] ?? '[STATE/PROVINCE]' }}" placeholder="State/Province" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 4px; width: 100%; background: rgba(37,99,235,0.05);">
+                        </div>
+                        <div style="display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: start; margin-bottom: 12px;">
+                            <strong style="font-size: 12px; letter-spacing: 0.5px; padding-top: 4px;">TENANT ADDRESS:</strong>
+                            <textarea id="glex-tenant-address" rows="2" placeholder="Complete address" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 4px; width: 100%; resize: vertical; background: rgba(37,99,235,0.05);">{{ $td['glex-tenant-address'] ?? '[COMPLETE ADDRESS]' }}</textarea>
+                        </div>
+                        <div style="display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: center; margin-bottom: 12px;">
+                            <strong style="font-size: 12px; letter-spacing: 0.5px;">PREMISES:</strong>
+                            <input id="glex-premises-description" type="text" value="{{ $td['glex-premises-description'] ?? '[DESCRIBE]' }}" placeholder="Describe premises" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 4px; width: 100%; background: rgba(37,99,235,0.05);">
+                        </div>
+                        <div style="display: grid; grid-template-columns: 130px 1fr; gap: 12px; align-items: start;">
+                            <strong style="font-size: 12px; letter-spacing: 0.5px; padding-top: 4px;">PROPERTY:</strong>
+                            <textarea id="glex-property-address" rows="2" placeholder="Street, City, State, ZIP" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 4px; width: 100%; resize: vertical; background: rgba(37,99,235,0.05);">{{ $td['glex-property-address'] ?? '[ADDRESS]' }}</textarea>
+                        </div>
+                    </div>
+
+                    <p style="margin: 0 0 12px; text-align: justify;">
+                        WHEREAS, the parties entered into a Residential Lease Agreement dated
+                        <input id="glex-original-lease-date" type="text" value="{{ $td['glex-original-lease-date'] ?? '[DATE]' }}" placeholder="Original lease date" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 2px 4px; width: 180px; background: rgba(37,99,235,0.05);">
+                        (&ldquo;Original Lease&rdquo;); and
+                    </p>
+                    <p style="margin: 0 0 12px; text-align: justify;">WHEREAS, the parties desire to extend the term of the Original Lease;</p>
+                    <p style="margin: 0 0 20px; text-align: justify; font-weight: bold;">NOW, THEREFORE, the parties agree as follows:</p>
+
+                    <div style="border-top: 1px solid #d1d5db; padding-top: 16px;">
+                        <p style="margin: 0 0 6px; font-weight: bold;">1. LEASE EXTENSION</p>
+                        <p style="margin: 0 0 16px; text-indent: 28px; text-align: justify;">
+                            The Original Lease is hereby extended for
+                            <input id="glex-extension-period" type="text" value="{{ $td['glex-extension-period'] ?? '[TIME PERIOD]' }}" placeholder="Time period" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 2px 4px; width: 130px; background: rgba(37,99,235,0.05);">
+                            beginning on
+                            <input id="glex-extension-start-date" type="text" value="{{ $td['glex-extension-start-date'] ?? '[DATE]' }}" placeholder="Start date" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 2px 4px; width: 150px; background: rgba(37,99,235,0.05);">
+                            and ending on
+                            <input id="glex-extension-end-date" type="text" value="{{ $td['glex-extension-end-date'] ?? '[DATE]' }}" placeholder="End date" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 2px 4px; width: 150px; background: rgba(37,99,235,0.05);">.
+                        </p>
+
+                        <p style="margin: 0 0 6px; font-weight: bold;">2. RENT</p>
+                        <p style="margin: 0 0 16px; text-indent: 28px; text-align: justify;">
+                            Beginning on the extension start date, the monthly rent shall be
+                            $<input id="glex-new-rent" type="text" value="{{ $td['glex-new-rent'] ?? '[AMOUNT]' }}" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 2px 4px; width: 110px; background: rgba(37,99,235,0.05);">
+                            per month, payable in accordance with the terms of the Original Lease.
+                        </p>
+
+                        <p style="margin: 0 0 6px; font-weight: bold;">3. TERMS AND CONDITIONS</p>
+                        <p style="margin: 0 0 16px; text-indent: 28px; text-align: justify;">
+                            Except as expressly modified by this Agreement, all terms, conditions, covenants, and obligations contained in the Original Lease shall remain unchanged and in full force and effect.
+                        </p>
+
+                        <p style="margin: 0 0 6px; font-weight: bold;">4. SECURITY DEPOSIT</p>
+                        <p style="margin: 0 0 16px; text-indent: 28px; text-align: justify;">
+                            The security deposit currently held by the Landlord shall continue to be held under the terms of the Original Lease and applicable law.
+                        </p>
+
+                        <p style="margin: 0 0 6px; font-weight: bold;">5. GOVERNING LAW</p>
+                        <p style="margin: 0 0 16px; text-indent: 28px; text-align: justify;">
+                            This Agreement shall be governed by and construed in accordance with the laws of the
+                            <input id="glex-governing-law" type="text" value="{{ $td['glex-governing-law'] ?? 'state in which the property is located' }}" style="border: none; border-bottom: 1px dashed #2563eb; font-family: Georgia, 'Times New Roman', Times, serif; font-size: 13px; color: #1d4ed8; outline: none; padding: 2px 4px; width: 230px; background: rgba(37,99,235,0.05);">.
+                        </p>
+                    </div>
+
+                    <div style="border-top: 1px solid #d1d5db; margin-top: 22px; padding-top: 18px;">
+                        <p style="margin: 0 0 20px; font-weight: bold; text-align: justify;">
+                            IN WITNESS WHEREOF, the parties have executed this Lease Extension Agreement as of the date first written above.
+                        </p>
+
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 48px;">
+                            <div>
+                                <p style="margin: 0 0 8px; font-size: 10px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; color: #555;">Landlord</p>
+                                <div style="border-bottom: 1px solid #000; height: 30px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0 0 14px; font-size: 10px; color: #777;">Signature</p>
+                                <div style="border-bottom: 1px solid #000; height: 24px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0; font-size: 10px; color: #777;">Date</p>
+                            </div>
+                            <div>
+                                <p style="margin: 0 0 8px; font-size: 10px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; color: #555;">Tenant</p>
+                                <div style="border-bottom: 1px solid #000; height: 30px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0 0 14px; font-size: 10px; color: #777;">Signature</p>
+                                <div style="border-bottom: 1px solid #000; height: 24px; margin-bottom: 4px;"></div>
+                                <p style="margin: 0; font-size: 10px; color: #777;">Date</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style="display: flex; justify-content: flex-end; gap: 12px; margin-top: 32px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+                        <button type="button" id="glex-open-editor-btn" style="background: #374151; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s; font-family: -apple-system, system-ui, sans-serif;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                            Open in Editor
+                        </button>
+                        <button type="button" id="glex-save-btn" style="background: #1d4ed8; color: white; font-size: 15px; font-weight: 700; padding: 12px 32px; border-radius: 10px; border: none; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.15s; font-family: -apple-system, system-ui, sans-serif;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                            Generate PDF
+                        </button>
+                    </div>
+                </div>
+                @endif
+
             </div>
         </div>
 
@@ -50141,7 +50276,7 @@
                 if (saveFormBtn) {
                     saveFormBtn.addEventListener('click', async () => {
                         // Determine which card is active
-                        const cardIds = ['guided-invoice-card', 'guided-newsletter-card', 'guided-nda-card', 'guided-po-card'];
+                        const cardIds = ['guided-invoice-card', 'guided-newsletter-card', 'guided-nda-card', 'guided-po-card', 'guided-lease-extension-card'];
                         let activeCardId = null;
                         let formData = {};
                         for (const cid of cardIds) {
@@ -50166,16 +50301,23 @@
                             const docId = @json($document->id);
                             const html = captureCardHtml(activeCardId);
 
-                            // Save form data AND generate PDF in one request
-                            const resp = await fetch(`/documents/${docId}/convert-html-to-pdf`, {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                                    'Accept': 'application/json',
-                                },
-                                body: JSON.stringify({ html: html, form_data: formData }),
-                            });
+                            const isLeaseExtension = activeCardId === 'guided-lease-extension-card';
+                            const resp = await fetch(
+                                isLeaseExtension
+                                    ? `/documents/${docId}/regenerate-template`
+                                    : `/documents/${docId}/convert-html-to-pdf`,
+                                {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                                        'Accept': 'application/json',
+                                    },
+                                    body: JSON.stringify(isLeaseExtension
+                                        ? { ...formData, template_type: 'realestate', template_slug: 'lease_extension' }
+                                        : { html: html, form_data: formData }),
+                                }
+                            );
 
                             if (!resp.ok) {
                                 const err = await resp.json().catch(() => ({}));
@@ -50422,12 +50564,61 @@
                 }
             })();
 
+            // ─── Guided Lease Extension Builder ───────────────────────────
+            (function guidedLeaseExtensionInit() {
+                const saveBtn = document.getElementById('glex-save-btn');
+                if (!saveBtn) return;
+
+                async function generateLeaseExtension(btn, openInEditor) {
+                    const formData = collectFormData('guided-lease-extension-card');
+                    const origHtml = btn.innerHTML;
+                    btn.disabled = true;
+                    btn.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="spin-icon"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Generating…`;
+
+                    try {
+                        const docId = @json($document->id);
+                        const resp = await fetch(`/documents/${docId}/regenerate-template`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({ ...formData, template_type: 'realestate', template_slug: 'lease_extension' }),
+                        });
+                        if (!resp.ok) {
+                            const err = await resp.json().catch(() => ({}));
+                            throw new Error(err.error || 'Generation failed');
+                        }
+                        if (openInEditor) {
+                            window.location.href = @json(route('documents.edit', $document));
+                        } else {
+                            window.open(`/documents/${docId}/file`, '_blank');
+                        }
+                        return;
+                    } catch (err) {
+                        console.error('Lease extension generation error:', err);
+                        alert('Error: ' + err.message);
+                    } finally {
+                        btn.disabled = false;
+                        btn.innerHTML = origHtml;
+                    }
+                }
+
+                saveBtn.addEventListener('click', () => generateLeaseExtension(saveBtn, false));
+
+                const openEditorBtn = document.getElementById('glex-open-editor-btn');
+                if (openEditorBtn) {
+                    openEditorBtn.addEventListener('click', () => generateLeaseExtension(openEditorBtn, true));
+                }
+            })();
+
             // ─── Restore Guided Template Data ──────────────────────────────
             (function() {
                 const savedFormData = @json($formData ?? null);
                 if (savedFormData && (typeof savedFormData === 'object') && Object.keys(savedFormData).length > 0) {
                     // Try to restore for all possible guided cards
-                    ['guided-invoice-card', 'guided-newsletter-card', 'guided-nda-card', 'guided-po-card'].forEach(cardId => {
+                    ['guided-invoice-card', 'guided-newsletter-card', 'guided-nda-card', 'guided-po-card', 'guided-lease-extension-card'].forEach(cardId => {
                         restoreFormData(cardId, savedFormData);
                     });
                 }
@@ -50444,6 +50635,10 @@
                     { id: 'gnda-date',        format: 'F j, Y' },
                     { id: 'gpo-date',         format: 'm-d-Y' },
                     { id: 'gpo-delivery-date', format: 'm-d-Y' },
+                    { id: 'glex-agreement-date', format: 'F j, Y' },
+                    { id: 'glex-original-lease-date', format: 'F j, Y' },
+                    { id: 'glex-extension-start-date', format: 'F j, Y' },
+                    { id: 'glex-extension-end-date', format: 'F j, Y' },
                 ];
 
                 dateFields.forEach(({ id, format, noDay }) => {

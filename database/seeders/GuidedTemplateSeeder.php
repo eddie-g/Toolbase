@@ -15,7 +15,7 @@ class GuidedTemplateSeeder extends Seeder
                 'name'        => 'Security Deposit Return',
                 'description' => 'Itemized deposit refund statement with deductions table',
                 'type'        => 'realestate',
-                'sort_order'  => 1,
+                'sort_order'  => 2,
                 'is_active'   => true,
                 'defaults'    => [
                     'landlord_name'    => 'Landlord Name',
@@ -37,6 +37,7 @@ class GuidedTemplateSeeder extends Seeder
             [
                 'name'        => 'Clean Modern',
                 'description' => 'Dark header, clean layout — guided form',
+                'type'        => 'invoice',
                 'sort_order'  => 1,
                 'is_active'   => true,
                 'defaults'    => [
@@ -56,6 +57,7 @@ class GuidedTemplateSeeder extends Seeder
             [
                 'name'        => 'Bold Red',
                 'description' => 'Corporate style with red header — guided form',
+                'type'        => 'invoice',
                 'sort_order'  => 2,
                 'is_active'   => true,
                 'defaults'    => [

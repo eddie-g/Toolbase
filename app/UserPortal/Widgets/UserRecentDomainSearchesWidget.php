@@ -3,24 +3,25 @@
 namespace App\UserPortal\Widgets;
 
 use App\Models\AiDomainRequest;
-use App\Models\SavedDomain;
-use App\Services\NamecheapClient;
-use Filament\Notifications\Notification;
-use Filament\Tables\Actions\Action;
+use App\UserPortal\Pages\Domains;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Filament\Widgets\TableWidget as BaseWidget;
-use Illuminate\Support\Facades\Cache;
+use Livewire\Attributes\On;
 
 class UserRecentDomainSearchesWidget extends BaseWidget
 {
-    private const REFRESH_COOLDOWN_KEY_PREFIX = 'saved-domains:refresh:user:';
-
     protected static ?int $sort = 4;
 
     protected int | string | array $columnSpan = 'full';
 
     protected static ?string $heading = 'Domains · Recent Searches';
+
+    #[On('domains-refreshed')]
+    public function refreshAfterDomainsRefresh(): void
+    {
+        $this->resetTable();
+    }
 
     public function table(Table $table): Table
     {
@@ -52,131 +53,14 @@ class UserRecentDomainSearchesWidget extends BaseWidget
                     })
                     ->badge()
                     ->color('info')
-                    ->action(
-                        Action::make('viewResults')
-                            ->modalHeading(fn (AiDomainRequest $record) => 'Results · ' . str($record->prompt)->limit(80))
-                            ->modalSubmitAction(false)
-                            ->modalCancelActionLabel('Close')
-                            ->modalContent(fn (AiDomainRequest $record) => view('user-portal.widgets.domain-search-results', [
-                                'rows' => $this->extractResultRows($record),
-                            ]))
-                    ),
+                    ->url(fn (AiDomainRequest $record): string => Domains::getUrl(['search' => $record->id], panel: 'user')),
             ])
-            ->headerActions([
-                Action::make('refreshDomains')
-                    ->label(function (): string {
-                        $user = auth()->user();
-                        if (!$user) {
-                            return 'Refresh Domains';
-                        }
-
-                        $nextAllowedAt = Cache::get(self::REFRESH_COOLDOWN_KEY_PREFIX . $user->id);
-                        if (!$nextAllowedAt) {
-                            return 'Refresh Domains';
-                        }
-
-                        try {
-                            $next = \Illuminate\Support\Carbon::parse((string) $nextAllowedAt);
-                        } catch (\Throwable $e) {
-                            return 'Refresh Domains';
-                        }
-
-                        if (now()->gte($next)) {
-                            Cache::forget(self::REFRESH_COOLDOWN_KEY_PREFIX . $user->id);
-                            return 'Refresh Domains';
-                        }
-
-                        return 'Refresh in ' . now()->diffForHumans($next, true, false, 2);
-                    })
-                    ->icon('heroicon-o-arrow-path')
-                    ->disabled(function (): bool {
-                        $user = auth()->user();
-                        if (!$user) {
-                            return false;
-                        }
-
-                        $nextAllowedAt = Cache::get(self::REFRESH_COOLDOWN_KEY_PREFIX . $user->id);
-                        if (!$nextAllowedAt) {
-                            return false;
-                        }
-
-                        try {
-                            return now()->lt(\Illuminate\Support\Carbon::parse((string) $nextAllowedAt));
-                        } catch (\Throwable $e) {
-                            return false;
-                        }
-                    })
-                    ->action(function (): void {
-                        $user = auth()->user();
-                        if (!$user) {
-                            return;
-                        }
-
-                        $cooldownKey = self::REFRESH_COOLDOWN_KEY_PREFIX . $user->id;
-                        $nextAllowedAt = Cache::get($cooldownKey);
-
-                        if ($nextAllowedAt && now()->lt(\Illuminate\Support\Carbon::parse($nextAllowedAt))) {
-                            Notification::make()
-                                ->title('Refresh available in ' . now()->diffForHumans(\Illuminate\Support\Carbon::parse($nextAllowedAt), true))
-                                ->warning()
-                                ->send();
-                            return;
-                        }
-
-                        $domains = SavedDomain::query()
-                            ->where('user_id', $user->id)
-                            ->pluck('domain')
-                            ->filter()
-                            ->map(fn ($d) => strtolower(trim((string) $d)))
-                            ->unique()
-                            ->values()
-                            ->all();
-
-                        if (empty($domains)) {
-                            Notification::make()
-                                ->title('No favorited domains to refresh')
-                                ->warning()
-                                ->send();
-                            return;
-                        }
-
-                        try {
-                            $results = app(NamecheapClient::class)->checkFqdns($domains);
-                        } catch (\Throwable $e) {
-                            Notification::make()
-                                ->title('Namecheap refresh failed')
-                                ->body($e->getMessage())
-                                ->danger()
-                                ->send();
-                            return;
-                        }
-
-                        $rows = collect($results['results'] ?? [])
-                            ->keyBy(fn ($item) => strtolower((string) ($item['domain'] ?? '')));
-
-                        foreach ($domains as $domain) {
-                            $row = $rows->get($domain);
-                            if (!$row) {
-                                continue;
-                            }
-
-                            SavedDomain::query()
-                                ->where('user_id', $user->id)
-                                ->whereRaw('LOWER(domain) = ?', [$domain])
-                                ->update([
-                                    'is_available' => (bool) ($row['available'] ?? false),
-                                    'is_premium' => (bool) ($row['premium'] ?? false),
-                                    'checked_at' => now(),
-                                ]);
-                        }
-
-                        Cache::put($cooldownKey, now()->addHour()->toISOString(), now()->addHour());
-
-                        Notification::make()
-                            ->title('Domain availability refreshed from Namecheap')
-                            ->success()
-                            ->send();
-                    }),
+            ->actions([
+                Tables\Actions\DeleteAction::make()
+                    ->label('Delete')
+                    ->modalHeading('Delete domain search')
+                    ->modalDescription('This will permanently delete this domain search and its stored results.')
+                    ->successNotificationTitle('Domain search deleted'),
             ])
             ->defaultSort('created_at', 'desc')
             ->paginated([10, 25, 50]);

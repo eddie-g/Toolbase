@@ -18,6 +18,7 @@ use App\Models\UserPdfMonthlyUsage;
 use App\Http\Controllers\PdfTestController;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
@@ -1636,12 +1637,15 @@ class DocumentController extends Controller
         }
 
         $normalizedEntries = $this->normalizeAcroFormEntriesForPersistence($entries);
+        usort($normalizedEntries, static function (array $left, array $right): int {
+            return strcmp((string) ($left['key'] ?? ''), (string) ($right['key'] ?? ''));
+        });
         $keys = array_values(array_filter(array_map(
             static fn (array $entry) => trim((string) ($entry['key'] ?? '')),
             $normalizedEntries
         )));
 
-        DB::transaction(function () use ($document, $sessionId, $normalizedEntries, $ownership, $state, $keys) {
+        $runUpsert = function () use ($document, $sessionId, $normalizedEntries, $ownership, $state, $keys) {
             foreach ($normalizedEntries as $entry) {
                 $fieldKey = trim((string) ($entry['key'] ?? ''));
                 if ($fieldKey === '') {
@@ -1670,7 +1674,9 @@ class DocumentController extends Controller
                 ];
 
                 if ($existing) {
-                    $existing->update($payload);
+                    if ($this->pdfAcroFormPayloadChanged($existing, $payload)) {
+                        $existing->update($payload);
+                    }
                 } else {
                     PdfAcroForm::create(array_merge($payload, [
                         'document_id' => $document->id,
@@ -1696,9 +1702,49 @@ class DocumentController extends Controller
                     ->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(data, '$.key')) NOT IN ({$quotedKeys})", $keys)
                     ->delete();
             }
-        });
+        };
+
+        $this->runPdfAcroFormTransactionWithRetry($runUpsert);
 
         return count($normalizedEntries);
+    }
+
+    private function pdfAcroFormPayloadChanged(PdfAcroForm $existing, array $payload): bool
+    {
+        foreach (['user_id', 'admin_id', 'sess_id', 'page_num', 'state'] as $field) {
+            if (($existing->{$field} ?? null) != ($payload[$field] ?? null)) {
+                return true;
+            }
+        }
+
+        return $existing->data != ($payload['data'] ?? null);
+    }
+
+    private function runPdfAcroFormTransactionWithRetry(callable $callback, int $attempts = 5): void
+    {
+        $attempts = max(1, $attempts);
+
+        for ($attempt = 1; $attempt <= $attempts; $attempt += 1) {
+            try {
+                DB::transaction($callback, 1);
+                return;
+            } catch (QueryException $exception) {
+                if (!$this->isRetryableDatabaseConcurrencyError($exception) || $attempt === $attempts) {
+                    throw $exception;
+                }
+
+                usleep(random_int(25_000, 125_000) * $attempt);
+            }
+        }
+    }
+
+    private function isRetryableDatabaseConcurrencyError(QueryException $exception): bool
+    {
+        $sqlState = (string) ($exception->errorInfo[0] ?? '');
+        $driverCode = (int) ($exception->errorInfo[1] ?? 0);
+
+        return $sqlState === '40001'
+            || in_array($driverCode, [1205, 1213], true);
     }
 
     private function materializePdfAcroFormFields(Document $document, string $pdfPath, string $pythonBinary): int
@@ -5203,11 +5249,40 @@ class DocumentController extends Controller
         ]);
     }
 
+    private function normalizeUploadedDocumentName(string $value): string
+    {
+        $name = preg_replace('/[<>:"\/\\\\|?*\x00-\x1F]+/u', ' ', trim($value));
+        $name = preg_replace('/\s+/u', ' ', (string) $name);
+        $name = trim((string) $name);
+
+        if ($name === '') {
+            $name = 'document';
+        }
+
+        if (!str_ends_with(strtolower($name), '.pdf')) {
+            $name = rtrim($name, ". \t\n\r\0\x0B") . '.pdf';
+        }
+
+        return $name;
+    }
+
+    private function resolveDocumentEditorUrl(Document $document): string
+    {
+        return match ($document->mode) {
+            'guided' => route('documents.guided', $document),
+            'ai' => route('documents.ai', $document),
+            'full_editor' => route('documents.editPdfjs', $document),
+            default => route('documents.edit', $document),
+        };
+    }
+
     public function store(Request $request)
     {
         $validated = $request->validate([
             'document' => ['required', 'file', 'mimes:pdf', 'max:20480'],
             'document_mode' => ['nullable', 'string', 'in:editor,regression'],
+            'rename_to' => ['nullable', 'string', 'max:240'],
+            'allow_duplicate_name' => ['nullable', 'boolean'],
         ]);
 
         if ($response = $this->consumeMonthlyUploadQuota($request)) {
@@ -5215,6 +5290,45 @@ class DocumentController extends Controller
         }
 
         $file = $validated['document'];
+
+        $documentMode = is_string($validated['document_mode'] ?? null)
+            ? trim((string) $validated['document_mode'])
+            : '';
+        if ($documentMode === '') {
+            $documentMode = 'editor';
+        }
+
+        // Resolve the name for this upload. An explicit rename (from the
+        // duplicate-name prompt) takes precedence over the uploaded file name.
+        $requestedName = is_string($validated['rename_to'] ?? null)
+            ? trim((string) $validated['rename_to'])
+            : '';
+        $effectiveName = $this->normalizeUploadedDocumentName(
+            $requestedName !== '' ? $requestedName : (string) $file->getClientOriginalName()
+        );
+
+        // Avoid silently creating a second document with the same name. When a
+        // match already exists in the user's library (and they haven't chosen
+        // to keep both), prompt them to open the existing one or rename this
+        // upload instead of creating a duplicate.
+        $allowDuplicate = filter_var($validated['allow_duplicate_name'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        if ($documentMode !== 'regression' && !$allowDuplicate) {
+            $existing = $this->applyAccessibleDocumentScope($request, Document::query())
+                ->where('mode', '!=', 'regression')
+                ->whereRaw('LOWER(original_name) = ?', [mb_strtolower($effectiveName)])
+                ->latest()
+                ->first();
+
+            if ($existing) {
+                return response()->json([
+                    'duplicate_name' => true,
+                    'message' => 'A document named "' . $effectiveName . '" already exists.',
+                    'existing_name' => $existing->original_name,
+                    'existing_url' => $this->resolveDocumentEditorUrl($existing),
+                ], 409);
+            }
+        }
+
         Storage::makeDirectory('documents');
         $storedPath = $file->storeAs(
             'documents',
@@ -5235,16 +5349,9 @@ class DocumentController extends Controller
 
         $backupPath = $this->createOriginalBackup($storedPath);
 
-        $documentMode = is_string($validated['document_mode'] ?? null)
-            ? trim((string) $validated['document_mode'])
-            : '';
-        if ($documentMode === '') {
-            $documentMode = 'editor';
-        }
-
         $document = Document::create([
             ...$this->documentOwnershipPayload(),
-            'original_name' => $file->getClientOriginalName(),
+            'original_name' => $effectiveName,
             'path' => $storedPath,
             'original_backup_path' => $backupPath,
             'mime_type' => $file->getClientMimeType(),
@@ -5427,6 +5534,11 @@ class DocumentController extends Controller
         ]);
 
         $style = $validated['style'] ?? 'default';
+        $template = GuidedTemplate::where('type', 'invoice')
+            ->where('slug', $style)
+            ->where('is_active', true)
+            ->first();
+        $templateName = $template?->name ?: 'Invoice';
 
         // Enforce one template per type: redirect to existing if found
         $existing = $this->applyAccessibleDocumentScope($request, Document::query())
@@ -5483,7 +5595,7 @@ class DocumentController extends Controller
 
         $document = Document::create([
             ...$this->documentOwnershipPayload(),
-            'original_name' => 'Invoice ' . ($validated['invoice_number'] ?? $uuid) . '.pdf',
+            'original_name' => $templateName . ' Guided.pdf',
             'path' => $storedRelative,
             'original_backup_path' => $this->createOriginalBackup($storedRelative),
             'mime_type' => 'application/pdf',
@@ -5495,6 +5607,7 @@ class DocumentController extends Controller
         ]);
 
         $this->refreshDocumentPreviewSnapshot($document);
+        $this->materializePdfAcroFormFields($document, $storedFull, $pythonBinary);
         $this->rememberSessionAccessibleDocument($request, $document);
 
         $editUrl = route('documents.guided', $document);
@@ -5521,7 +5634,15 @@ class DocumentController extends Controller
         $templateType = $validated['_template_type'];
         $templateSlug = $validated['_template_slug'];
 
-        // Enforce one template per type: redirect to existing if found
+        // Look up the template to get defaults
+        $template = GuidedTemplate::where('type', $templateType)
+            ->where('slug', $templateSlug)
+            ->where('is_active', true)
+            ->first();
+        if (!$template) {
+            return redirect()->route('documents.index')->withErrors('Template not found.');
+        }
+
         $existing = $this->applyAccessibleDocumentScope($request, Document::query())
             ->where('mode', 'guided')
             ->where('template_type', $templateType)
@@ -5531,13 +5652,7 @@ class DocumentController extends Controller
         if ($existing) {
             return redirect()
                 ->route('documents.guided', ['document' => $existing, 'template_type' => $templateType, 'template_slug' => $templateSlug])
-                ->with('status', 'You already have this template. Editing existing one.');
-        }
-
-        // Look up the template to get defaults
-        $template = GuidedTemplate::where('slug', $templateSlug)->where('is_active', true)->first();
-        if (!$template) {
-            return redirect()->route('documents.index')->withErrors('Template not found.');
+                ->with('status', 'You already have this guided template. Editing existing one.');
         }
 
         $uuid = Str::uuid()->toString();
@@ -5583,7 +5698,7 @@ class DocumentController extends Controller
 
         $document = Document::create([
             ...$this->documentOwnershipPayload(),
-            'original_name' => $template->name . '.pdf',
+            'original_name' => $template->name . ' Guided.pdf',
             'path' => $storedRelative,
             'original_backup_path' => $this->createOriginalBackup($storedRelative),
             'mime_type' => 'application/pdf',
@@ -5629,6 +5744,7 @@ class DocumentController extends Controller
         ]);
 
         $storedFull = Storage::path($document->path);
+        $validated['style'] = $validated['style'] ?? ($document->template_slug ?: 'default');
 
         $payload = json_encode($validated, JSON_UNESCAPED_UNICODE);
 
@@ -5660,11 +5776,15 @@ class DocumentController extends Controller
 
         $document->update([
             'size_bytes' => filesize($storedFull),
+            'form_data' => $validated,
         ]);
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->materializePdfAcroFormFields($document, $storedFull, $pythonBinary);
 
         return response()->json([
             'success' => true,
             'python_binary' => $pythonBinary,
+            'file_url' => route('documents.file', $document),
         ]);
     }
 
@@ -5716,9 +5836,459 @@ class DocumentController extends Controller
 
         $document->update([
             'size_bytes' => filesize($storedFull),
+            'form_data' => $data,
+            'template_type' => $document->template_type ?: $templateType,
+            'template_slug' => $document->template_slug ?: $templateSlug,
+            'mode' => 'guided',
+        ]);
+        $this->refreshDocumentPreviewSnapshot($document);
+        PdfAcroForm::query()
+            ->where('document_id', $document->id)
+            ->delete();
+        $this->materializePdfAcroFormFields($document, $storedFull, $pythonBinary);
+
+        return response()->json([
+            'success' => true,
+            'file_url' => route('documents.file', $document),
+        ]);
+    }
+
+    public function convertGuidedAcroForm(Request $request, Document $document)
+    {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $storedFull = Storage::path($document->path);
+
+        if (!file_exists($storedFull)) {
+            return response()->json(['error' => 'PDF file not found.'], 404);
+        }
+
+        $tempDir = storage_path('app/temp');
+        if (!is_dir($tempDir)) {
+            @mkdir($tempDir, 0775, true);
+        }
+
+        $rawAcroFormEntries = $request->input('acro_form_entries', []);
+        if (is_string($rawAcroFormEntries) && trim($rawAcroFormEntries) !== '') {
+            $decodedAcroFormEntries = json_decode($rawAcroFormEntries, true);
+            if (!is_array($decodedAcroFormEntries)) {
+                return response()->json(['error' => 'AcroForm payload is invalid.'], 422);
+            }
+            $rawAcroFormEntries = $decodedAcroFormEntries;
+        }
+        $acroFormEntries = $this->normalizeAcroFormEntriesForPersistence(
+            is_array($rawAcroFormEntries) ? $rawAcroFormEntries : []
+        );
+
+        $sourcePdfPath = $storedFull;
+        $appliedPdfPath = null;
+        if (!empty($acroFormEntries)) {
+            $acroFormApplyResult = $this->applyAcroFormEntriesToPdf($storedFull, $acroFormEntries, $pythonBinary);
+            if (!($acroFormApplyResult['success'] ?? false)) {
+                Log::error('Guided AcroForm value application failed', [
+                    'document_id' => $document->id,
+                    'message' => $acroFormApplyResult['message'] ?? null,
+                    'error' => $acroFormApplyResult['error'] ?? null,
+                ]);
+                return response()->json([
+                    'error' => $acroFormApplyResult['message'] ?? 'Failed to apply form field values.',
+                ], 500);
+            }
+            $appliedPdfPath = $acroFormApplyResult['output_pdf_path'] ?? null;
+            if (is_string($appliedPdfPath) && $appliedPdfPath !== '' && file_exists($appliedPdfPath)) {
+                $sourcePdfPath = $appliedPdfPath;
+            }
+        }
+        $guidedLeaseUnderlineAnnotations = $this->buildGuidedLeaseUnderlineShapeAnnotations($acroFormEntries);
+        $guidedLeaseFieldTextAnnotations = $this->buildGuidedLeaseFieldTextAnnotations($acroFormEntries);
+        $guidedLeaseAnnotations = array_merge($guidedLeaseUnderlineAnnotations, $guidedLeaseFieldTextAnnotations);
+
+        // Fields that became editable text annotations must NOT be baked into
+        // the flattened page, or the value would appear twice (baked + overlay).
+        $skipBakeFieldNames = [];
+        foreach ($guidedLeaseFieldTextAnnotations as $annotation) {
+            $skipKey = trim((string) ($annotation['acroFieldKey'] ?? ''));
+            if ($skipKey !== '') {
+                $skipBakeFieldNames[] = $skipKey;
+            }
+        }
+        foreach ($acroFormEntries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+            $entryKey = trim((string) ($entry['key'] ?? ''));
+            $entryFieldName = trim((string) ($entry['fieldName'] ?? ''));
+            if ($entryFieldName !== '' && in_array($entryKey, $skipBakeFieldNames, true)) {
+                $skipBakeFieldNames[] = $entryFieldName;
+            }
+        }
+        $skipBakeFieldNames = array_values(array_unique(array_filter($skipBakeFieldNames)));
+
+        $skipBakePath = null;
+        if (!empty($skipBakeFieldNames)) {
+            $skipBakePath = $tempDir . '/guided_acro_skip_' . $document->id . '_' . Str::uuid() . '.json';
+            file_put_contents($skipBakePath, json_encode(array_values($skipBakeFieldNames)));
+        }
+
+        $outputPath = $tempDir . '/guided_acro_flat_' . $document->id . '_' . Str::uuid() . '.pdf';
+        $script = base_path('python/pdf-editor/flatten_acro_form_to_text.py');
+        $command = $skipBakePath !== null
+            ? sprintf(
+                '%s %s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
+                escapeshellarg($script),
+                escapeshellarg($sourcePdfPath),
+                escapeshellarg($outputPath),
+                escapeshellarg($skipBakePath)
+            )
+            : sprintf(
+                '%s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
+                escapeshellarg($script),
+                escapeshellarg($sourcePdfPath),
+                escapeshellarg($outputPath)
+            );
+
+        $output = [];
+        $exitCode = 0;
+        exec($command, $output, $exitCode);
+        if ($skipBakePath !== null) {
+            @unlink($skipBakePath);
+        }
+
+        if ($exitCode !== 0 || !file_exists($outputPath)) {
+            @unlink($outputPath);
+            if ($appliedPdfPath && $appliedPdfPath !== $storedFull) {
+                @unlink($appliedPdfPath);
+            }
+            Log::error('Guided AcroForm conversion failed', [
+                'document_id' => $document->id,
+                'exit_code' => $exitCode,
+                'output' => implode("\n", $output),
+            ]);
+            return response()->json(['error' => 'Failed to convert form fields to editable text.'], 500);
+        }
+
+        if (!@copy($outputPath, $storedFull)) {
+            @unlink($outputPath);
+            if ($appliedPdfPath && $appliedPdfPath !== $storedFull) {
+                @unlink($appliedPdfPath);
+            }
+            return response()->json(['error' => 'Failed to replace PDF with converted version.'], 500);
+        }
+        @unlink($outputPath);
+        if ($appliedPdfPath && $appliedPdfPath !== $storedFull) {
+            @unlink($appliedPdfPath);
+        }
+
+        PdfAcroForm::query()
+            ->where('document_id', $document->id)
+            ->delete();
+
+        $document->update([
+            'mime_type' => 'application/pdf',
+            'size_bytes' => filesize($storedFull),
+            'mode' => 'full_editor',
+            'template_type' => null,
+            'template_slug' => null,
         ]);
 
-        return response()->json(['success' => true]);
+        $this->refreshDocumentPreviewSnapshot($document);
+
+        $userEmail = $this->resolveEditorEmail();
+        $sessionId = $request->session()->getId();
+        [$extractCode, $extractOutput] = $this->runFitzExtraction(
+            $document,
+            $storedFull,
+            $userEmail,
+            $sessionId,
+            $pythonBinary
+        );
+
+        if ($extractCode !== 0) {
+            Log::warning('Converted guided PDF extraction failed', [
+                'document_id' => $document->id,
+                'exit_code' => $extractCode,
+                'output' => implode("\n", $extractOutput),
+            ]);
+        }
+
+        if (!empty($guidedLeaseAnnotations)) {
+            $this->persistGuidedLeaseUnderlineShapeAnnotations(
+                $document,
+                $sessionId,
+                $guidedLeaseAnnotations
+            );
+        }
+
+        return response()->json([
+            'success' => true,
+            'edit_url' => route('documents.editPdfjs', $document),
+            'message' => 'Converted form fields to editable text.',
+        ]);
+    }
+
+    private function buildGuidedLeaseUnderlineShapeAnnotations(array $acroFormEntries): array
+    {
+        $annotations = [];
+
+        foreach ($acroFormEntries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $fieldKey = trim((string) ($entry['key'] ?? $entry['fieldName'] ?? ''));
+            if (!str_starts_with($fieldKey, 'lease_') || str_starts_with($fieldKey, 'lease_sig_')) {
+                continue;
+            }
+
+            $rect = is_array($entry['rect'] ?? null) ? array_values($entry['rect']) : [];
+            if (count($rect) < 4) {
+                continue;
+            }
+
+            $x0 = is_numeric($rect[0]) ? (float) $rect[0] : null;
+            $y0 = is_numeric($rect[1]) ? (float) $rect[1] : null;
+            $x1 = is_numeric($rect[2]) ? (float) $rect[2] : null;
+            $y1 = is_numeric($rect[3] ?? null) ? (float) $rect[3] : null;
+            if ($x0 === null || $y0 === null || $x1 === null || $x1 <= $x0) {
+                continue;
+            }
+
+            $pageIndex = isset($entry['pageIndex']) && is_numeric($entry['pageIndex'])
+                ? max(0, (int) $entry['pageIndex'])
+                : 0;
+            $strokeWidth = 1.0;
+            // Anchor the underline to the field's own text line (the top of the
+            // widget rect) instead of the rect bottom. Tall widget rects reach
+            // down into the following line; an underline drawn there overlaps
+            // that paragraph and looks detached from its own value.
+            $rawHeight = ($y1 !== null && $y1 > $y0) ? ($y1 - $y0) : 0.0;
+            if ($rawHeight > 0.0) {
+                $fontSize = min(9.0, $rawHeight * 0.85);
+                if ($fontSize < 6.0) {
+                    $fontSize = 6.0;
+                }
+                $lineBoxHeight = min($rawHeight, $fontSize * 1.2);
+                $lineBottomY = ($y0 + $rawHeight) - $lineBoxHeight;
+            } else {
+                $lineBottomY = $y0;
+            }
+            $pdfY = max(0.0, $lineBottomY - ($strokeWidth / 2) - 1.5);
+            $id = 'guided_lease_underline_' . preg_replace('/[^a-zA-Z0-9_-]+/', '_', $fieldKey);
+
+            $annotations[] = [
+                'id' => $id,
+                'type' => 'shape',
+                'shapeType' => 'line',
+                'pageIndex' => $pageIndex,
+                'pdfX' => $x0,
+                'pdfY' => $pdfY,
+                'pdfWidth' => $x1 - $x0,
+                'pdfHeight' => $strokeWidth,
+                'strokeColor' => '#111827',
+                'strokeOpacity' => 1,
+                'strokeWidth' => $strokeWidth,
+                'strokeTransparent' => false,
+                'fillColor' => '#ffffff',
+                'fillOpacity' => 0,
+                'fillTransparent' => true,
+                'lineStartX' => 0,
+                'lineStartY' => 0.5,
+                'lineEndX' => 1,
+                'lineEndY' => 0.5,
+                'lineCap' => 'butt',
+                'opacity' => 1,
+                'rotation' => 0,
+                'locked' => false,
+                'guidedLeaseUnderline' => true,
+                'acroFieldKey' => $fieldKey,
+            ];
+        }
+
+        return $annotations;
+    }
+
+    /**
+     * Build editable text-overlay annotations for each filled guided-lease
+     * field. Pairs with buildGuidedLeaseUnderlineShapeAnnotations(): the
+     * underline becomes a shape the user can move, and the value becomes a
+     * standalone editable text box (instead of being baked into the page,
+     * where it merges into one un-editable source run).
+     */
+    private function buildGuidedLeaseFieldTextAnnotations(array $acroFormEntries): array
+    {
+        $annotations = [];
+
+        foreach ($acroFormEntries as $entry) {
+            if (!is_array($entry)) {
+                continue;
+            }
+
+            $fieldKey = trim((string) ($entry['key'] ?? $entry['fieldName'] ?? ''));
+            if ($fieldKey === '') {
+                continue;
+            }
+            // Signature fields stay baked into the page (never become editable text).
+            if (str_starts_with($fieldKey, 'lease_sig_')) {
+                continue;
+            }
+            // Only real text/value fields become editable overlay boxes. Checkboxes,
+            // radio buttons, push buttons and signature widgets keep their baked
+            // appearance so their mark stays glued to the correct spot. Without this,
+            // a field value would be flattened into the surrounding template line and
+            // become un-editable (clicking the value selects the whole line).
+            $fieldType = strtoupper(trim((string) ($entry['fieldType'] ?? '')));
+            $isNonTextField = (bool) ($entry['checkBox'] ?? false)
+                || (bool) ($entry['radioButton'] ?? false)
+                || in_array($fieldType, ['BTN', 'SIG'], true);
+            if ($isNonTextField) {
+                continue;
+            }
+
+            $value = $entry['value'] ?? '';
+            if (is_array($value)) {
+                $value = implode("\n", array_map(static fn ($item) => (string) ($item ?? ''), $value));
+            } elseif (is_bool($value)) {
+                $value = $value ? 'X' : '';
+            } else {
+                $value = (string) $value;
+            }
+            if (trim($value) === '') {
+                continue;
+            }
+
+            $rect = is_array($entry['rect'] ?? null) ? array_values($entry['rect']) : [];
+            if (count($rect) < 4) {
+                continue;
+            }
+
+            $x0 = is_numeric($rect[0]) ? (float) $rect[0] : null;
+            $y0 = is_numeric($rect[1]) ? (float) $rect[1] : null;
+            $x1 = is_numeric($rect[2]) ? (float) $rect[2] : null;
+            $y1 = is_numeric($rect[3]) ? (float) $rect[3] : null;
+            if ($x0 === null || $y0 === null || $x1 === null || $y1 === null || $x1 <= $x0 || $y1 <= $y0) {
+                continue;
+            }
+
+            $pageIndex = isset($entry['pageIndex']) && is_numeric($entry['pageIndex'])
+                ? max(0, (int) $entry['pageIndex'])
+                : 0;
+            $multiLine = (bool) ($entry['multiLine'] ?? false);
+
+            $width = $x1 - $x0;
+            $rawHeight = $y1 - $y0;
+            // Match the 9pt body text used by the lease generator, shrinking
+            // only for unusually short field boxes.
+            $fontSize = min(9.0, $rawHeight * 0.85);
+            if ($fontSize < 6.0) {
+                $fontSize = 6.0;
+            }
+            $lineHeight = $fontSize * 1.2;
+            // A single-line field's widget rect can be much taller than one line
+            // of text. Keep its editable/clickable box to a single line, anchored
+            // to the top of the field, so it never extends down over the paragraph
+            // line below and swallows the pointer events that line needs to be
+            // edited. Multi-line fields keep their full height.
+            $height = $rawHeight;
+            if (!$multiLine && $rawHeight > $lineHeight) {
+                $height = $lineHeight;
+                $y0 = ($y0 + $rawHeight) - $height;
+            }
+
+            $id = 'guided_lease_field_' . preg_replace('/[^a-zA-Z0-9_-]+/', '_', $fieldKey);
+            $uid = 'guided_lease_field_' . preg_replace('/[^a-zA-Z0-9_-]+/', '_', $fieldKey);
+
+            $annotations[] = [
+                'id' => $id,
+                'type' => 'text',
+                'pageIndex' => $pageIndex,
+                'text' => $value,
+                'originalText' => '',
+                'pdfX' => $x0,
+                'pdfY' => $y0,
+                'pdfWidth' => $width,
+                'pdfHeight' => $height,
+                'fontSize' => $fontSize,
+                'requestedFontSize' => $fontSize,
+                'lineHeight' => $lineHeight,
+                'fontFamily' => 'Helvetica',
+                'fontWeight' => '400',
+                'fontStyle' => 'normal',
+                'textColor' => '#111827',
+                'color' => '#111827',
+                'backgroundColor' => 'transparent',
+                'opacity' => 1,
+                'underline' => false,
+                'textAlign' => 'left',
+                'verticalAlign' => $multiLine ? 'top' : 'middle',
+                'locked' => false,
+                'zIndex' => 7,
+                'savedTextOverlay' => true,
+                'styleDirty' => true,
+                'userCreated' => true,
+                'userAuthored' => true,
+                'userSizedTextBox' => true,
+                'userForcedRichText' => true,
+                'pdfjsEditorMode' => 'rich',
+                'skipPdfjsSourceMask' => true,
+                'pdfjsAnchorUid' => $uid,
+                'guidedLeaseField' => true,
+                'acroFieldKey' => $fieldKey,
+                '_originalBox' => ['x' => $x0, 'y' => $y0, 'w' => $width, 'h' => $height],
+                '_originalPdfBox' => ['x' => $x0, 'y' => $y0, 'w' => $width, 'h' => $height],
+            ];
+        }
+
+        return $annotations;
+    }
+
+    private function persistGuidedLeaseUnderlineShapeAnnotations(
+        Document $document,
+        string $sessionId,
+        array $annotations
+    ): void {
+        if ($sessionId === '' || empty($annotations)) {
+            return;
+        }
+
+        $ownership = $this->pdfStateOwnershipPayload($document, $sessionId);
+        $shapeSessionId = (($ownership['user_id'] ?? null) === null && ($ownership['admin_id'] ?? null) === null)
+            ? 'document_' . $document->id . '_extracted'
+            : $sessionId;
+        $ownership['session_id'] = $shapeSessionId;
+
+        DB::transaction(function () use ($document, $shapeSessionId, $annotations, $ownership) {
+            $cleanupQuery = PdfState::query()
+                ->where('document_id', $document->id)
+                ->where(function ($query) {
+                    $query->whereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) LIKE ?", ['guided_lease_underline_%'])
+                        ->orWhereRaw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) LIKE ?", ['guided_lease_field_%']);
+                });
+            if (($ownership['user_id'] ?? null) !== null) {
+                $cleanupQuery->where('user_id', $ownership['user_id']);
+            } elseif (($ownership['admin_id'] ?? null) !== null) {
+                $cleanupQuery->where('admin_id', $ownership['admin_id']);
+            } else {
+                $cleanupQuery->where(function ($query) use ($shapeSessionId) {
+                    $query->where('session_id', $shapeSessionId)
+                        ->orWhere(function ($guestQuery) {
+                            $guestQuery->whereNull('user_id')
+                                ->whereNull('admin_id');
+                        });
+                });
+            }
+            $cleanupQuery->delete();
+
+            foreach ($annotations as $annotation) {
+                PdfState::create([
+                    'document_id' => $document->id,
+                    'page_number' => $annotation['pageIndex'] ?? 0,
+                    'annotation_data' => $annotation,
+                    'state' => 'saved',
+                    ...$ownership,
+                ]);
+            }
+        });
     }
 
     /**
@@ -5981,6 +6551,10 @@ class DocumentController extends Controller
 
     public function editNew(\Illuminate\Http\Request $request, Document $document)
     {
+        if ($document->mode === 'guided') {
+            return redirect()->route('documents.guided', $document);
+        }
+
         // Staged migration: ?pdfjs=1 mounts the official pdf.js PDFViewer +
         // editor stack (canvasWrapper / textLayer / annotationLayer /
         // annotationEditorLayer) against the redacted clean PDF. Default
@@ -5997,6 +6571,10 @@ class DocumentController extends Controller
 
     public function editPdfjs(Document $document)
     {
+        if ($document->mode === 'guided') {
+            return redirect()->route('documents.guided', $document);
+        }
+
         return redirect()->route('documents.editNew', [
             'document' => $document,
             'pdfjs' => 1,
@@ -6736,29 +7314,89 @@ class DocumentController extends Controller
 
     public function guided(Document $document)
     {
-        // Use saved template metadata if available, otherwise fallback to query params or default
-        $templateType = $document->template_type ?? request('template_type', 'invoice');
-        $templateSlug = $document->template_slug ?? request('template_slug', 'default');
-        
-        // Pass saved form data if available
-        $formData = $document->form_data ?? [];
+        $storedFormData = $document->form_data;
+        if (is_string($storedFormData)) {
+            $decoded = json_decode($storedFormData, true);
+            $storedFormData = is_array($decoded) ? $decoded : [];
+        }
+        if (!is_array($storedFormData)) {
+            $storedFormData = [];
+        }
+        $storedTemplateType = trim((string) ($storedFormData['template_type'] ?? ''));
+        $storedTemplateSlug = trim((string) ($storedFormData['template_slug'] ?? ''));
+        if ($document->mode === 'guided' && ($document->template_type === null || $document->template_slug === null) && $storedTemplateType !== '' && $storedTemplateSlug !== '') {
+            $document->forceFill([
+                'template_type' => $document->template_type ?: $storedTemplateType,
+                'template_slug' => $document->template_slug ?: $storedTemplateSlug,
+            ])->save();
+            $document->refresh();
+        }
 
-        // If no saved data, maybe we can load defaults from the template definition
-        $templateDefaults = [];
-        if (empty($formData) && $templateSlug) {
-            $template = GuidedTemplate::where('slug', $templateSlug)->first();
-            if ($template) {
-                $templateDefaults = $template->defaults ?? [];
+        if (
+            $document->mode === 'guided'
+            && $document->template_type === 'invoice'
+            && ($document->template_slug === null || $document->template_slug === 'default')
+        ) {
+            $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+            $storedFull = Storage::path($document->path);
+            $fieldCount = $this->ensurePdfAcroFormMaterialized($document, $storedFull, $pythonBinary);
+
+            if ($fieldCount === 0 && is_file($storedFull)) {
+                $formData = $document->form_data;
+                if (is_string($formData)) {
+                    $decoded = json_decode($formData, true);
+                    $formData = is_array($decoded) ? $decoded : [];
+                }
+                if (!is_array($formData)) {
+                    $formData = [];
+                }
+
+                $template = GuidedTemplate::where('type', 'invoice')
+                    ->where('slug', 'default')
+                    ->where('is_active', true)
+                    ->first();
+                $defaults = is_array($template?->defaults) ? $template->defaults : [];
+                $payloadData = array_merge($defaults, $formData, ['style' => 'default']);
+                $tmpPayload = tempnam(sys_get_temp_dir(), 'inv_upgrade_');
+                file_put_contents($tmpPayload, json_encode($payloadData, JSON_UNESCAPED_UNICODE));
+
+                $script = base_path('python/pdf-editor/generate_simple_invoice.py');
+                $command = sprintf(
+                    '%s %s %s < %s 2>&1',
+                    escapeshellarg($pythonBinary),
+                    escapeshellarg($script),
+                    escapeshellarg($storedFull),
+                    escapeshellarg($tmpPayload)
+                );
+                $output = [];
+                $exitCode = 0;
+                exec($command, $output, $exitCode);
+                @unlink($tmpPayload);
+
+                if ($exitCode === 0 && is_file($storedFull)) {
+                    $document->update([
+                        'size_bytes' => filesize($storedFull),
+                        'form_data' => $payloadData,
+                    ]);
+                    $this->refreshDocumentPreviewSnapshot($document);
+                    $this->materializePdfAcroFormFields($document, $storedFull, $pythonBinary);
+                } else {
+                    Log::warning('Failed to upgrade guided invoice to AcroForm fields', [
+                        'document_id' => $document->id,
+                        'exit_code' => $exitCode,
+                        'output' => implode("\n", $output),
+                    ]);
+                }
             }
         }
 
-        return view('documents.edit', [
+        // Guided templates now open in the PDF.js editor (the ?pdfjs=1 editor)
+        // with a guided, text + signature focused toolbar. The generated
+        // template PDF already contains the blank fields; turning on edit mode
+        // by default lets the user click straight into them and type.
+        return view('documents.edit-new-pdfjs', [
             'document' => $document,
-            'activeTab' => 'guided-' . $templateType, // Dynamically activate the correct tab
-            'templateType' => $templateType,
-            'templateSlug' => $templateSlug,
-            'templateDefaults' => $templateDefaults, // Only used if no form_data
-            'formData' => $formData,                 // New: saved input values
+            'guided' => true,
         ]);
     }
 
@@ -11296,6 +11934,47 @@ class DocumentController extends Controller
         ]);
     }
 
+    public function saveAcroFormState(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'acro_form_entries' => 'nullable|array',
+            'session_id' => 'nullable|string',
+        ]);
+
+        $acroFormEntries = $this->normalizeAcroFormEntriesForPersistence(
+            is_array($validated['acro_form_entries'] ?? null) ? $validated['acro_form_entries'] : []
+        );
+        if (empty($acroFormEntries)) {
+            return response()->json([
+                'success' => true,
+                'message' => 'No AcroForm changes to save.',
+                'saved_count' => 0,
+            ]);
+        }
+
+        $sessionId = is_string($validated['session_id'] ?? null)
+            ? trim((string) $validated['session_id'])
+            : '';
+        if ($sessionId === '') {
+            $sessionId = $request->session()->getId();
+        }
+
+        $savedCount = $this->upsertPdfAcroFormSessionState(
+            $document,
+            $sessionId,
+            $acroFormEntries,
+            $this->resolvePdfStateOwnership($document),
+            'saved'
+        );
+
+        return response()->json([
+            'success' => true,
+            'message' => 'AcroForm state saved.',
+            'saved_count' => $savedCount,
+            'session_id' => $sessionId,
+        ]);
+    }
+
     /**
      * Stamp annotations onto a temporary copy of the PDF and serve it as a
      * file download. Never overwrites document.path. Also saves annotation state to DB.
@@ -11665,8 +12344,9 @@ class DocumentController extends Controller
         }
 
         $entries = $query
+            ->orderByRaw("CASE WHEN state = 'saved' THEN 0 ELSE 1 END")
             ->orderBy('page_num')
-            ->orderBy('updated_at')
+            ->orderByDesc('updated_at')
             ->get()
             ->map(function (PdfAcroForm $record) {
                 $entry = is_array($record->data) ? $record->data : [];

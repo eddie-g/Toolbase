@@ -1,4 +1,19 @@
 <x-filament-panels::page>
+    <section class="mb-6 rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-4 dark:border-emerald-800/60 dark:bg-emerald-950/40">
+        <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+                <h2 class="text-base font-semibold text-emerald-950 dark:text-emerald-100">Create or edit a PDF</h2>
+                <p class="mt-1 text-sm text-emerald-800 dark:text-emerald-200">Open the PDF generator workspace to upload, create, edit, split, and convert documents.</p>
+            </div>
+            <a
+                href="{{ route('documents.index') }}"
+                class="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
+            >
+                Open PDF Generator
+            </a>
+        </div>
+    </section>
+
     <div class="mb-6 grid grid-cols-1 gap-4 md:grid-cols-2">
         <div class="rounded-xl border border-gray-200 bg-white p-4">
             <div class="text-xs font-semibold uppercase tracking-wide text-gray-500">Uploads ({{ $this->usageSummary['month'] }})</div>

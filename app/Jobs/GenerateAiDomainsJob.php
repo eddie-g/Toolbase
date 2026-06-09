@@ -8,6 +8,7 @@ use App\Services\NamecheapClient;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Process;
 
 class GenerateAiDomainsJob implements ShouldQueue
@@ -15,7 +16,8 @@ class GenerateAiDomainsJob implements ShouldQueue
     use Queueable;
 
     public int $tries = 2;
-    public int $timeout = 120;
+    public int $timeout = 150;
+    public bool $failOnTimeout = true;
 
     public function __construct(
         public string $jobId,
@@ -61,7 +63,7 @@ class GenerateAiDomainsJob implements ShouldQueue
                 $messages,
                 0.9,
                 ['type' => 'json_object'],
-                ['timeout' => 120],
+                ['timeout' => 90],
             );
 
             $reply = $data['reply'];
@@ -108,19 +110,17 @@ class GenerateAiDomainsJob implements ShouldQueue
                 $domainRequest->save();
             }
         } catch (\Throwable $e) {
-            Cache::put($cacheKey, array_merge($existing, [
-                'status' => 'failed',
-                'error' => $e->getMessage(),
-                'done' => true,
-                'updated_at' => now()->toISOString(),
-            ]), now()->addMinutes(30));
-
-            if ($domainRequest) {
-                $domainRequest->status = 'failed';
-                $domainRequest->error_message = $e->getMessage();
-                $domainRequest->save();
-            }
+            $this->markFailed($e, $domainRequest);
         }
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        $domainRequest = $this->domainRequestId
+            ? AiDomainRequest::find($this->domainRequestId)
+            : null;
+
+        $this->markFailed($exception, $domainRequest);
     }
 
     private function resolveDomainRequest(): ?AiDomainRequest
@@ -146,6 +146,54 @@ class GenerateAiDomainsJob implements ShouldQueue
     private function cacheKey(): string
     {
         return 'ai-domain-job:' . $this->jobId;
+    }
+
+    private function markFailed(\Throwable $e, ?AiDomainRequest $domainRequest = null): void
+    {
+        $cacheKey = $this->cacheKey();
+        $existing = Cache::get($cacheKey, []);
+        $message = $this->failureMessage($e);
+
+        Cache::put($cacheKey, array_merge($existing, [
+            'status' => 'failed',
+            'error' => $message,
+            'done' => true,
+            'updated_at' => now()->toISOString(),
+        ]), now()->addMinutes(30));
+
+        if ($domainRequest) {
+            $domainRequest->status = 'failed';
+            $domainRequest->error_message = $message;
+            $domainRequest->save();
+        }
+
+        Log::warning('[GenerateAiDomainsJob] Failed', [
+            'job_id' => $this->jobId,
+            'domain_request_id' => $this->domainRequestId,
+            'exception' => get_class($e),
+            'message' => \App\Support\SecretRedactor::redact($e->getMessage()),
+        ]);
+    }
+
+    private function failureMessage(\Throwable $e): string
+    {
+        if ($e instanceof \Illuminate\Queue\TimeoutExceededException) {
+            return 'AI domain generation timed out before completion. Please try again.';
+        }
+
+        // Never surface raw HTTP/connection exception messages to users: they can
+        // contain request URLs, headers, or other internal details. Show a safe,
+        // generic message instead.
+        if ($e instanceof \Illuminate\Http\Client\ConnectionException
+            || $e instanceof \Illuminate\Http\Client\RequestException) {
+            return 'The AI service is temporarily unreachable. Please try again in a moment.';
+        }
+
+        // For our own RuntimeExceptions (safe, user-facing messages), pass the
+        // message through but redact any secrets as a defense-in-depth backstop.
+        $message = \App\Support\SecretRedactor::redact($e->getMessage());
+
+        return $message !== '' ? $message : 'AI domain generation failed. Please try again.';
     }
 
     private function buildPrompt(): string

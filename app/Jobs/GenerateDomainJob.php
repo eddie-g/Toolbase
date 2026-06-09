@@ -121,14 +121,19 @@ class GenerateDomainJob implements ShouldQueue
                 ]),
             ]);
         } catch (\Throwable $e) {
+            $isHttpError = $e instanceof \Illuminate\Http\Client\ConnectionException
+                || $e instanceof \Illuminate\Http\Client\RequestException;
+
             Log::error('[GenerateDomainJob] Failed', [
                 'domain_request_id' => $this->domainRequestId,
-                'error'             => $e->getMessage(),
+                'error'             => \App\Support\SecretRedactor::redact($e->getMessage()),
             ]);
 
             $domainRequest->update([
                 'status'        => 'failed',
-                'error_message' => $e->getMessage(),
+                'error_message' => $isHttpError
+                    ? 'The AI service is temporarily unreachable. Please try again in a moment.'
+                    : \App\Support\SecretRedactor::redact($e->getMessage()),
             ]);
         }
     }

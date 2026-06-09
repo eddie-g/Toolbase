@@ -1415,6 +1415,7 @@ PYTHON;
 
         $annotations = collect($this->mergeContainedPromotedAnnotationsForEditor($annotations->values()->all()))->values();
         $annotations = collect($this->normalizeDotLeaderPromotedAnnotationsForEditor($annotations->values()->all()))->values();
+        $annotations = collect($this->suppressPromotedAnnotationsCoveredByPdfjsSourceEdits($annotations->values()->all()))->values();
 
         return $annotations
             ->filter(fn ($annotation) => is_array($annotation) && !empty($annotation))
@@ -2859,6 +2860,167 @@ PYTHON;
         return array_values(array_merge($result, $replacementRows));
     }
 
+    private function suppressPromotedAnnotationsCoveredByPdfjsSourceEdits(array $annotations): array
+    {
+        if (count($annotations) < 2) {
+            return $annotations;
+        }
+
+        $sourceEditRects = [];
+        foreach ($annotations as $annotation) {
+            if (!is_array($annotation) || !$this->isExplicitPdfjsSourceEditAnnotation($annotation)) {
+                continue;
+            }
+
+            $rect = $this->pdfjsSourceEditTopOriginRect($annotation);
+            if (!$rect) {
+                continue;
+            }
+
+            $sourceEditRects[] = [
+                'pageIndex' => (int) ($annotation['pageIndex'] ?? 0),
+                'rect' => $rect,
+            ];
+        }
+
+        if (empty($sourceEditRects)) {
+            return $annotations;
+        }
+
+        $result = [];
+        foreach ($annotations as $annotation) {
+            if (
+                is_array($annotation)
+                && !empty($annotation['promotedFromExtraction'])
+                && !$this->promotedAnnotationHasUserVisibleEdits($annotation)
+                && $this->promotedAnnotationOverlapsAnyPdfjsSourceEdit($annotation, $sourceEditRects)
+            ) {
+                continue;
+            }
+
+            $result[] = $annotation;
+        }
+
+        return array_values($result);
+    }
+
+    private function isExplicitPdfjsSourceEditAnnotation(array $annotation): bool
+    {
+        if (strtolower((string) ($annotation['type'] ?? '')) !== 'text') {
+            return false;
+        }
+        if (!empty($annotation['promotedFromExtraction'])) {
+            return false;
+        }
+        if (empty($annotation['savedTextOverlay']) && empty($annotation['pdfjsDeleted'])) {
+            return false;
+        }
+
+        $id = trim((string) ($annotation['id'] ?? ''));
+        $hasPdfjsIdentity = str_starts_with($id, 'pdfjs_')
+            || trim((string) ($annotation['pdfjsAnchorUid'] ?? '')) !== ''
+            || trim((string) ($annotation['pdfjsSourceText'] ?? '')) !== '';
+        if (!$hasPdfjsIdentity) {
+            return false;
+        }
+
+        if (!empty($annotation['pdfjsDeleted'])) {
+            return true;
+        }
+
+        $sourceText = $this->normalizePromotedComparableText(
+            (string) ($annotation['pdfjsSourceText'] ?? $annotation['originalText'] ?? '')
+        );
+        $annotationText = $this->normalizePromotedComparableText((string) ($annotation['text'] ?? ''));
+
+        return !empty($annotation['movedTextOverlay'])
+            || !empty($annotation['styleDirty'])
+            || !empty($annotation['userForcedRichText'])
+            || $annotationText === ''
+            || ($sourceText !== '' && $annotationText !== $sourceText);
+    }
+
+    private function promotedAnnotationHasUserVisibleEdits(array $annotation): bool
+    {
+        return !empty($annotation['promotedDirty'])
+            || !empty($annotation['promotedReflowEnabled'])
+            || !empty($annotation['userAuthored'])
+            || !empty($annotation['styleDirty'])
+            || !empty($annotation['userForcedRichText'])
+            || !empty($annotation['movedTextOverlay']);
+    }
+
+    private function pdfjsSourceEditTopOriginRect(array $annotation): ?array
+    {
+        $x = $annotation['pdfjsSourceMaskX'] ?? $annotation['pdfjsSourceX'] ?? null;
+        $y = $annotation['pdfjsSourceMaskY'] ?? $annotation['pdfjsSourceY'] ?? null;
+        $w = $annotation['pdfjsSourceMaskW'] ?? $annotation['pdfjsSourceW'] ?? null;
+        $h = $annotation['pdfjsSourceMaskH'] ?? $annotation['pdfjsSourceH'] ?? null;
+        $pageHeight = $annotation['pdfjsSourcePageHeight']
+            ?? $annotation['sourcePageHeight']
+            ?? $annotation['__sourcePdfPageHeight']
+            ?? null;
+
+        if (!is_numeric($x) || !is_numeric($y) || !is_numeric($w) || !is_numeric($h) || !is_numeric($pageHeight)) {
+            return null;
+        }
+
+        $left = (float) $x;
+        $bottom = (float) $y;
+        $width = (float) $w;
+        $height = (float) $h;
+        $pageHeight = (float) $pageHeight;
+        if ($width <= 0.0 || $height <= 0.0 || $pageHeight <= 0.0) {
+            return null;
+        }
+
+        $top = $pageHeight - ($bottom + $height);
+
+        return [$left, $top, $left + $width, $top + $height];
+    }
+
+    private function promotedAnnotationOverlapsAnyPdfjsSourceEdit(array $annotation, array $sourceEditRects): bool
+    {
+        $promotedRect = $this->promotedAnnotationSourceRect($annotation);
+        if (!$promotedRect) {
+            return false;
+        }
+
+        $pageIndex = (int) ($annotation['pageIndex'] ?? 0);
+        foreach ($sourceEditRects as $entry) {
+            if ((int) ($entry['pageIndex'] ?? -1) !== $pageIndex) {
+                continue;
+            }
+
+            $sourceRect = $entry['rect'] ?? null;
+            if (!is_array($sourceRect) || count($sourceRect) < 4) {
+                continue;
+            }
+
+            if ($this->rectsSubstantiallyOverlap($promotedRect, $sourceRect)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function rectsSubstantiallyOverlap(array $leftRect, array $rightRect): bool
+    {
+        $leftArea = max(1.0, ((float) $leftRect[2] - (float) $leftRect[0]) * ((float) $leftRect[3] - (float) $leftRect[1]));
+        $rightArea = max(1.0, ((float) $rightRect[2] - (float) $rightRect[0]) * ((float) $rightRect[3] - (float) $rightRect[1]));
+        $width = max(0.0, min((float) $leftRect[2], (float) $rightRect[2]) - max((float) $leftRect[0], (float) $rightRect[0]));
+        $height = max(0.0, min((float) $leftRect[3], (float) $rightRect[3]) - max((float) $leftRect[1], (float) $rightRect[1]));
+        if ($width <= 0.0 || $height <= 0.0) {
+            return false;
+        }
+
+        $overlap = $width * $height;
+
+        return ($overlap / min($leftArea, $rightArea)) >= 0.35
+            || ($overlap / max($leftArea, $rightArea)) >= 0.18;
+    }
+
     private function groupPromotedSpanEntriesByBaseline(array $entries): array
     {
         usort($entries, static function (array $left, array $right): int {
@@ -3650,6 +3812,9 @@ PYTHON;
         $annotations = collect($this->splitPromotedFieldLabelAnnotationsForEditor(
             $annotations->values()->all()
         ))->values();
+        $annotations = collect($this->suppressPromotedAnnotationsCoveredByPdfjsSourceEdits(
+            $annotations->values()->all()
+        ))->values();
         if (!empty($deletedPromotedSourceKeys)) {
             $annotations = $annotations
                 ->reject(function ($annotation) use ($deletedPromotedSourceKeys) {
@@ -3686,6 +3851,7 @@ PYTHON;
             );
 
             $acroFormEntries = $acroFormQuery
+                ->orderByRaw("CASE WHEN state = 'saved' THEN 0 ELSE 1 END")
                 ->orderByDesc('updated_at')
                 ->get()
                 ->unique(function (PdfAcroForm $record) {

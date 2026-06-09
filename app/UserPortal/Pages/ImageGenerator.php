@@ -12,9 +12,9 @@ class ImageGenerator extends Page
 {
     use WithPagination;
 
-    protected static ?string $title = 'Image Generator';
+    protected static ?string $title = 'Images';
 
-    protected static ?string $navigationLabel = 'Image Generator';
+    protected static ?string $navigationLabel = 'Images';
 
     protected static ?string $navigationIcon = 'heroicon-o-photo';
 
@@ -82,16 +82,16 @@ class ImageGenerator extends Page
         $model = strtolower((string) $model);
 
         if (str_contains($model, 'recraft')) {
-            return 'Luna';
-        }
-        if (str_contains($model, 'flux') || str_contains($model, 'nano-banana')) {
-            return 'Cosmo';
-        }
-        if (str_contains($model, 'gpt-image') || str_contains($model, 'dall-e')) {
             return 'Ray';
         }
+        if (str_contains($model, 'flux') || str_contains($model, 'nano-banana')) {
+            return 'Luna';
+        }
+        if (str_contains($model, 'gpt-image') || str_contains($model, 'dall-e')) {
+            return 'Cosmo';
+        }
 
-        return 'Ray';
+        return 'Cosmo';
     }
 
     public function getRequestsProperty(): LengthAwarePaginator

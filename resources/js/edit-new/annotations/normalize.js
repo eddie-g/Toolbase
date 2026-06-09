@@ -25,8 +25,7 @@ export function normalizeShapeAnnotation(ann) {
     ann.fillColor = normalizeHexColor(ann.fillColor, '#22c55e');
     ann.strokeOpacity = clamp01(ann.strokeOpacity ?? ann.opacity ?? 1, 1);
     ann.fillOpacity = clamp01(ann.fillOpacity ?? (ann.fillTransparent ? 0 : 0.22), ann.fillTransparent ? 0 : 0.22);
-    const strokeWidth = Number(ann.strokeWidth);
-    ann.strokeWidth = Math.max(0, Number.isFinite(strokeWidth) ? strokeWidth : 3);
+    ann.strokeWidth = Math.max(1, Number(ann.strokeWidth) || 3);
     ann.strokeTransparent = Boolean(ann.strokeTransparent);
     ann.fillTransparent = Boolean(ann.fillTransparent);
     ann.rotation = normalizeShapeRotationDegrees(ann.rotation);

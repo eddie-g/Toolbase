@@ -57,6 +57,7 @@ class AiLogoPrice extends Model
         'fal-ai/nano-banana-2' => ['price' => 0.0398, 'unit' => 'images'],
         'fal-ai/birefnet'      => ['price' => 0.00111, 'unit' => 'compute seconds'],
         'fal-ai/recraft/vectorize' => ['price' => 0.01, 'unit' => 'images'],
+        'fal-ai/topaz/upscale/image' => ['price' => 0.08, 'unit' => 'images'],
     ];
 
     /**
@@ -120,7 +121,10 @@ class AiLogoPrice extends Model
         string $bgColor = 'white',
         string $outputFormat = 'raster',
         string $imageModel = 'flux',
+        ?int $customWidth = null,
+        ?int $customHeight = null,
     ): array {
+        $hasCustomDimensions = $customWidth !== null && $customHeight !== null;
         $resolution = $isPro ? $proSize : 512;
         
         // Determine model ID based on imageModel and outputFormat
@@ -132,7 +136,7 @@ class AiLogoPrice extends Model
             $modelId = $isPro ? 'fal-ai/flux-2-flex' : 'fal-ai/flux/schnell';
         }
         
-        $resolutionStr = "{$resolution}x{$resolution}";
+        $resolutionStr = $hasCustomDimensions ? "{$customWidth}x{$customHeight}" : "{$resolution}x{$resolution}";
         
         // Try to get pricing from ai_rates table
         $dbRate = \App\Models\AiRate::where('model_name', $modelName)
@@ -146,7 +150,9 @@ class AiLogoPrice extends Model
         $prices = $pricing['prices'];
         
         // Calculate megapixels (used for display and some models)
-        $megapixels = ($resolution * $resolution) / 1_000_000;
+        $megapixels = $hasCustomDimensions
+            ? ($customWidth * $customHeight) / 1_000_000
+            : ($resolution * $resolution) / 1_000_000;
         
         // Calculate base generation cost
         $fallbackData = self::FALLBACK_PRICES[$modelId] ?? ['price' => 0.05, 'unit' => 'megapixels'];
@@ -325,6 +331,42 @@ class AiLogoPrice extends Model
                 'vectorize' => $vectorizeCostTotal,
             ],
             'source' => $dbRate ? 'database' : 'static_with_markup',
+        ];
+    }
+
+    /**
+     * Estimate Topaz image upscaling cost with the same 50% markup used elsewhere.
+     */
+    public static function estimateUpscaleCost(int $imageCount = 1, int $upscaleFactor = 2, ?float $outputMegapixels = null): array
+    {
+        $baseCostPerImage = match (true) {
+            $outputMegapixels !== null && $outputMegapixels > 96 => 1.36,
+            $outputMegapixels !== null && $outputMegapixels > 48 => 0.32,
+            $outputMegapixels !== null && $outputMegapixels > 24 => 0.16,
+            default => 0.08,
+        };
+
+        $markupPercentage = 50.00;
+        $costPerImage = round($baseCostPerImage * 1.5, 6);
+        $baseCostTotal = round($baseCostPerImage * $imageCount, 6);
+        $totalCost = round($costPerImage * $imageCount, 6);
+
+        return [
+            'image_count' => $imageCount,
+            'model' => 'fal-ai/topaz/upscale/image',
+            'resolution' => $upscaleFactor . 'x upscale',
+            'upscale_factor' => $upscaleFactor,
+            'megapixels' => $outputMegapixels !== null ? round($outputMegapixels, 3) : null,
+            'cost_per_image' => $costPerImage,
+            'estimated_cost_usd' => $totalCost,
+            'base_cost_per_image' => $baseCostPerImage,
+            'base_cost_total' => $baseCostTotal,
+            'markup_percentage' => $markupPercentage,
+            'markup_amount' => round($totalCost - $baseCostTotal, 6),
+            'breakdown' => [
+                'upscale' => $totalCost,
+            ],
+            'source' => 'static_with_markup',
         ];
     }
 

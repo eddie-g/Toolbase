@@ -7,12 +7,16 @@ use App\UserPortal\Pages\Dashboard;
 use App\UserPortal\Pages\Domains;
 use App\UserPortal\Pages\ImageGenerator;
 use App\UserPortal\Pages\PdfGenerator;
+use App\UserPortal\Pages\AddCredits;
+use App\UserPortal\Pages\Profile;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
+use Filament\Navigation\NavigationItem;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Illuminate\Auth\Middleware\EnsureEmailIsVerified;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
 use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
@@ -29,6 +33,7 @@ class UserPanelProvider extends PanelProvider
             ->id('user')
             ->path('portal')
             ->login(Login::class)   // redirects unauthenticated users to /login (Fortify)
+            ->profile(Profile::class, isSimple: false)
             ->authGuard('web')
             ->colors([
                 'primary' => Color::Blue,
@@ -40,6 +45,15 @@ class UserPanelProvider extends PanelProvider
                 Domains::class,
                 ImageGenerator::class,
                 PdfGenerator::class,
+                AddCredits::class,
+            ])
+            ->navigationItems([
+                NavigationItem::make('Settings')
+                    ->icon('heroicon-o-cog-6-tooth')
+                    ->activeIcon('heroicon-s-cog-6-tooth')
+                    ->url(fn (): string => Profile::getUrl(panel: 'user'))
+                    ->isActiveWhen(fn (): bool => request()->routeIs('filament.user.auth.profile'))
+                    ->sort(99),
             ])
             ->discoverWidgets(in: app_path('Filament/User/Widgets'), for: 'App\\Filament\\User\\Widgets')
             ->widgets([])
@@ -56,6 +70,7 @@ class UserPanelProvider extends PanelProvider
             ])
             ->authMiddleware([
                 Authenticate::class,
+                EnsureEmailIsVerified::class,
             ]);
     }
 }

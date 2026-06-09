@@ -22,18 +22,23 @@
             </svg>
         </button>
     </div>
+    @if($guided ?? false)
+        <span class="guided-mode-label">Guided mode</span>
+    @endif
     <span id="save-status" class="save-status">Saved</span>
     <button id="undo-btn" type="button" class="history-btn" title="Undo (Ctrl+Z)" disabled>&#8592;</button>
     <button id="redo-btn" type="button" class="history-btn" title="Redo (Ctrl+Y)" disabled>&#8594;</button>
-    <button id="edit-mode-toggle" type="button" class="edit-mode-toggle" aria-pressed="false" title="Turn edit mode on to show editable text boxes">
-        <span class="edit-mode-toggle__icon" aria-hidden="true">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 20h9"/>
-                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
-            </svg>
-        </span>
+    @unless($guided ?? false)
+        <button id="edit-mode-toggle" type="button" class="edit-mode-toggle" aria-pressed="false" title="Turn edit mode on to show editable text boxes">
+            <span class="edit-mode-toggle__icon" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 20h9"/>
+                    <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+                </svg>
+            </span>
             <span id="edit-mode-toggle-label" class="edit-mode-toggle__label">Edit Mode OFF</span>
-    </button>
+        </button>
+    @endunless
     <button id="add-text-btn" type="button" class="history-btn add-text-btn" title="Add Text — click or drag on the page to place a new text block">Add Text</button>
     <button id="add-shape-btn" type="button" class="history-btn add-shape-btn" title="Shapes — choose a shape and drag on the page to draw it">Shapes</button>
     <button id="save-btn" type="button" class="save-btn">Save</button>

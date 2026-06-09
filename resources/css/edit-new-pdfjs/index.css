@@ -105,6 +105,192 @@ body.enpv-body .top-bar .doc-name-wrap {
     min-width: 0;
 }
 
+body.enpv-guided .top-bar .doc-name-wrap {
+    max-width: min(360px, 35vw);
+}
+
+body.enpv-body .top-bar .guided-mode-label {
+    display: none;
+}
+
+body.enpv-guided .top-bar .guided-mode-label {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 999px;
+    border: 1px solid #cdd4ff;
+    background: #eef2ff;
+    color: #121c84;
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    pointer-events: none;
+}
+
+body.enpv-guided .annotationLayer input.enpv-guided-date-field,
+body.enpv-guided .annotationLayer textarea.enpv-guided-date-field {
+    cursor: pointer;
+}
+
+body.enpv-guided .annotationLayer input.enpv-guided-date-field:focus,
+body.enpv-guided .annotationLayer textarea.enpv-guided-date-field:focus,
+body.enpv-guided .annotationLayer input.enpv-guided-date-field.is-guided-date-open,
+body.enpv-guided .annotationLayer textarea.enpv-guided-date-field.is-guided-date-open {
+    outline: 2px solid #f97316 !important;
+    outline-offset: 1px;
+    box-shadow: 0 0 0 1px #f97316 !important;
+}
+
+.enpv-guided-date-picker[hidden] {
+    display: none !important;
+}
+
+.enpv-guided-date-picker {
+    position: fixed;
+    z-index: 2147483600;
+    display: block;
+    padding: 20px 22px 22px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #202124;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    box-shadow: 0 18px 35px rgba(15, 23, 42, 0.14), 0 3px 10px rgba(15, 23, 42, 0.08);
+}
+
+.enpv-guided-date-picker .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.enpv-guided-date-header {
+    display: grid;
+    grid-template-columns: 30px minmax(0, 1fr) 82px 30px;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+}
+
+.enpv-guided-date-month,
+.enpv-guided-date-year {
+    min-width: 0;
+}
+
+.enpv-guided-date-month select,
+.enpv-guided-date-year input {
+    width: 100%;
+    height: 32px;
+    border: 0;
+    border-radius: 6px;
+    background: #ffffff;
+    color: #202124;
+    font: inherit;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.enpv-guided-date-month select {
+    font-weight: 700;
+    appearance: auto;
+    cursor: pointer;
+}
+
+.enpv-guided-date-year input {
+    text-align: center;
+}
+
+.enpv-guided-date-month select:focus,
+.enpv-guided-date-year input:focus,
+.enpv-guided-date-nav:focus-visible,
+.enpv-guided-date-day:focus-visible {
+    outline: 2px solid #f97316;
+    outline-offset: 2px;
+}
+
+.enpv-guided-date-nav {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 999px;
+    background: #ffffff;
+    color: #4b5563;
+    cursor: pointer;
+}
+
+.enpv-guided-date-nav:hover {
+    background: #f3f4f6;
+    color: #111827;
+}
+
+.enpv-guided-date-weekdays,
+.enpv-guided-date-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 8px 9px;
+}
+
+.enpv-guided-date-weekdays {
+    margin-bottom: 12px;
+    color: #7b7d86;
+    font-size: 16px;
+    font-weight: 700;
+    text-align: center;
+}
+
+.enpv-guided-date-grid {
+    align-items: center;
+}
+
+.enpv-guided-date-empty,
+.enpv-guided-date-day {
+    width: 31px;
+    height: 31px;
+    justify-self: center;
+}
+
+.enpv-guided-date-day {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: #24262d;
+    font: inherit;
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.enpv-guided-date-day:hover {
+    background: #f4f4f5;
+}
+
+.enpv-guided-date-day.is-today {
+    color: #f97316;
+}
+
+.enpv-guided-date-day.is-selected {
+    background: #fff7ed;
+    color: #f97316;
+}
+
 body.enpv-body .top-bar #doc-name-display,
 body.enpv-body .top-bar #doc-name-input,
 body.enpv-body .top-bar #doc-name-edit-btn {
@@ -142,6 +328,7 @@ body.enpv-body .top-bar .doc-top-documents-link {
 
 /* The floating toolbar Edit PDF controls are wired here. */
 body.enpv-body #ftb-edit-mode,
+body.enpv-body #ftb-guided-convert,
 body.enpv-body #ftb-add-text,
 body.enpv-body #ftb-add-image,
 body.enpv-body #ftb-convert,
@@ -191,6 +378,39 @@ body.enpv-body #download-pdf-btn {
  * the pdf.js text-overlay model. */
 body.enpv-body #ann-format-bar {
     z-index: 2147483501;
+    transform: none;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    width: min(900px, calc(100vw - 16px));
+    max-width: calc(100vw - 16px);
+    padding: 8px 10px 9px;
+    white-space: normal;
+    overflow: visible;
+}
+body.enpv-body #ann-format-bar .afb-size-group {
+    order: 100;
+    flex: 0 0 100%;
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin-top: 2px;
+    padding-top: 8px;
+    border-top: 1px solid #e5e7eb;
+}
+body.enpv-body #ann-format-bar .afb-size-group + .afb-divider {
+    display: none;
+}
+body.enpv-body #ann-format-bar .afb-size-slider {
+    width: 100%;
+    min-width: 0;
+    height: 24px;
+}
+body.enpv-body #ann-format-bar .afb-size-value {
+    min-width: 44px;
+    justify-self: end;
 }
 body.enpv-body #ann-format-bar button,
 body.enpv-body #ann-format-bar input,
@@ -867,6 +1087,243 @@ body.enpv-body .enpv-layers-open[aria-expanded='true'] {
     background: #f8fafc;
     border-color: rgba(37, 99, 235, 0.48);
     outline: none;
+}
+
+body.enpv-body .enpv-guided-helper-rail {
+    position: fixed;
+    right: 14px;
+    top: 212px;
+    z-index: 2147483400;
+}
+
+body.enpv-body .enpv-guided-helper-open {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    width: 58px;
+    height: 58px;
+    border: 1px solid rgba(15, 23, 42, 0.14);
+    border-radius: 8px;
+    background: #ffffff;
+    color: #334155;
+    box-shadow: 0 8px 28px rgba(15, 23, 42, 0.16);
+    font: 600 10px/1 system-ui, sans-serif;
+    cursor: pointer;
+}
+
+body.enpv-body .enpv-guided-helper-open:hover,
+body.enpv-body .enpv-guided-helper-open:focus-visible,
+body.enpv-body .enpv-guided-helper-open[aria-expanded='true'] {
+    color: #0f172a;
+    background: #f8fafc;
+    border-color: rgba(37, 99, 235, 0.48);
+    outline: none;
+}
+
+body.enpv-body .enpv-guided-helper-panel[hidden] {
+    display: none !important;
+}
+
+body.enpv-body .enpv-guided-helper-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    z-index: 2147483552;
+    width: min(460px, 96vw);
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border-left: 1px solid rgba(15, 23, 42, 0.12);
+    background: #ffffff;
+    color: #0f172a;
+    box-shadow: -22px 0 70px rgba(15, 23, 42, 0.24);
+    font-family: system-ui, sans-serif;
+}
+
+body.enpv-body .enpv-guided-helper-header {
+    min-height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 16px 0 20px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+body.enpv-body .enpv-guided-helper-header h2 {
+    margin: 0;
+    font-size: 18px;
+    line-height: 1.2;
+    font-weight: 750;
+}
+
+body.enpv-body .enpv-guided-helper-header p {
+    margin: 4px 0 0;
+    color: #64748b;
+    font-size: 12px;
+}
+
+body.enpv-body .enpv-guided-helper-close {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+}
+
+body.enpv-body .enpv-guided-helper-close:hover,
+body.enpv-body .enpv-guided-helper-close:focus-visible {
+    background: #f1f5f9;
+    color: #0f172a;
+    outline: none;
+}
+
+body.enpv-body .enpv-guided-helper-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 18px 20px 28px;
+}
+
+body.enpv-body .enpv-helper-section {
+    padding: 0 0 18px;
+    border-bottom: 1px solid #e5e7eb;
+}
+
+body.enpv-body .enpv-helper-section + .enpv-helper-section {
+    padding-top: 18px;
+}
+
+body.enpv-body .enpv-helper-section h3 {
+    margin: 0 0 12px;
+    font-size: 12px;
+    line-height: 1.2;
+    font-weight: 800;
+    letter-spacing: 0;
+    text-transform: uppercase;
+    color: #334155;
+}
+
+body.enpv-body .enpv-helper-item + .enpv-helper-item {
+    margin-top: 14px;
+}
+
+body.enpv-body .enpv-helper-item h4 {
+    margin: 0 0 6px;
+    color: #0f172a;
+    font-size: 14px;
+    line-height: 1.3;
+    font-weight: 750;
+}
+
+body.enpv-body .enpv-helper-item p {
+    margin: 0 0 7px;
+    color: #334155;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+body.enpv-body .enpv-helper-example,
+body.enpv-body .enpv-helper-clause {
+    border-left: 3px solid #38bdf8;
+    padding-left: 10px;
+    color: #0f172a !important;
+}
+
+body.enpv-body .enpv-helper-callout {
+    margin-top: 9px;
+    border: 1px solid #bae6fd;
+    border-radius: 8px;
+    padding: 10px 11px;
+    background: #f0f9ff;
+    color: #075985;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+body.enpv-body .enpv-guided-helper-panel pre {
+    margin: 8px 0 0;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    padding: 10px 11px;
+    background: #f8fafc;
+    color: #0f172a;
+    white-space: pre-wrap;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+body.enpv-body .enpv-guided-invoice-row-add,
+body.enpv-body .enpv-guided-sdr-row-add {
+    position: fixed;
+    z-index: 46;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #121c84;
+    border-radius: 999px;
+    background: #121c84;
+    color: #ffffff;
+    font-size: 22px;
+    line-height: 1;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: 0 12px 26px rgba(18, 28, 132, 0.2);
+}
+
+body.enpv-body .enpv-guided-invoice-row-add:hover,
+body.enpv-body .enpv-guided-invoice-row-add:focus-visible,
+body.enpv-body .enpv-guided-sdr-row-add:hover,
+body.enpv-body .enpv-guided-sdr-row-add:focus-visible {
+    background: #1f2ab4;
+    outline: none;
+}
+
+body.enpv-body .enpv-guided-invoice-row-add[hidden],
+body.enpv-body .enpv-guided-sdr-row-add[hidden] {
+    display: none !important;
+}
+
+body.enpv-body .enpv-helper-table {
+    width: 100%;
+    border-collapse: collapse;
+    overflow: hidden;
+    border: 1px solid #dbe3ef;
+    border-radius: 8px;
+    font-size: 13px;
+}
+
+body.enpv-body .enpv-helper-table th,
+body.enpv-body .enpv-helper-table td {
+    border-bottom: 1px solid #e5e7eb;
+    padding: 9px 10px;
+    text-align: left;
+    vertical-align: top;
+}
+
+body.enpv-body .enpv-helper-table tr:last-child th,
+body.enpv-body .enpv-helper-table tr:last-child td {
+    border-bottom: 0;
+}
+
+body.enpv-body .enpv-helper-table th {
+    width: 45%;
+    background: #f8fafc;
+    color: #475569;
+    font-weight: 700;
+}
+
+body.enpv-body .enpv-helper-table td {
+    color: #0f172a;
 }
 
 body.enpv-body .enpv-layers-panel[hidden] {
@@ -1695,6 +2152,10 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay[data-vertical-
     line-height: var(--enpv-line-height, var(--enpv-font-size, 12px));
     transform-origin: 0 0;
 }
+body.enpv-edit-on .enpv-annotation-box.is-source-handle:not(.is-editing) .enpv-text-content,
+body.enpv-edit-on .enpv-annotation-box.is-source-handle.is-promoted-source-block:not(.is-persisted-overlay):not(.is-editing) .enpv-text-content {
+    display: none !important;
+}
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay {
     background: var(--enpv-bg-color, transparent);
     border: none;
@@ -1732,6 +2193,10 @@ body.enpv-shape-on .enpv-annotation-box.is-persisted-overlay.enpv-shape-box[data
     border: none;
     outline: none;
     box-shadow: none;
+}
+body.enpv-body .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"].is-readonly,
+body.enpv-edit-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"]:not(.is-selected) {
+    pointer-events: none;
 }
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-editing .enpv-text-content {
     pointer-events: auto;
@@ -2350,19 +2815,31 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
 
 .enpv-shape-box {
     background: transparent;
+    border: 0 !important;
 }
 .enpv-annotation-box.enpv-shape-box:not([data-shape-type="line"]).is-selected {
     background: transparent !important;
-    border-color: transparent !important;
+    border: 0 !important;
     outline: none !important;
     box-shadow: none !important;
 }
 .enpv-shape-svg {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
     height: 100%;
     overflow: visible;
     pointer-events: none;
+}
+body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"]::before {
+    content: "";
+    position: absolute;
+    left: -2px;
+    right: -2px;
+    top: -8px;
+    bottom: -8px;
+    pointer-events: auto;
 }
 .enpv-shape-box.is-shape-preview {
     opacity: 0.75;
@@ -2524,6 +3001,37 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
     color: #9ca3af;
     font-size: 12px;
     line-height: 1.35;
+}
+.enpv-debug-subtitle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+.enpv-debug-annotation-id {
+    width: min(190px, 48vw);
+    max-width: 100%;
+    border: 1px solid rgba(147,197,253,0.3);
+    border-radius: 4px;
+    padding: 2px 5px;
+    background: rgba(15,23,42,0.72);
+    color: #e5e7eb;
+    font: inherit;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    line-height: 1.35;
+    cursor: text;
+    user-select: text;
+}
+.enpv-debug-annotation-id:focus {
+    border-color: rgba(147,197,253,0.85);
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(59,130,246,0.22);
+}
+.enpv-debug-annotation-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .enpv-debug-close {
     appearance: none;
@@ -2893,4 +3401,35 @@ body.enpv-body .enpv-annotation-box.enpv-image-box.is-locked {
 }
 .enpv-annotation-box.enpv-image-box.is-selected > .enpv-image-selection-label {
     display: inline-flex;
+}
+
+/* ---------------------------------------------------------------------
+ * Guided template mode.
+ *
+ * Guided documents open in this PDF.js editor but keep a focused toolbar:
+ * only "Convert", "Add Text", and "Sign" remain.
+ * Everything else (shapes, draw, highlight, notes, image, convert, encrypt,
+ * page tools) is hidden so the experience stays simple and guided.
+ * --------------------------------------------------------------------- */
+body.enpv-guided #edit-mode-toggle,
+body.enpv-guided #ftb-edit-mode,
+body.enpv-guided #ftb-add-shape,
+body.enpv-guided #ftb-draw-erase,
+body.enpv-guided #ftb-highlight,
+body.enpv-guided #ftb-notes,
+body.enpv-guided #ftb-add-image,
+body.enpv-guided #ftb-convert,
+body.enpv-guided #ftb-encrypt,
+body.enpv-guided #add-shape-btn,
+body.enpv-guided #enpv-page-manager-rail,
+body.enpv-guided .top-bar .doc-top-edit-link {
+    display: none !important;
+}
+/* Collapse now-empty toolbar groups / separators around hidden buttons. */
+body.enpv-guided .floating-tool-bar .ftb-group:last-child,
+body.enpv-guided .floating-tool-bar .ftb-sep:last-of-type {
+    display: none !important;
+}
+body:not(.enpv-guided) #ftb-guided-convert {
+    display: none !important;
 }
