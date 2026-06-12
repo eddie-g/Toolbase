@@ -2686,12 +2686,14 @@ def draw_direct_draw_vector_annotation(page: fitz.Page, ann: Dict[str, Any], rec
         color = hex_to_rgb(stroke.get("color") or ann.get("drawStrokeColor") or "#111827")
         opacity = normalized_opacity(stroke.get("opacity", ann.get("opacity", 1.0)))
         shape = page.new_shape()
-        shape.draw_polyline(points)
+        for start, end in zip(points, points[1:]):
+            shape.draw_line(start, end)
         finish_kwargs = {
             "color": color,
             "width": brush_size,
             "lineCap": 1,
             "lineJoin": 1,
+            "closePath": False,
             "stroke_opacity": opacity,
         }
         if morph is not None:

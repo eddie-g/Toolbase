@@ -19,9 +19,7 @@
             <span>Attach to current page</span>
         </label>
         <div class="enpv-notes-anchor-row">
-            <button type="button" class="enpv-notes-anchor-btn" id="enpv-notes-place-anchor">Place Pin</button>
-            <button type="button" class="enpv-notes-anchor-btn" id="enpv-notes-clear-anchor" hidden>Clear Pin</button>
-            <span class="enpv-notes-anchor-status" id="enpv-notes-anchor-status">Page only</span>
+            <span class="enpv-notes-anchor-status" id="enpv-notes-anchor-status">Drag a saved note onto the PDF to pin it</span>
         </div>
         <div class="enpv-notes-compose__actions">
             <button type="submit" class="enpv-notes-save" id="enpv-notes-save">Save Note</button>

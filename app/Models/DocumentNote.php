@@ -14,6 +14,8 @@ class DocumentNote extends Model
         'page_index',
         'anchor_x',
         'anchor_y',
+        'pin_color',
+        'pin_icon',
         'body',
     ];
 

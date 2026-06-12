@@ -52,7 +52,7 @@ class GenerateAiDomainsJob implements ShouldQueue
             $maxNames = $tldCount > 0 ? (int) floor(50 / $tldCount) : 20;
             $maxNames = max(5, min($maxNames, 50));
 
-            $systemPrompt = "You are a creative domain name generator. Generate {$maxNames} unique, brandable domain names based on the user's request. Return ONLY a JSON object with a 'domains' array containing domain name strings (without TLDs).\n\nSTRICT RULES — every name MUST follow all of these:\n1. A single concatenated word (no spaces, no underscores). Hyphens are allowed only when intentional for branding (e.g. \"e-flux\").\n2. NO common English stop words, articles, conjunctions, or prepositions anywhere in the name. Forbidden words: the, a, an, and, or, but, of, for, in, on, at, to, with, this, that, these, those, it, is, be, by, as, up, do.\n3. Short: 4–15 characters total.\n4. Memorable and brandable — sounds like a real product or company name.\n5. Easy to spell and pronounce.\n6. Directly related to or evocative of the user's prompt.\n7. Creative, modern, and professional — prefer portmanteaus, blends, or invented words over generic dictionary phrases.\n\nGood examples: techflow, cloudnova, pixelforge, datazen, codecraft, velorix, snapvault, lumiq\nBad examples: thedesign, thisapp, andmore, forall, topmatch (contain stop words or are generic phrases)\n\nExample response format:\n{\"domains\": [\"techflow\", \"cloudnova\", \"pixelforge\", \"datazen\", \"codecraft\"]}";
+            $systemPrompt = "You are a creative domain name generator. Generate {$maxNames} unique, brandable domain names based on the user's request. Return ONLY a JSON object with a 'domains' array containing domain name strings (without TLDs).\n\nSTRICT RULES — every name MUST follow all of these:\n1. A valid domain label: no spaces and no underscores. Hyphens are allowed only when intentional for branding (e.g. \"e-flux\").\n2. If the user asks for a specific word count or a combination of words, satisfy that as visible root/concept components in the domain label. Example: a 3-word request should look like three short combined roots, such as \"realmquestforge\" or \"guildraidnexus\", not a one-word invention.\n3. NO common English stop words, articles, conjunctions, or prepositions anywhere in the name. Forbidden words: the, a, an, and, or, but, of, for, in, on, at, to, with, this, that, these, those, it, is, be, by, as, up, do.\n4. Short: normally 4-15 characters total; allow up to 30 characters when the user explicitly asks for multi-word combinations.\n5. Memorable and brandable — sounds like a real product or company name.\n6. Easy to spell and pronounce.\n7. Directly related to or evocative of the user's prompt.\n8. Creative, modern, and professional — prefer meaningful blends over generic dictionary phrases unless the user explicitly asks for word combinations.\n\nGood examples: techflow, cloudnova, pixelforge, datazen, codecraft, realmquestforge, guildraidnexus, lorewararena\nBad examples: thedesign, thisapp, andmore, forall, topmatch (contain stop words or are generic phrases)\n\nExample response format:\n{\"domains\": [\"techflow\", \"cloudnova\", \"pixelforge\", \"realmquestforge\", \"guildraidnexus\"]}";
 
             $messages = [
                 ['role' => 'system', 'content' => $systemPrompt],
@@ -63,7 +63,7 @@ class GenerateAiDomainsJob implements ShouldQueue
                 $messages,
                 0.9,
                 ['type' => 'json_object'],
-                ['timeout' => 90],
+                ['timeout' => 90, 'thinking_budget' => 0],
             );
 
             $reply = $data['reply'];
@@ -87,7 +87,7 @@ class GenerateAiDomainsJob implements ShouldQueue
                 'domains' => $domains,
                 'results' => $check['results'],
                 'usage' => $usageMetadata ?: null,
-                'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
+                'model' => $data['response']['model'] ?? config('services.gemini.model', 'gemini-2.5-flash-lite'),
                 'error' => $check['error'],
                 'done' => true,
                 'updated_at' => now()->toISOString(),
@@ -96,13 +96,13 @@ class GenerateAiDomainsJob implements ShouldQueue
             if ($domainRequest) {
                 $domainRequest->status = 'completed';
                 $domainRequest->response = $responseData;
-                $domainRequest->model = $data['response']['model'] ?? 'gemini-2.0-flash';
+                $domainRequest->model = $data['response']['model'] ?? config('services.gemini.model', 'gemini-2.5-flash-lite');
                 $domainRequest->usage = $usageMetadata ?: null;
                 $domainRequest->result_data = json_encode([
                     'domains' => $domains,
                     'results' => $check['results'],
                     'usage' => $usageMetadata ?: null,
-                    'model' => $data['response']['model'] ?? 'gemini-2.0-flash',
+                    'model' => $data['response']['model'] ?? config('services.gemini.model', 'gemini-2.5-flash-lite'),
                     'error' => $check['error'],
                     'job_id' => $this->jobId,
                 ]);
@@ -209,9 +209,11 @@ class GenerateAiDomainsJob implements ShouldQueue
                 'Names must still be pronounceable and evoke the original idea.',
             ]),
             'numbers' => implode(' ', [
-                'Generate domain names that cleverly incorporate numbers while staying pronounceable and brandable.',
-                'Use patterns like replacing sounds with digits (e.g. "for" -> "4", "to/too" -> "2", "ate" -> "8"), appending meaningful numbers (e.g. 360, 24, 101), or blending digits into the middle of a word.',
-                'Do not force numbers into every idea; use them where they improve memorability.',
+                'Number Blend mode is selected: EVERY returned domain name MUST contain at least one digit from 0-9.',
+                'Create one-word domain labels that blend digits into the name while staying pronounceable and brandable.',
+                'Use meaningful sound substitutions such as "to/too" -> "2", "for/fore" -> "4", "ate/eight" -> "8", "one/won" -> "1", or "o/zero" -> "0".',
+                'You may also append meaningful compact numbers such as 24, 360, or 101 when they fit the concept.',
+                'Do not output any digit-free names. Bad: chronoscape, aetheria, nexusprime. Good: quest2play, realm8, raid360, lore4ge, nexu5, arca1a.',
                 'Avoid random spammy strings of digits. Keep names short, clean, and startup-ready.',
             ]),
         ];
@@ -237,10 +239,16 @@ class GenerateAiDomainsJob implements ShouldQueue
     {
         $stopWords = ['the','a','an','and','or','but','of','for','in','on','at','to','with','this','that','these','those','it','is','be','by','as','up','do'];
 
+        $requiresDigit = $this->promptModifier === 'numbers';
+
         return array_values(array_filter(array_map(function ($name) {
             return strtolower(trim((string) $name));
-        }, $domains), function ($name) use ($stopWords) {
+        }, $domains), function ($name) use ($stopWords, $requiresDigit) {
             if (!preg_match('/^[a-z0-9][a-z0-9\-]{2,}[a-z0-9]$/i', $name)) {
+                return false;
+            }
+
+            if ($requiresDigit && !preg_match('/\d/', $name)) {
                 return false;
             }
 

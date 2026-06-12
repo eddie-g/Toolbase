@@ -1533,7 +1533,7 @@ class DomainSearchController extends Controller
 
         try {
             $apiKey = config('services.gemini.api_key');
-            $model = config('services.gemini.model', 'gemini-2.0-flash');
+            $model = config('services.gemini.model', 'gemini-2.5-flash-lite');
             $baseUrl = config('services.gemini.base_url', 'https://generativelanguage.googleapis.com/v1beta');
 
             // Fetch the image — support local storage paths as well as external URLs
