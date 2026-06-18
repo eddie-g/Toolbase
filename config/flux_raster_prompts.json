@@ -17,10 +17,11 @@
         "abstract": "navy blue and gold color palette.",
         "monoline": "navy blue and gold color palette.",
         "negative_space": "navy blue and gold color palette.",
-        "tech_gradient": "vibrant gradient colors from cyan to purple."
+        "tech_gradient": "vibrant gradient colors from cyan to purple.",
+        "nature_landscape": "forest green, pine green, warm sunrise orange, soft yellow, and dark charcoal color palette."
     },
     "no_text": {
-        "icon_only": " There is absolutely NO text, NO letters, NO words, NO numbers, NO typography anywhere in the image. Zero text of any kind. Pure graphic symbol only.",
+        "icon_only": " ICON ONLY. Do not create company names, brand names, taglines, labels, signs, captions, letters, numbers, initials, fake words, or any readable characters. Pure graphic symbol only.",
         "with_brand": " The ONLY text in the entire image is \"{brand}\". Do not add any other words, letters, taglines, slogans, or captions anywhere in the image."
     },
     "default_concept": {
@@ -28,8 +29,8 @@
         "with_brand": ""
     },
     "quality": {
-        "min": "",
-        "medium": " high quality.",
+        "min": " Final detail rule: low detail overrides any earlier ornate, epic, cinematic, or high-detail style wording. Make it a flat 2D image/logo with simple shapes, bold readable silhouettes, clean solid fills, minimal internal detail, minimal shadows, no painterly texture, no cinematic lighting, no photorealism, no dense ornament, no runic micro-detail, and no complex background.",
+        "medium": " Final detail rule: medium detail overrides any earlier max-detail, epic, cinematic, or ornate style wording. Use moderate detail, simplified shapes, controlled lighting, restrained texture, limited ornament, and readable forms. Avoid ultra-detailed rendering, cinematic lighting, painterly complexity, dense scrollwork, runic micro-detail, and complex backgrounds.",
         "max": " Masterpiece quality, ultra-detailed, cinematic lighting, 8k."
     },
     "icon_only": {
@@ -43,7 +44,8 @@
         "lego": "A glossy sticker-style icon mark.{concept} Thick clean outlines, soft shadows, toy plastic material. {colors} Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} Sticker design, 4k.{no_text}",
         "minimalist": "A minimalist icon mark.{concept} A single clean, modern symbol using flat design principles. Subtle geometric shapes, {colors} Plain or white background. Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No gradients, no shadows, no clutter. Visually balanced professional minimalist design, 4k.{no_text}",
         "greetingcard": "Hand-painted watercolor greeting card illustration.{concept} Soft color washes, visible paper grain texture, uneven deckled edges. {colors} Dreamy soft lighting, high-quality gouache textures. Centered 1:1 square composition, {bg}. {shape_block} No hard digital lines, no flat vector fills, no photorealism.{no_text}",
-        "photorealistic": "A photorealistic high-resolution photograph.{concept} Professional studio lighting, sharp focus, crisp detail, natural colors and textures. {colors} Clean commercial photography style. Centered 1:1 square composition, {bg}. {shape_block}{no_text}"
+        "photorealistic": "A photorealistic high-resolution photograph.{concept} Professional studio lighting, sharp focus, crisp detail, natural colors and textures. {colors} Clean commercial photography style. Centered 1:1 square composition, {bg}. {shape_block}{no_text}",
+        "nature_landscape": "Nature logo icon.{concept} Create a clear outdoor landscape mark with actual trees or forest silhouettes and a visible rising sun on the horizon when requested. Preserve any requested season: winter uses snow, bare branches, frosty ground, and cool whites/blues; spring uses blossoms, new leaves, flowers, and fresh light greens; autumn or fall uses orange, red, and gold leaves with warm earth tones; summer uses lush green foliage and bright warm sun only when summer is requested. The subject must read as nature immediately, not as a generic eco, utility, or wellness symbol. Use layered tree forms, trunks, branches, leaves, hills, ground line, and seasonal sun or sky cues. {colors} Clean flat logo artwork, centered 1:1 square composition, {bg}. {shape_block} Avoid light bulbs, water droplets, flames, abstract drops, generic recycle symbols, random icons, people, buildings, text, letters, and photorealism.{no_text}"
     },
     "with_brand": {
         "professional": "A premium corporate logo. The centerpiece is the word \"{brand}\" in an elegant, refined custom serif typeface with perfectly spaced letters.{concept} Monolithic, thick lines, emblem style, {colors} Secure, established, Fortune 500 quality. Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No shadows, no 3D effects, no gradients, no cluttered details, avoid photorealism, avoid messy lines. High contrast, professional design, 4k.{no_text}",
@@ -56,6 +58,7 @@
         "lego": "A glossy sticker-style logo with \"{brand}\" in a decorative banner.{concept} Thick clean outlines, soft shadows, toy plastic material. {colors} Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} Sticker design, 4k.{no_text}",
         "minimalist": "A minimalist logo design with \"{brand}\" in a stylish sans-serif font.{concept} Clean, modern, and simple, using flat design principles. Subtle geometric shapes or symbols, {colors} Plain or white background. Clean flat artwork, centered 1:1 square composition, {bg}. {shape_block} No gradients, no shadows, no clutter. Visually balanced professional minimalist design, 4k.{no_text}",
         "greetingcard": "Hand-painted watercolor greeting card illustration. The piece features the word \"{brand}\" in an elegant hand-lettered script.{concept} Soft color washes, visible paper grain texture, uneven deckled edges. {colors} Dreamy soft lighting, high-quality gouache textures. Centered 1:1 square composition, {bg}. {shape_block} No hard digital lines, no flat vector fills, no photorealism.{no_text}",
-        "photorealistic": "A photorealistic brand image for \"{brand}\".{concept} Professional studio photography with crisp lighting, sharp detail, and clean modern typography. {colors} Commercial product branding aesthetic. Centered 1:1 square composition, {bg}. {shape_block}{no_text}"
+        "photorealistic": "A photorealistic brand image for \"{brand}\".{concept} Professional studio photography with crisp lighting, sharp detail, and clean modern typography. {colors} Commercial product branding aesthetic. Centered 1:1 square composition, {bg}. {shape_block}{no_text}",
+        "nature_landscape": "Nature brand logo for \"{brand}\".{concept} Create a clear outdoor landscape mark with actual trees or forest silhouettes and a visible rising sun on the horizon when requested. Preserve any requested season: winter uses snow, bare branches, frosty ground, and cool whites/blues; spring uses blossoms, new leaves, flowers, and fresh light greens; autumn or fall uses orange, red, and gold leaves with warm earth tones; summer uses lush green foliage and bright warm sun only when summer is requested. The icon must read as nature immediately, not as a generic eco, utility, or wellness symbol. Use layered tree forms, trunks, branches, leaves, hills, ground line, and seasonal sun or sky cues. {colors} Clean flat logo artwork, centered 1:1 square composition, {bg}. {shape_block} Avoid light bulbs, water droplets, flames, abstract drops, generic recycle symbols, random icons, people, buildings, and photorealism.{no_text}"
     }
 }

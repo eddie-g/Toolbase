@@ -2986,7 +2986,18 @@ function deletedPdfjsSourceOwnsSpan(pageIndex, currentRect, text, originalText, 
             || annotation.text
             || '',
         );
-        if (targetText && deletedText && targetText !== deletedText) return false;
+        if (targetText && deletedText && targetText !== deletedText) {
+            // A deleted promoted paragraph block owns every one of its member
+            // rows: the deletion mask stores the whole block's text while the
+            // live span carries a single row, so exact equality would let each
+            // row respawn as an on-demand source editor box over the erased
+            // block. Accept whitespace-insensitive containment instead; the
+            // geometry check below still requires the row to sit inside the
+            // deleted source rect.
+            const strippedDeleted = deletedText.replace(/\s+/g, '');
+            const strippedTarget = targetText.replace(/\s+/g, '');
+            if (!strippedTarget || !strippedDeleted.includes(strippedTarget)) return false;
+        }
         return pdfjsSourceBoxesMatch(annotation, spanSourceProxy);
     });
 }
@@ -18588,6 +18599,12 @@ shapeMoreToggle?.addEventListener('click', (event) => {
         if (input === shapeStrokeHexInput && shapeStrokeColorInput) shapeStrokeColorInput.value = cssColorToHex(shapeStrokeHexInput.value, shapeStrokeColorInput.value);
         if (input === shapeFillColorInput && shapeFillHexInput) shapeFillHexInput.value = shapeFillColorInput.value;
         if (input === shapeFillHexInput && shapeFillColorInput) shapeFillColorInput.value = cssColorToHex(shapeFillHexInput.value, shapeFillColorInput.value);
+        if ([shapeStrokeColorInput, shapeStrokeHexInput, shapeStrokeWidthInput, shapeStrokeOpacityInput].includes(input)
+            && shapeStrokeTransparentInput
+            && (Number(shapeStrokeWidthInput?.value) || 0) > 0
+            && (Number(shapeStrokeOpacityInput?.value) || 0) > 0) {
+            shapeStrokeTransparentInput.checked = false;
+        }
         if (shapeStrokeWidthValue && shapeStrokeWidthInput) shapeStrokeWidthValue.textContent = `${shapeStrokeWidthInput.value}px`;
         if (shapeStrokeOpacityValue && shapeStrokeOpacityInput) shapeStrokeOpacityValue.textContent = `${shapeStrokeOpacityInput.value}%`;
         if (shapeFillOpacityValue && shapeFillOpacityInput) shapeFillOpacityValue.textContent = `${shapeFillOpacityInput.value}%`;

@@ -1,5 +1,51 @@
+@php
+    $fallbackBackUrl = route('documents.index');
+    $adminBackUrl = route('filament.user.pages.pdf-generator');
+    $explicitAdminOrigin = request()->query('from') === 'admin';
+
+    $candidateBackUrl = null;
+    $normalizedCandidatePath = '';
+
+    if (!$explicitAdminOrigin) {
+        $returnTo = request()->query('return_to');
+        $referer = request()->headers->get('referer');
+        $candidateBackUrl = is_string($returnTo) && $returnTo !== '' ? $returnTo : ($referer ?: url()->previous());
+        $candidatePath = is_string($candidateBackUrl) ? (parse_url($candidateBackUrl, PHP_URL_PATH) ?: '') : '';
+        $normalizedCandidatePath = '/' . ltrim($candidatePath, '/');
+    }
+
+    $currentUrl = request()->fullUrl();
+    $requestHost = request()->getHost();
+    $candidateHost = is_string($candidateBackUrl) ? parse_url($candidateBackUrl, PHP_URL_HOST) : null;
+    $sameHost = !$candidateHost || $candidateHost === $requestHost;
+    $isLivewireUpdate = str_contains($normalizedCandidatePath, '/livewire/update')
+        || (is_string($candidateBackUrl) && str_contains($candidateBackUrl, 'livewire/update'));
+    $cameFromAdmin = $explicitAdminOrigin
+        || str_starts_with($normalizedCandidatePath, '/admin')
+        || str_starts_with($normalizedCandidatePath, '/portal');
+    $hasUsableCandidate = !$explicitAdminOrigin
+        && is_string($candidateBackUrl)
+        && $candidateBackUrl !== ''
+        && $candidateBackUrl !== $currentUrl
+        && $sameHost
+        && !$isLivewireUpdate;
+    $backUrl = $explicitAdminOrigin
+        ? $adminBackUrl
+        : ($hasUsableCandidate ? $candidateBackUrl : ($cameFromAdmin ? $adminBackUrl : $fallbackBackUrl));
+    $backLabel = $cameFromAdmin ? 'Back to admin' : 'Back to editor';
+@endphp
+
 <div class="top-bar">
-    <a href="{{ route('documents.index') }}" class="doc-top-back-btn" title="Back" aria-label="Back">&#8592;</a>
+    <button
+        type="button"
+        class="doc-top-back-btn"
+        title="{{ $backLabel }}"
+        aria-label="{{ $backLabel }}"
+        onclick="window.location.assign({!! Js::from($backUrl) !!})"
+    >
+        <span class="doc-top-back-btn__icon" aria-hidden="true">&#8592;</span>
+        <span class="doc-top-back-btn__text">{{ $backLabel }}</span>
+    </button>
     <div class="doc-name-wrap" id="doc-name-wrap"
          data-rename-url="{{ route('documents.rename', $document) }}"
          data-original-name="{{ $document->original_name }}">

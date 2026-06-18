@@ -47,6 +47,45 @@
         }
         .top-bar .doc-name-edit-btn:hover { background: #f3f4f6; color: #111827; }
         .top-bar .doc-name-edit-btn:focus-visible { outline: none; background: #f3f4f6; box-shadow: 0 0 0 3px rgba(99,102,241,0.2); }
+        .top-bar .doc-top-back-btn {
+            appearance: none;
+            border: 1px solid #c7d2fe;
+            border-radius: 8px;
+            background: #eef2ff;
+            color: #3730a3;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            flex: 0 0 auto;
+            max-width: 132px;
+            min-height: 32px;
+            padding: 0 10px;
+            overflow: hidden;
+            font-size: 12px;
+            font-weight: 700;
+            line-height: 1;
+            white-space: nowrap;
+        }
+        .top-bar .doc-top-back-btn__icon {
+            flex: 0 0 auto;
+            font-size: 14px;
+            line-height: 1;
+        }
+        .top-bar .doc-top-back-btn__text {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .top-bar .doc-top-back-btn:hover,
+        .top-bar .doc-top-back-btn:focus-visible {
+            border-color: #a5b4fc;
+            background: #e0e7ff;
+            color: #312e81;
+            outline: none;
+        }
         .top-bar a  { font-size: 13px; color: #6b7280; text-decoration: none; white-space: nowrap; }
         .top-bar a:hover { color: #111827; }
         .top-bar .save-status { font-size: 12px; color: #6b7280; white-space: nowrap; }

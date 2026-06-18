@@ -69,33 +69,53 @@ body.enpv-body .floating-zoom-bar button:disabled {
 
 body.enpv-body .top-bar {
     display: grid;
-    grid-template-columns: auto minmax(160px, 1fr) auto auto auto;
+    grid-template-columns: auto minmax(120px, 1fr) repeat(8, auto);
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
 body.enpv-body .top-bar .doc-top-back-btn {
     order: 1;
-    width: 32px;
+    min-width: 0;
+    max-width: 132px;
     height: 32px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid #d1d5db;
+    gap: 6px;
+    border: 1px solid #c7d2fe;
     border-radius: 8px;
-    color: #374151;
-    background: #ffffff;
-    font-size: 17px;
+    padding: 0 10px;
+    overflow: hidden;
+    color: #3730a3;
+    background: #eef2ff;
+    font-size: 12px;
     font-weight: 700;
     text-decoration: none;
+    white-space: nowrap;
     pointer-events: auto;
     opacity: 1;
+    cursor: pointer;
+}
+
+body.enpv-body .top-bar .doc-top-back-btn__icon {
+    flex: 0 0 auto;
+    font-size: 14px;
+    line-height: 1;
+}
+
+body.enpv-body .top-bar .doc-top-back-btn__text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 body.enpv-body .top-bar .doc-top-back-btn:hover,
 body.enpv-body .top-bar .doc-top-back-btn:focus-visible {
-    background: #f3f4f6;
-    color: #111827;
+    border-color: #a5b4fc;
+    background: #e0e7ff;
+    color: #312e81;
     outline: none;
 }
 
@@ -2564,33 +2584,34 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
 }
 .enpv-notes-panel {
     position: fixed;
-    top: 88px;
-    right: 18px;
-    bottom: 18px;
-    width: min(360px, calc(100vw - 32px));
+    top: 0;
+    right: 0;
+    z-index: 2147483550;
+    width: min(430px, 96vw);
+    height: 100%;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    border: 1px solid #dbe3ef;
-    border-radius: 12px;
+    border-left: 1px solid rgba(15, 23, 42, 0.12);
     background: #ffffff;
-    color: #111827;
-    box-shadow: 0 18px 55px rgba(15, 23, 42, 0.18), 0 4px 16px rgba(15, 23, 42, 0.08);
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+    color: #0f172a;
+    box-shadow: -22px 0 70px rgba(15, 23, 42, 0.24);
+    font-family: system-ui, sans-serif;
 }
 .enpv-notes-panel__header {
+    min-height: 58px;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 14px;
-    padding: 16px 16px 12px;
-    border-bottom: 1px solid #edf1f7;
+    gap: 16px;
+    padding: 0 16px 0 20px;
+    border-bottom: 1px solid #e5e7eb;
 }
 .enpv-notes-panel__header h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 18px;
     line-height: 1.2;
-    font-weight: 750;
+    font-weight: 700;
 }
 .enpv-notes-panel__header p {
     margin: 4px 0 0;
@@ -2598,21 +2619,21 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
     font-size: 12px;
 }
 .enpv-notes-panel__close {
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid transparent;
+    border: 0;
     border-radius: 8px;
     background: transparent;
-    color: #475569;
+    color: #64748b;
+    cursor: pointer;
 }
 .enpv-notes-panel__close:hover,
 .enpv-notes-panel__close:focus-visible {
-    border-color: #d7dee8;
     background: #f1f5f9;
-    color: #111827;
+    color: #0f172a;
     outline: none;
 }
 .enpv-notes-compose {

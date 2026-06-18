@@ -35,7 +35,6 @@
                     <a href="/pdf-editor" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">PDF Editor</a>
                     <a href="/domain-search" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Domain Search</a>
                     <a href="/logo-generator" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Logo Generator</a>
-                    <a href="/prices" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Prices</a>
                     <a href="/browse-logos" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Browse Logos</a>
                 </nav>
             @endif
@@ -123,7 +122,6 @@
                             <a @click="mobileMenuOpen = false" href="/pdf-editor" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">PDF Editor</a>
                             <a @click="mobileMenuOpen = false" href="/domain-search" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Domain Search</a>
                             <a @click="mobileMenuOpen = false" href="/logo-generator" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Logo Generator</a>
-                            <a @click="mobileMenuOpen = false" href="/prices" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Prices</a>
                             <a @click="mobileMenuOpen = false" href="/browse-logos" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Browse Logos</a>
                         </nav>
                     @endif

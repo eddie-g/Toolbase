@@ -19,6 +19,74 @@ class UserUploadedPdfsWidget extends BaseWidget
 
     protected static ?string $heading = 'Uploaded PDFs';
 
+    protected static string $view = 'user-portal.widgets.user-uploaded-pdfs-widget';
+
+    public string $viewMode = 'cards';
+
+    public function setViewMode(string $mode): void
+    {
+        $this->viewMode = in_array($mode, ['table', 'cards'], true) ? $mode : 'table';
+    }
+
+    public function openUrl(Document $document): string
+    {
+        return $document->mode === 'guided'
+            ? route('documents.guided', $document)
+            : route('documents.editNew', [
+                'document' => $document,
+                'pdfjs' => 1,
+                'from' => 'admin',
+                'return_to' => route('filament.user.pages.pdf-generator'),
+            ]);
+    }
+
+    public function deleteDocument(int $documentId): void
+    {
+        $user = auth()->user();
+        if (!$user) {
+            return;
+        }
+
+        $record = Document::query()->find($documentId);
+        if (!$record) {
+            return;
+        }
+
+        $canDelete = ((int) ($record->user_id ?? 0) === (int) $user->id)
+            || UserActivity::query()
+                ->where('user_id', $user->id)
+                ->where('document_id', $record->id)
+                ->exists();
+
+        if (!$canDelete) {
+            Notification::make()
+                ->title('You are not allowed to delete this PDF')
+                ->danger()
+                ->send();
+            return;
+        }
+
+        DB::table('pdf_extractions_fitz')
+            ->where('document_id', $record->id)
+            ->delete();
+
+        if ($record->path) {
+            Storage::delete($record->path);
+        }
+
+        if ($record->original_backup_path) {
+            Storage::delete($record->original_backup_path);
+        }
+
+        $record->delete();
+        $this->resetTable();
+
+        Notification::make()
+            ->title('PDF deleted')
+            ->success()
+            ->send();
+    }
+
     public function table(Table $table): Table
     {
         $user = auth()->user();
@@ -29,6 +97,7 @@ class UserUploadedPdfsWidget extends BaseWidget
             ->pluck('document_id');
 
         return $table
+            ->heading(null)
             ->query(
                 Document::query()
                     ->when(
@@ -65,7 +134,7 @@ class UserUploadedPdfsWidget extends BaseWidget
                 Tables\Actions\Action::make('open')
                     ->label('Open')
                     ->icon('heroicon-o-arrow-top-right-on-square')
-                    ->url(fn (Document $record) => route('documents.edit', $record))
+                    ->url(fn (Document $record) => $this->openUrl($record))
                     ->openUrlInNewTab(),
                 Tables\Actions\Action::make('delete')
                     ->label('DELETE')
@@ -74,42 +143,7 @@ class UserUploadedPdfsWidget extends BaseWidget
                     ->requiresConfirmation()
                     ->modalHeading('Delete PDF')
                     ->modalDescription('This will permanently delete the uploaded PDF.')
-                    ->action(function (Document $record): void {
-                        $user = auth()->user();
-                        if (!$user) {
-                            return;
-                        }
-
-                        $canDelete = ((int) ($record->user_id ?? 0) === (int) $user->id)
-                            || UserActivity::query()
-                                ->where('user_id', $user->id)
-                                ->where('document_id', $record->id)
-                                ->exists();
-
-                        if (!$canDelete) {
-                            Notification::make()
-                                ->title('You are not allowed to delete this PDF')
-                                ->danger()
-                                ->send();
-                            return;
-                        }
-
-                        DB::table('pdf_extractions_fitz')
-                            ->where('document_id', $record->id)
-                            ->delete();
-
-                        if ($record->path) {
-                            Storage::delete($record->path);
-                        }
-
-                        $record->delete();
-                        $this->resetTable();
-
-                        Notification::make()
-                            ->title('PDF deleted')
-                            ->success()
-                            ->send();
-                    }),
+                    ->action(fn (Document $record) => $this->deleteDocument((int) $record->id)),
             ])
             ->defaultSort('created_at', 'desc')
             ->paginated([10, 25, 50]);

@@ -1,10 +1,10 @@
 {
-    "_comment": "Image-mode (non-logo) prompt templates for the Logo Generator's 'Image' mode. Edit strings here; variable substitution happens at runtime. Variables: {style_direction} (art-direction phrase for the selected style), {subject} (user description), {size} (composition/aspect phrase), {colors} (color instruction or empty), {bg} (background phrase or empty).",
-    "template": "A high-quality {style_direction} image of {subject}. {size}. Only include the requested subject and explicitly requested supporting elements; do not add people, buildings, vehicles, mountains, terrain, horizon lines, foreground objects, or extra scenery unless the description asks for them. {colors}{bg}Rich detail, balanced lighting, professional composition. Do not include any logos, watermarks, captions, or text or lettering unless it is explicitly part of the described subject.",
+    "_comment": "Image-mode (non-logo) prompt templates for the Logo Generator's 'Image' mode. Edit strings here; variable substitution happens at runtime. Variables: {style_direction} (art-direction phrase for the selected style), {subject} (user description), {size} (composition/aspect phrase), {detail} (detail-level direction), {colors} (color instruction or empty), {bg} (background phrase or empty), {shape} (shape container instruction or empty).",
+    "template": "A high-quality {style_direction} image of {subject}. {size}. {detail}{colors}{bg}{shape}Professional composition, clear focal point, clean anatomy and readable silhouettes. Do not include logos, watermarks, captions, or text unless text is explicitly requested.",
     "default_subject": "an evocative, visually striking scene",
     "style_direction": {
         "professional": "clean, modern, polished commercial-quality",
-        "fantasy": "epic fantasy art style, magical and ornate, painterly",
+        "fantasy": "fantasy illustration",
         "future": "futuristic sci-fi, sleek high-tech, dramatic",
         "retro": "vintage retro, nostalgic color grading, classic",
         "minimalist": "minimalist, lots of negative space, simple and clean",
@@ -19,5 +19,29 @@
         "1:1": "Square 1:1 aspect ratio",
         "16:9": "Wide 16:9 aspect ratio with horizontal framing",
         "9:16": "Tall 9:16 aspect ratio with vertical framing"
+    },
+    "detail_direction": {
+        "default": {
+            "min": "Flat graphic image with simple shapes, clean solid fills, minimal texture, minimal shadows, and little to no background detail. ",
+            "medium": "Moderately detailed rendering with controlled lighting, clear subject separation, simplified background detail, and restrained texture. ",
+            "max": "Highly detailed rendering with layered depth, dramatic lighting, texture, atmosphere, and polished finish. "
+        },
+        "fantasy": {
+            "min": "Flat fantasy image/logo style with simplified characters and creature shapes, clean solid color areas, bold silhouettes, minimal internal detail, no painterly texture, no cinematic lighting, and little to no background detail. ",
+            "medium": "Moderately detailed fantasy illustration with readable characters and action, simplified environment, restrained magic effects, controlled lighting, limited texture, and less atmospheric depth than a cinematic scene. ",
+            "max": "Epic fantasy battle scene with cinematic scale, wide establishing composition, dramatic sky, distant environment, foreground/midground/background depth, painterly brushwork, glowing magic or fire effects, atmospheric haze, and richly detailed armor, creature anatomy, terrain, and architecture when relevant. "
+        }
+    },
+    "transparent_detail_direction": {
+        "default": {
+            "min": "Flat isolated subject cutout with clean solid shapes, simple color fills, minimal texture, and crisp edges. ",
+            "medium": "Moderately detailed isolated subject cutout with clean edges, readable silhouette, simplified texture, and no background elements. ",
+            "max": "Highly detailed isolated subject cutout with clean edges, layered internal detail, dramatic lighting on the subject, texture, and polished finish, with no background elements. "
+        },
+        "fantasy": {
+            "min": "Flat isolated fantasy image/logo cutout with simplified character and creature shapes, bold silhouettes, solid fills, minimal internal detail, crisp edges, and no background elements. ",
+            "medium": "Moderately detailed isolated fantasy action cutout with clear character and creature silhouettes, restrained magic effects, simplified texture, clean edges, and no background elements. ",
+            "max": "Highly detailed isolated fantasy action cutout with the requested characters, creature anatomy, armor, weapons, fire or magic effects, painterly texture, clean transparent edges, readable silhouettes, and no sky, terrain, architecture, horizon, ground plane, or scenery. "
+        }
     }
 }

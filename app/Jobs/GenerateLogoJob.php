@@ -113,6 +113,19 @@ class GenerateLogoJob implements ShouldQueue
         $logoDetail = $this->params['logo_detail'] ?? 'max';
         $imageSize = $this->params['image_size'] ?? '1:1';
 
+        if ($imageModel === 'recraft' && $outputFormat === 'raster' && $isPro && $imageSize !== '1:1') {
+            $logoRequest->update([
+                'status' => 'failed',
+                'error_message' => 'Ray PRO currently supports Square image size only. Landscape and Portrait are not available for this model.',
+            ]);
+            $priceLog->update(['status' => 'failed']);
+            Log::warning('[GenerateLogoJob] Unsupported Recraft PRO image size rejected - NO CHARGE', [
+                'logo_request_id' => $this->logoRequestId,
+                'image_size' => $imageSize,
+            ]);
+            return;
+        }
+
         try {
             if ($imageModel === 'recraft') {
                 $result = $this->generateRecraft($prompt, $imageCount, $outputFormat, $isPro, $bgColor, $iconOnly, $colorPalette, $recraftSubstyle, $imageSize);
@@ -131,7 +144,7 @@ class GenerateLogoJob implements ShouldQueue
                 $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
                 $logoRequest->update([
                     'status' => 'failed',
-                    'error_message' => $result['error'],
+                    'error_message' => $this->friendlyErrorMessage($result['error']),
                     'fal_status_code' => $result['status_code'] ?? null,
                     'response_time_ms' => $elapsedMs,
                 ]);
@@ -154,9 +167,47 @@ class GenerateLogoJob implements ShouldQueue
                 return;
             }
 
+            if (count($images) < $imageCount) {
+                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+                $logoRequest->update([
+                    'status' => 'failed',
+                    'error_message' => 'Only ' . count($images) . " of {$imageCount} requested images were generated. Your account was not charged.",
+                    'response_time_ms' => $elapsedMs,
+                ]);
+                $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
+                Log::warning('[GenerateLogoJob] Partial image result rejected - NO CHARGE', [
+                    'logo_request_id' => $this->logoRequestId,
+                    'requested' => $imageCount,
+                    'received' => count($images),
+                    'model' => $modelName,
+                ]);
+                return;
+            }
+
+            if (count($images) > $imageCount) {
+                $images = array_slice($images, 0, $imageCount);
+            }
+
             // ── Post-processing (non-Recraft only) ──
             if ($imageModel !== 'recraft') {
-                $images = $this->postProcess($images, $bgColor, $outputFormat);
+                $images = $this->postProcess($images, $bgColor, $outputFormat, $logoShape);
+            }
+
+            if (count($images) < $imageCount) {
+                $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
+                $logoRequest->update([
+                    'status' => 'failed',
+                    'error_message' => 'Only ' . count($images) . " of {$imageCount} requested images were available after processing. Your account was not charged.",
+                    'response_time_ms' => $elapsedMs,
+                ]);
+                $priceLog->update(['status' => 'failed', 'response_time_ms' => $elapsedMs]);
+                Log::warning('[GenerateLogoJob] Partial processed image result rejected - NO CHARGE', [
+                    'logo_request_id' => $this->logoRequestId,
+                    'requested' => $imageCount,
+                    'received' => count($images),
+                    'model' => $modelName,
+                ]);
+                return;
             }
 
             // ── Persist images to local storage ──
@@ -169,7 +220,7 @@ class GenerateLogoJob implements ShouldQueue
                 $imgUrl = is_array($img) ? ($img['svg_url'] ?? $img['url'] ?? '') : (string) $img;
                 $imageUrls[] = $imgUrl;
 
-                if (!$imgUrl || str_starts_with($imgUrl, 'data:') || $imgUrl === '[base64-omitted]') {
+                if (!$imgUrl || $imgUrl === '[base64-omitted]') {
                     continue;
                 }
 
@@ -211,7 +262,7 @@ class GenerateLogoJob implements ShouldQueue
             // ── Calculate actual cost and charge ──
             $actualImageCount = count($images);
             if ($imageModel === 'recraft') {
-                $recraftSize = $outputFormat === 'vector' ? '1:1' : '1024x1024';
+                $recraftSize = $this->recraftRequestSize($outputFormat, $isPro, $imageSize);
                 $actualCost = RecraftPricing::estimateLogoCost(
                     imageCount: $actualImageCount,
                     size: $recraftSize,
@@ -219,11 +270,13 @@ class GenerateLogoJob implements ShouldQueue
                     type: $outputFormat,
                 );
             } elseif ($imageModel === 'dalle') {
+                $gptImageResolution = AiLogoPrice::gptImageResolutionForSize($imageSize);
                 $actualCost = AiLogoPrice::estimateDalleCost(
                     imageCount: $actualImageCount,
-                    resolution: '1024x1024',
+                    resolution: $gptImageResolution,
                     quality: $isPro ? 'hd' : 'standard',
                     outputFormat: $outputFormat,
+                    bgColor: $bgColor,
                 );
             } else {
                 $actualCost = AiLogoPrice::estimateCost(
@@ -290,7 +343,7 @@ class GenerateLogoJob implements ShouldQueue
                             'domain' => $domain,
                             'style' => $style,
                             'image_count' => $actualImageCount,
-                            'resolution' => $imageModel === 'recraft' ? ($outputFormat === 'vector' ? '1:1' : '1024x1024') : ($imageModel === 'dalle' ? '1024x1024' : ($isPro ? "{$proSize}x{$proSize}" : '512x512')),
+                            'resolution' => $imageModel === 'recraft' ? $this->recraftRequestSize($outputFormat, $isPro, $imageSize) : ($imageModel === 'dalle' ? AiLogoPrice::gptImageResolutionForSize($imageSize) : ($isPro ? "{$proSize}x{$proSize}" : '512x512')),
                             'pro' => $isPro,
                             'icon_only' => $iconOnly,
                             'bg_color' => $bgColor,
@@ -405,6 +458,20 @@ class GenerateLogoJob implements ShouldQueue
     //  Model-specific generation methods
     // ──────────────────────────────────────────────────────────────
 
+    private function recraftRequestSize(string $outputFormat, bool $isPro, string $imageSize): string
+    {
+        if ($outputFormat === 'vector') {
+            return '1:1';
+        }
+
+        return match (true) {
+            $isPro => '1024x1024',
+            $imageSize === '16:9' => '1344x768',
+            $imageSize === '9:16' => '768x1344',
+            default => '1024x1024',
+        };
+    }
+
     /**
      * Generate images via Recraft (v4/v4.1 Pro or v2 regular, raster or vector).
      *
@@ -417,13 +484,7 @@ class GenerateLogoJob implements ShouldQueue
         $recraftKey = config('services.recraft.key');
         $isVector = $outputFormat === 'vector';
 
-        // Raster images honor the requested aspect ratio (Recraft-valid sizes).
-        $recraftRasterSize = match ($imageSize) {
-            '16:9'  => '1820x1024',
-            '9:16'  => '1024x1820',
-            default => '1024x1024',
-        };
-        $recraftSize = $isVector ? '1:1' : $recraftRasterSize;
+        $recraftSize = $this->recraftRequestSize($outputFormat, $isPro, $imageSize);
 
         // Use V4 for vector/raster Pro and V2 for regular raster.
         if ($isVector) {
@@ -613,7 +674,7 @@ class GenerateLogoJob implements ShouldQueue
     /**
      * Generate images via GPT Image 1.5 (OpenAI /images/generations).
      *
-     * Quality mapping: standard → medium ($0.042 / img), hd → high ($0.167 / img)
+     * Quality mapping: standard → medium, hd → high.
      * Response may contain 'url' or 'b64_json'; both are handled.
      * 
      * If outputFormat is 'vector', will vectorize PNG to SVG after generation.
@@ -1089,18 +1150,51 @@ class GenerateLogoJob implements ShouldQueue
         ) {
             return 'Model currently unavailable, please try a different model.';
         }
-        return $raw;
+
+        if (
+            str_contains($normalized, 'http request returned status code') ||
+            str_contains($normalized, 'invalid_request_parameter') ||
+            str_contains($normalized, 'invalid response') ||
+            str_contains($normalized, 'invalid json') ||
+            str_contains($normalized, 'api returned') ||
+            str_contains($normalized, 'api key') ||
+            str_contains($normalized, 'recraft') ||
+            str_contains($normalized, 'dall-e') ||
+            str_contains($normalized, 'gpt-image') ||
+            str_contains($normalized, 'fal-ai') ||
+            str_contains($normalized, 'openai')
+        ) {
+            return 'Image generation failed. Please adjust your settings and try again.';
+        }
+
+        return 'Image generation failed. Please try again.';
     }
 
-    private function postProcess(array $images, string $bgColor, string $outputFormat): array
+    private function postProcess(array $images, string $bgColor, string $outputFormat, ?string $logoShape = null): array
     {
-        $needsBgRemoval = ($bgColor === 'transparent' || str_starts_with($bgColor, '#'));
+        $needsBgRemoval = in_array($bgColor, ['none', 'transparent'], true) || str_starts_with($bgColor, '#');
+        $shape = strtolower((string) ($logoShape ?: 'none'));
 
         if ($needsBgRemoval) {
             $falKey = config('services.fal.key');
             foreach ($images as $i => &$img) {
                 $imgUrl = is_array($img) ? ($img['url'] ?? '') : (string) $img;
-                if (!$imgUrl || str_starts_with($imgUrl, 'data:')) continue;
+                if (!$imgUrl) continue;
+
+                $backgroundRemovalInput = $imgUrl;
+                if (str_starts_with($imgUrl, '/storage/')) {
+                    $relativePath = str_replace('/storage/', '', $imgUrl);
+                    if (Storage::disk('public')->exists($relativePath)) {
+                        $extension = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
+                        $mime = match ($extension) {
+                            'jpg', 'jpeg' => 'image/jpeg',
+                            'webp' => 'image/webp',
+                            'gif' => 'image/gif',
+                            default => 'image/png',
+                        };
+                        $backgroundRemovalInput = 'data:' . $mime . ';base64,' . base64_encode(Storage::disk('public')->get($relativePath));
+                    }
+                }
 
                 try {
                     $birefnetUrl = 'https://fal.run/fal-ai/birefnet';
@@ -1111,7 +1205,7 @@ class GenerateLogoJob implements ShouldQueue
                         return $e instanceof \Illuminate\Http\Client\ConnectionException
                             || ($e instanceof \Illuminate\Http\Client\RequestException && $e->response?->serverError());
                     })->timeout(60)->post($birefnetUrl, [
-                        'image_url' => $imgUrl,
+                        'image_url' => $backgroundRemovalInput,
                         'model' => 'General Use (Light)',
                         'operating_resolution' => '1024x1024',
                         'output_format' => 'png',
@@ -1132,6 +1226,34 @@ class GenerateLogoJob implements ShouldQueue
                     }
                 } catch (\Exception $bgEx) {
                     Log::warning('Background removal exception for image ' . $i, ['error' => $bgEx->getMessage()]);
+                }
+            }
+            unset($img);
+        }
+
+        if ($shape !== 'none' && $shape !== 'square' && $outputFormat === 'raster') {
+            foreach ($images as $i => &$img) {
+                $imgUrl = is_array($img) ? ($img['url'] ?? '') : (string) $img;
+                if (!$imgUrl) {
+                    continue;
+                }
+
+                $maskedDataUrl = $this->maskImageToShape($imgUrl, $shape);
+                if (!$maskedDataUrl) {
+                    continue;
+                }
+
+                if (is_array($img)) {
+                    $img['url'] = $maskedDataUrl;
+                    $img['shape'] = $shape;
+                    $img['transparent'] = true;
+                    unset($img['stored_path'], $img['stored_url']);
+                } else {
+                    $images[$i] = [
+                        'url' => $maskedDataUrl,
+                        'shape' => $shape,
+                        'transparent' => true,
+                    ];
                 }
             }
             unset($img);
@@ -1190,6 +1312,122 @@ class GenerateLogoJob implements ShouldQueue
         }
 
         return $images;
+    }
+
+    private function maskImageToShape(string $imageUrl, string $shape): ?string
+    {
+        if (!function_exists('imagecreatefromstring')) {
+            return null;
+        }
+
+        try {
+            $imageBytes = $this->imageBytesForProcessing($imageUrl);
+            if ($imageBytes === null || $imageBytes === '') {
+                return null;
+            }
+
+            $source = @imagecreatefromstring($imageBytes);
+            if (!$source) {
+                return null;
+            }
+
+            $width = imagesx($source);
+            $height = imagesy($source);
+            if ($width <= 0 || $height <= 0) {
+                imagedestroy($source);
+                return null;
+            }
+
+            imagepalettetotruecolor($source);
+            imagealphablending($source, false);
+            imagesavealpha($source, true);
+
+            $mask = imagecreatetruecolor($width, $height);
+            imagefill($mask, 0, 0, imagecolorallocate($mask, 0, 0, 0));
+            $white = imagecolorallocate($mask, 255, 255, 255);
+
+            $padding = (int) round(min($width, $height) * 0.04);
+            $left = $padding;
+            $top = $padding;
+            $right = $width - $padding - 1;
+            $bottom = $height - $padding - 1;
+            $centerX = $width / 2;
+            $centerY = $height / 2;
+            $radius = (min($width, $height) / 2) - $padding;
+
+            match ($shape) {
+                'circle' => imagefilledellipse($mask, (int) round($centerX), (int) round($centerY), (int) round($radius * 2), (int) round($radius * 2), $white),
+                'triangle' => imagefilledpolygon($mask, [
+                    (int) round($centerX), $top,
+                    $right, $bottom,
+                    $left, $bottom,
+                ], 3, $white),
+                'hexagon' => imagefilledpolygon($mask, $this->regularPolygonPoints($centerX, $centerY, $radius, 6, -90), 6, $white),
+                'pentagon' => imagefilledpolygon($mask, $this->regularPolygonPoints($centerX, $centerY, $radius, 5, -90), 5, $white),
+                default => imagefilledrectangle($mask, $left, $top, $right, $bottom, $white),
+            };
+
+            $transparent = imagecolorallocatealpha($source, 0, 0, 0, 127);
+            for ($y = 0; $y < $height; $y++) {
+                for ($x = 0; $x < $width; $x++) {
+                    if ((imagecolorat($mask, $x, $y) & 0xFF) < 128) {
+                        imagesetpixel($source, $x, $y, $transparent);
+                    }
+                }
+            }
+
+            ob_start();
+            imagepng($source);
+            $png = ob_get_clean();
+
+            return is_string($png) && $png !== ''
+                ? 'data:image/png;base64,' . base64_encode($png)
+                : null;
+        } catch (\Throwable $e) {
+            Log::warning('[GenerateLogoJob] Shape mask failed', [
+                'request_id' => $this->logoRequestId,
+                'shape' => $shape,
+                'error' => $e->getMessage(),
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * @return array<int, int>
+     */
+    private function regularPolygonPoints(float $centerX, float $centerY, float $radius, int $sides, float $rotationDegrees): array
+    {
+        $points = [];
+        for ($i = 0; $i < $sides; $i++) {
+            $angle = deg2rad($rotationDegrees + (($i * 360) / $sides));
+            $points[] = (int) round($centerX + ($radius * cos($angle)));
+            $points[] = (int) round($centerY + ($radius * sin($angle)));
+        }
+
+        return $points;
+    }
+
+    private function imageBytesForProcessing(string $imageUrl): ?string
+    {
+        if (str_starts_with($imageUrl, 'data:image/')) {
+            if (!preg_match('/^data:image\/[a-zA-Z0-9.+-]+;base64,(.*)$/s', $imageUrl, $matches)) {
+                return null;
+            }
+
+            $decoded = base64_decode($matches[1], true);
+            return $decoded === false ? null : $decoded;
+        }
+
+        if (str_starts_with($imageUrl, '/storage/')) {
+            $relativePath = str_replace('/storage/', '', $imageUrl);
+            return Storage::disk('public')->exists($relativePath)
+                ? Storage::disk('public')->get($relativePath)
+                : null;
+        }
+
+        $response = $this->httpWithResolvedDns($imageUrl, [])->timeout(45)->get($imageUrl);
+        return $response->successful() ? $response->body() : null;
     }
 
     private function resolveStorageUserId(?AiLogoRequest $logoRequest = null): int

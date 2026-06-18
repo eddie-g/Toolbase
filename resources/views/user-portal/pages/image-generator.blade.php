@@ -103,32 +103,8 @@
             color: rgb(203 213 225);
         }
 
-        .netkit-image-generator-mark {
-            position: absolute;
-            right: 14px;
-            bottom: -20px;
-            display: flex;
-            width: 50px;
-            height: 50px;
-            align-items: center;
-            justify-content: center;
-            border: 1px solid rgb(226 232 240);
-            border-radius: 2px;
-            background: white;
-            color: rgb(15 23 42);
-            font-size: 18px;
-            font-weight: 800;
-            box-shadow: 0 4px 10px rgba(15, 23, 42, 0.18);
-        }
-
-        .dark .netkit-image-generator-mark {
-            border-color: rgb(55 65 81);
-            background: rgb(3 7 18);
-            color: white;
-        }
-
         .netkit-image-body {
-            padding: 28px 16px 12px;
+            padding: 16px;
         }
 
         .netkit-image-title {
@@ -142,6 +118,87 @@
 
         .dark .netkit-image-title {
             color: white;
+        }
+
+        .netkit-image-title-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 8px;
+        }
+
+        .netkit-image-title-edit {
+            display: inline-flex;
+            width: 28px;
+            height: 28px;
+            flex: 0 0 auto;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid rgb(226 232 240);
+            border-radius: 7px;
+            color: rgb(100 116 139);
+            transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+        }
+
+        .netkit-image-title-edit:hover {
+            border-color: rgb(148 163 184);
+            background: rgb(248 250 252);
+            color: rgb(15 23 42);
+        }
+
+        .dark .netkit-image-title-edit {
+            border-color: rgb(55 65 81);
+            color: rgb(203 213 225);
+        }
+
+        .dark .netkit-image-title-edit:hover {
+            background: rgb(31 41 55);
+            color: white;
+        }
+
+        .netkit-rename-form {
+            display: grid;
+            grid-template-columns: 1fr auto auto;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .netkit-rename-input {
+            min-width: 0;
+            border: 1px solid rgb(203 213 225);
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 13px;
+            color: rgb(15 23 42);
+        }
+
+        .netkit-rename-input:focus {
+            outline: 2px solid rgb(14 165 233 / 0.25);
+            border-color: rgb(14 165 233);
+        }
+
+        .dark .netkit-rename-input {
+            border-color: rgb(55 65 81);
+            background: rgb(17 24 39);
+            color: white;
+        }
+
+        .netkit-rename-save,
+        .netkit-rename-cancel {
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-size: 12px;
+            font-weight: 700;
+        }
+
+        .netkit-rename-save {
+            background: rgb(15 23 42);
+            color: white;
+        }
+
+        .netkit-rename-cancel {
+            border: 1px solid rgb(203 213 225);
+            color: rgb(71 85 105);
         }
 
         .netkit-image-prompt {
@@ -515,6 +572,8 @@
                             $path = strtolower((string) parse_url($url, PHP_URL_PATH));
                             $isVector = $request->output_format === 'vector' || str_ends_with($path, '.svg');
                             $imageKey = 'user-' . $request->id . '-' . $imageIndex;
+                            $previewUrl = route('generatedImages.preview', ['logoRequest' => $request->id, 'index' => $imageIndex]);
+                            $originalUrl = route('generatedImages.original', ['logoRequest' => $request->id, 'index' => $imageIndex]);
                         @endphp
 
                         <article class="netkit-image-card">
@@ -522,32 +581,18 @@
                                 <button
                                     type="button"
                                     class="block aspect-[4/3] w-full"
-                                    @click="openPreview(imageUrl('{{ $imageKey }}', @js($url)), @js($title))"
+                                    @click="openPreview(imageUrl('{{ $imageKey }}', @js($originalUrl)), @js($title))"
                                 >
                                     <img
-                                        :src="imageUrl('{{ $imageKey }}', @js($url))"
+                                        :src="imagePreviewUrl('{{ $imageKey }}', @js($previewUrl))"
                                         alt="{{ $title }}"
                                         class="h-full w-full object-cover"
                                         loading="lazy"
-                                        onerror="this.parentElement.innerHTML='<div class=\'flex h-full w-full items-center justify-center text-xs text-gray-400\'>Image unavailable</div>'"
+                                        x-on:error="imageLoadFallback($event, imageUrl('{{ $imageKey }}', @js($originalUrl)))"
                                     />
                                 </button>
                                 <div class="netkit-image-format">
                                     {{ strtoupper((string) ($request->output_format ?? 'image')) }}
-                                </div>
-                                <button
-                                    type="button"
-                                    wire:click="startRename({{ $request->id }})"
-                                    class="netkit-image-edit"
-                                    aria-label="Rename image"
-                                >
-                                    <svg class="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 7.125 16.862 4.487" />
-                                    </svg>
-                                </button>
-                                <div class="netkit-image-generator-mark">
-                                    {{ strtoupper(substr($generator, 0, 1)) }}
                                 </div>
                             </div>
 
@@ -559,23 +604,36 @@
                                     @endif
                                 </div>
 
-                                @if ($this->editingRequestId === (int) $request->id)
-                                    <div class="flex items-center gap-2">
+                                @if ($this->editingImageKey === $imageKey)
+                                    <div class="netkit-rename-form">
                                         <input
                                             type="text"
                                             wire:model="editingName"
-                                            class="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm"
+                                            class="netkit-rename-input"
+                                            wire:keydown.enter="saveRename({{ $request->id }})"
+                                            wire:keydown.escape="cancelRename"
                                         />
-                                        <button wire:click="saveRename({{ $request->id }})" class="rounded-lg bg-gray-900 px-2 py-1.5 text-xs font-semibold text-white">Save</button>
-                                        <button wire:click="cancelRename" class="rounded-lg border border-gray-300 px-2 py-1.5 text-xs font-semibold text-gray-600">Cancel</button>
+                                        <button type="button" wire:click="saveRename({{ $request->id }})" class="netkit-rename-save">Save</button>
+                                        <button type="button" wire:click="cancelRename" class="netkit-rename-cancel">Cancel</button>
                                     </div>
                                 @else
-                                    <div class="flex items-start justify-between gap-2">
-                                        <div class="min-w-0">
+                                    <div class="netkit-image-title-row">
+                                        <div class="min-w-0 grow">
                                             <p class="netkit-image-title">{{ $title }}</p>
-                                            <p class="netkit-image-prompt">{{ $request->original_prompt ?: 'Prompt hidden' }}</p>
                                         </div>
+                                        <button
+                                            type="button"
+                                            wire:click="startRename({{ $request->id }}, '{{ $imageKey }}')"
+                                            class="netkit-image-title-edit"
+                                            aria-label="Rename image"
+                                            title="Rename"
+                                        >
+                                            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" />
+                                            </svg>
+                                        </button>
                                     </div>
+                                    <p class="netkit-image-prompt">{{ $request->original_prompt ?: 'Prompt hidden' }}</p>
                                 @endif
 
                                 <div class="netkit-image-meta">
@@ -586,7 +644,7 @@
 
                                 <div class="netkit-image-actions">
                                     <a
-                                        :href="imageUrl('{{ $imageKey }}', @js($url))"
+                                        :href="imageUrl('{{ $imageKey }}', @js($originalUrl))"
                                         download
                                         class="netkit-btn-secondary"
                                     >
@@ -599,7 +657,7 @@
                                             type="button"
                                             class="netkit-btn-primary"
                                             :disabled="isUpscaling('{{ $imageKey }}')"
-                                            @click="upsizeImage('{{ $imageKey }}', imageUrl('{{ $imageKey }}', @js($url)), {{ (int) $request->id }}, {{ (int) $imageIndex }})"
+                                            @click="upsizeImage('{{ $imageKey }}', imageUrl('{{ $imageKey }}', @js($originalUrl)), {{ (int) $request->id }}, {{ (int) $imageIndex }}, @js($previewUrl))"
                                             x-text="isUpscaling('{{ $imageKey }}') ? 'Upsizing...' : 'Upsize'"
                                         ></button>
                                     @endif
@@ -629,32 +687,41 @@
                                 $urls = is_array($request->image_urls) ? array_values(array_filter($request->image_urls)) : [];
                                 $cover = $urls[0] ?? null;
                                 $title = $request->domain ?: 'Untitled';
+                                $coverPreviewUrl = $cover ? route('generatedImages.preview', ['logoRequest' => $request->id, 'index' => 0]) : null;
+                                $coverOriginalUrl = $cover ? route('generatedImages.original', ['logoRequest' => $request->id, 'index' => 0]) : null;
+                                $tableEditKey = 'table-' . $request->id;
                             @endphp
                             <tr>
                                 <td class="px-4 py-3">
                                     @if ($cover)
-                                        <button type="button" @click="openPreview(@js($cover), @js($title))" class="block">
-                                            <img src="{{ $cover }}" alt="{{ $title }}" class="h-12 w-12 rounded-md border border-gray-200 object-contain" loading="lazy" />
+                                        <button type="button" @click="openPreview(@js($coverOriginalUrl), @js($title))" class="block">
+                                            <img src="{{ $coverPreviewUrl }}" alt="{{ $title }}" class="h-12 w-12 rounded-md border border-gray-200 object-contain" loading="lazy" x-on:error="imageLoadFallback($event, @js($coverOriginalUrl))" />
                                         </button>
                                     @else
                                         <div class="h-12 w-12 rounded-md border border-gray-200 bg-gray-100"></div>
                                     @endif
                                 </td>
                                 <td class="px-4 py-3 font-medium text-gray-900">
-                                    @if ($this->editingRequestId === (int) $request->id)
-                                        <div class="flex items-center gap-2">
+                                    @if ($this->editingImageKey === $tableEditKey)
+                                        <div class="netkit-rename-form">
                                             <input
                                                 type="text"
                                                 wire:model="editingName"
-                                                class="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-sm"
+                                                class="netkit-rename-input"
+                                                wire:keydown.enter="saveRename({{ $request->id }})"
+                                                wire:keydown.escape="cancelRename"
                                             />
-                                            <button wire:click="saveRename({{ $request->id }})" class="rounded-lg bg-gray-900 px-2 py-1.5 text-xs font-semibold text-white">Save</button>
-                                            <button wire:click="cancelRename" class="rounded-lg border border-gray-300 px-2 py-1.5 text-xs font-semibold text-gray-600">Cancel</button>
+                                            <button type="button" wire:click="saveRename({{ $request->id }})" class="netkit-rename-save">Save</button>
+                                            <button type="button" wire:click="cancelRename" class="netkit-rename-cancel">Cancel</button>
                                         </div>
                                     @else
                                         <div class="flex items-center gap-2">
                                             <span>{{ $request->domain ?: '-' }}</span>
-                                            <button wire:click="startRename({{ $request->id }})" class="rounded-lg border border-gray-300 px-2 py-1 text-xs font-semibold text-gray-600">Edit</button>
+                                            <button type="button" wire:click="startRename({{ $request->id }}, '{{ $tableEditKey }}')" class="netkit-image-title-edit" aria-label="Rename image" title="Rename">
+                                                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" />
+                                                </svg>
+                                            </button>
                                         </div>
                                     @endif
                                 </td>
@@ -702,9 +769,14 @@
                 upscaleError: null,
                 upscaling: {},
                 replacementUrls: {},
+                replacementPreviewUrls: {},
 
                 imageUrl(key, fallbackUrl) {
                     return this.replacementUrls[key] || fallbackUrl;
+                },
+
+                imagePreviewUrl(key, fallbackUrl) {
+                    return this.replacementPreviewUrls[key] || fallbackUrl;
                 },
 
                 isUpscaling(key) {
@@ -716,12 +788,25 @@
                     this.previewAlt = alt || 'Generated image';
                 },
 
+                imageLoadFallback(event, fallbackUrl) {
+                    const image = event?.target;
+                    if (!image || !fallbackUrl || image.dataset.fallbackTried === '1') {
+                        if (image) {
+                            image.style.display = 'none';
+                        }
+                        return;
+                    }
+
+                    image.dataset.fallbackTried = '1';
+                    image.src = fallbackUrl;
+                },
+
                 closePreview() {
                     this.previewUrl = null;
                     this.previewAlt = '';
                 },
 
-                async upsizeImage(key, imageUrl, logoRequestId, imageIndex) {
+                async upsizeImage(key, imageUrl, logoRequestId, imageIndex, previewUrl) {
                     if (this.isUpscaling(key)) return;
 
                     this.upscaleError = null;
@@ -753,6 +838,9 @@
                         }
 
                         this.replacementUrls = { ...this.replacementUrls, [key]: data.upscaled_url };
+                        if (previewUrl) {
+                            this.replacementPreviewUrls = { ...this.replacementPreviewUrls, [key]: `${previewUrl}?v=${Date.now()}` };
+                        }
                         if (this.previewUrl === imageUrl) {
                             this.previewUrl = data.upscaled_url;
                         }

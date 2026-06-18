@@ -12,7 +12,8 @@
         "abstract": "navy blue and gold",
         "monoline": "navy blue and gold",
         "negative_space": "navy blue and gold",
-        "tech_gradient": "vibrant cyan to purple gradient"
+        "tech_gradient": "vibrant cyan to purple gradient",
+        "nature_landscape": "forest green, pine green, warm sunrise orange, soft yellow, dark charcoal"
     },
     "default_subject": {
         "icon_only": "logo symbol",
@@ -21,7 +22,7 @@
     },
     "shape_block": "Hard shape constraint: the entire logo is fully enclosed inside a perfect {SHAPE} container. Nothing extends outside the {Shape}.",
     "no_text": {
-        "icon_only": "No text, no letters, no words, no numbers anywhere in the image.",
+        "icon_only": "ICON ONLY. Do not create company names, brand names, taglines, labels, signs, captions, letters, numbers, initials, fake words, or any readable characters.",
         "with_brand": "The ONLY text allowed is exactly \"{brand}\" with correct spelling."
     },
     "icon_only": {
@@ -31,11 +32,12 @@
         "retro": "Retro vintage logo icon for {subject}. Bold retro icon, strong shapes, vintage contrast. Colors: {colors}. Hard edges, flat fills. Background: {bg}. {shape_block} {no_text}",
         "minimalist": "Clean minimal logo icon for {subject}. Single bold shape, generous negative space, flat design. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. No gradients, shadows, or glows. {no_text}",
         "greetingcard": "Hand-painted watercolor logo icon for {subject}. Gentle painted edges, soft color washes. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-        "photorealistic": "Photorealistic photograph of {subject}. Professional studio lighting, sharp focus, crisp detail, natural colors. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+        "photorealistic": "Photorealistic photograph of {subject}. Professional studio lighting, sharp focus, crisp detail, natural colors. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+        "nature_landscape": "Nature logo icon for {subject}. Create an unmistakable outdoor landscape mark with actual trees or forest silhouettes and a visible rising sun on the horizon when requested. Preserve any requested season: winter uses snow, bare branches, frosty ground, and cool whites/blues; spring uses blossoms, new leaves, flowers, and fresh light greens; autumn or fall uses orange, red, and gold leaves with warm earth tones; summer uses lush green foliage and bright warm sun only when summer is requested. Use layered tree forms, trunks, branches, leaves, hills, ground line, and seasonal sun or sky cues. Avoid light bulbs, water droplets, flames, abstract drops, generic recycle symbols, random icons, people, buildings, text, letters, and photorealism. Colors: {colors}. Background: {bg}. {shape_block} Clean flat logo artwork. {no_text}"
     },
     "icon_only_medium": {
         "professional": "A {subject}. Smooth curves. {colors}. Background: {bg}. {shape_block} {no_text}",
-        "fantasy": "High fantasy logo icon for {subject}. Lord of the Rings inspired, ornate. Mythical presence, scrollwork and rune accents, enchanted forest motifs. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+        "fantasy": "Medium-detail fantasy logo icon for {subject}. Clear mythical presence with simplified fantasy shapes, restrained magical accents, readable silhouette, and limited ornament. Avoid dense scrollwork, rune micro-detail, painterly texture, cinematic lighting, and complex scenery. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
         "future": "Futuristic sci-fi logo icon for {subject}. Sleek, high-tech. Neon edge-lighting and layered circuit detail. Colors: {colors}. Background: {bg}. Solid plain background — no space, no galaxies, no starfields. No atmospheric effects. {shape_block} {no_text}",
         "retro": "Bold retro vintage logo icon for {subject}. Screen-print aesthetic, strong outlines, halftone textures. Colors: {colors}. Hard edges, flat fills. Background: {bg}. No photorealism, no gradients. Classic American retro design. {shape_block} {no_text}",
         "minimalist": "Flat minimalist logo icon for {subject}. Bold silhouette, single filled shape — no line-art, thick shapes, smooth curves. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. No gradients, shadows, or glows. {no_text}",
@@ -58,11 +60,12 @@
         "retro": "Retro vintage brand logo for \"{brand}\". Concept: {subject}. Bold retro icon with brand in retro font. Colors: {colors}. Hard edges, flat fills. Background: {bg}. {shape_block} {no_text}",
         "minimalist": "Clean minimal brand logo for \"{brand}\". Concept: {subject}. Single bold shape with clean wordmark. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. {no_text}",
         "greetingcard": "Hand-painted watercolor brand logo for \"{brand}\". Concept: {subject}. Soft watercolor washes with brand in hand-lettered script. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-        "photorealistic": "Photorealistic brand image for \"{brand}\". Concept: {subject}. Professional studio photography with crisp lighting and clean typography. Colors: {colors}. Background: {bg}. {shape_block} {no_text}"
+        "photorealistic": "Photorealistic brand image for \"{brand}\". Concept: {subject}. Professional studio photography with crisp lighting and clean typography. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+        "nature_landscape": "Nature brand logo for \"{brand}\". Concept: {subject}. Create an unmistakable outdoor landscape mark with actual trees or forest silhouettes and a visible rising sun on the horizon when requested. Preserve any requested season: winter uses snow, bare branches, frosty ground, and cool whites/blues; spring uses blossoms, new leaves, flowers, and fresh light greens; autumn or fall uses orange, red, and gold leaves with warm earth tones; summer uses lush green foliage and bright warm sun only when summer is requested. Use layered tree forms, trunks, branches, leaves, hills, ground line, and seasonal sun or sky cues. Avoid light bulbs, water droplets, flames, abstract drops, generic recycle symbols, random icons, people, buildings, and photorealism. Colors: {colors}. Background: {bg}. {shape_block} Clean flat logo artwork. {no_text}"
     },
     "with_brand_medium": {
         "professional": "Polished professional brand logo for \"{brand}\". Concept: {subject}. Refined geometric icon with subtle depth, fine linework, and a clean well-spaced wordmark. Professional premium corporate aesthetic with strong legibility. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
-        "fantasy": "High fantasy brand logo for \"{brand}\". Lord of the Rings inspired, ornate. Concept: {subject}. Mythical presence, scrollwork and rune accents, decorative hand-lettered wordmark. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+        "fantasy": "Medium-detail fantasy brand logo for \"{brand}\". Concept: {subject}. Clear mythical presence with simplified fantasy shapes, restrained magical accents, readable silhouette, limited ornament, and a clean fantasy wordmark. Avoid dense scrollwork, rune micro-detail, painterly texture, cinematic lighting, and complex scenery. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
         "future": "Futuristic sci-fi brand logo for \"{brand}\". Sleek, high-tech. Concept: {subject}. Neon edge-lighting, layered circuit detail, sleek illuminated wordmark. Colors: {colors}. Background: {bg}. Solid plain background — no space, no galaxies, no starfields. No atmospheric effects. {shape_block} {no_text}",
         "retro": "Bold retro vintage brand logo for \"{brand}\". Screen-print aesthetic. Concept: {subject}. Bold retro icon with strong outlines and classic bold wordmark. Colors: {colors}. Hard edges, flat fills. Background: {bg}. No photorealism, no gradients. Classic American retro design. {shape_block} {no_text}",
         "minimalist": "Flat minimalist brand logo for \"{brand}\". Concept: {subject}. Bold silhouette with elegant clean wordmark — no line-art, thick shapes, smooth curves. Color: {colors}. Background: {bg}. {shape_block} Flat fills only. {no_text}",

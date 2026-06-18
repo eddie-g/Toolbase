@@ -54,6 +54,9 @@ class RecraftPromptBuilder
     {
         $subject = trim($subject);
         $subject = preg_replace('/\s+/', ' ', $subject) ?? $subject;
+        $subject = preg_replace('/^(?:generate|create|make|design|draw)\s+(?:a\s+|an\s+|the\s+)?/i', '', $subject) ?? $subject;
+        $subject = preg_replace('/^(?:[\w-]+\s+){0,6}logo\s+(?:for|of|featuring|with)\s+/i', '', $subject) ?? $subject;
+        $subject = preg_replace('/^(?:a\s+|an\s+|the\s+)?(?:minimal\s+|geometric\s+|vector\s+|brand\s+|company\s+|business\s+|commercial\s+)*logo\s+(?:for|of|featuring)\s+/i', '', $subject) ?? $subject;
 
         return rtrim($subject, " \t\n\r\0\x0B.");
     }
@@ -123,7 +126,6 @@ class RecraftPromptBuilder
             $colorDesc = 'AI picks best matching colors';
         }
 
-        // Vector format doesn't use detail levels
         if ($format === 'vector') {
             $modeKey = $mode;
         } else {
@@ -147,13 +149,26 @@ class RecraftPromptBuilder
             'colors'      => $colorDesc,
             'bg'          => $bgDesc,
             'shape_block' => $shapeBlock,
-            'no_text'     => $noText,
+            'no_text'     => ($format === 'vector' && $mode === 'icon_only') ? '' : $noText,
         ]);
+
+        if ($format === 'vector' && $mode === 'icon_only' && $noText !== '') {
+            $prompt = $noText . ' ' . $prompt;
+        }
 
         // Clean up empty background directives
         $prompt = preg_replace('/Background:\s*\./', '', $prompt);
         $prompt = preg_replace('/\s+/', ' ', $prompt); // Normalize whitespace
         $prompt = trim($prompt);
+
+        $detailDirective = match ($logoDetail) {
+            'min' => 'Detail level: low. This overrides ornate, epic, cinematic, or high-detail wording. Keep it flat 2D and logo/icon friendly with simple shapes, bold readable silhouette, clean solid fills, minimal internal detail, minimal paths, no painterly texture, no cinematic lighting, no photorealism, no dense ornament, and no complex background.',
+            'medium' => 'Detail level: medium. This overrides max-detail, epic, cinematic, or ornate wording. Use moderate detail only: simplified shapes, readable forms, controlled lighting, restrained texture, limited ornament, and clear icon/logo structure. Avoid ultra-detailed rendering, cinematic lighting, painterly complexity, dense micro-detail, and complex backgrounds.',
+            default => '',
+        };
+        if ($detailDirective !== '') {
+            $prompt = $detailDirective . ' ' . $prompt;
+        }
 
         // Recraft API hard limit: 1000 characters
         return mb_strlen($prompt) > 1000 ? mb_substr($prompt, 0, 1000) : $prompt;
