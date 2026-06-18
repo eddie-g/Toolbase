@@ -6,13 +6,16 @@
         "monoline": "navy blue and gold",
         "negative_space": "navy blue and gold",
         "tech_gradient": "vibrant cyan to purple gradient",
+        "real_estate_home": "red, deep blue, white, charcoal",
+        "skyline_swoosh": "deep blue, bright cyan, warm orange, charcoal",
         "modern_sans": "navy blue and gold",
         "bold_geometric": "deep charcoal and electric blue",
         "elegant_serif": "midnight blue and muted gold",
         "script_signature": "rich black and warm gold",
         "tech_mono": "slate gray and neon cyan",
         "minimal_light": "soft charcoal and light gray",
-        "evergreen_silhouette": "solid black silhouette on white"
+        "evergreen_silhouette": "solid black silhouette on white",
+        "nature_landscape": "forest green, pine green, warm sunrise orange, soft yellow, dark charcoal"
     },
     "default_subject": {
         "icon_only": "logo symbol",
@@ -21,17 +24,20 @@
     },
     "shape_block": "Keep the mark fully inside a clean {shape} container.",
     "no_text": {
-        "icon_only": "No text, letters, words, or numbers.",
+        "icon_only": "ICON ONLY. Do not create company names, brand names, taglines, labels, signs, captions, letters, numbers, initials, fake words, or any readable characters.",
         "with_brand": "The ONLY text allowed is exactly \"{brand}\" with correct spelling.",
         "text_only": "The ONLY text allowed is exactly \"{brand}\". No icons or symbols."
     },
     "icon_only": {
-        "minimal_geometric": "Minimal geometric vector logo of {subject}. Keep the exact subject and spatial relationship recognizable, with a strong simple silhouette and clean flat shapes. Colors: {colors}. Background: {bg}. {shape_block} Crisp SVG paths. {no_text}",
-        "abstract": "Abstract vector logo of {subject}. Keep the subject recognizable before abstraction; use simple flat planes and a clear silhouette. Colors: {colors}. Background: {bg}. {shape_block} Avoid unrelated marks. Crisp SVG paths. {no_text}",
+        "minimal_geometric": "Minimal geometric vector brand icon for {subject}. Interpret the subject as a polished logo mark, not a literal illustration or scene. Use 2 to 5 large flat geometric shapes, clear silhouette, intentional negative space, balanced symmetry or near-symmetry, and generous whitespace in a centered 1:1 composition. If the subject has multiple elements, merge them into one cohesive symbol using only the most essential forms. Avoid perspective drawing, landscapes, clip art, decorative fragments, tiny details, textures, shadows, gradients, outlines, and clutter. Colors: {colors}. Background: {bg}. {shape_block} Crisp simple SVG paths. {no_text}",
+        "abstract": "Abstract vector brand mark for {subject}. Build a clean multi-part emblem rather than one large literal object. Translate the subject into repeated modular silhouettes and angular planes arranged in foreground, middle, and background tiers. Use thick negative-space separators, diagonal cut lines, a stable horizontal baseline, balanced symmetry or near-symmetry, and small simple geometric cutouts only when they improve recognition. De-emphasize secondary scene elements; make them subtle accents or omit them if they create clutter. Avoid oversized circular backdrops or arcs, perspective scenes, decorative fragments, texture, shadows, gradients, outlines, photorealism, and clutter. Flat solid fills only. Colors: {colors}. Background: {bg}. {shape_block} Crisp SVG paths. {no_text}",
         "monoline": "Monoline vector logo of {subject}. Keep the subject and spatial relationship readable in an elegant continuous-line icon. Colors: {colors}. Background: {bg}. {shape_block} Crisp SVG paths. {no_text}",
         "negative_space": "Negative-space vector logo of {subject}. Keep the subject readable, with one clear hidden-shape idea and minimal flat geometry. Colors: {colors}. Background: {bg}. {shape_block} Crisp SVG paths. {no_text}",
         "tech_gradient": "Modern gradient vector logo of {subject}. Keep the subject recognizable, with smooth geometric shapes and controlled gradient fills. Colors: {colors}. Background: {bg}. {shape_block} Crisp SVG paths. {no_text}",
-        "evergreen_silhouette": "Professional evergreen forest silhouette vector logo of {subject}. Create a polished cluster of conifer, pine, and fir trees with varied heights, sharp readable branch edges, a clean unified black silhouette, and a subtle ground base. Use solid black unless user colors override. Background: {bg}. {shape_block} Premium outdoor brand mark, balanced centered composition, crisp SVG paths, no messy blobs, no photorealism, no texture. {no_text}"
+        "real_estate_home": "Icon-only modern real estate vector symbol for {subject}. Make the subject read immediately as premium property or real estate using simplified building silhouettes, window grids, doors, keys, map pins, land parcel shapes, skyline geometry, or clean property-brand forms. Use crisp angular geometry, confident negative space, balanced horizontal proportions, and generous white space. Prefer deep navy, white, charcoal, and restrained warm accent colors when colors are not fixed. Avoid people, abstract monograms, maze-like geometry, circular emblems, ambiguous symbols, and decorative flowing underline strokes unless the subject specifically asks for them. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+        "skyline_swoosh": "Icon-only modern real estate vector symbol for {subject}. When the subject asks for roofs, sun, or swoosh, use a sleek angular roofline composition with crisp navy planes, small square window cutouts, a restrained warm orange sunburst behind the form, and an optional smooth blue baseline stroke. Keep it airy, premium, horizontally balanced, and SVG-clean. Avoid chunky house clip art, thick cartoon outlines, clutter, text, labels, people, and photorealism. Colors: {colors}. Background: {bg}. {shape_block} {no_text}",
+        "evergreen_silhouette": "Professional evergreen forest silhouette vector logo of {subject}. Create a polished cluster of conifer, pine, and fir trees with varied heights, sharp readable branch edges, a clean unified black silhouette, and a subtle ground base. Use solid black unless user colors override. Background: {bg}. {shape_block} Premium outdoor brand mark, balanced centered composition, crisp SVG paths, no messy blobs, no photorealism, no texture. {no_text}",
+        "nature_landscape": "Icon-only nature vector symbol for {subject}. Create an unmistakable outdoor landscape mark with actual trees or forest silhouettes and a visible rising sun on the horizon when requested. Preserve any requested season: winter snow and cool whites/blues; spring blossoms and fresh greens; autumn/fall orange, red, and gold leaves; summer lush green foliage only when summer is requested. Use layered tree forms, trunks, branches, leaves, hills, ground line, and seasonal sun or sky cues. Avoid light bulbs, water droplets, flames, abstract drops, recycle symbols, random icons, people, buildings, text, letters, and photorealism. Colors: {colors}. Background: {bg}. {shape_block} Clean flat SVG paths. {no_text}"
     },
     "text_only": {
         "modern_sans": "Text-only vector wordmark logo for \"{brand}\" in a modern sans-serif style. Clean letterforms, balanced spacing, contemporary geometry. Colors: {colors}. Background: {bg}. {shape_block} No icons or symbols. Crisp SVG-friendly paths and clean Bezier curves.",

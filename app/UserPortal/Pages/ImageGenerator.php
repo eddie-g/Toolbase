@@ -25,6 +25,7 @@ class ImageGenerator extends Page
     public string $viewMode = 'grid';
     public string $formatFilter = 'all';
     public ?int $editingRequestId = null;
+    public ?string $editingImageKey = null;
     public string $editingName = '';
 
     public function setViewMode(string $mode): void
@@ -38,7 +39,7 @@ class ImageGenerator extends Page
         $this->resetPage();
     }
 
-    public function startRename(int $id): void
+    public function startRename(int $id, ?string $imageKey = null): void
     {
         $record = AiLogoRequest::query()
             ->where('user_id', auth()->id())
@@ -50,12 +51,14 @@ class ImageGenerator extends Page
         }
 
         $this->editingRequestId = (int) $record->id;
+        $this->editingImageKey = $imageKey ?: 'request-' . $record->id;
         $this->editingName = (string) ($record->domain ?? '');
     }
 
     public function cancelRename(): void
     {
         $this->editingRequestId = null;
+        $this->editingImageKey = null;
         $this->editingName = '';
     }
 

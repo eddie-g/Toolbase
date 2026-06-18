@@ -91,7 +91,7 @@ class GenerateDomainJob implements ShouldQueue
                 'document_id'    => null,
                 'user_email'     => $user->email,
                 'request_type'   => 'domain_generation',
-                'model_name'     => $data['response']['model'] ?? 'gemini-2.0-flash',
+                'model_name'     => $data['response']['model'] ?? config('services.gemini.model', 'gemini-2.5-flash-lite'),
                 'input_tokens'   => $inputTokens,
                 'output_tokens'  => $outputTokens,
                 'total_tokens'   => $totalTokens,
@@ -110,13 +110,13 @@ class GenerateDomainJob implements ShouldQueue
             $domainRequest->update([
                 'status'      => 'completed',
                 'response'    => $responseData,
-                'model'       => $data['response']['model'] ?? 'gemini-2.0-flash',
+                'model'       => $data['response']['model'] ?? config('services.gemini.model', 'gemini-2.5-flash-lite'),
                 'usage'       => $usageMetadata ?: null,
                 'result_data' => json_encode([
                     'domains'   => $domains,
                     'results'   => $check['results'],
                     'usage'     => $usageMetadata ?: null,
-                    'model'     => $data['response']['model'] ?? 'gemini-2.0-flash',
+                    'model'     => $data['response']['model'] ?? config('services.gemini.model', 'gemini-2.5-flash-lite'),
                     'error'     => $check['error'],
                 ]),
             ]);

@@ -74,15 +74,6 @@
                         </button>
                     </div>
                     
-                    <button 
-                        @click="showTextPromptPanel = !showTextPromptPanel"
-                        class="hidden lg:flex ml-4 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
-                    >
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
-                        </svg>
-                        <span x-text="showTextPromptPanel ? 'Hide' : 'Edit Text & Prompt'"></span>
-                    </button>
                 </div>
                 
                 <!-- Generation Settings Toggle & Generate Button -->
@@ -93,6 +84,22 @@
                             <span class="px-2 py-0.5 bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400 text-xs font-semibold rounded" x-text="logoCount + ' logo' + (logoCount > 1 ? 's' : '')"></span>
                         </div>
                         <div class="text-lg font-bold text-gray-900 dark:text-white" x-text="'$' + logoPrice.toFixed(2)"></div>
+                    </div>
+                    <div class="flex flex-col items-end gap-1">
+                        <button
+                            type="button"
+                            @click="saveLogoGeneratorSettings()"
+                            :disabled="settingsSaving || !canSaveSettings"
+                            class="px-3 md:px-5 py-2 md:py-3 rounded-lg bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed text-white text-sm md:text-base font-semibold shadow-lg transition-colors whitespace-nowrap"
+                            :title="canSaveSettings ? 'Save these generator settings for next time' : 'Sign in to save generator settings'"
+                        >
+                            <span x-show="!settingsSaving && canSaveSettings" class="hidden sm:inline">Save Settings</span>
+                            <span x-show="!settingsSaving && canSaveSettings" class="sm:hidden">Save</span>
+                            <span x-show="settingsSaving">Saving...</span>
+                            <span x-show="!canSaveSettings">Sign in to Save</span>
+                        </button>
+                        <span x-show="settingsStatus" x-text="settingsStatus" class="hidden xl:block text-xs text-emerald-600 dark:text-emerald-400"></span>
+                        <span x-show="settingsError" x-text="settingsError" class="hidden xl:block text-xs text-red-600 dark:text-red-400"></span>
                     </div>
                     <button 
                         @click="generateLogo()"
@@ -148,7 +155,7 @@
 
                     <!-- PRO Mode Toggle -->
                     <div x-show="!isLunaVectorMode() && !(selectedModel === 'recraft' && outputFormat === 'vector')">
-                        <div class="flex items-center justify-between p-3.5 rounded-xl border-2 transition-all cursor-pointer" :class="proMode ? 'border-amber-400 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'" @click="proMode = !proMode; fetchLogoPrice()">
+                        <div class="flex items-center justify-between p-3.5 rounded-xl border-2 transition-all cursor-pointer" :class="proMode ? 'border-amber-400 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-900/20' : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'" @click="proMode = !proMode; ensureSupportedImageSize(); fetchLogoPrice()">
                             <div class="flex items-center gap-3">
                                 <div class="text-sm font-semibold text-gray-900 dark:text-white" x-text="selectedModel === 'dalle' ? 'HD Quality' : 'PRO Mode'"></div>
                                 <span class="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider" :class="proMode ? 'bg-amber-500 text-white' : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400'" x-text="proMode ? 'ON' : 'OFF'"></span>
@@ -184,6 +191,52 @@
                         </div>
                     </div>
 
+                    <!-- Logo Mode -->
+                    <div class="space-y-3">
+                        <label class="block text-sm font-semibold text-gray-900 dark:text-white">Logo Mode</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <button 
+                                type="button"
+                                @click="logoMode = 'icon_only'; logoDomain = ''; if (outputFormat === 'vector' && isTextStyle(logoStyle)) logoStyle = 'default'; fetchLogoPrice()"
+                                :class="logoMode === 'icon_only' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                class="px-2 py-2.5 border rounded-lg font-medium text-xs transition-colors"
+                            >
+                                Icon Only
+                            </button>
+                            <button 
+                                type="button"
+                                @click="if (workMode !== 'logo') { logoMode = 'icon_text'; fetchLogoPrice(); }"
+                                :disabled="workMode === 'logo'"
+                                :class="[
+                                    logoMode === 'icon_text' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600',
+                                    workMode === 'logo' ? 'opacity-50 cursor-not-allowed' : ''
+                                ]"
+                                class="px-2 py-2.5 border rounded-lg font-medium text-xs transition-colors"
+                            >
+                                Icon + Text
+                            </button>
+                            <button 
+                                type="button"
+                                @click="logoMode = 'text_only'; if (logoStyle !== 'default' && !isTextStyle(logoStyle)) logoStyle = 'modern_sans'; fetchLogoPrice()"
+                                :class="logoMode === 'text_only' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                class="px-2 py-2.5 border rounded-lg font-medium text-xs transition-colors"
+                            >
+                                Text Only
+                            </button>
+                        </div>
+                        <p x-show="workMode === 'logo'" x-transition class="text-xs text-amber-600 dark:text-amber-400">
+                            For vector generation, logo and text should be generated separately to ensure professional quality and positioning control.
+                        </p>
+                        <input 
+                            type="text" 
+                            x-model="logoDomain"
+                            @input="fetchLogoPrice()"
+                            x-show="logoMode !== 'icon_only'"
+                            placeholder="e.g., TechStart, CloudSync, DataFlow, etc."
+                            class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white dark:bg-gray-800 dark:text-white transition-colors"
+                        >
+                    </div>
+
                     <!-- Detail Level -->
                     <div>
                         <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Detail Level</label>
@@ -208,7 +261,7 @@
                             <template x-for="shape in [{id:'',label:'None'},{id:'circle',label:'Circle'},{id:'square',label:'Square'},{id:'hexagon',label:'Hexagon'},{id:'triangle',label:'Triangle'},{id:'pentagon',label:'Pentagon'}]" :key="shape.id">
                                 <button 
                                     type="button"
-                                    @click="shapeContainer = shape.id; fetchLogoPrice()"
+                                    @click="shapeContainer = shape.id; fetchLogoPrice(); saveLogoGeneratorSettings()"
                                     :class="shapeContainer === shape.id ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
                                     class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
                                     x-text="shape.label"
@@ -220,69 +273,6 @@
                 </div>
             </div>
 
-            <!-- Expandable Text & Prompt Panel -->
-            <div x-show="showTextPromptPanel" x-cloak x-transition class="border-t border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-900 px-3 md:px-6 py-6">
-                <div class="max-w-5xl mx-auto space-y-5">
-                    <!-- Logo Text Input with Mode Selection -->
-                    <div class="space-y-3">
-                        <label class="block text-sm font-semibold text-gray-900 dark:text-white">Logo Mode</label>
-                        <div class="grid grid-cols-3 gap-2">
-                            <button 
-                                type="button"
-                                @click="logoMode = 'icon_only'; logoDomain = ''; if (outputFormat === 'vector' && isTextStyle(logoStyle)) logoStyle = 'minimal_geometric'; fetchLogoPrice()"
-                                :class="logoMode === 'icon_only' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
-                                class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
-                            >
-                                Icon Only
-                            </button>
-                            <button 
-                                type="button"
-                                @click="if (workMode !== 'logo') { logoMode = 'icon_text'; fetchLogoPrice(); }"
-                                :disabled="workMode === 'logo'"
-                                :class="[
-                                    logoMode === 'icon_text' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600',
-                                    workMode === 'logo' ? 'opacity-50 cursor-not-allowed' : ''
-                                ]"
-                                class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
-                            >
-                                Icon + Text
-                            </button>
-                            <button 
-                                type="button"
-                                @click="logoMode = 'text_only'; if (!isTextStyle(logoStyle)) logoStyle = 'modern_sans'; fetchLogoPrice()"
-                                :class="logoMode === 'text_only' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
-                                class="px-3 py-2.5 border rounded-lg font-medium text-sm transition-colors"
-                            >
-                                Text Only
-                            </button>
-                        </div>
-                        <p x-show="workMode === 'logo'" x-transition class="text-xs text-amber-600 dark:text-amber-400">
-                            ⚠️ For vector generation, logo and text should be generated separately to ensure professional quality and positioning control.
-                        </p>
-                        <input 
-                            type="text" 
-                            x-model="logoDomain"
-                            @input="fetchLogoPrice()"
-                            x-show="logoMode !== 'icon_only'"
-                            placeholder="e.g., TechStart, CloudSync, DataFlow, etc."
-                            class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white dark:bg-gray-800 dark:text-white transition-colors"
-                        >
-                    </div>
-
-                    <!-- Custom Prompt -->
-                    <div x-show="logoMode !== 'text_only'" x-transition class="space-y-3">
-                        <label class="block text-sm font-semibold text-gray-900 dark:text-white">Custom Prompt (Optional)</label>
-                        <textarea 
-                            x-model="logoPrompt"
-                            @input="fetchLogoPrice()"
-                            rows="4"
-                            placeholder="Describe your logo in detail: style (modern, vintage, minimalist), mood (professional, playful, elegant), imagery (abstract shapes, tech elements, nature), colors, and any specific elements you want..."
-                            class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-y bg-white dark:bg-gray-800 dark:text-white leading-relaxed"
-                        ></textarea>
-                        <p class="text-xs text-gray-500 dark:text-gray-400">💡 Tip: Be specific about style, colors, and elements you want in your logo for best results</p>
-                    </div>
-                </div>
-            </div>
         </div>
 
         <!-- Main Content -->
@@ -299,7 +289,7 @@
                 class="w-80 lg:w-96 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 overflow-y-auto"
                 x-cloak
             >
-                <div class="p-6 space-y-6" x-show="activeTab !== 'editor'">
+                <div class="p-6 space-y-6">
                     <!-- Balance Display -->
                     <div class="bg-gradient-to-r from-violet-50 to-purple-50 border border-violet-200 rounded-lg px-4 py-3 flex items-center justify-between">
                         <span class="text-xs font-medium text-violet-700 uppercase tracking-wider">Balance</span>
@@ -391,6 +381,7 @@
                             <div class="flex-1 min-w-0">
                                 <div class="text-[10px] font-medium text-gray-400 uppercase tracking-wider">Style</div>
                                 <div class="text-sm font-semibold text-gray-900 truncate" x-text="getStyleLabel()"></div>
+                                <div class="mt-0.5 text-xs text-gray-500 truncate" x-text="'Theme: ' + getThemeLabel()"></div>
                             </div>
                             <svg class="w-4 h-4 text-gray-400 group-hover:text-gray-500 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                         </button>
@@ -563,283 +554,27 @@
 
                 </div>
 
-                <!-- Editor Tools Panel -->
-                <div x-show="activeTab === 'editor'" x-cloak class="flex flex-col h-full overflow-y-auto">
-                    <!-- Panel Header -->
-                    <div class="px-5 pt-5 pb-4 border-b border-gray-100 dark:border-gray-800">
-                        <div class="flex items-center gap-2">
-                            <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 flex items-center justify-center">
-                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
-                                </svg>
-                            </div>
-                            <h2 class="text-sm font-bold text-gray-900 dark:text-white tracking-tight">Editor Tools</h2>
-                        </div>
-                    </div>
-
-                    <div class="flex-1 overflow-y-auto px-4 py-5 space-y-6">
-
-                        <!-- Mode Toggle -->
-                        <div>
-                            <p class="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-2">Pointer Mode</p>
-                            <div class="flex rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 p-1 gap-1">
-                                <button
-                                    @click="editMode = false; updateElementInteractivity()"
-                                    :class="!editMode ? 'bg-white dark:bg-gray-700 text-violet-700 dark:text-violet-300 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'"
-                                    class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition-all"
-                                >
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
-                                    </svg>
-                                    Move
-                                </button>
-                                <button
-                                    @click="editMode = true; updateElementInteractivity()"
-                                    :class="editMode ? 'bg-white dark:bg-gray-700 text-violet-700 dark:text-violet-300 shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'"
-                                    class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition-all"
-                                >
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
-                                    </svg>
-                                    Edit
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Primary Tools -->
-                        <div>
-                            <p class="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-2">Add &amp; Manage</p>
-                            <div class="space-y-2">
-                                <!-- Text -->
-                                <button
-                                    @click="openAddTextModal()"
-                                    class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20 border border-orange-100 dark:border-orange-800/40 hover:border-orange-300 dark:hover:border-orange-700 transition-all group"
-                                >
-                                    <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-orange-500 to-amber-500 flex items-center justify-center shadow-sm shadow-orange-500/30 group-hover:scale-105 transition-transform">
-                                        <svg class="w-4.5 h-4.5 text-white" style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
-                                        </svg>
-                                    </div>
-                                    <div class="text-left">
-                                        <div class="text-sm font-semibold text-gray-800 dark:text-gray-100">Add Text</div>
-                                        <div class="text-[11px] text-gray-500 dark:text-gray-400">Insert &amp; style text layers</div>
-                                    </div>
-                                    <svg class="w-4 h-4 ml-auto text-orange-300 group-hover:text-orange-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-                                    </svg>
-                                </button>
-
-                                <!-- Import -->
-                                <button
-                                    @click="showImportModal = true"
-                                    class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-50 to-teal-50 dark:from-emerald-900/20 dark:to-teal-900/20 border border-emerald-100 dark:border-emerald-800/40 hover:border-emerald-300 dark:hover:border-emerald-700 transition-all group"
-                                >
-                                    <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center shadow-sm shadow-emerald-500/30 group-hover:scale-105 transition-transform">
-                                        <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" class="text-white"/>
-                                        </svg>
-                                    </div>
-                                    <div class="text-left">
-                                        <div class="text-sm font-semibold text-gray-800 dark:text-gray-100">Import Vector</div>
-                                        <div class="text-[11px] text-gray-500 dark:text-gray-400">Add SVG from saved logos</div>
-                                    </div>
-                                    <svg class="w-4 h-4 ml-auto text-emerald-300 group-hover:text-emerald-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-                                    </svg>
-                                </button>
-
-                                <!-- Layers -->
-                                <button
-                                    @click="showLayersModal = true"
-                                    class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-indigo-50 to-violet-50 dark:from-indigo-900/20 dark:to-violet-900/20 border border-indigo-100 dark:border-indigo-800/40 hover:border-indigo-300 dark:hover:border-indigo-700 transition-all group"
-                                >
-                                    <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center shadow-sm shadow-indigo-500/30 group-hover:scale-105 transition-transform">
-                                        <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" class="text-white"/>
-                                        </svg>
-                                    </div>
-                                    <div class="text-left">
-                                        <div class="text-sm font-semibold text-gray-800 dark:text-gray-100">Layers</div>
-                                        <div class="text-[11px] text-gray-500 dark:text-gray-400">Manage element order</div>
-                                    </div>
-                                    <svg class="w-4 h-4 ml-auto text-indigo-300 group-hover:text-indigo-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-                                    </svg>
-                                </button>
-
-                                <!-- Shapes -->
-                                <button
-                                    @click="showShapeModal = true"
-                                    class="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-gradient-to-r from-sky-50 to-cyan-50 dark:from-sky-900/20 dark:to-cyan-900/20 border border-sky-100 dark:border-sky-800/40 hover:border-sky-300 dark:hover:border-sky-700 transition-all group"
-                                >
-                                    <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-sky-500 to-cyan-500 flex items-center justify-center shadow-sm shadow-sky-500/30 group-hover:scale-105 transition-transform">
-                                        <svg style="width:18px;height:18px" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h10v10H7zM4 12h3m10 0h3M12 4v3m0 10v3"/>
-                                        </svg>
-                                    </div>
-                                    <div class="text-left">
-                                        <div class="text-sm font-semibold text-gray-800 dark:text-gray-100">Add Shape</div>
-                                        <div class="text-[11px] text-gray-500 dark:text-gray-400">Line, square, circle, star</div>
-                                    </div>
-                                    <svg class="w-4 h-4 ml-auto text-sky-300 group-hover:text-sky-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Canvas Controls -->
-                        <div>
-                            <p class="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-2">Canvas</p>
-                            <div class="space-y-2">
-                                <div class="flex items-center justify-between rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
-                                    <label class="text-xs font-medium text-gray-600 dark:text-gray-400">Size Preset</label>
-                                    <select
-                                        x-model="canvasSize"
-                                        @change="setCanvasSize()"
-                                        class="text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2 py-1.5 focus:ring-2 focus:ring-violet-500"
-                                    >
-                                        <option value="default">Default</option>
-                                        <option value="letter">Letter (8.5×11")</option>
-                                        <option value="business-card">Business Card</option>
-                                    </select>
-                                </div>
-                                <div class="flex items-center justify-between rounded-xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 px-3 py-2">
-                                    <label class="text-xs font-medium text-gray-600 dark:text-gray-400">Zoom</label>
-                                    <div class="flex items-center gap-1">
-                                        <button @click="editorZoom = Math.max(0.25, editorZoom - 0.25)" class="w-7 h-7 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center transition-colors">
-                                            <svg class="w-3.5 h-3.5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M20 12H4"/></svg>
-                                        </button>
-                                        <span class="text-xs font-bold text-gray-700 dark:text-gray-300 min-w-[3rem] text-center" x-text="(editorZoom * 100).toFixed(0) + '%'"></span>
-                                        <button @click="editorZoom = Math.min(4, editorZoom + 0.25)" class="w-7 h-7 rounded-md hover:bg-gray-200 dark:hover:bg-gray-600 flex items-center justify-center transition-colors">
-                                            <svg class="w-3.5 h-3.5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
-                                        </button>
-                                        <button @click="editorZoom = 1" class="ml-1 text-[11px] font-semibold text-violet-600 dark:text-violet-400 hover:text-violet-700 transition-colors">Reset</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Actions -->
-                        <div>
-                            <p class="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-2">Actions</p>
-                            <div class="space-y-2">
-                                <!-- Remove Background -->
-                                <button
-                                    @click="removeSvgBackground()"
-                                    x-show="editorSvgElement"
-                                    class="w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-amber-200 dark:border-amber-800/40 bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 text-sm font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-all"
-                                >
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 7h18M7 7V5a2 2 0 012-2h6a2 2 0 012 2v2m-9 4h8m-9 4h8M6 7l1 13a2 2 0 002 2h6a2 2 0 002-2l1-13"/>
-                                    </svg>
-                                    Remove Background
-                                </button>
-                                <!-- Undo -->
-                                <button
-                                    @click="undoDelete()"
-                                    x-show="undoStack.length > 0"
-                                    class="w-full flex items-center gap-2.5 px-4 py-2.5 rounded-xl border border-blue-200 dark:border-blue-800/40 bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 text-sm font-semibold hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-all"
-                                >
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
-                                    </svg>
-                                    Undo Delete
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Save / Load / Download -->
-                        <div>
-                            <p class="text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500 mb-2">File</p>
-                            <div class="space-y-2">
-                                <button
-                                    @click="downloadEditedSvg()"
-                                    class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-700 hover:to-purple-700 text-white text-sm font-semibold transition-all shadow-sm shadow-violet-500/20"
-                                >
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                                    </svg>
-                                    Download SVG
-                                </button>
-                                <button
-                                    @click="showSaveStateModal = true; loadEditorStates()"
-                                    class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-700 transition-all"
-                                >
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                        <path stroke-linecap="round" stroke-linejoin="round" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
-                                    </svg>
-                                    Save State
-                                </button>
-                                <!-- Load State -->
-                                <div class="relative" x-data="{ openLoadMenu: false }">
-                                    <button
-                                        @click="openLoadMenu = !openLoadMenu; if (openLoadMenu) loadEditorStates()"
-                                        class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 text-sm font-semibold hover:bg-gray-50 dark:hover:bg-gray-700 transition-all"
-                                    >
-                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/>
-                                        </svg>
-                                        Load State
-                                        <svg class="w-3.5 h-3.5 ml-auto transition-transform" :class="openLoadMenu ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/></svg>
-                                    </button>
-                                    <div
-                                        x-show="openLoadMenu"
-                                        @click.away="openLoadMenu = false"
-                                        x-cloak
-                                        class="mt-1 w-full bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden z-50"
-                                    >
-                                        <div class="p-1.5 max-h-48 overflow-y-auto">
-                                            <div x-show="editorStates.length === 0" class="px-3 py-3 text-xs text-gray-500 text-center">No saved states</div>
-                                            <template x-for="state in editorStates" :key="state.id">
-                                                <div class="flex items-center gap-1 p-1.5 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-lg group">
-                                                    <button @click="loadEditorStateById(state.id); openLoadMenu = false" class="flex-1 text-left">
-                                                        <div class="text-xs font-medium text-gray-700 dark:text-gray-300" x-text="state.name"></div>
-                                                        <div class="text-[10px] text-gray-400" x-text="state.created_at"></div>
-                                                    </button>
-                                                    <button @click.stop="deleteEditorStateById(state.id)" class="p-1 rounded text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all">
-                                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                                                    </button>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-                </div>
 
             </div>
 
             <!-- Main Canvas Area -->
             <div class="flex-1 overflow-hidden bg-gray-50 dark:bg-gray-900 flex flex-col">
-                <!-- Tabs -->
-                <div class="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800">
-                    <div class="flex gap-1 p-2">
-                        <button 
-                            @click="activeTab = 'generator'"
-                            :class="activeTab === 'generator' ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
-                            class="px-4 py-2 rounded-lg font-medium text-sm transition-colors"
-                        >
-                            Generator
-                        </button>
-                        <button 
-                            x-show="workMode === 'logo'"
-                            @click="activeTab = 'editor'"
-                            :class="activeTab === 'editor' ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
-                            class="px-4 py-2 rounded-lg font-medium text-sm transition-colors"
-                        >
-                            SVG Editor
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Tab Content -->
+                <!-- Generator Content -->
                 <div class="flex-1 overflow-y-auto">
-                    <!-- Generator Tab -->
-                    <div x-show="activeTab === 'generator'" class="p-8"
+                    <div class="p-8">
+                    <!-- Custom Prompt -->
+                    <div class="mb-6 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
+                        <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-2">Custom Prompt (Optional)</label>
+                        <textarea
+                            x-model="logoPrompt"
+                            @input="fetchLogoPrice()"
+                            rows="4"
+                            placeholder="Describe your logo in detail: style (modern, vintage, minimalist), mood (professional, playful, elegant), imagery (abstract shapes, tech elements, nature), colors, and any specific elements you want..."
+                            class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-y bg-white dark:bg-gray-800 dark:text-white leading-relaxed"
+                        ></textarea>
+                        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Be specific about style, colors, and elements for best results.</p>
+                    </div>
+
                     <!-- Error Display -->
                     <div x-show="error" x-cloak class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
                         <div class="flex items-start gap-3">
@@ -891,7 +626,7 @@
                                     </template>
                                     
                                     <!-- Generated Images -->
-                                    <template x-for="(image, imageIndex) in batch.images" :key="image.editUrl || image.url || imageIndex">
+                                    <template x-for="(image, imageIndex) in batch.images" :key="image.key || image.editUrl || image.url || imageIndex">
                                         <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg transition-shadow">
                                             <!-- Failed Image Placeholder -->
                                             <template x-if="image.failed">
@@ -921,27 +656,21 @@
 
                                             <!-- Actions -->
                                     <div x-show="!image.failed" class="p-4">
-                                        <div class="grid grid-cols-2 gap-2">
+                                        <div class="grid grid-cols-1 gap-2">
                                             <button 
                                                 @click="saveLogo(image.editUrl || image.url)"
                                                 class="px-3 py-2 bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium rounded-lg transition-colors"
                                             >
                                                 Save
                                             </button>
-                                            <button 
-                                                x-show="image.isVector"
-                                                @click="openEditorTab(image.editUrl || image.url)"
-                                                class="px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition-colors"
-                                            >
-                                                Edit
-                                            </button>
                                             <button
                                                 x-show="!image.isVector"
-                                                @click="upscaleGeneratedImage(batchIndex, imageIndex)"
+                                                @click.stop="upscaleGeneratedImage(batchIndex, imageIndex)"
                                                 :disabled="image.upscaling"
                                                 class="px-3 py-2 bg-sky-600 hover:bg-sky-700 disabled:bg-sky-400 disabled:cursor-wait text-white text-sm font-medium rounded-lg transition-colors"
                                                 x-text="image.upscaling ? 'Upsizing...' : 'Upsize ($' + upscalePrice.toFixed(2) + ')'"
                                             ></button>
+                                            <p x-show="image.upscaleError" x-text="image.upscaleError" class="text-xs text-red-600 dark:text-red-400"></p>
                                         </div>
                                     </div>
                                         </div>
@@ -987,330 +716,6 @@
                     </div>
                     </div>
 
-                    <!-- Editor Tab -->
-                    <div x-show="activeTab === 'editor'" class="h-full flex flex-col"
-                         @keydown.window.prevent.+="editorZoom = Math.min(4, editorZoom + 0.25)"
-                         @keydown.window.prevent.-="editorZoom = Math.max(0.25, editorZoom - 0.25)"
-                         @keydown.window.prevent.0="editorZoom = 1"
-                         x-init="$watch('editMode', () => updateElementInteractivity())">
-                        
-                        <!-- Toolbar at Top -->
-                        <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
-                            <div class="flex items-center gap-4 flex-wrap">
-                                <!-- Move/Edit Mode Toggle -->
-                                <div class="flex items-center gap-2 bg-violet-50 dark:bg-violet-900/20 border-2 border-violet-200 dark:border-violet-800 rounded-lg p-1">
-                                    <button
-                                        @click="editMode = false; updateElementInteractivity()"
-                                        :class="!editMode ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-600 dark:text-gray-400'"
-                                        class="px-3 md:px-4 py-2 rounded-md text-sm font-semibold transition-all"
-                                    >
-                                        <div class="flex items-center gap-2">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                                <path stroke-linecap="round" stroke-linejoin="round" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
-                                            </svg>
-                                            <span class="hidden sm:inline">Move</span>
-                                        </div>
-                                    </button>
-                                    <button
-                                        @click="editMode = true; updateElementInteractivity()"
-                                        :class="editMode ? 'bg-white dark:bg-gray-700 shadow-sm' : 'text-gray-600 dark:text-gray-400'"
-                                        class="px-3 md:px-4 py-2 rounded-md text-sm font-semibold transition-all"
-                                    >
-                                        <div class="flex items-center gap-2">
-                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                                <path stroke-linecap="round" stroke-linejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/>
-                                            </svg>
-                                            <span class="hidden sm:inline">Edit</span>
-                                        </div>
-                                    </button>
-                                </div>
-
-                                <!-- Canvas Size Preset (toolbar only) -->
-                                <div class="flex items-center gap-2">
-                                    <label class="text-sm font-medium text-gray-600 dark:text-gray-400">Canvas:</label>
-                                    <select 
-                                        x-model="canvasSize"
-                                        @change="setCanvasSize()"
-                                        class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-sm focus:ring-2 focus:ring-blue-500"
-                                    >
-                                        <option value="default">Default</option>
-                                        <option value="letter">Letter (8.5×11")</option>
-                                        <option value="business-card">Business Card (3.5×2")</option>
-                                    </select>
-                                </div>
-
-                                <!-- Divider -->
-                                <div class="hidden lg:block h-16 w-px bg-gray-300 dark:bg-gray-600"></div>
-
-                                <!-- Zoom Controls -->
-                                <div class="flex items-center gap-2">
-                                    <button 
-                                        @click="editorZoom = Math.max(0.25, editorZoom - 0.25)"
-                                        class="w-10 h-10 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors flex items-center justify-center"
-                                        title="Zoom Out"
-                                    >
-                                        <svg class="w-5 h-5 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7"/>
-                                        </svg>
-                                    </button>
-                                    <span class="text-sm font-semibold text-gray-600 dark:text-gray-400 min-w-[4rem] text-center" x-text="(editorZoom * 100).toFixed(0) + '%'"></span>
-                                    <button 
-                                        @click="editorZoom = Math.min(4, editorZoom + 0.25)"
-                                        class="w-10 h-10 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors flex items-center justify-center"
-                                        title="Zoom In"
-                                    >
-                                        <svg class="w-5 h-5 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7"/>
-                                        </svg>
-                                    </button>
-                                    <button 
-                                        @click="editorZoom = 1"
-                                        class="px-3 py-2 text-sm font-semibold rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 transition-colors"
-                                        title="Reset Zoom"
-                                    >
-                                        Reset
-                                    </button>
-                                </div>
-
-                                <div class="flex-1"></div>
-
-                                <!-- Action Buttons -->
-                                <div class="flex items-center gap-2 flex-wrap">
-                                    <!-- Undo Button -->
-                                    <button 
-                                        @click="undoDelete()"
-                                        x-show="undoStack.length > 0"
-                                        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
-                                        title="Undo Delete (Ctrl+Z)"
-                                    >
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"/>
-                                        </svg>
-                                        Undo
-                                    </button>
-
-                                    <!-- Remove Background Button -->
-                                    <button
-                                        @click="removeSvgBackground()"
-                                        x-show="editorSvgElement"
-                                        class="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
-                                        title="Remove SVG Background"
-                                    >
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 7h18M7 7V5a2 2 0 012-2h6a2 2 0 012 2v2m-9 4h8m-9 4h8M6 7l1 13a2 2 0 002 2h6a2 2 0 002-2l1-13"/>
-                                        </svg>
-                                        Remove BG
-                                    </button>
-
-                                    <!-- Load State Dropdown -->
-                                    <div class="relative" x-data="{ openLoadMenu: false }">
-                                    <button 
-                                        @click="openLoadMenu = !openLoadMenu; if (openLoadMenu) loadEditorStates()"
-                                        class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
-                                        title="Load Saved State"
-                                    >
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10"/>
-                                        </svg>
-                                        Load
-                                    </button>
-                                    
-                                    <div x-show="openLoadMenu" 
-                                         @click.away="openLoadMenu = false"
-                                         x-cloak
-                                         class="absolute right-0 mt-2 w-64 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50">
-                                        <div class="p-2">
-                                            <div x-show="editorStates.length === 0" class="px-3 py-4 text-sm text-gray-500 text-center">
-                                                No saved states
-                                            </div>
-                                            <template x-for="state in editorStates" :key="state.id">
-                                                <div class="flex items-center justify-between group p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg">
-                                                    <button 
-                                                        @click="loadEditorStateById(state.id); openLoadMenu = false"
-                                                        class="flex-1 text-left text-sm font-medium text-gray-700 dark:text-gray-300"
-                                                    >
-                                                        <div x-text="state.name"></div>
-                                                        <div class="text-xs text-gray-500" x-text="state.created_at"></div>
-                                                    </button>
-                                                    <button 
-                                                        @click="deleteEditorStateById(state.id)"
-                                                        class="ml-2 p-1 text-red-600 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                        title="Delete"
-                                                    >
-                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                                        </svg>
-                                                    </button>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                <!-- Save State Button -->
-                                <button 
-                                    @click="showSaveStateModal = true; loadEditorStates()"
-                                    class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
-                                    title="Save Current State"
-                                >
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/>
-                                    </svg>
-                                    Save
-                                </button>
-
-                                <!-- Download Button -->
-                                <button 
-                                    @click="downloadEditedSvg()"
-                                    class="px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white font-semibold rounded-lg transition-colors flex items-center gap-2"
-                                >
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-                                    </svg>
-                                    Download
-                                </button>
-                            </div>
-
-                            <div x-show="editMode && hasSelectedTextElement()" class="w-full mt-3">
-                                <div class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-3">
-                                    <div class="flex items-center justify-between mb-2">
-                                        <p class="text-xs font-bold uppercase tracking-wide text-amber-800">Text Editor</p>
-                                        <p class="text-xs text-amber-700">Click any text layer to edit anytime</p>
-                                    </div>
-                                    <div class="grid grid-cols-1 md:grid-cols-12 gap-2">
-                                        <input
-                                            type="text"
-                                            x-model="selectedTextContent"
-                                            @input="applySelectedTextChanges()"
-                                            placeholder="Edit text"
-                                            class="md:col-span-5 px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm text-gray-900 focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                                        >
-                                        <select
-                                            x-model="selectedTextFontFamily"
-                                            @change="applySelectedTextChanges()"
-                                            class="md:col-span-3 px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm text-gray-900 focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                                        >
-                                            <template x-for="font in textFontOptions" :key="font">
-                                                <option :value="font" x-text="font"></option>
-                                            </template>
-                                        </select>
-                                        <input
-                                            type="number"
-                                            min="8"
-                                            max="300"
-                                            x-model.number="selectedTextFontSize"
-                                            @input="applySelectedTextChanges()"
-                                            class="md:col-span-2 px-3 py-2 rounded-lg border border-amber-300 bg-white text-sm text-gray-900 focus:ring-2 focus:ring-amber-500 focus:border-transparent"
-                                        >
-                                        <div class="md:col-span-2 flex items-center gap-2">
-                                            <button
-                                                type="button"
-                                                @click="toggleSelectedTextBold()"
-                                                class="flex-1 px-3 py-2 rounded-lg border text-sm font-bold transition-colors"
-                                                :class="selectedTextBold ? 'border-amber-500 bg-amber-100 text-amber-800' : 'border-amber-300 bg-white text-gray-700'"
-                                                title="Bold"
-                                            >
-                                                B
-                                            </button>
-                                            <button
-                                                type="button"
-                                                @click="toggleSelectedTextItalic()"
-                                                class="flex-1 px-3 py-2 rounded-lg border text-sm italic transition-colors"
-                                                :class="selectedTextItalic ? 'border-amber-500 bg-amber-100 text-amber-800' : 'border-amber-300 bg-white text-gray-700'"
-                                                title="Italic"
-                                            >
-                                                I
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Canvas Area (Full Screen) -->
-                        <div id="svg-editor-surface" class="flex-1 bg-gray-50 dark:bg-gray-900 overflow-auto relative flex items-center justify-center"
-                             @keydown.delete.window="deleteSelectedElement()"
-                             @keydown.backspace.window="deleteSelectedElement()"
-                             @keydown.ctrl.z.window="undoDelete()"
-                             @keydown.meta.z.window="undoDelete()">
-                            <div
-                                x-show="hoverMenu.visible && selectedElements.length > 0"
-                                x-cloak
-                                data-hover-menu="true"
-                                class="absolute z-30"
-                                :style="`left:${hoverMenu.x}px; top:${hoverMenu.y}px; transform: translate(-50%, -110%);`"
-                            >
-                                <div class="flex items-center gap-1 px-2 py-1.5 rounded-xl border border-gray-200 bg-white/95 shadow-lg backdrop-blur">
-                                    <template x-if="!editMode && !editGroupMode">
-                                        <div class="flex items-center gap-1">
-                                            <button @click.stop="moveElementBackward()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Send Back 1 Layer">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13l-3 3m0 0l-3-3m3 3V8m0 13a9 9 0 110-18 9 9 0 010 18z"/>
-                                                </svg>
-                                            </button>
-                                            <button @click.stop="moveElementForward()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Bring Forward 1 Layer">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 11l3-3m0 0l3 3m-3-3v8m0-13a9 9 0 110 18 9 9 0 010-18z"/>
-                                                </svg>
-                                            </button>
-                                            <button @click.stop="duplicateSelectedLogos()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Duplicate">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h8a2 2 0 012 2v8m-2 0H8a2 2 0 01-2-2V9a2 2 0 012-2zm-3 4V5a2 2 0 012-2h8"/>
-                                                </svg>
-                                            </button>
-                                            <button @click.stop="deleteSelectedElement()" class="p-1.5 text-red-600 hover:bg-red-50 rounded-md" title="Delete">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6"/>
-                                                </svg>
-                                            </button>
-                                        </div>
-                                    </template>
-                                    <template x-if="editMode || editGroupMode">
-                                        <div class="flex items-center gap-1">
-                                            <button x-show="hasSelectedTextElement()" @click.stop="openTextEditorForSelected()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Edit Text">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5h10M11 9h7M11 13h10M11 17h7M5 5v14M5 5l2.5 2.5M5 5L2.5 7.5"/>
-                                                </svg>
-                                            </button>
-                                            <button @click.stop="makeHolesTransparent()" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Make Letter Holes Transparent">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                                                </svg>
-                                            </button>
-                                            <button @click.stop="showColorModal = true" class="p-1.5 text-gray-700 hover:bg-gray-100 rounded-md" title="Change Color">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
-                                                </svg>
-                                            </button>
-                                            <button @click.stop="deleteSelectedElement()" class="p-1.5 text-red-600 hover:bg-red-50 rounded-md" title="Delete">
-                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6"/>
-                                                </svg>
-                                            </button>
-                                        </div>
-                                    </template>
-                                </div>
-                            </div>
-                            <div x-show="editorSvgUrl || editorSvgElement" id="svg-editor-canvas" class="transition-transform duration-200" :style="'transform: scale(' + editorZoom + '); transform-origin: center center;'"></div>
-                            <div x-show="!editorSvgUrl && !editorSvgElement" class="text-center">
-                                <svg class="w-20 h-20 mx-auto text-gray-400 dark:text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                                </svg>
-                                <h3 class="text-lg font-semibold text-gray-700 dark:text-gray-300 mb-2">No Logo Loaded</h3>
-                                <p class="text-gray-500 dark:text-gray-400 mb-4">Click "Import Logo" to select a logo to edit</p>
-                                <button 
-                                    @click="showImportModal = true"
-                                    class="inline-flex items-center px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
-                                >
-                                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
-                                    </svg>
-                                    Import Logo
-                                </button>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </div>
         </div>
@@ -1328,9 +733,32 @@
                     </button>
                 </div>
                 <div class="p-5">
+                    <div class="mb-5 grid grid-cols-2 rounded-lg border border-gray-200 bg-gray-50 p-1">
+                        <button type="button" @click="styleModalTab = 'style'"
+                            class="rounded-md px-3 py-2 text-xs font-bold uppercase tracking-wider transition"
+                            :class="styleModalTab === 'style' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'">
+                            Style
+                        </button>
+                        <button type="button" @click="styleModalTab = 'theme'"
+                            class="rounded-md px-3 py-2 text-xs font-bold uppercase tracking-wider transition"
+                            :class="styleModalTab === 'theme' ? 'bg-white text-violet-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'">
+                            Theme
+                        </button>
+                    </div>
+
                     <!-- DALL-E styles -->
-                    <div x-show="selectedModel === 'dalle'">
+                    <div x-show="styleModalTab === 'style' && selectedModel === 'dalle'">
                         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                            <button type="button" @click="selectStyle('default')"
+                                class="group rounded-xl border-2 p-3 transition-all text-center"
+                                :class="logoStyle === 'default' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                                <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                    <svg class="w-6 h-6" :class="logoStyle === 'default' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4.5 7.5h15m-15 4.5h15m-15 4.5h15"></path></svg>
+                                </div>
+                                <div class="text-xs font-semibold"
+                                    :class="logoStyle === 'default' ? 'text-blue-700' : 'text-gray-600'">Default</div>
+                                <div class="text-[10px] text-gray-400 mt-0.5">No style bias</div>
+                            </button>
                             <button type="button" @click="selectStyle('professional')"
                                 class="group rounded-xl border-2 p-3 transition-all text-center"
                                 :class="logoStyle === 'professional' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
@@ -1391,15 +819,6 @@
                                     :class="logoStyle === 'photorealistic' ? 'text-blue-700' : 'text-gray-600'">Photorealistic</div>
                                 <div class="text-[10px] text-gray-400 mt-0.5">Lifelike & detailed</div>
                             </button>
-                            <button type="button" @click="selectStyle('custom')" x-show="customPromptStyleEnabled"
-                                class="col-span-2 sm:col-span-3 group rounded-xl border-2 p-3 transition-all text-center"
-                                :class="logoStyle === 'custom' ? 'border-purple-500 ring-2 ring-purple-200 bg-purple-50' : 'border-gray-200 hover:border-gray-300'">
-                                <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
-                                    <svg class="w-6 h-6" :class="logoStyle === 'custom' ? 'text-purple-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"></path></svg>
-                                </div>
-                                <div class="text-xs font-semibold" :class="logoStyle === 'custom' ? 'text-purple-700' : 'text-gray-600'">Custom Prompt</div>
-                                <div class="text-[10px] text-gray-400 mt-0.5">Write your own full prompt</div>
-                            </button>
                         </div>
                         <div class="mt-5 mb-4">
                             <div class="w-full h-px bg-gradient-to-r from-transparent via-violet-400/70 to-transparent"></div>
@@ -1444,7 +863,17 @@
                     </div>
 
                     <!-- Flux/Recraft styles -->
-                    <div x-show="selectedModel !== 'dalle'" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div x-show="styleModalTab === 'style' && selectedModel !== 'dalle'" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <button type="button" @click="selectStyle('default')"
+                            class="group rounded-xl border-2 p-3 transition-all text-center"
+                            :class="logoStyle === 'default' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
+                                <svg class="w-6 h-6" :class="logoStyle === 'default' ? 'text-blue-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4.5 7.5h15m-15 4.5h15m-15 4.5h15"></path></svg>
+                            </div>
+                            <div class="text-xs font-semibold"
+                                :class="logoStyle === 'default' ? 'text-blue-700' : 'text-gray-600'">Default</div>
+                            <div class="text-[10px] text-gray-400 mt-0.5">No style bias</div>
+                        </button>
                         <!-- Image styles: shown in raster/image mode -->
                         <button type="button" @click="selectStyle('professional')" x-show="outputFormat !== 'vector'"
                             class="group rounded-xl border-2 p-3 transition-all text-center"
@@ -1592,16 +1021,6 @@
                                 :class="logoStyle === 'tech_gradient' ? 'text-blue-700' : 'text-gray-600'">Tech Gradient</div>
                             <div class="text-[10px] text-gray-400 mt-0.5">Futuristic</div>
                         </button>
-                        <button type="button" @click="selectStyle('evergreen_silhouette')" x-show="selectedModel === 'recraft' && outputFormat === 'vector' && logoMode !== 'text_only'"
-                            class="group rounded-xl border-2 p-3 transition-all text-center"
-                            :class="logoStyle === 'evergreen_silhouette' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
-                            <div class="w-full h-24 mx-auto mb-2 rounded-lg bg-gray-100 overflow-hidden">
-                                <img :src="getVectorSampleUrl('evergreen_silhouette')" alt="Evergreen Silhouette sample" class="style-sample-image w-full h-full object-cover" loading="lazy" />
-                            </div>
-                            <div class="text-xs font-semibold"
-                                :class="logoStyle === 'evergreen_silhouette' ? 'text-blue-700' : 'text-gray-600'">Evergreen Silhouette</div>
-                            <div class="text-[10px] text-gray-400 mt-0.5">Professional trees</div>
-                        </button>
                         <button type="button" @click="selectStyle('modern_sans')" x-show="outputFormat === 'vector' && logoMode === 'text_only'"
                             class="group rounded-xl border-2 p-3 transition-all text-center"
                             :class="logoStyle === 'modern_sans' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
@@ -1656,14 +1075,46 @@
                             <div class="text-xs font-semibold" :class="logoStyle === 'minimal_light' ? 'text-blue-700' : 'text-gray-600'">Minimal Light</div>
                             <div class="text-[10px] text-gray-400 mt-0.5">Thin clean letterforms</div>
                         </button>
-                        <button type="button" @click="selectStyle('custom')" x-show="customPromptStyleEnabled && (outputFormat !== 'vector' || logoMode !== 'text_only')"
-                            class="col-span-2 sm:col-span-3 group rounded-xl border-2 p-3 transition-all text-center"
-                            :class="logoStyle === 'custom' ? 'border-purple-500 ring-2 ring-purple-200 bg-purple-50' : 'border-gray-200 hover:border-gray-300'">
-                            <div class="w-10 h-10 mx-auto mb-2 rounded-lg bg-gray-100 flex items-center justify-center">
-                                <svg class="w-6 h-6" :class="logoStyle === 'custom' ? 'text-purple-600' : 'text-gray-400'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"></path></svg>
+                    </div>
+
+                    <div x-show="styleModalTab === 'theme'" class="space-y-3">
+                        <button type="button" @click="selectTheme('')"
+                            class="w-full rounded-xl border-2 p-4 text-left transition-all"
+                            :class="logoTheme === '' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="text-sm font-semibold" :class="logoTheme === '' ? 'text-blue-700' : 'text-gray-800'">No Theme</div>
+                            <div class="mt-0.5 text-xs text-gray-500">Use only the selected style and description.</div>
+                        </button>
+                        <button type="button" @click="selectTheme('real_estate')"
+                            class="group w-full rounded-xl border-2 p-3 text-left transition-all"
+                            :class="logoTheme === 'real_estate' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="flex gap-3">
+                                <div class="h-20 w-28 flex-shrink-0 rounded-lg bg-gray-100 flex items-center justify-center overflow-hidden">
+                                    <svg class="w-24 h-14" viewBox="0 0 112 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                        <path d="M10 39C31 28 62 57 102 34" stroke="#1d4ed8" stroke-width="8" stroke-linecap="round"/>
+                                        <path d="M14 45C39 37 55 67 94 55" stroke="#38bdf8" stroke-width="4" stroke-linecap="round"/>
+                                        <path d="M30 35L51 13L72 35H61L51 24L41 35H30Z" fill="#1e3a8a"/>
+                                        <path d="M72 32L88 17L104 32H95L88 25L81 32H72Z" fill="#f97316"/>
+                                        <path d="M54 12H61V25H54V12Z" fill="#2563eb"/>
+                                    </svg>
+                                </div>
+                                <div class="min-w-0 py-1">
+                                    <div class="text-sm font-semibold" :class="logoTheme === 'real_estate' ? 'text-blue-700' : 'text-gray-800'">Real Estate</div>
+                                    <div class="mt-1 text-xs text-gray-500">Architectural cues, rooflines, buildings, and clean property-brand geometry.</div>
+                                </div>
                             </div>
-                            <div class="text-xs font-semibold" :class="logoStyle === 'custom' ? 'text-purple-700' : 'text-gray-600'">Custom Prompt</div>
-                            <div class="text-[10px] text-gray-400 mt-0.5">Write your own full prompt</div>
+                        </button>
+                        <button type="button" @click="selectTheme('nature')"
+                            class="group w-full rounded-xl border-2 p-3 text-left transition-all"
+                            :class="logoTheme === 'nature' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="flex gap-3">
+                                <div class="h-20 w-28 flex-shrink-0 rounded-lg bg-gray-100 overflow-hidden">
+                                    <img src="/images/ray_vector_samples/ray_evergreen_silhouette_vector.svg" alt="Nature sample" class="style-sample-image h-full w-full object-cover" loading="lazy" />
+                                </div>
+                                <div class="min-w-0 py-1">
+                                    <div class="text-sm font-semibold" :class="logoTheme === 'nature' ? 'text-blue-700' : 'text-gray-800'">Nature</div>
+                                    <div class="mt-1 text-xs text-gray-500">Outdoor cues, trees, leaves, landforms, and clean organic silhouettes.</div>
+                                </div>
+                            </div>
                         </button>
                     </div>
                 </div>
@@ -1674,536 +1125,6 @@
         <div x-show="zoomImageUrl" x-cloak class="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center z-50 p-4" @click="zoomImageUrl = null">
             <div class="max-w-6xl w-full" @click.stop>
                 <img :src="zoomImageUrl" alt="Zoomed logo" class="w-full h-auto rounded-lg shadow-2xl">
-            </div>
-        </div>
-
-        <!-- Color Editor Modal -->
-        <div x-show="showColorModal" x-cloak x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showColorModal = false" @keydown.escape.window="showColorModal = false"
-            x-effect="if (showColorModal && selectedElements.length > 0) { setTimeout(() => { const colorInput = $el.querySelector('input[type=color]'); if (colorInput) colorInput.click(); }, 150); }">
-            <div class="relative w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl overflow-hidden" @click.stop
-                x-transition:enter="ease-out duration-200" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
-                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Color Editor</h3>
-                    <button @click="showColorModal = false" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                        </svg>
-                    </button>
-                </div>
-                <div class="p-6 space-y-4">
-                    <p class="text-sm text-gray-600 dark:text-gray-400">Enable Edit Mode and select an element to change its color</p>
-                    
-                    <div x-show="selectedElements.length > 0" class="space-y-4">
-                        <div class="flex items-center gap-4 p-4 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                            <div class="relative">
-                                <input 
-                                    type="color" 
-                                    x-model="selectedElementColor"
-                                    @input="updateSelectedElementColor($event.target.value)"
-                                    class="w-24 h-24 rounded-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 shadow-sm"
-                                >
-                            </div>
-                            <div class="flex-1">
-                                <label class="block text-xs text-gray-500 dark:text-gray-400 mb-2">Hex Color</label>
-                                <input 
-                                    type="text" 
-                                    x-model="selectedElementColor"
-                                    @input="updateSelectedElementColor($event.target.value)"
-                                    class="w-full px-4 py-3 text-lg border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono uppercase"
-                                    placeholder="#000000"
-                                >
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <p x-show="selectedElements.length === 0" class="text-center text-sm text-gray-500 dark:text-gray-400 italic py-8">
-                        No element selected
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Text Editor Modal -->
-        <div x-show="showTextModal" x-cloak x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showTextModal = false" @keydown.escape.window="showTextModal = false">
-            <div class="relative w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl overflow-hidden" @click.stop
-                x-transition:enter="ease-out duration-200" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
-                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white" x-text="editingTextElement ? 'Edit Text' : 'Add Text'"></h3>
-                    <button @click="showTextModal = false" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                        </svg>
-                    </button>
-                </div>
-                <div class="p-6 space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Text</label>
-                        <input 
-                            type="text" 
-                            x-model="editorText"
-                            placeholder="Enter text..."
-                            class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                        >
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Font</label>
-                        <select 
-                            x-model="editorFontFamily"
-                            class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                        >
-                            <template x-for="font in textFontOptions" :key="font">
-                                <option :value="font" x-text="font"></option>
-                            </template>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Size</label>
-                        <input 
-                            type="number" 
-                            x-model="editorFontSize"
-                            min="12"
-                            max="200"
-                            class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                        >
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Style</label>
-                        <div class="flex items-center gap-2">
-                            <button
-                                type="button"
-                                @click="editorFontBold = !editorFontBold"
-                                class="flex-1 px-3 py-2 rounded-lg border text-sm font-bold transition-colors"
-                                :class="editorFontBold ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'"
-                            >
-                                Bold
-                            </button>
-                            <button
-                                type="button"
-                                @click="editorFontItalic = !editorFontItalic"
-                                class="flex-1 px-3 py-2 rounded-lg border text-sm italic transition-colors"
-                                :class="editorFontItalic ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300'"
-                            >
-                                Italic
-                            </button>
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Color</label>
-                        <div class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                            <input 
-                                type="color" 
-                                x-model="editorTextColor"
-                                class="w-16 h-16 rounded-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 shadow-sm"
-                            >
-                            <input 
-                                type="text" 
-                                x-model="editorTextColor"
-                                class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono uppercase"
-                                placeholder="#000000"
-                            >
-                        </div>
-                    </div>
-
-                    <label class="flex items-center gap-2" x-show="!editingTextElement">
-                        <input type="checkbox" x-model="editorTextUseVector" class="rounded border-gray-300 text-amber-600 focus:ring-amber-500">
-                        <span class="text-sm text-gray-700 dark:text-gray-300">Use Vector (place as vector layer)</span>
-                    </label>
-
-                    <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
-                        <div class="flex items-center justify-between mb-2">
-                            <p class="text-xs font-bold uppercase tracking-wide text-amber-800">Live Preview</p>
-                            <p class="text-xs text-amber-700" x-text="`${Math.max(8, parseFloat(editorFontSize) || 48)}px · ${editorFontFamily}`"></p>
-                        </div>
-                        <div class="min-h-[96px] rounded-lg border border-amber-200 bg-white px-3 py-2 flex items-center justify-center text-center overflow-hidden">
-                            <span
-                                x-text="editorText && editorText.trim() ? editorText : 'The quick brown fox'"
-                                :style="`font-family:${editorFontFamily}; font-size:${Math.max(8, parseFloat(editorFontSize) || 48)}px; font-weight:${editorFontBold ? '700' : '400'}; font-style:${editorFontItalic ? 'italic' : 'normal'}; color:${editorTextColor || '#000000'}; line-height:1.15;`"
-                            ></span>
-                        </div>
-                    </div>
-
-                    <button 
-                        @click="saveTextModal()"
-                        class="w-full px-4 py-3 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg transition-colors"
-                        x-text="editingTextElement ? 'Apply Text Changes' : 'Add Text to Canvas'"
-                    >
-                    </button>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 text-center" x-text="editingTextElement ? 'Tip: You can reopen this at any time from the text layer.' : 'Tip: Text will be draggable after adding.'"></p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Import Logo Modal -->
-        <div x-show="showImportModal" x-cloak x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" 
-             @click.self="showImportModal = false; replaceTargetElement = null" 
-             @keydown.escape.window="showImportModal = false; replaceTargetElement = null"
-             x-init="$watch('showImportModal', value => { if (value) fetchUserLogos() })">
-            <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-5xl w-full max-h-[85vh] overflow-hidden mx-auto">
-                <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-                    <div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white">Import Logo</h3>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">💡 Click vectors to add them to canvas (modal stays open for multiple imports)</p>
-                    </div>
-                    <button @click="showImportModal = false; replaceTargetElement = null" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                        </svg>
-                    </button>
-                </div>
-
-                <!-- Tabs -->
-                <div class="border-b border-gray-200 dark:border-gray-700">
-                    <div class="flex gap-1 px-4">
-                        <button 
-                            @click="importModalTab = 'session'"
-                            :class="importModalTab === 'session' ? 'border-b-2 border-violet-600 text-violet-600 dark:text-violet-400' : 'text-gray-600 dark:text-gray-400'"
-                            class="px-3 py-2 font-medium text-sm transition-colors"
-                        >
-                            Current Session
-                        </button>
-                        <button 
-                            @click="importModalTab = 'saved'"
-                            :class="importModalTab === 'saved' ? 'border-b-2 border-violet-600 text-violet-600 dark:text-violet-400' : 'text-gray-600 dark:text-gray-400'"
-                            class="px-3 py-2 font-medium text-sm transition-colors"
-                        >
-                            My Saved Logos
-                        </button>
-                    </div>
-                </div>
-
-                <div class="p-4 overflow-y-auto max-h-[calc(85vh-140px)]">
-                    <!-- Current Session Tab -->
-                    <div x-show="importModalTab === 'session'">
-                        <template x-if="logoBatches.length === 0">
-                            <div class="text-center py-12">
-                                <svg class="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-                                </svg>
-                                <p class="text-gray-500 dark:text-gray-400 text-lg">No SVG logos in current session</p>
-                                <p class="text-gray-400 dark:text-gray-500 text-sm mt-2">Generate vector logos to edit them here</p>
-                            </div>
-                        </template>
-
-                        <template x-if="logoBatches.length > 0">
-                            <div class="space-y-4">
-                                <template x-for="(batch, batchIndex) in logoBatches" :key="batch.id">
-                                    <div class="space-y-2" x-show="!batch.loading && batch.images.length > 0">
-                                        <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
-                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                                            </svg>
-                                            <span x-text="new Date(batch.timestamp).toLocaleString()"></span>
-                                        </div>
-
-                                        <div class="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
-                                            <template x-for="(image, imageIndex) in batch.images" :key="image.editUrl || image.url || imageIndex">
-                                                <div 
-                                                    x-show="image.isVector && !image.failed"
-                                                    @click="importLogoToEditor(image.editUrl || image.url)"
-                                                    class="bg-white dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden cursor-pointer hover:border-violet-500 dark:hover:border-violet-400 transition-all hover:shadow-md"
-                                                >
-                                                    <div class="aspect-square bg-gray-50 dark:bg-gray-800 p-1">
-                                                        <img :src="image.displayUrl || image.url" :alt="'Logo ' + (imageIndex + 1)" class="w-full h-full object-contain">
-                                                    </div>
-                                                    <div class="p-1 bg-gray-50 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-600 text-center">
-                                                        <span 
-                                                            class="inline-block w-2 h-2 bg-green-500 rounded-full"
-                                                            title="Vector SVG"
-                                                        >
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                        </div>
-                                    </div>
-                                </template>
-                            </div>
-                        </template>
-                    </div>
-
-                    <!-- My Saved Logos Tab -->
-                    <div x-show="importModalTab === 'saved'">
-                        <template x-if="loadingUserLogos">
-                            <div class="text-center py-12">
-                                <svg class="animate-spin h-12 w-12 mx-auto text-violet-600 mb-4" fill="none" viewBox="0 0 24 24">
-                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                                <p class="text-gray-500 dark:text-gray-400">Loading your logos...</p>
-                            </div>
-                        </template>
-
-                        <template x-if="!loadingUserLogos && userLogos.length === 0">
-                            <div class="text-center py-12">
-                                <svg class="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-                                </svg>
-                                <p class="text-gray-500 dark:text-gray-400 text-lg">No saved SVG logos found</p>
-                                <p class="text-gray-400 dark:text-gray-500 text-sm mt-2">Generate and save vector logos to see them here</p>
-                            </div>
-                        </template>
-
-                        <template x-if="!loadingUserLogos && userLogos.length > 0">
-                            <div class="grid grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2">
-                                <template x-for="logo in userLogos" :key="logo.id + '-' + logo.url">
-                                    <div 
-                                        @click="importLogoToEditor(logo.url)"
-                                        class="bg-white dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 overflow-hidden cursor-pointer hover:border-violet-500 dark:hover:border-violet-400 transition-all hover:shadow-md"
-                                        :title="logo.created || 'Click to import'"
-                                    >
-                                        <div class="aspect-square bg-gray-50 dark:bg-gray-800 p-1">
-                                            <img :src="logo.url" :alt="logo.domain || 'Logo'" class="w-full h-full object-contain">
-                                        </div>
-                                        <div class="p-1 bg-gray-50 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-600">
-                                            <div class="flex items-center justify-between">
-                                                <span 
-                                                    class="inline-block w-2 h-2 bg-green-500 rounded-full"
-                                                    :title="logo.domain || 'Vector SVG'"
-                                                >
-                                                </span>
-                                                <span class="text-[9px] text-gray-500 dark:text-gray-400" x-text="logo.created"></span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </template>
-                            </div>
-                        </template>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Layers Modal -->
-        <div x-show="showLayersModal" x-cloak x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" 
-             @click.self="showLayersModal = false" 
-             @keydown.escape.window="showLayersModal = false">
-            <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full max-h-[85vh] overflow-hidden mx-auto">
-                <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-                    <div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white">Layers</h3>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Manage your canvas elements</p>
-                    </div>
-                    <button @click="showLayersModal = false" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                        </svg>
-                    </button>
-                </div>
-
-                <div class="p-4 overflow-y-auto max-h-[calc(85vh-140px)]">
-                    <template x-if="svgLayers.length === 0">
-                        <div class="text-center py-12">
-                            <svg class="w-16 h-16 mx-auto text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-                            </svg>
-                            <p class="text-gray-500 dark:text-gray-400 text-lg">No layers on canvas</p>
-                            <p class="text-gray-400 dark:text-gray-500 text-sm mt-2">Import vectors or add text to see layers here</p>
-                        </div>
-                    </template>
-
-                    <template x-if="svgLayers.length > 0">
-                        <div class="space-y-2">
-                            <template x-for="(layer, index) in svgLayers" :key="layer.id">
-                                <div 
-                                    class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-700 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-indigo-400 dark:hover:border-indigo-500 transition-colors"
-                                    :class="selectedElements.includes(layer.element) ? 'ring-2 ring-indigo-500' : ''"
-                                >
-                                    <!-- Layer Icon -->
-                                    <svg class="w-5 h-5 text-gray-500 dark:text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
-                                    </svg>
-
-                                    <!-- Layer Name -->
-                                    <div class="flex-1 min-w-0">
-                                        <p class="text-sm font-medium text-gray-900 dark:text-white truncate" x-text="layer.name"></p>
-                                        <p class="text-xs text-gray-500 dark:text-gray-400" x-text="'Layer ' + (index + 1)"></p>
-                                    </div>
-
-                                    <!-- Visibility Toggle -->
-                                    <button 
-                                        @click="toggleLayerVisibility(layer.id)"
-                                        class="p-2 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition"
-                                        :title="layer.element.style.display === 'none' ? 'Show layer' : 'Hide layer'"
-                                    >
-                                        <svg x-show="layer.element.style.display !== 'none'" class="w-5 h-5 text-gray-600 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                                        </svg>
-                                        <svg x-show="layer.element.style.display === 'none'" class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"/>
-                                        </svg>
-                                    </button>
-
-                                    <!-- Select Button -->
-                                    <button 
-                                        @click="selectLayer(layer.id); showLayersModal = false"
-                                        class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg transition"
-                                    >
-                                        Select
-                                    </button>
-
-                                    <!-- Delete Button -->
-                                    <button 
-                                        @click="deleteLayer(layer.id)"
-                                        class="p-2 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-red-600 dark:text-red-400 transition"
-                                        title="Delete layer"
-                                    >
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-                                        </svg>
-                                    </button>
-                                </div>
-                            </template>
-                        </div>
-                    </template>
-                </div>
-
-                <div class="p-4 border-t border-gray-200 dark:border-gray-700">
-                    <p class="text-xs text-gray-500 dark:text-gray-400 text-center">💡 Click Select to highlight and edit a layer</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Shape Modal -->
-        <div x-show="showShapeModal" x-cloak x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showShapeModal = false" @keydown.escape.window="showShapeModal = false">
-            <div class="relative w-full max-w-md bg-white dark:bg-gray-800 rounded-2xl shadow-2xl overflow-hidden" @click.stop
-                x-transition:enter="ease-out duration-200" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
-                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Add Vector Shape</h3>
-                    <button @click="showShapeModal = false" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                        </svg>
-                    </button>
-                </div>
-                <div class="p-6 space-y-4">
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Shape</label>
-                        <select x-model="editorShapeType" class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                            <option value="line">Line</option>
-                            <option value="rectangle">Rectangle</option>
-                            <option value="circle">Circle</option>
-                            <option value="triangle">Triangle</option>
-                            <option value="star">Star</option>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Size</label>
-                        <input type="number" x-model.number="editorShapeSize" min="20" max="400" class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Fill</label>
-                        <div class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                            <input type="color" x-model="editorShapeFill" class="w-12 h-12 rounded-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 shadow-sm">
-                            <input type="text" x-model="editorShapeFill" class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono uppercase" placeholder="#3B82F6">
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Stroke</label>
-                        <div class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-                            <input type="color" x-model="editorShapeStroke" class="w-12 h-12 rounded-lg cursor-pointer border-2 border-gray-300 dark:border-gray-600 shadow-sm">
-                            <input type="text" x-model="editorShapeStroke" class="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono uppercase" placeholder="#1F2937">
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Stroke Width</label>
-                        <input type="number" x-model.number="editorShapeStrokeWidth" min="0" max="20" step="0.5" class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                    </div>
-
-                    <button @click="addShapeToSvg(); showShapeModal = false" class="w-full px-4 py-3 bg-sky-600 hover:bg-sky-700 text-white font-semibold rounded-lg transition-colors">
-                        Add Shape to Canvas
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Save State Modal -->
-        <div x-show="showSaveStateModal" x-cloak x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" 
-             @click.self="showSaveStateModal = false; selectedStateToOverwrite = null; saveStateName = ''" 
-             @keydown.escape.window="showSaveStateModal = false; selectedStateToOverwrite = null; saveStateName = ''">
-            <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full mx-auto">
-                <div class="p-6 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-                    <div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white">Save Current State</h3>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Give your work a memorable name (max 3 saves)</p>
-                    </div>
-                    <button @click="showSaveStateModal = false; selectedStateToOverwrite = null; saveStateName = ''" class="p-1 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                        </svg>
-                    </button>
-                </div>
-
-                <div class="p-6">
-                    <div class="mb-4">
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">State Name</label>
-                        <input 
-                            type="text" 
-                            x-model="saveStateName"
-                            @keydown.enter="saveEditorState()"
-                            placeholder="e.g., Logo Draft v1"
-                            maxlength="100"
-                            :disabled="selectedStateToOverwrite !== null"
-                            class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                        <p class="text-xs text-gray-500 mt-1" x-show="!selectedStateToOverwrite">Enter a new name or select an existing state below to overwrite</p>
-                        <p class="text-xs text-emerald-600 dark:text-emerald-400 mt-1" x-show="selectedStateToOverwrite">
-                            Overwriting: <span x-text="selectedStateToOverwrite?.name"></span>
-                            <button @click="selectedStateToOverwrite = null; saveStateName = ''" class="ml-2 text-blue-600 hover:text-blue-700 underline">Clear</button>
-                        </p>
-                    </div>
-
-                    <div x-show="editorStates.length > 0" class="mb-4">
-                        <p class="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Select existing state to overwrite (<span x-text="editorStates.length"></span>/3):</p>
-                        <div class="space-y-2">
-                            <template x-for="state in editorStates" :key="state.id">
-                                <button
-                                    @click="selectedStateToOverwrite = state; saveStateName = state.name"
-                                    :class="selectedStateToOverwrite?.id === state.id ? 'bg-emerald-100 dark:bg-emerald-900 border-emerald-500' : 'bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600'"
-                                    class="w-full text-left px-3 py-2 rounded-lg border-2 transition-colors"
-                                >
-                                    <div class="flex items-center justify-between">
-                                        <div>
-                                            <div class="text-sm font-medium text-gray-900 dark:text-white" x-text="state.name"></div>
-                                            <div class="text-xs text-gray-500 dark:text-gray-400" x-text="state.created_at"></div>
-                                        </div>
-                                        <svg x-show="selectedStateToOverwrite?.id === state.id" class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                                        </svg>
-                                    </div>
-                                </button>
-                            </template>
-                        </div>
-                    </div>
-
-                    <div class="flex gap-3">
-                        <button 
-                            @click="showSaveStateModal = false; selectedStateToOverwrite = null; saveStateName = ''"
-                            class="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-900 dark:text-white font-semibold rounded-lg transition-colors"
-                        >
-                            Cancel
-                        </button>
-                        <button 
-                            @click="saveEditorState()"
-                            :disabled="!saveStateName || saveStateName.trim() === ''"
-                            :class="(!saveStateName || saveStateName.trim() === '') ? 'opacity-50 cursor-not-allowed' : (selectedStateToOverwrite ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700')"
-                            class="flex-1 px-4 py-2 text-white font-semibold rounded-lg transition-colors flex items-center justify-center gap-2"
-                        >
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                            </svg>
-                            <span x-text="selectedStateToOverwrite ? 'Overwrite State' : 'Save State'"></span>
-                        </button>
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -2219,17 +1140,18 @@
                 logoCount: 2,
                 logoDomain: '',
                 logoPrompt: '',
-                logoStyle: 'minimal_geometric',
+                logoStyle: 'default',
+                logoTheme: '',
                 logoColorPalette: 'none',
-                showTextPromptPanel: false,
                 showGenerationSettings: false,
                 showLeftPanel: true,
                 logoMode: 'icon_only',
+                styleModalTab: 'style',
                 
                 // Tab state
                 activeTab: 'generator',
                 
-                // SVG Editor state
+                // Legacy vector state retained for generated SVG processing.
                 editorSvgUrl: null,
                 editorSvgElement: null,
                 selectedElements: [],
@@ -2314,13 +1236,19 @@
 
                 // Palette management
                 canManagePalettes: @js((bool) $logoUser),
-                customPromptStyleEnabled: @js((bool) config('services.logo_custom_prompt_enabled')),
                 savedPalettes: [],
                 savedPaletteName: '',
                 paletteSaving: false,
                 paletteLoading: false,
                 paletteError: null,
                 paletteSuccess: null,
+
+                // Persistent generator settings
+                canSaveSettings: @js((bool) $logoUser),
+                savedLogoSettings: @js($logoGeneratorSettings ?? []),
+                settingsSaving: false,
+                settingsStatus: null,
+                settingsError: null,
 
                 // Available options
                 colorPalettes: [
@@ -2344,14 +1272,128 @@
                         .slice(0, 5);
                 },
 
-                init() {
-                    if (!this.customPromptStyleEnabled && this.logoStyle === 'custom') {
-                        this.logoStyle = this.outputFormat === 'raster' ? 'professional' : 'minimal_geometric';
+                currentLogoGeneratorSettings() {
+                    return {
+                        selected_model: this.selectedModel,
+                        logo_count: Number(this.logoCount) || 2,
+                        logo_domain: this.logoDomain || '',
+                        logo_prompt: this.logoPrompt || '',
+                        logo_style: this.logoStyle || 'default',
+                        logo_theme: this.logoTheme || '',
+                        logo_color_palette: this.logoColorPalette || 'none',
+                        logo_custom_colors: this.normalizePaletteColors(this.logoCustomColors),
+                        background_color: this.backgroundColor || 'white',
+                        background_custom_color: this.normalizeHexColor(this.backgroundCustomColor, '#4F46E5'),
+                        logo_mode: this.logoMode || 'icon_only',
+                        pro_mode: Boolean(this.proMode),
+                        pro_size: parseInt(this.proSize || '512', 10),
+                        detail_level: this.detailLevel || 'medium',
+                        shape_container: this.shapeContainer || '',
+                        work_mode: this.workMode || 'logo',
+                        output_format: this.outputFormat || 'vector',
+                        image_format: this.imageFormat || 'png',
+                        gen_mode: this.genMode || 'logo',
+                        image_size: this.imageSize || '1:1',
+                    };
+                },
+
+                applyLogoGeneratorSettings(settings, options = {}) {
+                    if (!settings || typeof settings !== 'object' || Object.keys(settings).length === 0) {
+                        return;
                     }
+
+                    this.selectedModel = ['flux', 'recraft', 'dalle'].includes(settings.selected_model) ? settings.selected_model : this.selectedModel;
+                    this.logoCount = Math.max(1, Math.min(4, parseInt(settings.logo_count || this.logoCount, 10) || this.logoCount));
+                    this.logoDomain = String(settings.logo_domain || '');
+                    this.logoPrompt = String(settings.logo_prompt || '');
+                    this.logoStyle = String(settings.logo_style || 'default');
+                    this.logoTheme = ['real_estate', 'nature'].includes(settings.logo_theme) ? settings.logo_theme : '';
+                    this.logoColorPalette = String(settings.logo_color_palette || 'none');
+
+                    const colors = this.normalizePaletteColors(settings.logo_custom_colors || []);
+                    if (colors.length >= 2) {
+                        this.logoCustomColors = colors;
+                    }
+
+                    const background = String(settings.background_color || 'white');
+                    this.backgroundColor = background;
+                    this.backgroundCustomColor = this.normalizeHexColor(settings.background_custom_color || (background.startsWith('#') ? background : '#4F46E5'), '#4F46E5');
+                    this.logoMode = ['icon_only', 'icon_text', 'text_only'].includes(settings.logo_mode) ? settings.logo_mode : 'icon_only';
+                    this.proMode = Boolean(settings.pro_mode);
+
+                    const proSize = parseInt(settings.pro_size, 10);
+                    this.proSize = String([512, 1024, 1536].includes(proSize) ? proSize : 512);
+                    this.detailLevel = ['min', 'medium', 'max'].includes(settings.detail_level) ? settings.detail_level : 'medium';
+                    this.shapeContainer = ['circle', 'square', 'hexagon', 'triangle', 'pentagon'].includes(settings.shape_container) ? settings.shape_container : '';
+                    this.workMode = ['logo', 'image'].includes(settings.work_mode) ? settings.work_mode : 'logo';
+                    this.outputFormat = ['raster', 'vector'].includes(settings.output_format) ? settings.output_format : 'vector';
+                    this.imageFormat = ['png', 'bmp'].includes(settings.image_format) ? settings.image_format : 'png';
+                    this.genMode = ['logo', 'image'].includes(settings.gen_mode) ? settings.gen_mode : 'logo';
+                    this.imageSize = ['1:1', '16:9', '9:16'].includes(settings.image_size) ? settings.image_size : '1:1';
+
+                    if (this.workMode === 'logo') {
+                        this.outputFormat = 'vector';
+                        this.genMode = 'logo';
+                        if (this.selectedModel === 'dalle') {
+                            this.selectedModel = 'recraft';
+                        }
+                        if (this.logoMode === 'icon_text') {
+                            this.logoMode = 'icon_only';
+                        }
+                    }
+
+                    if (this.selectedModel === 'dalle' && this.imageFormat !== 'png') {
+                        this.imageFormat = 'png';
+                    }
+
+                    this.enforceLunaVectorDefaults();
+                    if (options.fetch !== false) {
+                        this.fetchLogoPrice();
+                    }
+                },
+
+                async saveLogoGeneratorSettings() {
+                    if (!this.canSaveSettings || this.settingsSaving) {
+                        return;
+                    }
+
+                    this.settingsSaving = true;
+                    this.settingsStatus = null;
+                    this.settingsError = null;
+
+                    try {
+                        const response = await fetch('/domain-search/logo-generator-settings', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({ settings: this.currentLogoGeneratorSettings() }),
+                        });
+                        const data = await response.json().catch(() => ({}));
+
+                        if (!response.ok) {
+                            this.settingsError = data.error || data.message || 'Failed to save settings.';
+                            return;
+                        }
+
+                        this.savedLogoSettings = data.settings || this.currentLogoGeneratorSettings();
+                        this.settingsStatus = 'Settings saved.';
+                    } catch (e) {
+                        this.settingsError = 'Network error saving settings.';
+                    } finally {
+                        this.settingsSaving = false;
+                    }
+                },
+
+                init() {
+                    this.applyLogoGeneratorSettings(this.savedLogoSettings, { fetch: false });
                     if (String(this.backgroundColor || '').startsWith('#')) {
                         this.backgroundCustomColor = this.normalizeHexColor(this.backgroundColor, '#4F46E5');
                     }
                     this.enforceLunaVectorDefaults();
+                    this.ensureSupportedImageSize();
 
                     // Delay initial price fetch to ensure everything is loaded
                     this.$nextTick(() => {
@@ -2362,7 +1404,7 @@
 
                 selectModel(model) {
                     this.selectedModel = model;
-                    if (model !== 'recraft' && this.logoStyle === 'evergreen_silhouette') {
+                    if (['skyline_swoosh', 'evergreen_silhouette'].includes(this.logoStyle)) {
                         this.logoStyle = this.outputFormat === 'vector' ? 'minimal_geometric' : 'professional';
                     }
                     // Set default pro mode based on model
@@ -2372,12 +1414,14 @@
                         this.proMode = true;
                     }
                     this.enforceLunaVectorDefaults();
+                    this.ensureSupportedImageSize();
                     this.fetchLogoPrice();
                 },
 
                 switchToImageMode() {
                     this.workMode = 'image';
                     this.outputFormat = 'raster';
+                    this.ensureSupportedImageSize();
 
                     if (this.selectedModel === 'dalle' && this.imageFormat !== 'png') {
                         this.imageFormat = 'png';
@@ -2387,12 +1431,8 @@
                         this.activeTab = 'generator';
                     }
 
-                    const vectorStyles = ['minimal_geometric', 'abstract', 'monoline', 'negative_space', 'tech_gradient', 'evergreen_silhouette', 'modern_sans', 'bold_geometric', 'elegant_serif', 'script_signature', 'tech_mono', 'minimal_light'];
+                    const vectorStyles = ['minimal_geometric', 'abstract', 'monoline', 'negative_space', 'tech_gradient', 'skyline_swoosh', 'evergreen_silhouette', 'modern_sans', 'bold_geometric', 'elegant_serif', 'script_signature', 'tech_mono', 'minimal_light'];
                     if (vectorStyles.includes(this.logoStyle)) {
-                        this.logoStyle = 'professional';
-                    }
-
-                    if (!this.customPromptStyleEnabled && this.logoStyle === 'custom') {
                         this.logoStyle = 'professional';
                     }
 
@@ -2415,18 +1455,15 @@
                     const rasterStyles = ['professional', 'fantasy', 'future', 'retro', 'minimalist', 'greetingcard', 'photorealistic'];
                     const textStyles = ['modern_sans', 'bold_geometric', 'elegant_serif', 'script_signature', 'tech_mono', 'minimal_light'];
                     if (this.logoMode === 'text_only') {
-                        if (!textStyles.includes(this.logoStyle)) {
+                        if (this.logoStyle !== 'default' && !textStyles.includes(this.logoStyle)) {
                             this.logoStyle = 'modern_sans';
                         }
-                    } else if (rasterStyles.includes(this.logoStyle) || textStyles.includes(this.logoStyle)) {
-                        this.logoStyle = 'minimal_geometric';
-                    }
-
-                    if (!this.customPromptStyleEnabled && this.logoStyle === 'custom') {
+                    } else if (this.logoStyle !== 'default' && (rasterStyles.includes(this.logoStyle) || textStyles.includes(this.logoStyle))) {
                         this.logoStyle = 'minimal_geometric';
                     }
 
                     this.enforceLunaVectorDefaults();
+                    this.ensureSupportedImageSize();
                     this.fetchLogoPrice();
                 },
 
@@ -2487,6 +1524,12 @@
                 },
 
                 imageSizeOptions() {
+                    if (this.selectedModel === 'recraft' && this.outputFormat === 'raster' && this.getEffectiveProSettings().pro) {
+                        return [
+                            { id: '1:1', label: 'Square' },
+                        ];
+                    }
+
                     return [
                         { id: '1:1', label: 'Square' },
                         { id: '16:9', label: 'Landscape' },
@@ -2494,10 +1537,28 @@
                     ];
                 },
 
+                ensureSupportedImageSize() {
+                    const supported = this.imageSizeOptions().map(option => option.id);
+                    if (!supported.includes(this.imageSize)) {
+                        this.imageSize = '1:1';
+                    }
+                },
+
                 imageSizeResolutionLabel() {
-                    if (this.imageSize === '16:9') return this.selectedModel === 'dalle' ? '1536x1024' : (this.selectedModel === 'recraft' ? '1820x1024' : '16:9');
-                    if (this.imageSize === '9:16') return this.selectedModel === 'dalle' ? '1024x1536' : (this.selectedModel === 'recraft' ? '1024x1820' : '9:16');
-                    return this.selectedModel === 'dalle' ? '1024x1024' : (this.selectedModel === 'recraft' ? '1024x1024' : '1:1');
+                    if (this.selectedModel === 'dalle') {
+                        if (this.imageSize === '16:9') return '1536x1024';
+                        if (this.imageSize === '9:16') return '1024x1536';
+                        return '1024x1024';
+                    }
+
+                    if (this.selectedModel === 'recraft') {
+                        const isRayPro = Boolean(this.getEffectiveProSettings().pro);
+                        if (this.imageSize === '16:9') return '1344x768';
+                        if (this.imageSize === '9:16') return '768x1344';
+                        return '1024x1024';
+                    }
+
+                    return this.imageSize;
                 },
 
                 getSelectedPaletteColors() {
@@ -2701,10 +1762,14 @@
                 },
 
                 getStyleLabel() {
-                    const labels = { chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', greetingcard: 'Watercolor', photorealistic: 'Photorealistic', minimal_geometric: 'Minimal Geometric', abstract: 'Abstract', monoline: 'Monoline', negative_space: 'Negative Space', tech_gradient: 'Tech Gradient', evergreen_silhouette: 'Evergreen Silhouette', modern_sans: 'Modern Sans', bold_geometric: 'Bold Geometric', elegant_serif: 'Elegant Serif', script_signature: 'Script Signature', tech_mono: 'Tech Mono', minimal_light: 'Minimal Light', custom: 'Custom Prompt' };
+                    const labels = { default: 'Default', chrome: 'Chrome', professional: 'Professional', fantasy: 'Fantasy', future: 'Future', retro: 'Retro', '8bit': '8-Bit', dotmatrix: 'Dot Matrix', greetingcard: 'Watercolor', photorealistic: 'Photorealistic', minimal_geometric: 'Minimal Geometric', abstract: 'Abstract', monoline: 'Monoline', negative_space: 'Negative Space', tech_gradient: 'Tech Gradient', skyline_swoosh: 'Skyline Swoosh', evergreen_silhouette: 'Evergreen Silhouette', modern_sans: 'Modern Sans', bold_geometric: 'Bold Geometric', elegant_serif: 'Elegant Serif', script_signature: 'Script Signature', tech_mono: 'Tech Mono', minimal_light: 'Minimal Light' };
                     if (labels[this.logoStyle]) return labels[this.logoStyle];
-                    if (this.outputFormat === 'vector' && this.logoMode === 'text_only') return 'Modern Sans';
-                    return this.outputFormat === 'vector' ? 'Minimal Geometric' : 'Professional';
+                    return 'Default';
+                },
+
+                getThemeLabel() {
+                    const labels = { real_estate: 'Real Estate', nature: 'Nature' };
+                    return labels[this.logoTheme] || 'None';
                 },
 
                 selectStyle(style) {
@@ -2713,8 +1778,15 @@
                     this.fetchLogoPrice();
                 },
 
+                selectTheme(theme) {
+                    this.logoTheme = theme;
+                    this.showStyleModal = false;
+                    this.fetchLogoPrice();
+                },
+
                 async fetchLogoPrice() {
                     try {
+                        this.ensureSupportedImageSize();
                         const proSettings = this.getEffectiveProSettings();
 
                         // Ensure CSRF token is available
@@ -2806,12 +1878,12 @@
 
                     const sourceUrl = image.displayUrl || image.editUrl || image.url;
                     if (!sourceUrl) {
-                        this.error = 'No image URL is available to upscale.';
+                        this.updateGeneratedImage(batchIndex, imageIndex, { upscaleError: 'No image URL is available to upscale.' });
                         return;
                     }
 
                     this.error = null;
-                    this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: true });
+                    this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: true, upscaleError: null });
                     const abortController = new AbortController();
                     const timeoutHandle = window.setTimeout(() => abortController.abort(), 180000);
 
@@ -2826,17 +1898,20 @@
                             body: JSON.stringify({
                                 image_url: sourceUrl,
                                 upscale_factor: 2,
+                                logo_request_id: image.logoRequestId || null,
+                                image_index: Number.isInteger(image.imageIndex) ? image.imageIndex : imageIndex,
                             }),
                             signal: abortController.signal,
                         });
 
                         const data = await response.json().catch(() => ({ error: 'Server returned invalid response.' }));
                         if (!response.ok) {
-                            this.error = data.error || 'Upsize failed.';
+                            const message = data.error || 'Upsize failed.';
+                            this.error = message;
                             if (data.credit_balance !== undefined) {
                                 this.creditBalance = parseFloat(data.credit_balance);
                             }
-                            this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: false });
+                            this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: false, upscaleError: message });
                             return;
                         }
 
@@ -2848,6 +1923,7 @@
                             upscaledUrl: data.upscaled_url,
                             originalUrl: sourceUrl,
                             upscaling: false,
+                            upscaleError: null,
                             metadata: {
                                 ...(image.metadata || batch.metadata || {}),
                                 resolution,
@@ -2859,10 +1935,11 @@
                             this.creditBalance = parseFloat(data.credit_balance);
                         }
                     } catch (err) {
-                        this.error = err.name === 'AbortError'
+                        const message = err.name === 'AbortError'
                             ? 'Upsize is taking longer than expected. Please try again in a moment.'
                             : (err.message || 'Upsize failed.');
-                        this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: false });
+                        this.error = message;
+                        this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: false, upscaleError: message });
                     } finally {
                         window.clearTimeout(timeoutHandle);
                         this.updateGeneratedImage(batchIndex, imageIndex, { upscaling: false });
@@ -2870,6 +1947,7 @@
                 },
 
                 async generateLogo() {
+                    this.ensureSupportedImageSize();
                     const proSettings = this.getEffectiveProSettings();
 
                     // Validate based on mode
@@ -2916,7 +1994,7 @@
                         modelId: this.selectedModel,
                         resolution: isImageContentBatch ? this.imageSizeResolutionLabel() : (isRayVector ? 'SVG 1:1' : (proSettings.pro && this.selectedModel === 'flux' ? `${proSettings.proSize}x${proSettings.proSize}` : (this.selectedModel === 'dalle' ? '1024x1024' : '512x512'))),
                         price: (this.logoPrice / this.logoCount).toFixed(4),
-                        style: this.logoStyle
+                        style: this.logoTheme ? this.getThemeLabel() : this.logoStyle
                     };
                     
                     this.logoBatches.unshift({
@@ -2929,84 +2007,70 @@
                     });
 
                     try {
-                        // Step 1: Queue all logo generation jobs
+                        // Step 1: Queue one generation job for the full requested count.
                         const totalCount = this.logoCount;
                         const pendingJobs = [];
+                        const isImageContent = this.workMode === 'image' && this.genMode === 'image';
+                        const payload = {
+                            domain: (this.logoMode === 'icon_text' || this.logoMode === 'text_only') ? this.logoDomain : null,
+                            custom_prompt: this.logoPrompt || '',
+                            style: this.logoStyle,
+                            logo_theme: this.logoTheme || null,
+                            count: totalCount,
+                            total_count: totalCount,
+                            batch_index: 0,
+                            pro: proSettings.pro,
+                            pro_size: proSettings.proSize,
+                            icon_only: isImageContent ? false : this.logoMode === 'icon_only',
+                            text_only: isImageContent ? false : this.logoMode === 'text_only',
+                            bg_color: this.backgroundColor,
+                            image_model: this.selectedModel,
+                            output_format: this.outputFormat,
+                            image_format: this.outputFormat === 'raster' && this.selectedModel === 'dalle' ? this.imageFormat : null,
+                            color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
+                            logo_shape: this.shapeContainer || 'none',
+                            logo_detail: this.detailLevel || 'medium',
+                            gen_mode: isImageContent ? 'image' : 'logo',
+                            image_size: isImageContent ? this.imageSize : null
+                        };
 
-                        for (let i = 0; i < totalCount; i++) {
-                            const isImageContent = this.workMode === 'image' && this.genMode === 'image';
-                            const payload = {
-                                domain: (this.logoMode === 'icon_text' || this.logoMode === 'text_only') ? this.logoDomain : null,
-                                custom_prompt: this.logoPrompt || '',
-                                style: this.logoStyle,
-                                count: 1,
-                                total_count: totalCount,
-                                batch_index: i,
-                                pro: proSettings.pro,
-                                pro_size: proSettings.proSize,
-                                icon_only: isImageContent ? false : this.logoMode === 'icon_only',
-                                text_only: isImageContent ? false : this.logoMode === 'text_only',
-                                bg_color: this.backgroundColor,
-                                image_model: this.selectedModel,
-                                output_format: this.outputFormat,
-                                image_format: this.outputFormat === 'raster' && this.selectedModel === 'dalle' ? this.imageFormat : null,
-                                color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
-                                logo_shape: isImageContent ? null : (this.shapeContainer || 'none'),
-                                logo_detail: this.detailLevel || 'medium',
-                                gen_mode: isImageContent ? 'image' : 'logo',
-                                image_size: isImageContent ? this.imageSize : null
-                            };
+                        const response = await fetch('/domain-search/generate-logo', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
+                            },
+                            body: JSON.stringify(payload)
+                        });
 
-                            const response = await fetch('/domain-search/generate-logo', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''
-                                },
-                                body: JSON.stringify(payload)
-                            });
-
-                            if (!response.ok) {
-                                const data = await response.json().catch(() => ({ error: 'Server error' }));
-                                this.error = data.error || 'Failed to queue logo generation';
-	                                if (data.credit_balance !== undefined) {
-	                                    this.creditBalance = parseFloat(data.credit_balance);
-	                                }
-	                                if (response.status === 402) {
-	                                    this.logoBatches = this.logoBatches.filter(batch => batch.id !== batchId);
-	                                    this.generating = false;
-	                                    return;
-	                                }
-	                                continue;
-	                            }
-
-                            const data = await response.json().catch(() => {
-                                console.error('Failed to parse generation response as JSON');
-                                return null;
-                            });
-                            
-                            if (!data) {
-                                this.error = 'Server returned invalid response';
-                                continue;
-                            }
-
-                            if (data.logo_request_id) {
-                                pendingJobs.push(data.logo_request_id);
-                            }
-
+                        if (!response.ok) {
+                            const data = await response.json().catch(() => ({ error: 'Server error' }));
+                            this.error = data.error || 'Failed to queue logo generation';
                             if (data.credit_balance !== undefined) {
                                 this.creditBalance = parseFloat(data.credit_balance);
                             }
+                            this.logoBatches = this.logoBatches.filter(batch => batch.id !== batchId);
+                            this.generating = false;
+                            return;
                         }
 
-	                        if (pendingJobs.length === 0) {
-	                            if (!this.error) {
-	                                this.error = 'Failed to queue logo generation. Please try again.';
-	                            }
-	                            this.logoBatches = this.logoBatches.filter(batch => batch.id !== batchId);
-	                            this.generating = false;
-	                            return;
-	                        }
+                        const data = await response.json().catch(() => {
+                            console.error('Failed to parse generation response as JSON');
+                            return null;
+                        });
+
+                        if (!data || !data.logo_request_id) {
+                            this.error = 'Server returned invalid response';
+                            this.logoBatches = this.logoBatches.filter(batch => batch.id !== batchId);
+                            this.generating = false;
+                            return;
+                        }
+
+                        pendingJobs.push(data.logo_request_id);
+
+                        if (data.credit_balance !== undefined) {
+                            this.creditBalance = parseFloat(data.credit_balance);
+                        }
 
                         // Step 2: Poll for completion
                         const completedJobs = new Set();
@@ -3044,13 +2108,16 @@
 
                                         const batchIdx = this.logoBatches.findIndex(b => b.id === batchId);
                                         const existingBatch = batchIdx !== -1 ? this.logoBatches[batchIdx] : null;
-                                        const newImages = (statusData.images || []).map(img => {
+                                        const newImages = (statusData.images || []).map((img, resultIndex) => {
                                             const displayUrl = this.displayUrlForGeneratedImage(img);
                                             const editUrl = this.editUrlForGeneratedImage(img);
                                             return {
+                                                key: `${jobId}-${resultIndex}`,
                                                 url: displayUrl,
                                                 displayUrl,
                                                 editUrl,
+                                                logoRequestId: jobId,
+                                                imageIndex: resultIndex,
                                                 seed: statusData.seed || null,
                                                 isVector: this.outputFormat === 'vector',
                                                 metadata: existingBatch?.metadata || {}
@@ -3078,6 +2145,7 @@
                                             this.logoBatches[batchIdx] = {
                                                 ...this.logoBatches[batchIdx],
                                                 images: [...this.logoBatches[batchIdx].images, {
+                                                    key: `${jobId}-failed`,
                                                     url: null,
                                                     failed: true,
                                                     error: statusData.error || 'Generation failed',
@@ -3335,140 +2403,8 @@
                     this.zoomImageUrl = url;
                 },
 
-                async openEditorTab(url) {
-                    console.log('openEditorTab called with URL:', url);
-                    this.editorSvgUrl = url;
-                    this.activeTab = 'editor';
-                    this.selectedElements = [];
-                    this.hideHoverMenu();
-                    this.replaceTargetElement = null;
-                    this.editorZoom = 1;
-                    this.svgLayers = [];
-                    
-                    // Wait for DOM to update
-                    await this.$nextTick();
-                    
-                    try {
-                        console.log('Fetching SVG from URL...');
-                        const response = await fetch(url);
-                        const svgText = await response.text();
-                        console.log('SVG fetched successfully, length:', svgText.length);
-                        
-                        const parser = new DOMParser();
-                        const doc = parser.parseFromString(svgText, 'image/svg+xml');
-                        this.editorSvgElement = doc.querySelector('svg');
-                        console.log('SVG element parsed:', !!this.editorSvgElement);
-                        
-                        if (this.editorSvgElement) {
-                            // Make SVG responsive
-                            if (!this.editorSvgElement.getAttribute('viewBox')) {
-                                const width = this.editorSvgElement.getAttribute('width') || 512;
-                                const height = this.editorSvgElement.getAttribute('height') || 512;
-                                this.editorSvgElement.setAttribute('viewBox', `0 0 ${width} ${height}`);
-                            }
-                            
-                            // Remove white backgrounds for transparent display
-                            const viewBox = this.editorSvgElement.getAttribute('viewBox').split(' ');
-                            this.removeWhiteBackgrounds(this.editorSvgElement, viewBox);
-                            
-                            this.editorSvgElement.setAttribute('width', '1200');
-                            this.editorSvgElement.setAttribute('height', '1200');
-                            this.editorSvgElement.style.minWidth = '1200px';
-                            this.editorSvgElement.style.minHeight = '1200px';
-                            this.editorSvgElement.style.maxWidth = 'none';
-                            this.editorSvgElement.style.maxHeight = 'none';
-                            
-                            // Wrap original SVG content in a draggable group
-                            const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-                            group.setAttribute('id', 'original-svg-' + Date.now());
-                            group.setAttribute('data-layer-name', 'Original Logo');
-                            
-                            // Store original dimensions for scaling reference
-                            const originalViewBox = this.editorSvgElement.getAttribute('viewBox').split(' ');
-                            group.setAttribute('data-original-width', originalViewBox[2]);
-                            group.setAttribute('data-original-height', originalViewBox[3]);
-                            const sourceWidth = parseFloat(originalViewBox[2]) || 512;
-                            const sourceHeight = parseFloat(originalViewBox[3]) || 512;
-                            
-                            // Move all children from SVG to group
-                            while (this.editorSvgElement.firstChild) {
-                                group.appendChild(this.editorSvgElement.firstChild);
-                            }
-                            
-                            // Add group back to SVG
-                            this.editorSvgElement.appendChild(group);
-
-                            // Expand default workspace so small source SVGs are not boxed into tiny canvases.
-                            if (this.canvasSize === 'default') {
-                                const minWorkspace = 1200;
-                                const workspaceWidth = Math.max(sourceWidth, minWorkspace);
-                                const workspaceHeight = Math.max(sourceHeight, minWorkspace);
-                                const offsetX = (workspaceWidth - sourceWidth) / 2;
-                                const offsetY = (workspaceHeight - sourceHeight) / 2;
-
-                                this.editorSvgElement.setAttribute('viewBox', `0 0 ${workspaceWidth} ${workspaceHeight}`);
-                                group.setAttribute('transform', `translate(${offsetX}, ${offsetY}) scale(1)`);
-                            }
-                            
-                            // Insert into canvas
-                            const canvas = document.getElementById('svg-editor-canvas');
-                            canvas.innerHTML = '';
-                            canvas.appendChild(this.editorSvgElement);
-                            
-                            // Add workspace background when WHITE or a custom color is selected.
-                            const editorBgFill = this.getEditorBackgroundFill();
-                            if (editorBgFill) {
-                                const currentViewBox = this.editorSvgElement.getAttribute('viewBox').split(' ');
-                                const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                                bgRect.setAttribute('x', currentViewBox[0]);
-                                bgRect.setAttribute('y', currentViewBox[1]);
-                                bgRect.setAttribute('width', currentViewBox[2]);
-                                bgRect.setAttribute('height', currentViewBox[3]);
-                                bgRect.setAttribute('fill', editorBgFill);
-                                bgRect.setAttribute('data-editor-bg', 'true');
-                                bgRect.style.pointerEvents = 'none';
-                                this.editorSvgElement.insertBefore(bgRect, this.editorSvgElement.firstChild);
-                            }
-                            
-                            // Create selection rectangle for marquee selection
-                            this.selectionRectElement = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                            this.selectionRectElement.setAttribute('class', 'selection-box');
-                            this.selectionRectElement.setAttribute('fill', 'rgba(59, 130, 246, 0.2)');
-                            this.selectionRectElement.setAttribute('stroke', '#3b82f6');
-                            this.selectionRectElement.setAttribute('stroke-width', '3');
-                            this.selectionRectElement.setAttribute('stroke-dasharray', '8,4');
-                            this.selectionRectElement.style.display = 'none';
-                            this.selectionRectElement.style.pointerEvents = 'none';
-                            this.editorSvgElement.appendChild(this.selectionRectElement);
-                            
-                            // Add mousedown handler for marquee selection
-                            this.editorSvgElement.addEventListener('mousedown', (e) => {
-                                // Only start marquee on background click (not on elements)
-                                if (e.target === this.editorSvgElement || e.target === this.selectionRectElement) {
-                                    this.startMarqueeSelection(e);
-                                }
-                            });
-                            
-                            // Make the original group draggable
-                            this.makeGroupDraggable(group);
-                            
-                            // Apply canvas size if non-default preset is selected
-                            if (this.canvasSize !== 'default') {
-                                this.setCanvasSize();
-                            }
-                            
-                            // Switch to move mode and clear undo stack when opening editor
-                            this.editMode = false;
-                            this.undoStack = [];
-                            
-                            // Make elements clickable if in edit mode
-                            this.updateElementInteractivity();
-                            this.updateLayers();
-                        }
-                    } catch (error) {
-                        console.error('Failed to load SVG:', error);
-                        alert('Failed to load SVG');
-                    }
+                async openEditorTab() {
+                    return false;
                 },
 
                 setCanvasSize() {
@@ -3783,7 +2719,7 @@
                         return;
                     }
 
-                    const surfaceRect = document.getElementById('svg-editor-surface')?.getBoundingClientRect();
+                    const surfaceRect = null;
                     if (!surfaceRect) {
                         this.hideHoverMenu();
                         return;
@@ -5038,222 +3974,20 @@
                     }
                 },
 
-                async saveEditorState() {
-                    if (!this.saveStateName || this.saveStateName.trim() === '') {
-                        alert('Please enter a name for the state');
-                        return;
-                    }
-
-                    if (!this.editorSvgElement) {
-                        alert('No SVG content to save');
-                        return;
-                    }
-
-                    try {
-                        // Clone SVG and remove UI elements
-                        const svgClone = this.editorSvgElement.cloneNode(true);
-                        const resizeBoxes = svgClone.querySelectorAll('.resize-box');
-                        resizeBoxes.forEach(box => box.remove());
-                        const selectionBoxes = svgClone.querySelectorAll('.selection-box');
-                        selectionBoxes.forEach(box => box.remove());
-
-                        const serializer = new XMLSerializer();
-                        const svgContent = serializer.serializeToString(svgClone);
-
-                        const payload = {
-                            name: this.saveStateName,
-                            svg_content: svgContent,
-                            layers_data: this.svgLayers.map(l => ({ name: l.name, visible: l.visible })),
-                            canvas_size: this.canvasSize
-                        };
-
-                        // If overwriting, use PUT to update existing state
-                        const url = this.selectedStateToOverwrite 
-                            ? `/domain-search/editor-state/${this.selectedStateToOverwrite.id}`
-                            : '/domain-search/editor-state';
-                        const method = this.selectedStateToOverwrite ? 'PUT' : 'POST';
-
-                        const response = await fetch(url, {
-                            method: method,
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                            },
-                            body: JSON.stringify(payload)
-                        });
-
-                        const data = await response.json();
-
-                        if (data.success) {
-                            this.showSaveStateModal = false;
-                            this.saveStateName = '';
-                            this.selectedStateToOverwrite = null;
-                            await this.loadEditorStates();
-                            alert(method === 'PUT' ? 'State updated successfully!' : 'State saved successfully!');
-                        } else {
-                            alert('Failed to save state: ' + (data.error || 'Unknown error'));
-                        }
-                    } catch (error) {
-                        console.error('Save error:', error);
-                        alert('Failed to save state');
-                    }
+                saveEditorState() {
+                    return false;
                 },
 
-                async loadEditorStates() {
-                    try {
-                        const response = await fetch('/domain-search/editor-states', {
-                            headers: {
-                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                            }
-                        });
-
-                        const data = await response.json();
-
-                        if (data.success) {
-                            this.editorStates = data.states;
-                        }
-                    } catch (error) {
-                        console.error('Load states error:', error);
-                    }
+                loadEditorStates() {
+                    this.editorStates = [];
                 },
 
-                async loadEditorStateById(stateId) {
-                    console.log('loadEditorStateById called with ID:', stateId);
-                    try {
-                        // Switch to editor tab if not already there
-                        console.log('Current tab:', this.activeTab);
-                        if (this.activeTab !== 'editor') {
-                            console.log('Switching to editor tab...');
-                            this.activeTab = 'editor';
-                        }
-                        
-                        console.log('Fetching state from server...');
-                        const response = await fetch(`/domain-search/editor-state/${stateId}`, {
-                            headers: {
-                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                            }
-                        });
-
-                        console.log('Response status:', response.status);
-                        const data = await response.json();
-                        console.log('Response data:', data);
-
-                        if (data.success) {
-                            console.log('Load state successful, processing...');
-                            const state = data.state;
-                            console.log('State name:', state.name);
-                            console.log('SVG content length:', state.svg_content?.length);
-                            
-                            // Parse SVG content
-                            const parser = new DOMParser();
-                            const doc = parser.parseFromString(state.svg_content, 'image/svg+xml');
-                            const svgElement = doc.querySelector('svg');
-                            console.log('SVG element parsed:', !!svgElement);
-
-                            if (!svgElement) {
-                                console.error('No SVG element found in parsed content');
-                                alert('Invalid SVG data in saved state');
-                                return;
-                            }
-
-                            // Clear current editor
-                            console.log('Clearing current editor state...');
-                            this.selectedElements = [];
-                            this.hideHoverMenu();
-                            this.replaceTargetElement = null;
-                            this.editorZoom = 1;
-                            this.svgLayers = [];
-                            this.canvasSize = state.canvas_size || 'default';
-
-                            // Load SVG into editor
-                            console.log('Loading SVG into editor...');
-                            this.editorSvgElement = svgElement;
-                            
-                            const canvas = document.getElementById('svg-editor-canvas');
-                            console.log('Canvas element found:', !!canvas);
-                            canvas.innerHTML = '';
-                            canvas.appendChild(this.editorSvgElement);
-                            console.log('SVG appended to canvas');
-
-                            // Add workspace background when WHITE or a custom color is selected.
-                            const editorBgFill = this.getEditorBackgroundFill();
-                            if (editorBgFill) {
-                                const viewBox = this.editorSvgElement.getAttribute('viewBox').split(' ');
-                                const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                                bgRect.setAttribute('x', viewBox[0]);
-                                bgRect.setAttribute('y', viewBox[1]);
-                                bgRect.setAttribute('width', viewBox[2]);
-                                bgRect.setAttribute('height', viewBox[3]);
-                                bgRect.setAttribute('fill', editorBgFill);
-                                bgRect.setAttribute('data-editor-bg', 'true');
-                                bgRect.style.pointerEvents = 'none';
-                                this.editorSvgElement.insertBefore(bgRect, this.editorSvgElement.firstChild);
-                            }
-
-                            // Create selection rectangle for marquee selection
-                            this.selectionRectElement = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-                            this.selectionRectElement.setAttribute('class', 'selection-box');
-                            this.selectionRectElement.setAttribute('fill', 'rgba(59, 130, 246, 0.2)');
-                            this.selectionRectElement.setAttribute('stroke', '#3b82f6');
-                            this.selectionRectElement.setAttribute('stroke-width', '3');
-                            this.selectionRectElement.setAttribute('stroke-dasharray', '8,4');
-                            this.selectionRectElement.style.display = 'none';
-                            this.selectionRectElement.style.pointerEvents = 'none';
-                            this.editorSvgElement.appendChild(this.selectionRectElement);
-
-                            // Add mousedown handler for marquee selection
-                            this.editorSvgElement.addEventListener('mousedown', (e) => {
-                                if (e.target === this.editorSvgElement || e.target === this.selectionRectElement) {
-                                    this.startMarqueeSelection(e);
-                                }
-                            });
-
-                            // Make groups draggable
-                            console.log('Making groups draggable...');
-                            const groups = this.editorSvgElement.querySelectorAll('g[id^="original-svg-"], g[id^="imported-"]');
-                            console.log('Found groups:', groups.length);
-                            groups.forEach(g => this.makeGroupDraggable(g));
-
-                            // Update interactivity
-                            console.log('Updating interactivity and layers...');
-                            this.updateElementInteractivity();
-                            this.updateLayers();
-                            console.log('Load complete!');
-
-                            alert(`Loaded state: ${state.name}`);
-                        } else {
-                            alert('Failed to load state: ' + (data.error || 'Unknown error'));
-                        }
-                    } catch (error) {
-                        console.error('Load state error:', error);
-                        alert('Failed to load state');
-                    }
+                loadEditorStateById() {
+                    return false;
                 },
 
-                async deleteEditorStateById(stateId) {
-                    if (!confirm('Are you sure you want to delete this saved state?')) {
-                        return;
-                    }
-
-                    try {
-                        const response = await fetch(`/domain-search/editor-state/${stateId}`, {
-                            method: 'DELETE',
-                            headers: {
-                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
-                            }
-                        });
-
-                        const data = await response.json();
-
-                        if (data.success) {
-                            await this.loadEditorStates();
-                        } else {
-                            alert('Failed to delete state: ' + (data.error || 'Unknown error'));
-                        }
-                    } catch (error) {
-                        console.error('Delete state error:', error);
-                        alert('Failed to delete state');
-                    }
+                deleteEditorStateById() {
+                    return false;
                 },
 
                 importLogoToEditor(url) {

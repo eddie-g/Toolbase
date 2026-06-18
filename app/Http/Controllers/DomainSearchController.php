@@ -8,6 +8,7 @@ use App\Models\AiLogoRequest;
 use App\Models\Admin;
 use App\Models\SavedDomain;
 use App\Models\SavedLogoPalette;
+use App\Models\LogoGeneratorSetting;
 use App\Models\VectorEditorState;
 use App\Models\AiLogoPrice;
 use App\Models\AiPriceLog;
@@ -126,7 +127,14 @@ class DomainSearchController extends Controller
     public function logoGenerator2(Request $request)
     {
         $user = $request->user();
-        return view('logo-generator-2', ['logoUser' => $user]);
+        $settings = $user && Schema::hasTable('logo_generator_settings')
+            ? $this->logoGeneratorSettingsForUser($user)
+            : [];
+
+        return view('logo-generator-2', [
+            'logoUser' => $user,
+            'logoGeneratorSettings' => $settings,
+        ]);
     }
 
     public function check(Request $request)
@@ -401,6 +409,162 @@ class DomainSearchController extends Controller
         return response()->json([
             'deleted' => true,
         ]);
+    }
+
+    public function getLogoGeneratorSettings(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+        if (!Schema::hasTable('logo_generator_settings')) {
+            return response()->json(['error' => 'Logo generator settings table is missing. Run migrations first.'], 503);
+        }
+
+        return response()->json([
+            'settings' => $this->logoGeneratorSettingsForUser($user),
+        ]);
+    }
+
+    public function saveLogoGeneratorSettings(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+        if (!Schema::hasTable('logo_generator_settings')) {
+            return response()->json(['error' => 'Logo generator settings table is missing. Run migrations first.'], 503);
+        }
+
+        $validated = $request->validate([
+            'settings' => 'required|array',
+            'settings.selected_model' => 'required|string|in:flux,recraft,dalle',
+            'settings.logo_count' => 'required|integer|min:1|max:4',
+            'settings.logo_domain' => 'nullable|string|max:100',
+            'settings.logo_prompt' => 'nullable|string|max:2000',
+            'settings.logo_style' => 'required|string|in:' . $this->allowedLogoStylesForValidation(),
+            'settings.logo_theme' => 'nullable|string|in:real_estate,nature',
+            'settings.logo_color_palette' => 'required|string|max:60',
+            'settings.logo_custom_colors' => 'nullable|array|min:2|max:5',
+            'settings.logo_custom_colors.*' => ['required', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'settings.background_color' => 'required|string|max:20',
+            'settings.background_custom_color' => ['nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'settings.logo_mode' => 'required|string|in:icon_only,icon_text,text_only',
+            'settings.pro_mode' => 'required|boolean',
+            'settings.pro_size' => 'required|integer|in:512,1024,1536',
+            'settings.detail_level' => 'required|string|in:min,medium,max',
+            'settings.shape_container' => 'nullable|string|in:circle,square,hexagon,triangle,pentagon',
+            'settings.work_mode' => 'required|string|in:logo,image',
+            'settings.output_format' => 'required|string|in:raster,vector',
+            'settings.image_format' => 'required|string|in:png,bmp',
+            'settings.gen_mode' => 'required|string|in:logo,image',
+            'settings.image_size' => 'required|string|in:1:1,16:9,9:16',
+        ]);
+
+        $settings = $this->sanitizeLogoGeneratorSettings($validated['settings']);
+
+        $query = LogoGeneratorSetting::query();
+        $attrs = ['settings' => $settings];
+
+        if ($this->isAdmin($user)) {
+            $query->where('admin_id', $user->id);
+            $attrs['admin_id'] = $user->id;
+            $attrs['user_id'] = null;
+        } else {
+            $query->where('user_id', $user->id);
+            $attrs['user_id'] = $user->id;
+            $attrs['admin_id'] = null;
+        }
+
+        $record = $query->first();
+        if ($record) {
+            $record->fill($attrs)->save();
+        } else {
+            LogoGeneratorSetting::create($attrs);
+        }
+
+        return response()->json([
+            'saved' => true,
+            'settings' => $settings,
+        ]);
+    }
+
+    private function logoGeneratorSettingsForUser(object $user): array
+    {
+        $query = LogoGeneratorSetting::query();
+        if ($this->isAdmin($user)) {
+            $query->where('admin_id', $user->id);
+        } else {
+            $query->where('user_id', $user->id);
+        }
+
+        $record = $query->first();
+        if (!$record) {
+            return [];
+        }
+
+        return $this->sanitizeLogoGeneratorSettings((array) ($record->settings ?? []));
+    }
+
+    private function sanitizeLogoGeneratorSettings(array $settings): array
+    {
+        $allowedStyles = explode(',', $this->allowedLogoStylesForValidation());
+        $style = in_array(($settings['logo_style'] ?? 'default'), $allowedStyles, true)
+            ? (string) $settings['logo_style']
+            : 'default';
+
+        $theme = in_array(($settings['logo_theme'] ?? ''), ['real_estate', 'nature'], true)
+            ? (string) $settings['logo_theme']
+            : '';
+
+        $backgroundColor = (string) ($settings['background_color'] ?? 'white');
+        if (!in_array($backgroundColor, ['white', 'none', 'black'], true) && !preg_match('/^#[0-9a-fA-F]{6}$/', $backgroundColor)) {
+            $backgroundColor = 'white';
+        }
+
+        $customColors = collect($settings['logo_custom_colors'] ?? [])
+            ->map(fn ($color) => strtoupper(trim((string) $color)))
+            ->filter(fn ($color) => preg_match('/^#[0-9A-F]{6}$/', $color))
+            ->values()
+            ->take(5)
+            ->all();
+        if (count($customColors) < 2) {
+            $customColors = ['#1E3A5F', '#D4AF37', '#333333'];
+        }
+
+        $shape = (string) ($settings['shape_container'] ?? '');
+        if (!in_array($shape, ['', 'circle', 'square', 'hexagon', 'triangle', 'pentagon'], true)) {
+            $shape = '';
+        }
+
+        $backgroundColor = preg_match('/^#[0-9a-fA-F]{6}$/', $backgroundColor)
+            ? strtoupper($backgroundColor)
+            : strtolower($backgroundColor);
+
+        return [
+            'selected_model' => in_array(($settings['selected_model'] ?? 'flux'), ['flux', 'recraft', 'dalle'], true) ? (string) $settings['selected_model'] : 'flux',
+            'logo_count' => max(1, min(4, (int) ($settings['logo_count'] ?? 2))),
+            'logo_domain' => mb_substr(trim((string) ($settings['logo_domain'] ?? '')), 0, 100),
+            'logo_prompt' => mb_substr(trim((string) ($settings['logo_prompt'] ?? '')), 0, 2000),
+            'logo_style' => $style,
+            'logo_theme' => $theme,
+            'logo_color_palette' => mb_substr(trim((string) ($settings['logo_color_palette'] ?? 'none')), 0, 60) ?: 'none',
+            'logo_custom_colors' => $customColors,
+            'background_color' => $backgroundColor,
+            'background_custom_color' => preg_match('/^#[0-9a-fA-F]{6}$/', (string) ($settings['background_custom_color'] ?? ''))
+                ? strtoupper((string) $settings['background_custom_color'])
+                : '#4F46E5',
+            'logo_mode' => in_array(($settings['logo_mode'] ?? 'icon_only'), ['icon_only', 'icon_text', 'text_only'], true) ? (string) $settings['logo_mode'] : 'icon_only',
+            'pro_mode' => (bool) ($settings['pro_mode'] ?? true),
+            'pro_size' => in_array((int) ($settings['pro_size'] ?? 512), [512, 1024, 1536], true) ? (int) $settings['pro_size'] : 512,
+            'detail_level' => in_array(($settings['detail_level'] ?? 'medium'), ['min', 'medium', 'max'], true) ? (string) $settings['detail_level'] : 'medium',
+            'shape_container' => $shape,
+            'work_mode' => in_array(($settings['work_mode'] ?? 'logo'), ['logo', 'image'], true) ? (string) $settings['work_mode'] : 'logo',
+            'output_format' => in_array(($settings['output_format'] ?? 'vector'), ['raster', 'vector'], true) ? (string) $settings['output_format'] : 'vector',
+            'image_format' => in_array(($settings['image_format'] ?? 'png'), ['png', 'bmp'], true) ? (string) $settings['image_format'] : 'png',
+            'gen_mode' => in_array(($settings['gen_mode'] ?? 'logo'), ['logo', 'image'], true) ? (string) $settings['gen_mode'] : 'logo',
+            'image_size' => in_array(($settings['image_size'] ?? '1:1'), ['1:1', '16:9', '9:16'], true) ? (string) $settings['image_size'] : '1:1',
+        ];
     }
 
     public function userLogos(Request $request)
@@ -1533,7 +1697,7 @@ class DomainSearchController extends Controller
 
         try {
             $apiKey = config('services.gemini.api_key');
-            $model = config('services.gemini.model', 'gemini-2.0-flash');
+            $model = config('services.gemini.model', 'gemini-2.5-flash-lite');
             $baseUrl = config('services.gemini.base_url', 'https://generativelanguage.googleapis.com/v1beta');
 
             // Fetch the image — support local storage paths as well as external URLs
@@ -1651,7 +1815,7 @@ class DomainSearchController extends Controller
                 'count' => 'nullable|integer|min:1|max:4',
                 'pro' => 'nullable|boolean',
                 'pro_size' => 'nullable|integer|in:512,1024,1536',
-                'style' => 'nullable|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,greetingcard,photorealistic,minimalist,minimal_geometric,abstract,monoline,negative_space,tech_gradient,evergreen_silhouette,modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light',
+                'style' => 'nullable|string|in:' . $this->allowedLogoStylesForValidation(),
                 'bg_color' => 'nullable|string|max:20',
                 'image_model' => 'nullable|string|in:flux,dalle,recraft',
                 'output_format' => 'nullable|string|in:raster,vector',
@@ -1664,22 +1828,30 @@ class DomainSearchController extends Controller
             $imageModel = $request->input('image_model', 'flux');
             $outputFormat = $request->input('output_format', 'raster');
             $genMode = $request->input('gen_mode', 'logo');
-            $genImageSize = $request->input('image_size', '1:1');
+            $genImageSize = $request->input('image_size') ?: '1:1';
+            $isPro = (bool) $request->input('pro', false);
+
+            if ($this->isUnsupportedRecraftImageSize($imageModel, $outputFormat, $isPro, $genImageSize)) {
+                return response()->json([
+                    'error' => 'Ray PRO currently supports Square image size only. Landscape and Portrait are not available for this model.',
+                ], 422);
+            }
 
         if ($imageModel === 'recraft') {
-            $recraftSize = $outputFormat === 'vector' ? '1:1' : '1024x1024';
+            $recraftSize = $this->recraftRequestSize($outputFormat, $isPro, $genImageSize);
             $estimate = \App\Services\RecraftPricing::estimateLogoCost(
                 imageCount: (int) $request->input('count', 4),
                 size: $recraftSize,
-                isPro: (bool) $request->input('pro', false),
+                isPro: $isPro,
                 type: $outputFormat,
             );
         } elseif ($imageModel === 'dalle') {
             $estimate = AiLogoPrice::estimateDalleCost(
                 imageCount: (int) $request->input('count', 4),
-                resolution: '1024x1024',
+                resolution: AiLogoPrice::gptImageResolutionForSize($genImageSize),
                 quality: (bool) $request->input('pro', false) ? 'hd' : 'standard',
                 outputFormat: $outputFormat,
+                bgColor: $request->input('bg_color', 'white'),
             );
         } else {
             $estimate = AiLogoPrice::estimateCost(
@@ -1698,7 +1870,7 @@ class DomainSearchController extends Controller
         $estimate['credit_balance'] = $user ? (float) $user->credit_balance : 0;
         unset($estimate['base_cost_total'], $estimate['markup_amount']);
 
-        return response()->json($estimate);
+        return response()->json($this->publicEstimatePayload($estimate));
         
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
@@ -1715,227 +1887,166 @@ class DomainSearchController extends Controller
         }
     }
 
-    public function generateLogo(Request $request)
+    private function allowedLogoStylesForValidation(): string
     {
-        // Force JSON responses for this endpoint
-        $request->headers->set('Accept', 'application/json');
-        
-        try {
-            if (!$request->user()) {
-                return response()->json([
-                    'error' => 'You must be logged in to generate logos.',
-                ], 401);
+        return 'default,professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard,photorealistic,minimal_geometric,abstract,monoline,negative_space,tech_gradient,skyline_swoosh,evergreen_silhouette,nature_landscape,modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light';
+    }
+
+    private function buildLogoPromptPayload(
+        ?string $domain,
+        string $style,
+        string $genMode,
+        string $genImageSize,
+        bool $iconOnly,
+        bool $textOnly,
+        ?string $customPrompt,
+        ?string $logoTheme,
+        string $bgColor,
+        string $imageModel,
+        string $outputFormat,
+        ?array $colorPalette,
+        ?string $logoShape,
+        ?string $logoDetail,
+        ?string $fontStyle,
+    ): array {
+        $prompt = $this->buildLogoPromptText(
+            domain: $domain,
+            style: $style,
+            genMode: $genMode,
+            genImageSize: $genImageSize,
+            iconOnly: $iconOnly,
+            textOnly: $textOnly,
+            customPrompt: $customPrompt,
+            logoTheme: $logoTheme,
+            bgColor: $bgColor,
+            imageModel: $imageModel,
+            outputFormat: $outputFormat,
+            colorPalette: $colorPalette,
+            logoShape: $logoShape,
+            logoDetail: $logoDetail,
+            fontStyle: $fontStyle,
+        );
+
+        return [
+            'prompt' => $prompt,
+        ];
+    }
+
+    private function buildLogoPromptText(
+        ?string $domain,
+        string $style,
+        string $genMode,
+        string $genImageSize,
+        bool $iconOnly,
+        bool $textOnly,
+        ?string $customPrompt,
+        ?string $logoTheme,
+        string $bgColor,
+        string $imageModel,
+        string $outputFormat,
+        ?array $colorPalette,
+        ?string $logoShape,
+        ?string $logoDetail,
+        ?string $fontStyle,
+    ): string {
+        $brandName = $domain ? preg_replace('/\.(com|net|org|io|co|ai|app|dev|xyz|tech|me)$/i', '', $domain) : '';
+        $brandUpper = $brandName ? strtoupper($brandName) : '';
+        $customPrompt = trim((string) $customPrompt);
+        $logoDetail = $logoDetail ?: 'max';
+        $logoShape = $logoShape ?: 'none';
+        $fontStyle = $fontStyle ?: 'modern_sans';
+
+        if ($genMode === 'logo' && !$textOnly) {
+            if ($logoTheme === 'real_estate' && $style === 'default' && $outputFormat === 'vector') {
+                $style = $this->realEstatePromptRequestsRooflineStyle($customPrompt)
+                    ? 'skyline_swoosh'
+                    : 'real_estate_home';
+                $logoDetail = 'min';
+            } elseif ($logoTheme === 'nature' && $style === 'default' && $imageModel !== 'dalle') {
+                $style = 'nature_landscape';
+                $logoDetail = 'min';
             }
+        }
 
-            $request->validate([
-                'domain' => 'nullable|string|max:100',
-                'style' => 'required|string|in:professional,fantasy,future,retro,chrome,8bit,dotmatrix,lego,minimalist,greetingcard,photorealistic,minimal_geometric,abstract,monoline,negative_space,tech_gradient,evergreen_silhouette,modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light' . (config('services.logo_custom_prompt_enabled') ? ',custom' : ''),
-                'count' => 'nullable|integer|min:1|max:4',
-                'total_count' => 'nullable|integer|min:1|max:4',
-                'batch_index' => 'nullable|integer|min:0|max:3',
-                'custom_prompt' => 'nullable|string|min:2|max:2000',
-                'pro' => 'nullable|boolean',
-                'pro_size' => 'nullable|integer|in:512,1024,1536',
-                'icon_only' => 'nullable|boolean',
-                'text_only' => 'nullable|boolean',
-                'bg_color' => 'nullable|string|max:20',
-                'image_model' => 'nullable|string|in:flux,dalle,recraft',
-                'output_format' => 'nullable|string|in:raster,vector',
-                'image_format' => 'nullable|string|in:png,bmp',
-                'recraft_substyle' => 'nullable|string|max:60',
-                'logo_shape' => 'nullable|string|in:none,circle,hexagon,triangle,square,pentagon,heart',
-                'logo_detail' => 'nullable|string|in:min,medium,max',
-                'font_style' => 'nullable|string|in:modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light',
-                'color_palette' => 'nullable|array|max:5',
-                'color_palette.*' => 'string|max:20',
-                'gen_mode' => 'nullable|string|in:logo,image',
-                'image_size' => 'nullable|string|in:1:1,16:9,9:16',
-            ]);
+        $themeInstruction = $this->logoThemeInstruction($logoTheme);
+        if ($logoTheme === 'nature') {
+            $seasonInstruction = $this->natureSeasonInstruction($customPrompt);
+            if ($seasonInstruction !== '') {
+                $themeInstruction = trim($themeInstruction . ' ' . $seasonInstruction);
+            }
+        }
 
-            $iconOnly = (bool) $request->input('icon_only', false);
-            $textOnly = (bool) $request->input('text_only', false);
-            $domain = $request->input('domain') ? trim($request->input('domain')) : null;
-            $style = $request->input('style');
-            $genMode = $request->input('gen_mode', 'logo');
-            $genImageSize = $request->input('image_size', '1:1');
+        $customElement = '';
+        if ($customPrompt !== '') {
+            $cleaned = preg_replace('/\b[A-Z]{3,}\b/', '', $customPrompt);
+            $cleaned = preg_replace('/^(?:generate|create|make|design|draw)\s+(?:a\s+|an\s+|the\s+)?/i', '', $cleaned);
+            $cleaned = preg_replace('/^(?:[\w-]+\s+){0,6}logo\s+(?:for|of|featuring|with)\s+/i', '', $cleaned);
+            $cleaned = preg_replace('/\b(make|put|add|write|show|display|include|type|spell)\s+(it|the|a|an)?\s*/i', '', $cleaned);
+            $cleaned = preg_replace('/\b(large|big|huge|small|tiny|giant|massive|enormous)\b/i', '', $cleaned);
+            $cleaned = trim(preg_replace('/\s+/', ' ', $cleaned));
 
-            // In image mode there is never logo text, so force icon-only semantics.
+            if ($cleaned) {
+                $customElement = $style === 'photorealistic'
+                    ? " The image features {$cleaned}. Do not render any words or letters from this description."
+                    : " A visual icon element of {$cleaned} is integrated into the logo design. Do not render any words or letters from this description.";
+            }
+        }
+        if ($themeInstruction !== '') {
+            $customElement .= ' ' . $themeInstruction;
+        }
+
+        if (!empty($colorPalette) && is_array($colorPalette)) {
+            $colorNames = implode(', ', $colorPalette);
             if ($genMode === 'image') {
-                $iconOnly = true;
-                $textOnly = false;
-            }
-
-            // Domain is required for text-only mode and when text is included in logo
-            if ($genMode !== 'image' && !$iconOnly && !$domain && $style !== 'custom') {
-                return response()->json([
-                    'error' => 'Domain name is required when generating logos with text.',
-                ], 422);
-            }
-
-            $imageCount = $request->input('count', 1);
-            $totalCount = $request->input('total_count', $imageCount);
-            $batchIndex = $request->input('batch_index', 0);
-            $customPrompt = $request->input('custom_prompt');
-
-            // Image mode requires a description to generate from.
-            if ($genMode === 'image' && trim((string) $customPrompt) === '') {
-                return response()->json([
-                    'error' => 'Please describe the image you want to generate.',
-                ], 422);
-            }
-
-            // ── Trademark / copyright guard ──────────────────────────────────────
-            if ($customPrompt) {
-                $trademarkCheck = \App\Services\TrademarkFilter::check($customPrompt);
-                if (!$trademarkCheck['safe']) {
-                    return response()->json(['error' => $trademarkCheck['message']], 422);
-                }
-            }
-
-            $isPro = (bool) $request->input('pro', false);
-            $proSize = (int) $request->input('pro_size', 1024);
-            $bgColor = $request->input('bg_color', 'white');
-            $imageModel = $request->input('image_model', 'flux');
-            $outputFormat = $request->input('output_format', 'raster');
-            $imageFormat = $request->input('image_format', 'png');
-            $colorPalette = $request->input('color_palette');
-            $recraftSubstyle = $request->input('recraft_substyle');
-            $logoShape = $request->input('logo_shape', 'none');
-            $logoDetail = $request->input('logo_detail', 'max');
-            $fontStyle = $request->input('font_style', 'modern_sans');
-
-            // DALL-E always produces raster
-            if ($imageModel === 'dalle') {
-                $outputFormat = 'raster';
-            }
-
-            // Vector outputs must be generated as exactly one mode: icon-only OR text-only.
-            if ($outputFormat === 'vector') {
-                if ($iconOnly === $textOnly) {
-                    return response()->json([
-                        'error' => 'Vector generation supports either logo or text, not both.',
-                    ], 422);
-                }
-            }
-
-            // ── Balance check: reject if user can't afford the estimated cost ──
-            $user = $request->user();
-            $userBalance = (float) $user->credit_balance;
-
-            // Quick pre-check with a generous minimum threshold
-            if ($userBalance <= 0) {
-                return response()->json([
-                    'error' => 'Insufficient balance. Please add credits before generating logos.',
-                    'credit_balance' => $userBalance,
-                ], 402);
-            }
-
-            // Calculate cost estimate using total count for proper pricing
-            if ($imageModel === 'recraft') {
-                $recraftSize = $outputFormat === 'vector' ? '1:1' : '1024x1024';
-                $costEstimate = \App\Services\RecraftPricing::estimateLogoCost(
-                    imageCount: $totalCount,
-                    size: $recraftSize,
-                    isPro: $isPro,
-                    type: $outputFormat,
-                );
-            } elseif ($imageModel === 'dalle') {
-                $costEstimate = AiLogoPrice::estimateDalleCost(
-                    imageCount: $totalCount,
-                    resolution: '1024x1024',
-                    quality: $isPro ? 'hd' : 'standard',
-                    outputFormat: $outputFormat,
-                );
+                $colorInstruction = match ($logoDetail) {
+                    'min' => "Use this palette as flat solid fills and simple accents: {$colorNames}. Avoid gradients, painterly shading, cinematic lighting, heavy shadows, atmospheric color, and extra material colors.",
+                    'medium' => "Use this palette as the primary color grade and accent direction: {$colorNames}. Keep lighting, shadows, highlights, texture, and material colors restrained and moderate.",
+                    default => "Use this palette as the primary color grade and accent direction: {$colorNames}. Allow natural lighting, shadows, highlights, atmospheric color, and material colors needed for a believable image.",
+                };
             } else {
-                $costEstimate = AiLogoPrice::estimateCost(
-                    imageCount: $totalCount,
-                    isPro: $isPro,
-                    proSize: $proSize,
-                    style: $style,
-                    bgColor: $bgColor,
-                    outputFormat: $outputFormat,
-                    imageModel: $imageModel,
-                );
+                $colorInstruction = "MANDATORY COLOR PALETTE - use ONLY these exact colors for ALL logo artwork: {$colorNames}. Apply these colors strictly. Do not introduce any other colors. The background color is separate and defined below.";
             }
-            
-            // Calculate per-image cost for this single request
-            $costPerImage = $costEstimate['cost_per_image'];
-            $estimatedCostForThisImage = $costPerImage;
+        } else {
+            $colorInstruction = null;
+        }
 
-            // ── Precise balance check against estimated cost (for this single image) ──
-            if ($estimatedCostForThisImage > 0 && $userBalance < $estimatedCostForThisImage) {
-                return response()->json([
-                    'error' => 'Insufficient balance. This generation costs ~$' . number_format($estimatedCostForThisImage, 4) . ' but your balance is $' . number_format($userBalance, 4) . '. Please add credits.',
-                    'credit_balance' => $userBalance,
-                    'estimated_cost' => $estimatedCostForThisImage,
-                ], 402);
-            }
+        $bgInstruction = match($bgColor) {
+            'none' => '',
+            'black' => 'isolated on a solid black background',
+            'transparent' => 'isolated on a plain transparent background with no background elements',
+            default => str_starts_with($bgColor, '#')
+                ? "isolated on a solid {$bgColor} colored background"
+                : 'isolated on a solid white background',
+        };
 
-            // Extract the core brand concept from the domain name (strip TLD if present)
-            $brandName = $domain ? preg_replace('/\.(com|net|org|io|co|ai|app|dev|xyz|tech|me)$/i', '', $domain) : '';
-            $brandUpper = $brandName ? strtoupper($brandName) : '';
-            // Try to infer what the brand is about from its name
-            $brandConcept = $brandName ? str_replace(['-', '_', '.'], ' ', $brandName) : '';
-
-            // If user provided a custom description, extract visual concept only
-            // Strip any ALL-CAPS phrases and size/style directives to prevent them rendering as text
-            $customElement = '';
-            if ($customPrompt) {
-                // Remove ALL-CAPS words (3+ chars) that Flux might render as text
-                $cleaned = preg_replace('/\b[A-Z]{3,}\b/', '', $customPrompt);
-                // Remove common directive phrases
-                $cleaned = preg_replace('/\b(make|put|add|write|show|display|include|type|spell)\s+(it|the|a|an)?\s*/i', '', $cleaned);
-                // Remove size directives
-                $cleaned = preg_replace('/\b(large|big|huge|small|tiny|giant|massive|enormous)\b/i', '', $cleaned);
-                // Collapse whitespace
-                $cleaned = trim(preg_replace('/\s+/', ' ', $cleaned));
-                if ($cleaned) {
-                    // For photorealistic style, use photography language instead of logo/icon language
-                    if ($style === 'photorealistic') {
-                        $customElement = " The image features {$cleaned}. Do not render any words or letters from this description.";
-                    } else {
-                        $customElement = " A visual icon element of {$cleaned} is integrated into the logo design. Do not render any words or letters from this description.";
-                    }
-                }
-            }
-
-            // Typography-first prompts with style hooks and avoidance language
-            // Build color palette instruction
-            if (!empty($colorPalette) && is_array($colorPalette)) {
-                $colorNames = implode(', ', $colorPalette);
-                $colorInstruction = "MANDATORY COLOR PALETTE — use ONLY these exact colors for ALL logo artwork: {$colorNames}. Apply these colors strictly. Do not introduce any other colors. The background color is separate and defined below.";
-            } else {
-                $colorInstruction = null; // Let style defaults apply
-            }
-
-            // Determine background color instruction
-            $bgInstruction = match($bgColor) {
-                'none' => '',
-                'black' => 'isolated on a solid black background',
-                'transparent' => 'isolated on a plain transparent background with no background elements',
-                default => str_starts_with($bgColor, '#')
-                    ? "isolated on a solid {$bgColor} colored background"
-                    : 'isolated on a solid white background',
-            };
-
-            // Build Flux prompt from JSON template (edit config/flux_raster_prompts.json or config/flux_vector_prompts.json to change wording)
-            $prompt = \App\Services\FluxPromptBuilder::build(
-                style:            $style,
-                iconOnly:         $iconOnly,
-                textOnly:         $textOnly,
-                concept:          $customElement,
+        if ($style === 'default') {
+            $prompt = $this->buildDefaultLogoPrompt(
+                brandUpper: $brandUpper,
+                iconOnly: $iconOnly,
+                textOnly: $textOnly,
+                concept: $customElement,
                 colorInstruction: $colorInstruction,
-                bgInstruction:    $bgInstruction,
-                brandUpper:       $brandUpper,
-                outputFormat:     $outputFormat,
-                detail:           $logoDetail ?? 'max',
-                logoShape:        $logoShape,
-                fontStyle:        $fontStyle,
+                bgInstruction: $bgInstruction,
+                outputFormat: $outputFormat,
+                logoShape: $logoShape,
+            );
+        } else {
+            $prompt = \App\Services\FluxPromptBuilder::build(
+                style: $style,
+                iconOnly: $iconOnly,
+                textOnly: $textOnly,
+                concept: $customElement,
+                colorInstruction: $colorInstruction,
+                bgInstruction: $bgInstruction,
+                brandUpper: $brandUpper,
+                outputFormat: $outputFormat,
+                detail: $logoDetail,
+                logoShape: $logoShape,
+                fontStyle: $fontStyle,
             );
 
-            // ── Build a DALL-E-specific prompt from JSON templates ──
             if ($imageModel === 'dalle') {
-                $dalleDesc = trim($customPrompt ?? '');
+                $dalleDesc = trim($customPrompt . ' ' . $themeInstruction);
 
                 if (!empty($colorPalette) && is_array($colorPalette)) {
                     $namedColors = [];
@@ -1979,74 +2090,428 @@ class DomainSearchController extends Controller
                 );
             }
 
-            // ── Build a Recraft-specific structured logo prompt (max 1000 chars) ──
             if ($imageModel === 'recraft') {
-                $subjectDesc = trim($customPrompt ?? '');
-                $subject     = $subjectDesc ?: ($iconOnly ? 'Abstract geometric symbol' : 'Emblem mark');
-
+                $subject = trim($customPrompt . ' ' . $themeInstruction);
+                if ($logoTheme === 'real_estate' && $style === 'skyline_swoosh' && $customPrompt !== '') {
+                    $subject = $customPrompt;
+                } elseif ($logoTheme === 'nature' && $style === 'nature_landscape' && $customPrompt !== '') {
+                    $seasonInstruction = $this->natureSeasonInstruction($customPrompt);
+                    $subject = trim($customPrompt . ' ' . $seasonInstruction);
+                } elseif ($customPrompt === '' && $logoTheme === 'real_estate' && $style === 'real_estate_home') {
+                    $subject = 'modern property or real estate symbol using building silhouettes, window grids, doors, keys, map pins, land parcels, or skyline geometry';
+                } elseif ($customPrompt === '' && $logoTheme === 'nature' && $style === 'nature_landscape') {
+                    $subject = 'trees, forest silhouettes, hills, leaves, branches, and outdoor landscape forms';
+                }
+                $subject = $subject !== '' ? $subject : ($iconOnly ? 'Abstract geometric symbol' : 'Emblem mark');
                 $colorDesc = (!empty($colorPalette) && is_array($colorPalette))
                     ? implode(', ', $colorPalette)
                     : 'AI Picks';
 
                 $bgDesc = match($bgColor) {
-                    'none'        => '',
-                    'black'       => '#000000',
+                    'none' => '',
+                    'black' => '#000000',
                     'transparent' => 'transparent',
-                    default       => str_starts_with($bgColor, '#') ? $bgColor : '#FFFFFF',
+                    default => str_starts_with($bgColor, '#') ? $bgColor : '#FFFFFF',
                 };
 
                 $prompt = \App\Services\RecraftPromptBuilder::build(
-                    style:      $style,
+                    style: $style,
                     logoDetail: $logoDetail,
-                    logoShape:  $logoShape,
-                    iconOnly:   $iconOnly,
-                    textOnly:   $textOnly,
-                    subject:    $subject,
+                    logoShape: $logoShape,
+                    iconOnly: $iconOnly,
+                    textOnly: $textOnly,
+                    subject: $subject,
                     brandUpper: $brandUpper,
-                    colorDesc:  $colorDesc,
-                    bgDesc:     $bgDesc,
+                    colorDesc: $colorDesc,
+                    bgDesc: $bgDesc,
                     outputFormat: $outputFormat,
                     fontStyle: $fontStyle,
                 );
             }
+        }
 
-            // ── Custom style: bypass all prompt builders, use raw user prompt + palette/bg ──
-            if ($style === 'custom') {
-                $rawCustom = trim($customPrompt ?? '');
-                if ($colorInstruction) {
-                    $rawCustom .= "\n" . $colorInstruction;
-                }
-                $bgHint = match($bgColor) {
-                    'none'        => '',
-                    'black'       => 'solid black',
-                    'transparent' => 'transparent',
-                    default       => str_starts_with($bgColor, '#') ? "solid {$bgColor}" : 'solid white',
-                };
-                if ($bgHint !== '') {
-                    $rawCustom .= "\nBackground: {$bgHint}.";
-                }
-                $prompt = $rawCustom;
+        if ($genMode === 'image') {
+            $imageBg = match($bgColor) {
+                'none' => 'isolated cutout on a transparent background with no sky, terrain, landscape, city, room, scenery, horizon line, ground plane, or full scene; only the requested subject, action shapes, silhouettes, and effects',
+                'black' => 'set against a solid black background',
+                'transparent' => 'isolated cutout on a transparent background with no sky, terrain, landscape, city, room, scenery, horizon line, ground plane, or full scene; only the requested subject, action shapes, silhouettes, and effects',
+                default => str_starts_with($bgColor, '#')
+                    ? "set against a solid {$bgColor} background"
+                    : '',
+            };
+
+            $subject = trim($customPrompt . ' ' . $themeInstruction);
+            $prompt = $style === 'default'
+                ? $this->buildDefaultImagePrompt(
+                    subject: $subject,
+                    colorInstruction: $colorInstruction,
+                    bgInstruction: $imageBg,
+                    imageSize: $genImageSize,
+                    logoShape: $logoShape,
+                )
+                : \App\Services\ImagePromptBuilder::build(
+                    style: $style,
+                    subject: $subject,
+                    colorInstruction: $colorInstruction,
+                    bgInstruction: $imageBg,
+                    imageSize: $genImageSize,
+                    detail: $logoDetail,
+                    logoShape: $logoShape,
+                );
+        }
+
+        return trim($prompt);
+    }
+
+    private function buildDefaultLogoPrompt(
+        string $brandUpper,
+        bool $iconOnly,
+        bool $textOnly,
+        string $concept,
+        ?string $colorInstruction,
+        string $bgInstruction,
+        string $outputFormat,
+        ?string $logoShape,
+    ): string {
+        if ($textOnly && $brandUpper !== '') {
+            $parts = ["Wordmark logo for \"{$brandUpper}\"."];
+        } elseif ($iconOnly) {
+            $parts = ['Logo mark.'];
+        } elseif ($brandUpper !== '') {
+            $parts = ["Logo for \"{$brandUpper}\"."];
+        } else {
+            $parts = ['Logo design.'];
+        }
+
+        $concept = trim($concept);
+        if ($concept !== '') {
+            $parts[] = $concept;
+        }
+
+        $parts[] = $outputFormat === 'vector'
+            ? 'Create SVG-ready vector artwork with balanced composition, clean edges, and readable forms.'
+            : 'Create clear logo artwork with balanced composition and readable forms.';
+
+        $parts[] = $colorInstruction ?: 'Use colors that fit the subject and brand.';
+
+        if ($bgInstruction !== '') {
+            $parts[] = rtrim($bgInstruction, '.') . '.';
+        }
+
+        if (!empty($logoShape) && $logoShape !== 'none') {
+            $shape = strtolower($logoShape);
+            $parts[] = "Keep the complete design contained inside a {$shape} shape.";
+        }
+
+        if ($textOnly) {
+            $parts[] = $brandUpper !== ''
+                ? "Text only. Use the brand name exactly as \"{$brandUpper}\". Do not add icons or symbols."
+                : 'Text only. Do not add icons or symbols.';
+        } elseif ($iconOnly) {
+            $parts[] = 'Icon only. Do not render words, letters, initials, numbers, captions, or text.';
+        } elseif ($brandUpper !== '') {
+            $parts[] = "Use the brand name exactly as \"{$brandUpper}\". Avoid misspellings and extra text.";
+        } else {
+            $parts[] = 'Do not render unrelated words, letters, initials, numbers, captions, or text.';
+        }
+
+        return trim(preg_replace('/\s+/', ' ', implode(' ', $parts)));
+    }
+
+    private function buildDefaultImagePrompt(
+        string $subject,
+        ?string $colorInstruction,
+        string $bgInstruction,
+        string $imageSize,
+        ?string $logoShape = null,
+    ): string {
+        $subject = trim($subject) !== '' ? rtrim(trim($subject), '.') : 'the requested subject';
+        $sizeDirection = match ($imageSize) {
+            '16:9' => 'Wide 16:9 composition',
+            '9:16' => 'Vertical 9:16 composition',
+            default => 'Square 1:1 composition',
+        };
+
+        $parts = [
+            "Image of {$subject}.",
+            "{$sizeDirection}.",
+            'Use a clear composition and natural visual treatment without applying a named style preset.',
+        ];
+
+        if ($colorInstruction !== null && trim($colorInstruction) !== '') {
+            $parts[] = rtrim(trim($colorInstruction), '.') . '.';
+        }
+
+        if (trim($bgInstruction) !== '') {
+            $parts[] = rtrim(trim($bgInstruction), '.') . '.';
+        }
+
+        if (!empty($logoShape) && $logoShape !== 'none') {
+            $shape = strtolower($logoShape);
+            $parts[] = "Hard shape constraint: the entire image must be fully enclosed inside one clean {$shape} container/badge. The {$shape} is the outer boundary of the artwork, not just a background object. Nothing may extend outside the {$shape}. Keep all subjects, effects, scenery, silhouettes, and color fields clipped inside the {$shape}.";
+        }
+
+        return trim(preg_replace('/\s+/', ' ', implode(' ', $parts)));
+    }
+
+    private function logoThemeInstruction(?string $theme): string
+    {
+        return match ($theme) {
+            'real_estate' => 'Real estate theme: show a modern, premium property or real estate symbol, not an abstract emblem. Use broad property cues such as simplified building silhouettes, window grids, doors, keys, map pins, land parcels, skyline geometry, or clean property-brand shapes. Keep the mark contemporary, crisp, balanced, and spacious with flat vector-friendly geometry. Avoid people, initials, circular monograms, maze-like shapes, ambiguous abstract geometry, and decorative flowing underline strokes unless the user specifically asks for them.',
+            'nature' => 'Nature theme: show unmistakable outdoor nature, not a generic eco or utility icon. Use the user requested natural elements literally: trees, forest silhouettes, leaves, branches, hills, landforms, sunrise, sun rays, and any requested season. If trees or a sun are requested, include recognizable tree forms and a visible rising sun or horizon. Do not default to a summer scene unless summer is requested. Avoid light bulbs, water droplets, flames, abstract drops, generic recycle or sustainability marks, unrelated objects, buildings, people, and ambiguous abstract symbols unless the user specifically asks for them.',
+            default => '',
+        };
+    }
+
+    private function natureSeasonInstruction(string $customPrompt): string
+    {
+        $prompt = strtolower($customPrompt);
+        $seasons = [];
+
+        if (preg_match('/\b(winter|snow|snowy|frost|frosty|ice|icy)\b/', $prompt)) {
+            $seasons['winter'] = 'winter cues: snow-covered evergreens or bare branches, frost, snow ground, cool white and blue tones';
+        }
+        if (preg_match('/\b(spring|blossom|blossoms|bloom|blooms|flower|flowers|floral)\b/', $prompt)) {
+            $seasons['spring'] = 'spring cues: fresh light greens, new leaves, blossoms, small flowers, soft warm light';
+        }
+        if (preg_match('/\b(autumn|fall|falling leaves|orange leaves|red leaves|gold leaves)\b/', $prompt)) {
+            $seasons['autumn'] = 'autumn cues: orange, gold, and red foliage, falling leaves, warm muted earth tones';
+        }
+        if (preg_match('/\b(summer|sunny|lush|tropical)\b/', $prompt)) {
+            $seasons['summer'] = 'summer cues: lush full green foliage, bright warm sunlight, clear outdoor warmth';
+        }
+
+        if ($seasons === []) {
+            return '';
+        }
+
+        $seasonNames = implode(', ', array_keys($seasons));
+        $seasonCues = implode('; ', array_values($seasons));
+
+        if (count($seasons) > 1) {
+            return "Season requirement: visibly represent each requested season ({$seasonNames}) with distinct natural cues in the logo mark; {$seasonCues}. Do not collapse the design into a generic summer landscape.";
+        }
+
+        return "Season requirement: {$seasonNames}; {$seasonCues}. Make the requested season visually obvious and do not replace it with a generic summer landscape.";
+    }
+
+    private function realEstatePromptRequestsRooflineStyle(string $customPrompt): bool
+    {
+        return preg_match('/\b(roof|roofline|rooftop|swoosh|swooshes|sun|sunburst|sunrise|horizon)\b/i', $customPrompt) === 1;
+    }
+
+    private function recraftRequestSize(string $outputFormat, bool $isPro, string $imageSize): string
+    {
+        if ($outputFormat === 'vector') {
+            return '1:1';
+        }
+
+        return match (true) {
+            $isPro => '1024x1024',
+            $imageSize === '16:9' => '1344x768',
+            $imageSize === '9:16' => '768x1344',
+            default => '1024x1024',
+        };
+    }
+
+    private function isUnsupportedRecraftImageSize(string $imageModel, string $outputFormat, bool $isPro, string $imageSize): bool
+    {
+        return $imageModel === 'recraft'
+            && $outputFormat === 'raster'
+            && $isPro
+            && $imageSize !== '1:1';
+    }
+
+    public function generateLogo(Request $request)
+    {
+        // Force JSON responses for this endpoint
+        $request->headers->set('Accept', 'application/json');
+        
+        try {
+            if (!$request->user()) {
+                return response()->json([
+                    'error' => 'You must be logged in to generate logos.',
+                ], 401);
             }
 
-            // ── Image mode: override every builder with a general image prompt ──
-            if ($genMode === 'image') {
-                $imageBg = match($bgColor) {
-                    'none'        => '',
-                    'black'       => 'set against a solid black background',
-                    'transparent' => 'on a plain transparent background',
-                    default       => str_starts_with($bgColor, '#')
-                        ? "set against a solid {$bgColor} background"
-                        : 'set against a solid white background',
-                };
+            $request->validate([
+                'domain' => 'nullable|string|max:100',
+                'style' => 'required|string|in:' . $this->allowedLogoStylesForValidation(),
+                'count' => 'nullable|integer|min:1|max:4',
+                'total_count' => 'nullable|integer|min:1|max:4',
+                'batch_index' => 'nullable|integer|min:0|max:3',
+                'custom_prompt' => 'nullable|string|min:2|max:2000',
+                'logo_theme' => 'nullable|string|in:real_estate,nature',
+                'pro' => 'nullable|boolean',
+                'pro_size' => 'nullable|integer|in:512,1024,1536',
+                'icon_only' => 'nullable|boolean',
+                'text_only' => 'nullable|boolean',
+                'bg_color' => 'nullable|string|max:20',
+                'image_model' => 'nullable|string|in:flux,dalle,recraft',
+                'output_format' => 'nullable|string|in:raster,vector',
+                'image_format' => 'nullable|string|in:png,bmp',
+                'recraft_substyle' => 'nullable|string|max:60',
+                'logo_shape' => 'nullable|string|in:none,circle,hexagon,triangle,square,pentagon,heart',
+                'logo_detail' => 'nullable|string|in:min,medium,max',
+                'font_style' => 'nullable|string|in:modern_sans,bold_geometric,elegant_serif,script_signature,tech_mono,minimal_light',
+                'color_palette' => 'nullable|array|max:5',
+                'color_palette.*' => 'string|max:20',
+                'gen_mode' => 'nullable|string|in:logo,image',
+                'image_size' => 'nullable|string|in:1:1,16:9,9:16',
+            ]);
 
-                $prompt = \App\Services\ImagePromptBuilder::build(
-                    style:            $style === 'custom' ? 'professional' : $style,
-                    subject:          trim($customPrompt ?? ''),
-                    colorInstruction: $colorInstruction,
-                    bgInstruction:    $imageBg,
-                    imageSize:        $genImageSize,
+            $iconOnly = (bool) $request->input('icon_only', false);
+            $textOnly = (bool) $request->input('text_only', false);
+            $domain = $request->input('domain') ? trim($request->input('domain')) : null;
+            $style = $request->input('style');
+            $genMode = $request->input('gen_mode', 'logo');
+            $genImageSize = $request->input('image_size') ?: '1:1';
+
+            // In image mode there is never logo text, so force icon-only semantics.
+            if ($genMode === 'image') {
+                $iconOnly = true;
+                $textOnly = false;
+            }
+
+            // Domain is required for text-only mode and when text is included in logo
+            if ($genMode !== 'image' && !$iconOnly && !$domain) {
+                return response()->json([
+                    'error' => 'Domain name is required when generating logos with text.',
+                ], 422);
+            }
+
+            $imageCount = $request->input('count', 1);
+            $totalCount = $request->input('total_count', $imageCount);
+            $batchIndex = $request->input('batch_index', 0);
+            $customPrompt = $request->input('custom_prompt');
+
+            // Image mode requires a description to generate from.
+            if ($genMode === 'image' && trim((string) $customPrompt) === '') {
+                return response()->json([
+                    'error' => 'Please describe the image you want to generate.',
+                ], 422);
+            }
+
+            // ── Trademark / copyright guard ──────────────────────────────────────
+            if ($customPrompt) {
+                $trademarkCheck = \App\Services\TrademarkFilter::check($customPrompt);
+                if (!$trademarkCheck['safe']) {
+                    return response()->json(['error' => $trademarkCheck['message']], 422);
+                }
+            }
+
+            $isPro = (bool) $request->input('pro', false);
+            $proSize = (int) $request->input('pro_size', 1024);
+            $bgColor = $request->input('bg_color', 'white');
+            $imageModel = $request->input('image_model', 'flux');
+            $outputFormat = $request->input('output_format', 'raster');
+            $imageFormat = $request->input('image_format', 'png');
+            $colorPalette = $request->input('color_palette');
+            $recraftSubstyle = $request->input('recraft_substyle');
+            $logoShape = $request->input('logo_shape', 'none');
+            $logoDetail = $request->input('logo_detail', 'max');
+            $fontStyle = $request->input('font_style', 'modern_sans');
+            $logoTheme = $request->input('logo_theme');
+
+            // DALL-E always produces raster
+            if ($imageModel === 'dalle') {
+                $outputFormat = 'raster';
+            }
+
+            if ($this->isUnsupportedRecraftImageSize($imageModel, $outputFormat, $isPro, $genImageSize)) {
+                return response()->json([
+                    'error' => 'Ray PRO currently supports Square image size only. Landscape and Portrait are not available for this model.',
+                ], 422);
+            }
+
+            // Vector outputs must be generated as exactly one mode: icon-only OR text-only.
+            if ($outputFormat === 'vector') {
+                if ($iconOnly === $textOnly) {
+                    return response()->json([
+                        'error' => 'Vector generation supports either logo or text, not both.',
+                    ], 422);
+                }
+            }
+
+            // ── Balance check: reject if user can't afford the estimated cost ──
+            $user = $request->user();
+            $userBalance = (float) $user->credit_balance;
+
+            if ((!is_string($logoShape) || $logoShape === '' || $logoShape === 'none') && $user && Schema::hasTable('logo_generator_settings')) {
+                $savedShape = (string) ($this->logoGeneratorSettingsForUser($user)['shape_container'] ?? '');
+                if (in_array($savedShape, ['circle', 'square', 'hexagon', 'triangle', 'pentagon'], true)) {
+                    $logoShape = $savedShape;
+                }
+            }
+
+            // Quick pre-check with a generous minimum threshold
+            if ($userBalance <= 0) {
+                return response()->json([
+                    'error' => 'Insufficient balance. Please add credits before generating logos.',
+                    'credit_balance' => $userBalance,
+                ], 402);
+            }
+
+            // Calculate cost estimate for the queued request.
+            if ($imageModel === 'recraft') {
+                $recraftSize = $this->recraftRequestSize($outputFormat, $isPro, $genImageSize);
+                $costEstimate = \App\Services\RecraftPricing::estimateLogoCost(
+                    imageCount: $imageCount,
+                    size: $recraftSize,
+                    isPro: $isPro,
+                    type: $outputFormat,
+                );
+            } elseif ($imageModel === 'dalle') {
+                $costEstimate = AiLogoPrice::estimateDalleCost(
+                    imageCount: $imageCount,
+                    resolution: AiLogoPrice::gptImageResolutionForSize($genImageSize),
+                    quality: $isPro ? 'hd' : 'standard',
+                    outputFormat: $outputFormat,
+                    bgColor: $bgColor,
+                );
+            } else {
+                $costEstimate = AiLogoPrice::estimateCost(
+                    imageCount: $imageCount,
+                    isPro: $isPro,
+                    proSize: $proSize,
+                    style: $style,
+                    bgColor: $bgColor,
+                    outputFormat: $outputFormat,
+                    imageModel: $imageModel,
                 );
             }
+            
+            // Calculate total estimated cost for this queued request.
+            $costPerImage = $costEstimate['cost_per_image'];
+            $estimatedCostForThisRequest = (float) ($costEstimate['estimated_cost_usd'] ?? ($costPerImage * $imageCount));
+
+            // ── Precise balance check against estimated cost (for this request) ──
+            if ($estimatedCostForThisRequest > 0 && $userBalance < $estimatedCostForThisRequest) {
+                return response()->json([
+                    'error' => 'Insufficient balance. This generation costs ~$' . number_format($estimatedCostForThisRequest, 4) . ' but your balance is $' . number_format($userBalance, 4) . '. Please add credits.',
+                    'credit_balance' => $userBalance,
+                    'estimated_cost' => $estimatedCostForThisRequest,
+                ], 402);
+            }
+
+            $promptPayload = $this->buildLogoPromptPayload(
+                domain: $domain,
+                style: $style,
+                genMode: $genMode,
+                genImageSize: $genImageSize,
+                iconOnly: $iconOnly,
+                textOnly: $textOnly,
+                customPrompt: $customPrompt,
+                logoTheme: $logoTheme,
+                bgColor: $bgColor,
+                imageModel: $imageModel,
+                outputFormat: $outputFormat,
+                colorPalette: is_array($colorPalette) ? $colorPalette : null,
+                logoShape: $logoShape,
+                logoDetail: $logoDetail,
+                fontStyle: $fontStyle,
+            );
+            $prompt = $promptPayload['prompt'];
 
             // Determine model name for logging
             if ($imageModel === 'recraft') {
@@ -2060,7 +2525,7 @@ class DomainSearchController extends Controller
                     : ($isPro ? 'logo_recraft_v4_raster' : 'logo_recraft_raster');
             } elseif ($imageModel === 'dalle') {
                 $modelName = 'gpt-image-1.5';
-                $imageSize = '1024x1024';
+                $imageSize = AiLogoPrice::gptImageResolutionForSize($genImageSize);
                 $requestType = $isPro ? 'logo_dalle_hd' : 'logo_dalle';
             } else {
                 // Flux models
@@ -2100,9 +2565,9 @@ class DomainSearchController extends Controller
                 'num_inference_steps' => $imageModel === 'recraft' ? 0 : ($imageModel === 'dalle' ? 0 : ($isPro ? 28 : 8)),
                 'guidance_scale' => ($imageModel === 'recraft' || $imageModel === 'dalle') ? 0 : 3.50,
                 'cost_per_image' => $costPerImage,
-                'estimated_cost_usd' => $estimatedCostForThisImage,
+                'estimated_cost_usd' => $estimatedCostForThisRequest,
                 'status' => 'pending',
-                'prompt_preview' => substr($prompt, 0, 240) . ($totalCount > 1 ? " [img " . ($batchIndex + 1) . "/{$totalCount}]" : ''),
+                'prompt_preview' => substr($prompt, 0, 240) . ($imageCount > 1 ? " [{$imageCount} imgs]" : ''),
             ]);
 
             // ── Dispatch the generation job to the queue ──
@@ -2129,6 +2594,7 @@ class DomainSearchController extends Controller
                     'model_name' => $modelName,
                     'logo_shape' => $logoShape,
                     'logo_detail' => $logoDetail,
+                    'logo_theme' => $logoTheme,
                     'gen_mode' => $genMode,
                     'image_size' => $genImageSize,
                 ],
@@ -2139,7 +2605,7 @@ class DomainSearchController extends Controller
                 'status' => 'queued',
                 'message' => 'Logo generation has been queued. Poll /domain-search/logo-status/' . $logoRequest->id . ' for results.',
                 'credit_balance' => (float) $user->credit_balance,
-                'estimated_cost' => $estimatedCostForThisImage,
+                'estimated_cost' => $estimatedCostForThisRequest,
             ]);
         
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -2148,7 +2614,7 @@ class DomainSearchController extends Controller
                 'error' => 'Validation failed',
                 'errors' => $e->errors(),
             ], 422);
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             // Catch any other exceptions and return JSON with detailed error
             Log::error('Logo generation request failed', [
                 'error' => $e->getMessage(),
@@ -2158,17 +2624,8 @@ class DomainSearchController extends Controller
                 'request_data' => $request->all(),
             ]);
             
-            // In debug mode, return the actual error for troubleshooting
-            if (config('app.debug')) {
-                return response()->json([
-                    'error' => 'Error: ' . $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                ], 500);
-            }
-            
             return response()->json([
-                'error' => 'An unexpected error occurred. Please try again.',
+                'error' => $this->friendlyErrorMessage($e->getMessage()),
             ], 500);
         }
     }
@@ -2207,6 +2664,7 @@ class DomainSearchController extends Controller
             $resultData = $logoRequest->result_data
                 ? json_decode($logoRequest->result_data, true)
                 : null;
+            $resultData = $this->publicLogoResultPayload(is_array($resultData) ? $resultData : []);
 
             // Refresh user balance
             $currentUser->refresh();
@@ -2281,6 +2739,22 @@ class DomainSearchController extends Controller
             return 'Model currently unavailable, please try a different model.';
         }
 
+        if (
+            str_contains($normalized, 'http request returned status code') ||
+            str_contains($normalized, 'invalid_request_parameter') ||
+            str_contains($normalized, 'invalid response') ||
+            str_contains($normalized, 'invalid json') ||
+            str_contains($normalized, 'api returned') ||
+            str_contains($normalized, 'api key') ||
+            str_contains($normalized, 'recraft') ||
+            str_contains($normalized, 'dall-e') ||
+            str_contains($normalized, 'gpt-image') ||
+            str_contains($normalized, 'fal-ai') ||
+            str_contains($normalized, 'openai')
+        ) {
+            return 'Image generation failed. Please adjust your settings and try again.';
+        }
+
         if (str_contains($raw, 'content filters') || str_contains($raw, 'content_policy') || str_contains($raw, 'safety system')) {
             return 'Your prompt was flagged by the AI safety filter. Please rephrase your description and try again — avoid violent, sexual, or trademarked content.';
         }
@@ -2288,7 +2762,7 @@ class DomainSearchController extends Controller
             return 'The AI service is temporarily busy. Please wait a moment and try again.';
         }
         if (str_contains($raw, 'Billing hard limit') || str_contains($raw, 'billing')) {
-            return 'DALL-E 3 is temporarily unavailable. Please use another model.';
+            return 'Image generation is temporarily unavailable. Please use another model.';
         }
         if (str_contains($raw, 'quota')) {
             return 'The AI service quota has been reached. Please try again later or switch to a different model.';
@@ -2296,7 +2770,52 @@ class DomainSearchController extends Controller
         if (str_contains($raw, 'invalid_api_key') || str_contains($raw, 'Incorrect API key')) {
             return 'There is a configuration issue with the AI service. Please contact support.';
         }
-        return $raw;
+        return 'Image generation failed. Please try again.';
+    }
+
+    private function publicEstimatePayload(array $estimate): array
+    {
+        unset(
+            $estimate['model'],
+            $estimate['source'],
+            $estimate['prices'],
+            $estimate['units_per_image']
+        );
+
+        return $estimate;
+    }
+
+    private function publicLogoResultPayload(array $resultData): array
+    {
+        unset(
+            $resultData['image_model'],
+            $resultData['model'],
+            $resultData['provider'],
+            $resultData['api']
+        );
+
+        if (isset($resultData['images']) && is_array($resultData['images'])) {
+            $resultData['images'] = array_values(array_filter(array_map(function ($image) {
+                if (!is_array($image)) {
+                    return is_string($image) && str_starts_with($image, '/storage/')
+                        ? ['url' => $image]
+                        : null;
+                }
+
+                $publicUrl = $image['stored_url'] ?? $image['url'] ?? null;
+                if (!is_string($publicUrl) || !str_starts_with($publicUrl, '/storage/')) {
+                    return null;
+                }
+
+                return array_filter([
+                    'url' => $publicUrl,
+                    'stored_url' => $publicUrl,
+                    'seed' => $image['seed'] ?? null,
+                ], fn ($value) => $value !== null);
+            }, $resultData['images'])));
+        }
+
+        return $resultData;
     }
 
     /**
@@ -2924,6 +3443,13 @@ class DomainSearchController extends Controller
                     'error' => 'Image index not found for this logo request.',
                 ], 422);
             }
+
+            if ($imageIndex !== null) {
+                $imageUrls = array_values((array) $logoRequest->image_urls);
+                if (isset($imageUrls[$imageIndex]) && is_string($imageUrls[$imageIndex]) && $imageUrls[$imageIndex] !== '') {
+                    $imageUrl = $imageUrls[$imageIndex];
+                }
+            }
         }
 
         $estimate = AiLogoPrice::estimateUpscaleCost(upscaleFactor: $upscaleFactor);
@@ -3053,8 +3579,10 @@ class DomainSearchController extends Controller
 
     private function prepareFalImageInput(string $imageUrl): string
     {
-        if (str_starts_with($imageUrl, '/storage/')) {
-            $localPath = storage_path('app/public/' . substr($imageUrl, 9));
+        $path = parse_url($imageUrl, PHP_URL_PATH) ?: $imageUrl;
+
+        if (str_starts_with($path, '/storage/')) {
+            $localPath = storage_path('app/public/' . substr($path, 9));
             if (!file_exists($localPath)) {
                 throw new \RuntimeException('Source image not found on disk.');
             }

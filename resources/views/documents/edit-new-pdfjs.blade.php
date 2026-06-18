@@ -1,3 +1,4 @@
+@php($editorCanUsePremiumFeatures = auth()->check() || auth('admin')->check())
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -42,7 +43,8 @@
      data-save-acro-form-url="{{ route('documents.saveAcroFormState', $document) }}"
      data-annotation-debug-url="{{ route('documents.annotationDebug.save', $document) }}"
      data-overwrite-url="{{ route('documents.overwriteAnnotationText') }}"
-     data-notes-url="{{ route('documents.notes.index', $document) }}"
+     data-editor-authenticated="{{ $editorCanUsePremiumFeatures ? '1' : '0' }}"
+     data-notes-url="{{ $editorCanUsePremiumFeatures ? route('documents.notes.index', $document) : '' }}"
      data-download-url="{{ route('documents.downloadAnnotatedPdf', $document) }}"
      data-convert-to-pdfa-url="{{ route('documents.convertToPdfA', $document) }}"
      data-convert-to-word-url="{{ route('documents.convertToWord', $document) }}"
@@ -61,7 +63,9 @@
 @include('documents.edit-new._shape-panel')
 @include('documents.edit-new._draw-panel')
 @include('documents.edit-new._highlight-panel')
-@include('documents.edit-new._notes-panel')
+@if($editorCanUsePremiumFeatures)
+    @include('documents.edit-new._notes-panel')
+@endif
 @include('documents.edit-new._markup-modal')
 @include('documents.edit-new._signature-modal')
 @include('documents.edit-new._image-modal')

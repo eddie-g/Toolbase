@@ -26,7 +26,7 @@ class DeveloperChatClient
     public function chat(array $messages, ?float $temperature = null, ?array $responseFormat = null, array $options = []): array
     {
         $apiKey = $this->apiKey ?? config('services.gemini.api_key');
-        $model = $this->model ?? config('services.gemini.model', 'gemini-2.0-flash');
+        $model = $this->model ?? config('services.gemini.model', 'gemini-2.5-flash-lite');
         $baseUrl = rtrim($this->baseUrl ?? config('services.gemini.base_url', 'https://generativelanguage.googleapis.com/v1beta'), '/');
 
         $payload = [
@@ -39,6 +39,10 @@ class DeveloperChatClient
 
         if ($responseFormat && isset($responseFormat['type']) && $responseFormat['type'] === 'json_object') {
             $payload['generationConfig']['responseMimeType'] = 'application/json';
+        }
+
+        if (array_key_exists('thinking_budget', $options)) {
+            $payload['generationConfig']['thinkingConfig']['thinkingBudget'] = (int) $options['thinking_budget'];
         }
 
         $timeout = $options['timeout'] ?? 120;
@@ -54,6 +58,9 @@ class DeveloperChatClient
             ->throw();
 
         $body = $response->json();
+        $body['model'] = $body['model']
+            ?? $body['candidates'][0]['modelVersion']
+            ?? $model;
 
         return [
             'reply' => $this->extractReply($body),

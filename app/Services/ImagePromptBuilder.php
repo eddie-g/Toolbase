@@ -9,7 +9,7 @@ namespace App\Services;
  * normal image/illustration/photo (no logo, emblem, icon, or typography
  * language). Edit  config/image_prompts.json  to change wording.
  *
- * Variables: {style_direction} {subject} {size} {colors} {bg}
+ * Variables: {style_direction} {subject} {size} {detail} {colors} {bg} {shape}
  */
 class ImagePromptBuilder
 {
@@ -33,6 +33,8 @@ class ImagePromptBuilder
      * @param string|null $colorInstruction Color instruction, or null/empty for AI's choice
      * @param string      $bgInstruction    Background phrase (may be empty)
      * @param string      $imageSize        Aspect ratio: '1:1' | '16:9' | '9:16'
+     * @param string      $detail           Detail level: 'min' | 'medium' | 'max'
+     * @param string|null $logoShape        Optional shape container
      */
     public static function build(
         string $style,
@@ -40,6 +42,8 @@ class ImagePromptBuilder
         ?string $colorInstruction,
         string $bgInstruction,
         string $imageSize = '1:1',
+        string $detail = 'medium',
+        ?string $logoShape = null,
     ): string {
         $tpl = self::templates();
 
@@ -55,6 +59,18 @@ class ImagePromptBuilder
             ?? $tpl['size_direction']['1:1']
             ?? 'Square 1:1 composition';
 
+        $detailKey = in_array($detail, ['min', 'medium', 'max'], true) ? $detail : 'medium';
+        $transparentCutout = str_contains(strtolower($bgInstruction), 'transparent')
+            || str_contains(strtolower($bgInstruction), 'no-background');
+        $detailGroup = $transparentCutout
+            ? ($tpl['transparent_detail_direction'] ?? [])
+            : ($tpl['detail_direction'] ?? []);
+        $detailDirection = $detailGroup[$style][$detailKey]
+            ?? $detailGroup['default'][$detailKey]
+            ?? $tpl['detail_direction'][$style][$detailKey]
+            ?? $tpl['detail_direction']['default'][$detailKey]
+            ?? '';
+
         $colors = ($colorInstruction !== null && trim($colorInstruction) !== '')
             ? rtrim(trim($colorInstruction), '.') . '. '
             : '';
@@ -63,12 +79,18 @@ class ImagePromptBuilder
             ? rtrim(trim($bgInstruction), '.') . '. '
             : '';
 
+        $shape = '';
+        if (!empty($logoShape) && $logoShape !== 'none') {
+            $shapeName = strtolower($logoShape);
+            $shape = "Hard shape constraint: the entire image must be fully enclosed inside one clean {$shapeName} container/badge. The {$shapeName} is the outer boundary of the artwork, not just a background object. Nothing may extend outside the {$shapeName}. Keep all subjects, effects, scenery, silhouettes, and color fields clipped inside the {$shapeName}. ";
+        }
+
         $template = $tpl['template']
             ?? 'A high-quality {style_direction} image of {subject}. {size}. {colors}{bg}';
 
         return str_replace(
-            ['{style_direction}', '{subject}', '{size}', '{colors}', '{bg}'],
-            [$styleDirection, $subject, $sizeDirection, $colors, $bg],
+            ['{style_direction}', '{subject}', '{size}', '{detail}', '{colors}', '{bg}', '{shape}'],
+            [$styleDirection, $subject, $sizeDirection, $detailDirection, $colors, $bg, $shape],
             $template
         );
     }

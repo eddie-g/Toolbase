@@ -3,13 +3,13 @@
         <div class="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div>
                 <h2 class="text-base font-semibold text-emerald-950 dark:text-emerald-100">Create or edit a PDF</h2>
-                <p class="mt-1 text-sm text-emerald-800 dark:text-emerald-200">Open the PDF generator workspace to upload, create, edit, split, and convert documents.</p>
+                <p class="mt-1 text-sm text-emerald-800 dark:text-emerald-200">Open the PDF editor workspace to upload, create, edit, split, and convert documents.</p>
             </div>
             <a
                 href="{{ route('documents.index') }}"
                 class="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700"
             >
-                Open PDF Generator
+                Open PDF editor
             </a>
         </div>
     </section>

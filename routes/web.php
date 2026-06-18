@@ -3,6 +3,7 @@
 use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\DeveloperChatController;
 use App\Http\Controllers\DomainSearchController;
+use App\Http\Controllers\GeneratedImagePreviewController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\BrowseLogosController;
 use App\Http\Controllers\ComplianceController;
@@ -21,6 +22,10 @@ Route::get('/browse-logos', [BrowseLogosController::class, 'index'])->name('brow
 Route::get('/dashboard', function () {
     return redirect('/portal');
 })->middleware(['auth', 'verified'])->name('user.dashboard');
+
+Route::get('/livewire/update', function () {
+    return redirect()->to('/portal/pdf-generator');
+});
 
 Route::get('/docs/logo-generator', function () {
     return view('docs.logo-generator');
@@ -177,9 +182,6 @@ Route::get('/ai/add-to-pdf', function() {
 // Domain Search
 Route::get('/domain-search', [DomainSearchController::class, 'index'])->name('domainSearch.index');
 Route::get('/logo-generator', [DomainSearchController::class, 'logoGenerator2'])->name('domainSearch.logoGenerator');
-Route::get('/svg-editor', function () {
-    return view('svg-editor');
-})->name('svgEditor');
 Route::get('/domain-search/faq', function () {
     return view('domain-search-faq');
 })->name('domainSearch.faq');
@@ -209,15 +211,12 @@ Route::get('/domain-search/remove-logo-bg', fn () => response()->json(['error' =
 Route::get('/domain-search/logo-palettes', [DomainSearchController::class, 'listLogoPalettes'])->middleware('auth:web,admin')->name('domainSearch.logoPalettes.list');
 Route::post('/domain-search/logo-palettes', [DomainSearchController::class, 'saveLogoPalette'])->middleware('auth:web,admin')->name('domainSearch.logoPalettes.save');
 Route::delete('/domain-search/logo-palettes/{palette}', [DomainSearchController::class, 'deleteLogoPalette'])->middleware('auth:web,admin')->name('domainSearch.logoPalettes.delete');
+Route::get('/domain-search/logo-generator-settings', [DomainSearchController::class, 'getLogoGeneratorSettings'])->middleware('auth:web,admin')->name('domainSearch.logoSettings.get');
+Route::post('/domain-search/logo-generator-settings', [DomainSearchController::class, 'saveLogoGeneratorSettings'])->middleware('auth:web,admin')->name('domainSearch.logoSettings.save');
 Route::get('/domain-search/user-logos', [DomainSearchController::class, 'userLogos'])->middleware('auth:web,admin')->name('domainSearch.userLogos');
+Route::get('/generated-images/{logoRequest}/preview/{index}', GeneratedImagePreviewController::class)->whereNumber('index')->middleware('auth:web,admin')->name('generatedImages.preview');
+Route::get('/generated-images/{logoRequest}/original/{index}', [GeneratedImagePreviewController::class, 'original'])->whereNumber('index')->middleware('auth:web,admin')->name('generatedImages.original');
 Route::post('/domain-search/save-processed-svg', [DomainSearchController::class, 'saveProcessedSvg'])->middleware('auth:web,admin')->name('domainSearch.saveProcessedSvg');
-Route::post('/domain-search/editor-state', [DomainSearchController::class, 'saveEditorState'])->middleware('auth:web,admin')->name('domainSearch.editorState.save');
-Route::get('/domain-search/editor-states', [DomainSearchController::class, 'getEditorStates'])->middleware('auth:web,admin')->name('domainSearch.editorState.list');
-Route::get('/domain-search/editor-state/{id}', [DomainSearchController::class, 'loadEditorState'])->middleware('auth:web,admin')->name('domainSearch.editorState.load');
-Route::put('/domain-search/editor-state/{id}', [DomainSearchController::class, 'updateEditorState'])->middleware('auth:web,admin')->name('domainSearch.editorState.update');
-Route::delete('/domain-search/editor-state/{id}', [DomainSearchController::class, 'deleteEditorState'])->middleware('auth:web,admin')->name('domainSearch.editorState.delete');
-Route::get('/logos/{logoRequest}/edit', [DomainSearchController::class, 'editLogo'])->name('logos.edit');
-Route::post('/logos/{logoRequest}/save-edited', [DomainSearchController::class, 'saveEditedLogo'])->name('logos.saveEdited');
 
 // Stripe Credits
 Route::post('/credits/checkout', [CreditController::class, 'createCheckout'])->middleware('auth')->name('credits.checkout');

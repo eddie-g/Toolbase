@@ -5,30 +5,17 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class DocumentNote extends Model
+class LogoGeneratorSetting extends Model
 {
     protected $fillable = [
-        'document_id',
         'user_id',
         'admin_id',
-        'page_index',
-        'anchor_x',
-        'anchor_y',
-        'pin_color',
-        'pin_icon',
-        'body',
+        'settings',
     ];
 
     protected $casts = [
-        'page_index' => 'integer',
-        'anchor_x' => 'float',
-        'anchor_y' => 'float',
+        'settings' => 'array',
     ];
-
-    public function document(): BelongsTo
-    {
-        return $this->belongsTo(Document::class);
-    }
 
     public function user(): BelongsTo
     {

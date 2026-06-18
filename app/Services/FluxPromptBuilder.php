@@ -166,8 +166,12 @@ class FluxPromptBuilder
             'colors'      => $colorsValue,
             'bg'          => $bgInstruction,
             'shape_block' => $shapeBlock,
-            'no_text'     => $noTextValue,
+            'no_text'     => ($format === 'vector' && $mode === 'icon_only') ? '' : $noTextValue,
         ]);
+
+        if ($format === 'vector' && $mode === 'icon_only' && trim($noTextValue) !== '') {
+            $body = trim($noTextValue) . ' ' . $body;
+        }
 
         // For raster only, prepend custom colors to front-load palette guidance.
         // Vector templates already contain structured color instructions; avoid duplication.

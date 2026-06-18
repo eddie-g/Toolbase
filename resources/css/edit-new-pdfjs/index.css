@@ -69,33 +69,53 @@ body.enpv-body .floating-zoom-bar button:disabled {
 
 body.enpv-body .top-bar {
     display: grid;
-    grid-template-columns: auto minmax(160px, 1fr) auto auto auto;
+    grid-template-columns: auto minmax(120px, 1fr) repeat(8, auto);
     align-items: center;
-    gap: 10px;
+    gap: 8px;
 }
 
 body.enpv-body .top-bar .doc-top-back-btn {
     order: 1;
-    width: 32px;
+    min-width: 0;
+    max-width: 132px;
     height: 32px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid #d1d5db;
+    gap: 6px;
+    border: 1px solid #c7d2fe;
     border-radius: 8px;
-    color: #374151;
-    background: #ffffff;
-    font-size: 17px;
+    padding: 0 10px;
+    overflow: hidden;
+    color: #3730a3;
+    background: #eef2ff;
+    font-size: 12px;
     font-weight: 700;
     text-decoration: none;
+    white-space: nowrap;
     pointer-events: auto;
     opacity: 1;
+    cursor: pointer;
+}
+
+body.enpv-body .top-bar .doc-top-back-btn__icon {
+    flex: 0 0 auto;
+    font-size: 14px;
+    line-height: 1;
+}
+
+body.enpv-body .top-bar .doc-top-back-btn__text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 body.enpv-body .top-bar .doc-top-back-btn:hover,
 body.enpv-body .top-bar .doc-top-back-btn:focus-visible {
-    background: #f3f4f6;
-    color: #111827;
+    border-color: #a5b4fc;
+    background: #e0e7ff;
+    color: #312e81;
     outline: none;
 }
 
@@ -324,6 +344,39 @@ body.enpv-body .top-bar #save-btn,
 body.enpv-body .top-bar .doc-top-edit-link,
 body.enpv-body .top-bar .doc-top-documents-link {
     display: none !important;
+}
+
+body.enpv-body .floating-tool-bar .ftb-btn.is-premium-locked {
+    color: #6b7280;
+    cursor: not-allowed !important;
+}
+
+body.enpv-body .floating-tool-bar .ftb-btn.is-premium-locked:hover,
+body.enpv-body .floating-tool-bar .ftb-btn.is-premium-locked:focus-visible {
+    border-color: #fde68a;
+    background: #fffbeb;
+    color: #374151;
+    outline: none;
+}
+
+body.enpv-body .floating-tool-bar .ftb-btn.is-premium-locked svg {
+    opacity: 0.72;
+}
+
+body.enpv-body .floating-tool-bar .ftb-premium-label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 11px;
+    border-radius: 999px;
+    padding: 1px 4px;
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 7px;
+    line-height: 1;
+    font-weight: 800;
+    letter-spacing: 0;
+    text-transform: uppercase;
 }
 
 /* The floating toolbar Edit PDF controls are wired here. */
@@ -2443,52 +2496,52 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
     border: 2px solid #ffffff;
     border-radius: 999px;
     padding: 0;
-    background: #2563eb;
+    background: var(--enpv-note-pin-color, #2563eb);
     color: #ffffff;
     pointer-events: auto;
     cursor: grab !important;
-    box-shadow: 0 5px 14px rgba(15, 23, 42, 0.25), 0 0 0 1px rgba(37, 99, 235, 0.18);
+    box-shadow: 0 5px 14px rgba(15, 23, 42, 0.25), 0 0 0 1px color-mix(in srgb, var(--enpv-note-pin-color, #2563eb) 32%, transparent);
+    touch-action: none;
+    will-change: transform;
 }
 .enpv-note-marker__icon {
     position: absolute;
-    left: 9px;
-    top: 8px;
-    width: 14px;
-    height: 16px;
-    border-radius: 3px;
-    background: #ffffff;
-    box-shadow: inset 0 -3px 0 rgba(191, 219, 254, 0.95);
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #ffffff;
 }
-.enpv-note-marker__icon::before,
-.enpv-note-marker__icon::after {
-    content: '';
-    position: absolute;
-    left: 3px;
-    right: 3px;
-    height: 2px;
-    border-radius: 999px;
-    background: #60a5fa;
-}
-.enpv-note-marker__icon::before {
-    top: 5px;
-}
-.enpv-note-marker__icon::after {
-    top: 9px;
+.enpv-note-marker__icon svg {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.15;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 .enpv-note-marker:hover,
 .enpv-note-marker:focus-visible,
 .enpv-note-marker.is-focused {
-    background: #1d4ed8;
-    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.3), 0 0 0 5px rgba(37, 99, 235, 0.22);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.3), 0 0 0 5px color-mix(in srgb, var(--enpv-note-pin-color, #2563eb) 24%, transparent);
 }
 .enpv-note-marker.is-dragging {
     cursor: grabbing !important;
     transform: translate(-50%, -50%) scale(1.08);
-    background: #1d4ed8;
-    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.34), 0 0 0 6px rgba(37, 99, 235, 0.2);
+    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.34), 0 0 0 6px color-mix(in srgb, var(--enpv-note-pin-color, #2563eb) 22%, transparent);
 }
 .enpv-note-marker:focus-visible {
     outline: none;
+}
+.enpv-note-marker-drag-ghost {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 2147483646;
+    pointer-events: none;
+    cursor: grabbing !important;
+    box-shadow: 0 14px 28px rgba(15, 23, 42, 0.34), 0 0 0 6px color-mix(in srgb, var(--enpv-note-pin-color, #2563eb) 22%, transparent);
 }
 .pdfViewer .page.is-note-drop-target::after {
     content: '';
@@ -2531,33 +2584,34 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
 }
 .enpv-notes-panel {
     position: fixed;
-    top: 88px;
-    right: 18px;
-    bottom: 18px;
-    width: min(360px, calc(100vw - 32px));
+    top: 0;
+    right: 0;
+    z-index: 2147483550;
+    width: min(430px, 96vw);
+    height: 100%;
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    border: 1px solid #dbe3ef;
-    border-radius: 12px;
+    border-left: 1px solid rgba(15, 23, 42, 0.12);
     background: #ffffff;
-    color: #111827;
-    box-shadow: 0 18px 55px rgba(15, 23, 42, 0.18), 0 4px 16px rgba(15, 23, 42, 0.08);
-    font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+    color: #0f172a;
+    box-shadow: -22px 0 70px rgba(15, 23, 42, 0.24);
+    font-family: system-ui, sans-serif;
 }
 .enpv-notes-panel__header {
+    min-height: 58px;
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 14px;
-    padding: 16px 16px 12px;
-    border-bottom: 1px solid #edf1f7;
+    gap: 16px;
+    padding: 0 16px 0 20px;
+    border-bottom: 1px solid #e5e7eb;
 }
 .enpv-notes-panel__header h2 {
     margin: 0;
-    font-size: 17px;
+    font-size: 18px;
     line-height: 1.2;
-    font-weight: 750;
+    font-weight: 700;
 }
 .enpv-notes-panel__header p {
     margin: 4px 0 0;
@@ -2565,21 +2619,21 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
     font-size: 12px;
 }
 .enpv-notes-panel__close {
-    width: 32px;
-    height: 32px;
+    width: 34px;
+    height: 34px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid transparent;
+    border: 0;
     border-radius: 8px;
     background: transparent;
-    color: #475569;
+    color: #64748b;
+    cursor: pointer;
 }
 .enpv-notes-panel__close:hover,
 .enpv-notes-panel__close:focus-visible {
-    border-color: #d7dee8;
     background: #f1f5f9;
-    color: #111827;
+    color: #0f172a;
     outline: none;
 }
 .enpv-notes-compose {
@@ -2785,8 +2839,70 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
     line-height: 1.45;
 }
 .enpv-note-edit[hidden],
-.enpv-note-body[hidden] {
+.enpv-note-body[hidden],
+.enpv-note-style-menu[hidden] {
     display: none !important;
+}
+.enpv-note-style-menu {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 8px;
+    background: #f8fafc;
+}
+.enpv-note-style-group {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    flex-wrap: wrap;
+}
+.enpv-note-style-color,
+.enpv-note-style-icon {
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 0;
+    background: #ffffff;
+    color: #475569;
+}
+.enpv-note-style-color {
+    border-radius: 999px;
+}
+.enpv-note-style-color::before {
+    content: '';
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--enpv-note-pin-color, #2563eb);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+}
+.enpv-note-style-icon svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2.1;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+.enpv-note-style-color:hover,
+.enpv-note-style-color:focus-visible,
+.enpv-note-style-icon:hover,
+.enpv-note-style-icon:focus-visible {
+    border-color: #94a3b8;
+    outline: none;
+}
+.enpv-note-style-color.is-active,
+.enpv-note-style-icon.is-active {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
 }
 .enpv-note-drag-ghost {
     position: fixed;
@@ -2794,7 +2910,6 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
     width: min(260px, calc(100vw - 28px));
     max-height: 90px;
     overflow: hidden;
-    transform: translate(14px, 14px);
     border: 1px solid #bfdbfe;
     border-radius: 10px;
     padding: 10px 12px;

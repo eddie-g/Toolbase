@@ -25,6 +25,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 
 class DocumentController extends Controller
 {
@@ -32,6 +33,22 @@ class DocumentController extends Controller
     private const MONTHLY_ACTION_LIMIT = 1000;
     private const PDF_ACRO_FORM_BASE_SESSION = '__document_acro_form__';
     private const SESSION_DOCUMENT_ACCESS_KEY = 'pdf_editor_accessible_document_ids';
+    private const DOCUMENT_NOTE_PIN_COLORS = [
+        '#2563eb',
+        '#ef4444',
+        '#f59e0b',
+        '#10b981',
+        '#8b5cf6',
+        '#111827',
+    ];
+    private const DOCUMENT_NOTE_PIN_ICONS = [
+        'note',
+        'flag',
+        'check',
+        'alert',
+        'star',
+        'question',
+    ];
 
     public function __construct()
     {
@@ -6591,6 +6608,18 @@ class DocumentController extends Controller
             ->where('admin_id', $ownership['admin_id']);
     }
 
+    private function requireDocumentNotesAuthentication()
+    {
+        if ($this->hasEditorAuthentication()) {
+            return null;
+        }
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Notes are a premium feature for logged-in users.',
+        ], 401);
+    }
+
     private function serializeDocumentNote(DocumentNote $note): array
     {
         return [
@@ -6601,10 +6630,30 @@ class DocumentController extends Controller
             'anchor_x' => $note->anchor_x,
             'anchor_y' => $note->anchor_y,
             'has_anchor' => $note->page_index !== null && $note->anchor_x !== null && $note->anchor_y !== null,
+            'pin_color' => $this->normalizeDocumentNotePinColor($note->pin_color),
+            'pin_icon' => $this->normalizeDocumentNotePinIcon($note->pin_icon),
             'body' => $note->body,
             'created_at' => optional($note->created_at)->toIso8601String(),
             'updated_at' => optional($note->updated_at)->toIso8601String(),
         ];
+    }
+
+    private function normalizeDocumentNotePinColor(?string $color): string
+    {
+        $color = strtolower(trim((string) $color));
+
+        return in_array($color, self::DOCUMENT_NOTE_PIN_COLORS, true)
+            ? $color
+            : self::DOCUMENT_NOTE_PIN_COLORS[0];
+    }
+
+    private function normalizeDocumentNotePinIcon(?string $icon): string
+    {
+        $icon = strtolower(trim((string) $icon));
+
+        return in_array($icon, self::DOCUMENT_NOTE_PIN_ICONS, true)
+            ? $icon
+            : self::DOCUMENT_NOTE_PIN_ICONS[0];
     }
 
     private function normalizeDocumentNoteAnchor(array $validated): array
@@ -6633,6 +6682,10 @@ class DocumentController extends Controller
 
     public function getDocumentNotes(Request $request, Document $document)
     {
+        if ($response = $this->requireDocumentNotesAuthentication()) {
+            return $response;
+        }
+
         $notes = $this->documentNotesQuery($document)
             ->orderByRaw('page_index is null')
             ->orderBy('page_index')
@@ -6649,11 +6702,17 @@ class DocumentController extends Controller
 
     public function storeDocumentNote(Request $request, Document $document)
     {
+        if ($response = $this->requireDocumentNotesAuthentication()) {
+            return $response;
+        }
+
         $validated = $request->validate([
             'body' => ['required', 'string', 'max:20000'],
             'page_index' => ['nullable', 'integer', 'min:0'],
             'anchor_x' => ['nullable', 'numeric', 'min:0', 'max:1'],
             'anchor_y' => ['nullable', 'numeric', 'min:0', 'max:1'],
+            'pin_color' => ['nullable', Rule::in(self::DOCUMENT_NOTE_PIN_COLORS)],
+            'pin_icon' => ['nullable', Rule::in(self::DOCUMENT_NOTE_PIN_ICONS)],
         ]);
 
         $body = trim((string) $validated['body']);
@@ -6673,6 +6732,8 @@ class DocumentController extends Controller
             'page_index' => $pageIndex,
             'anchor_x' => $anchorX,
             'anchor_y' => $anchorY,
+            'pin_color' => $this->normalizeDocumentNotePinColor($validated['pin_color'] ?? null),
+            'pin_icon' => $this->normalizeDocumentNotePinIcon($validated['pin_icon'] ?? null),
             'body' => $body,
         ]);
 
@@ -6684,12 +6745,18 @@ class DocumentController extends Controller
 
     public function updateDocumentNote(Request $request, Document $document, DocumentNote $note)
     {
+        if ($response = $this->requireDocumentNotesAuthentication()) {
+            return $response;
+        }
+
         $note = $this->ownedDocumentNoteOrFail($document, $note);
         $validated = $request->validate([
             'body' => ['required', 'string', 'max:20000'],
             'page_index' => ['nullable', 'integer', 'min:0'],
             'anchor_x' => ['nullable', 'numeric', 'min:0', 'max:1'],
             'anchor_y' => ['nullable', 'numeric', 'min:0', 'max:1'],
+            'pin_color' => ['nullable', Rule::in(self::DOCUMENT_NOTE_PIN_COLORS)],
+            'pin_icon' => ['nullable', Rule::in(self::DOCUMENT_NOTE_PIN_ICONS)],
         ]);
 
         $body = trim((string) $validated['body']);
@@ -6705,6 +6772,8 @@ class DocumentController extends Controller
             'page_index' => $pageIndex,
             'anchor_x' => $anchorX,
             'anchor_y' => $anchorY,
+            'pin_color' => $this->normalizeDocumentNotePinColor($validated['pin_color'] ?? $note->pin_color),
+            'pin_icon' => $this->normalizeDocumentNotePinIcon($validated['pin_icon'] ?? $note->pin_icon),
             'body' => $body,
         ])->save();
 
@@ -6716,6 +6785,10 @@ class DocumentController extends Controller
 
     public function deleteDocumentNote(Request $request, Document $document, DocumentNote $note)
     {
+        if ($response = $this->requireDocumentNotesAuthentication()) {
+            return $response;
+        }
+
         $note = $this->ownedDocumentNoteOrFail($document, $note);
         $note->delete();
 

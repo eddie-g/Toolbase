@@ -48,6 +48,15 @@ class AiLogoPrice extends Model
         return $this->belongsTo(AiLogoRequest::class, 'ai_logo_request_id');
     }
 
+    public static function gptImageResolutionForSize(string $imageSize): string
+    {
+        return match ($imageSize) {
+            '16:9' => '1536x1024',
+            '9:16' => '1024x1536',
+            default => '1024x1024',
+        };
+    }
+
     /**
      * Fallback prices per megapixel (used if API is unreachable).
      */
@@ -108,7 +117,7 @@ class AiLogoPrice extends Model
      * @param bool   $isPro       Whether using flux-2-flex (PRO) or flux/schnell (standard)
      * @param int    $proSize     PRO resolution (512, 1024, 1536) — ignored for Schnell (always 512)
      * @param string $style       Style name ('vector' adds vectorize cost)
-     * @param string $bgColor     Background color ('transparent' or hex adds birefnet cost)
+     * @param string $bgColor     Background color ('none', 'transparent', or hex adds background-removal cost)
      * @param string $outputFormat Output format ('raster' or 'vector')
      * @param string $imageModel  Image model ('flux', 'dalle', 'recraft')
      * @return array Cost breakdown
@@ -188,7 +197,7 @@ class AiLogoPrice extends Model
         $vectorizeBaseCost = 0;
 
         // Background removal via birefnet
-        $needsBgRemove = $bgColor === 'transparent' || preg_match('/^#[0-9a-fA-F]{6}$/', $bgColor);
+        $needsBgRemove = in_array($bgColor, ['none', 'transparent'], true) || preg_match('/^#[0-9a-fA-F]{6}$/', $bgColor);
         if ($needsBgRemove) {
             $birefnetPrice = $prices['fal-ai/birefnet']['price'] ?? self::FALLBACK_PRICES['fal-ai/birefnet']['price'];
             $bgRemoveBaseCost = round($birefnetPrice * 3 * $imageCount, 6);
@@ -247,6 +256,7 @@ class AiLogoPrice extends Model
         string $resolution = '1024x1024',
         string $quality = 'standard',
         string $outputFormat = 'raster',
+        string $bgColor = 'white',
     ): array {
         // Map legacy DALL-E 3 quality names → GPT Image 1.5 quality tiers
         $gptQuality = match($quality) {
@@ -271,32 +281,37 @@ class AiLogoPrice extends Model
                 ->first();
         }
 
-        // GPT Image 1.5 base prices (OpenAI standard pricing, per 1 image)
-        // Previous DALL-E 3 prices were: standard 1024x1024=$0.06, hd=$0.12
+        // GPT Image 1.5 base prices (OpenAI standard pricing, per 1 image).
         if ($dbRate) {
             $baseCost = (float) $dbRate->base_cost_usd;
             $costPerImage = (float) $dbRate->user_cost_usd;
             $markupPercentage = (float) $dbRate->markup_percentage;
         } else {
             $basePrices = [
-                'medium' => [    // was DALL-E 3 'standard' — $0.06 → $0.042
-                    '1024x1024' => 0.042,
-                    '1024x1792' => 0.084,
-                    '1792x1024' => 0.084,
+                'medium' => [
+                    '1024x1024' => 0.034,
+                    '1024x1536' => 0.050,
+                    '1536x1024' => 0.050,
+                    '1024x1792' => 0.050,
+                    '1792x1024' => 0.050,
                 ],
-                'high' => [      // was DALL-E 3 'hd' — $0.12 → $0.167
-                    '1024x1024' => 0.167,
-                    '1024x1792' => 0.334,
-                    '1792x1024' => 0.334,
+                'high' => [
+                    '1024x1024' => 0.133,
+                    '1024x1536' => 0.200,
+                    '1536x1024' => 0.200,
+                    '1024x1792' => 0.200,
+                    '1792x1024' => 0.200,
                 ],
                 'low' => [
-                    '1024x1024' => 0.011,
-                    '1024x1792' => 0.022,
-                    '1792x1024' => 0.022,
+                    '1024x1024' => 0.009,
+                    '1024x1536' => 0.013,
+                    '1536x1024' => 0.013,
+                    '1024x1792' => 0.013,
+                    '1792x1024' => 0.013,
                 ],
             ];
 
-            $baseCost = $basePrices[$gptQuality][$resolution] ?? 0.042;
+            $baseCost = $basePrices[$gptQuality][$resolution] ?? 0.034;
             $markupPercentage = 50.00;
             $costPerImage = round($baseCost * 1.5, 6); // 50% markup
         }
@@ -313,6 +328,13 @@ class AiLogoPrice extends Model
         $vectorizeCostTotal = round($vectorizeCostPerImage * $imageCount, 6);
         $totalCost = round($totalCost + $vectorizeCostTotal, 6);
 
+        $bgRemoveCostPerImage = 0;
+        if (in_array($bgColor, ['none', 'transparent'], true) || preg_match('/^#[0-9a-fA-F]{6}$/', $bgColor)) {
+            $bgRemoveCostPerImage = round((self::FALLBACK_PRICES['fal-ai/birefnet']['price'] ?? 0.00111) * 3 * 1.5, 6);
+        }
+        $bgRemoveCostTotal = round($bgRemoveCostPerImage * $imageCount, 6);
+        $totalCost = round($totalCost + $bgRemoveCostTotal, 6);
+
         return [
             'image_count' => $imageCount,
             'model' => 'gpt-image-1.5',
@@ -327,7 +349,7 @@ class AiLogoPrice extends Model
             'markup_amount' => $markupAmount,
             'breakdown' => [
                 'generation' => round($costPerImage * $imageCount, 6),
-                'bg_removal' => 0,
+                'bg_removal' => $bgRemoveCostTotal,
                 'vectorize' => $vectorizeCostTotal,
             ],
             'source' => $dbRate ? 'database' : 'static_with_markup',

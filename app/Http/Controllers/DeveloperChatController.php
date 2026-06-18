@@ -58,7 +58,7 @@ class DeveloperChatController extends Controller
                 'reply' => $this->parseReply($data['reply']),
                 'model' => $data['response']['model']
                     ?? $data['response']['candidates'][0]['modelVersion']
-                    ?? env('GEMINI_MODEL', 'gemini-2.0-flash'),
+                    ?? config('services.gemini.model', 'gemini-2.5-flash-lite'),
                 'usage' => $data['response']['usageMetadata'] ?? null,
                 'raw' => $data['response'],
             ]);
@@ -133,7 +133,7 @@ class DeveloperChatController extends Controller
                 'reply' => $this->parseReply($data['reply']),
                 'model' => $data['response']['model']
                     ?? $data['response']['candidates'][0]['modelVersion']
-                    ?? env('GEMINI_MODEL', 'gemini-2.0-flash'),
+                    ?? config('services.gemini.model', 'gemini-2.5-flash-lite'),
                 'usage' => $data['response']['usageMetadata'] ?? null,
                 'raw' => $data['response'],
             ]);

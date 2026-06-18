@@ -210,7 +210,7 @@ class ApiIntegrations extends Page
 
             if ($response->successful()) {
                 $models = $response->json()['models'] ?? [];
-                $activeModel = config('services.gemini.model', 'gemini-2.0-flash');
+                $activeModel = config('services.gemini.model', 'gemini-2.5-flash-lite');
 
                 return [
                     'status'  => 'connected',

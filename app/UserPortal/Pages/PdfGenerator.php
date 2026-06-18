@@ -8,9 +8,9 @@ use Filament\Pages\Page;
 
 class PdfGenerator extends Page
 {
-    protected static ?string $title = 'PDF Generator';
+    protected static ?string $title = 'PDF editor';
 
-    protected static ?string $navigationLabel = 'PDF Generator';
+    protected static ?string $navigationLabel = 'PDF editor';
 
     protected static ?string $navigationIcon = 'heroicon-o-document-text';
 
