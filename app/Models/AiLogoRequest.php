@@ -28,13 +28,15 @@ class AiLogoRequest extends Model
         'response_time_ms',
         'is_favourited',
         'is_showcase',
+        'showcase_image_indexes',
     ];
 
     protected $casts = [
-        'image_urls'   => 'array',
+        'image_urls' => 'array',
         'is_favourited' => 'boolean',
-        'is_showcase'  => 'boolean',
-        'seed_number'  => 'integer',
+        'is_showcase' => 'boolean',
+        'showcase_image_indexes' => 'array',
+        'seed_number' => 'integer',
     ];
 
     public function user()

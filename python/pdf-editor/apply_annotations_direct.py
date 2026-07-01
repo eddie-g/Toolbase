@@ -2052,7 +2052,10 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
 
     shape_type = (ann.get("shapeType") or "rect").lower()
     opacity = float(ann.get("opacity", 1.0) or 1.0)
-    stroke_width = float(ann.get("strokeWidth", 2.0) or 2.0)
+    try:
+        stroke_width = max(0.0, float(ann.get("strokeWidth", 2.0)))
+    except (TypeError, ValueError):
+        stroke_width = 2.0
     rotation = float(ann.get("rotation", 0.0) or 0.0)
 
     def _clamp01(value: Any, fallback: float) -> float:
@@ -2069,7 +2072,7 @@ def draw_shape(page: fitz.Page, ann: Dict[str, Any]) -> None:
     stroke_opacity = _clamp01(ann.get("strokeOpacity", opacity), opacity)
     fill_opacity = _clamp01(ann.get("fillOpacity", opacity), opacity)
 
-    stroke = None if ann.get("strokeTransparent") else hex_to_rgb(ann.get("strokeColor") or "#000000")
+    stroke = None if ann.get("strokeTransparent") or stroke_width <= 0.0 else hex_to_rgb(ann.get("strokeColor") or "#000000")
     fill = None if ann.get("fillTransparent") else hex_to_rgb(ann.get("fillColor") or "#ffffff")
 
     if stroke is None and fill is None:

@@ -243,5 +243,160 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
         finally:
             doc.close()
 
+    def test_deleted_overprint_source_text_fully_removed(self):
+        # Faux-bold/overprint source headings paint each glyph twice with a
+        # small horizontal offset. The text-search redaction path covers only
+        # one set of glyphs and strands the offset duplicates at word edges
+        # (user-reported stray "P I r i" for a deleted "Part II ..." heading).
+        # A deleted source span must wipe every glyph in the captured rect
+        # while leaving the row below intact.
+        text = "Part II Seller/Transferor Information"
+        with tempfile.NamedTemporaryFile(suffix=".pdf") as handle:
+            doc = fitz.open()
+            try:
+                page = doc.new_page(width=612, height=792)
+                baseline = fitz.Point(40, 220)
+                # Overprint: same text painted twice, offset to fake bold.
+                page.insert_text(baseline, text, fontsize=11)
+                page.insert_text(fitz.Point(baseline.x + 0.4, baseline.y), text, fontsize=11)
+                # Neighbouring row just below that must survive.
+                page.insert_text(fitz.Point(40, 236), "First name/Grantor", fontsize=8)
+                doc.save(handle.name)
+            finally:
+                doc.close()
+
+            doc = fitz.open(handle.name)
+            try:
+                page = doc[0]
+                source_match = page.search_for(text)[0]
+                ph = page.rect.height
+                annotation = {
+                    "id": "pdfjs_deleted_pdfjs_0_0_0:35",
+                    "type": "text",
+                    "pageIndex": 0,
+                    "text": None,
+                    "originalText": text,
+                    "pdfjsDeleted": True,
+                    "savedTextOverlay": True,
+                    "skipPdfjsSourceMask": False,
+                    "fontSize": 11,
+                    "pdfX": source_match.x0,
+                    "pdfY": ph - source_match.y1,
+                    "pdfWidth": source_match.width,
+                    "pdfHeight": source_match.height,
+                    "pdfjsSourceX": source_match.x0,
+                    "pdfjsSourceY": ph - source_match.y1,
+                    "pdfjsSourceW": source_match.width,
+                    "pdfjsSourceH": source_match.height,
+                    "pdfjsSourcePageHeight": ph,
+                    "pdfjsSourceText": text,
+                    "pdfjsAnchorUid": "0:35",
+                    "pdfjsSourceOccurrence": "0",
+                }
+            finally:
+                doc.close()
+
+            self.module.apply_annotations(handle.name, [annotation])
+
+            out_doc = fitz.open(handle.name)
+            try:
+                page = out_doc[0]
+                # No fragment of the deleted heading may survive.
+                self.assertEqual(page.search_for("Part"), [])
+                self.assertEqual(page.search_for("Information"), [])
+
+                # No ink in the deleted source rect.
+                clip = fitz.Rect(
+                    source_match.x0, source_match.y0, source_match.x1, source_match.y1
+                ) & page.rect
+                pix = page.get_pixmap(matrix=fitz.Matrix(4, 4), clip=clip, alpha=False)
+                samples = pix.samples
+                channels = max(1, int(getattr(pix, "n", 3) or 3))
+                dark = 0
+                for offset in range(0, len(samples), channels):
+                    r = int(samples[offset])
+                    g = int(samples[offset + 1])
+                    b = int(samples[offset + 2])
+                    if (0.299 * r) + (0.587 * g) + (0.114 * b) < 180:
+                        dark += 1
+                self.assertEqual(dark, 0)
+
+                # The neighbouring row below must remain.
+                self.assertNotEqual(page.search_for("First name/Grantor"), [])
+            finally:
+                out_doc.close()
+
+    def test_rich_span_bold_resolves_sibling_embedded_face(self):
+        """A rich-text span that requests bold while the base source font is a
+        regular runtime-extracted face must resolve to the bold sibling within
+        the same family + stretch (e.g. HelveticaLTStd-Cond -> -BoldCond),
+        instead of silently rendering regular because the exact-name match
+        dominates the weight preference."""
+        module = self.module
+        metadata = {
+            "HelveticaLTStd-Cond": {
+                "clean_name": "HelveticaLTStd-Cond",
+                "family": "HelveticaLTStd",
+                "css_weight": "400",
+                "css_style": "normal",
+                "css_stretch": "condensed",
+                "file_path": "/fonts/runtime-extracted/9999/HelveticaLTStd-Cond.otf",
+            },
+            "HelveticaLTStd-BoldCond": {
+                "clean_name": "HelveticaLTStd-BoldCond",
+                "family": "HelveticaLTStd",
+                "css_weight": "700",
+                "css_style": "normal",
+                "css_stretch": "condensed",
+                "file_path": "/fonts/runtime-extracted/9999/HelveticaLTStd-BoldCond.otf",
+            },
+            "HelveticaLTStd-Bold": {
+                "clean_name": "HelveticaLTStd-Bold",
+                "family": "HelveticaLTStd",
+                "css_weight": "700",
+                "css_style": "normal",
+                "css_stretch": "normal",
+                "file_path": "/fonts/runtime-extracted/9999/HelveticaLTStd-Bold.otf",
+            },
+        }
+        original_loader = module.load_embedded_font_metadata
+        module.EMBEDDED_FONT_METADATA_CACHE.pop("9999", None)
+        module.load_embedded_font_metadata = lambda document_id: metadata
+        # Avoid filesystem coverage checks: the runtime-extracted otf files do
+        # not exist in this synthetic test, so treat every face as covering.
+        original_covers = module._embedded_font_covers_text
+        module._embedded_font_covers_text = lambda fontfile, text: True
+        # The public-path -> absolute resolver would look on disk; stub it to
+        # return a deterministic absolute path for the assertions.
+        original_abs = module.embedded_font_public_path_to_absolute
+        module.embedded_font_public_path_to_absolute = lambda web_path: str(web_path or "")
+        try:
+            base = {
+                "fontFamily": "HelveticaLTStd-Cond",
+                "fontSourceName": "HelveticaLTStd-Cond",
+                "forceEmbeddedFont": True,
+                "pdfjsForceEmbeddedFont": True,
+                "savedTextOverlay": True,
+                "pdfjsAnchorUid": "1:48",
+                "__documentId": "9999",
+            }
+
+            bold_ann = dict(base, fontWeight="700", text="13.")
+            bold_entry = module.resolve_embedded_font_entry(bold_ann)
+            self.assertIsNotNone(bold_entry)
+            self.assertEqual(bold_entry["clean_name"], "HelveticaLTStd-BoldCond")
+            self.assertGreaterEqual(int(bold_entry["css_weight"]), 600)
+
+            regular_ann = dict(base, fontWeight="400", text="Selling price")
+            regular_entry = module.resolve_embedded_font_entry(regular_ann)
+            self.assertIsNotNone(regular_entry)
+            self.assertEqual(regular_entry["clean_name"], "HelveticaLTStd-Cond")
+            self.assertLess(int(regular_entry["css_weight"]), 600)
+        finally:
+            module.load_embedded_font_metadata = original_loader
+            module._embedded_font_covers_text = original_covers
+            module.embedded_font_public_path_to_absolute = original_abs
+            module.EMBEDDED_FONT_METADATA_CACHE.pop("9999", None)
+
 if __name__ == "__main__":
     unittest.main()

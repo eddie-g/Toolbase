@@ -92,6 +92,7 @@ const floatingGuidedConvertButton = document.getElementById('ftb-guided-convert'
 const saveStatus = document.getElementById('save-status');
 const saveToast = document.getElementById('save-toast');
 const annFormatBar = document.getElementById('ann-format-bar');
+const afbClose = document.getElementById('afb-close');
 const afbFont = document.getElementById('afb-font');
 const afbSize = document.getElementById('afb-size');
 const afbSizeValue = document.getElementById('afb-size-value');
@@ -106,6 +107,7 @@ const afbValign = document.getElementById('afb-valign');
 const afbCopy = document.getElementById('afb-copy');
 const afbDelete = document.getElementById('afb-delete');
 const shapeToolPanel = document.getElementById('shape-tool-panel');
+const shapeToolClose = document.getElementById('shape-tool-close');
 const shapeTypeButtons = Array.from(document.querySelectorAll('[data-shape-tool]'));
 const shapeMoreToggle = document.getElementById('shape-more-toggle');
 const shapeStrokeColorInput = document.getElementById('shape-stroke-color');
@@ -153,6 +155,11 @@ const imageImportPreviewName = document.getElementById('image-import-preview-nam
 const imageImportPreviewDims = document.getElementById('image-import-preview-dims');
 const imageImportClear = document.getElementById('image-import-clear');
 const imageImportStatus = document.getElementById('image-import-status');
+const imageImportTabs = Array.from(document.querySelectorAll('[data-image-import-tab]'));
+const imageImportPanels = Array.from(document.querySelectorAll('[data-image-import-panel]'));
+const imageImportLogoGrid = document.getElementById('image-import-logo-grid');
+const imageImportLogoStatus = document.getElementById('image-import-logo-status');
+const imageImportLogoRefresh = document.getElementById('image-import-logo-refresh');
 const pageManagerOpenButton = document.getElementById('enpv-page-manager-open');
 const pageManagerModal = document.getElementById('enpv-page-manager-modal');
 const pageManagerCloseButton = document.getElementById('enpv-page-manager-close');
@@ -212,6 +219,7 @@ const SAVE_URL = editNewRoot?.dataset?.saveUrl;
 const SAVE_ACRO_FORM_URL = editNewRoot?.dataset?.saveAcroFormUrl;
 const ANNOTATION_DEBUG_URL = editNewRoot?.dataset?.annotationDebugUrl;
 const EDITOR_AUTHENTICATED = editNewRoot?.dataset?.editorAuthenticated === '1';
+const USER_LOGOS_URL = editNewRoot?.dataset?.userLogosUrl || '/domain-search/user-logos';
 const NOTES_URL = editNewRoot?.dataset?.notesUrl || '';
 const OVERWRITE_TEXT_URL = editNewRoot?.dataset?.overwriteUrl || '/documents/overwrite-annotation-text';
 const DOWNLOAD_URL = editNewRoot?.dataset?.downloadUrl;
@@ -332,6 +340,8 @@ let burningAnnotationId = '';
 const canvasRewrittenAnnotationIds = new Set();
 const sourceRedactedAnnotationIds = new Set();
 const pendingDeletedAnnotationIds = new Set();
+const pendingClearedAcroFormKeys = new Set();
+let pendingAcroFormClearRegions = [];
 const undoStack = [];
 const redoStack = [];
 const debugPanel = document.getElementById('enpv-debug-panel');
@@ -379,6 +389,7 @@ let drawToolType = 'pen';
 let drawStrokeColor = '#111827';
 let drawOpacity = 1;
 let drawBrushSize = 10;
+let drawStyleLiveEditHistoryCaptured = false;
 let activeDrawSession = null;
 let highlightModeActive = false;
 let highlightColor = '#facc15';
@@ -618,6 +629,95 @@ function annotationBaselinePdfBox(annotation) {
         return { x: bX, y: bY, w: bW, h: bH };
     }
     return null;
+}
+
+function isPdfjsAcroChromeGlyphText(value) {
+    const text = normalizeComparableText(value).replace(/\s+/g, '');
+    if (!text || text.length > 2) return false;
+    return /^[•●◦○◯◻☐☑☒□■▪▫▣▢✓✔✕✖×|()[\]{}]$/.test(text);
+}
+
+function acroFormWidgetPdfRectsForPage(pageIndex) {
+    const page = Number(pageIndex);
+    if (!Number.isFinite(page) || page < 0 || !Array.isArray(acroFormEntries)) return [];
+    return acroFormEntries
+        .filter((entry) => Number(entry?.pageIndex) === page)
+        .map((entry) => normalizedPdfRectFromArray(entry?.rect))
+        .filter(Boolean);
+}
+
+function pdfRectNearAny(rect, candidates, padding = 0) {
+    if (!rect || !Array.isArray(candidates) || !candidates.length) return false;
+    const padded = {
+        x: Number(rect.x) - padding,
+        y: Number(rect.y) - padding,
+        w: Number(rect.w) + (padding * 2),
+        h: Number(rect.h) + (padding * 2),
+    };
+    if (![padded.x, padded.y, padded.w, padded.h].every(Number.isFinite) || padded.w <= 0 || padded.h <= 0) return false;
+    return candidates.some((candidate) => pdfRectOverlapArea(padded, candidate) > 0);
+}
+
+function isPdfjsSourceBackedAcroWidgetChromeAnnotation(annotation) {
+    if (!annotation || String(annotation.type || '').toLowerCase() !== 'text') return false;
+    if (isUserCreatedTextAnnotation(annotation) || isPromotedExtractionAnnotation(annotation)) return false;
+    if (boolish(annotation.pdfjsDeleted)) return false;
+    if (boolish(annotation.styleDirty) || boolish(annotation.userForcedRichText)) return false;
+    if (String(annotation.pdfjsEditorMode || 'source').trim().toLowerCase() === 'rich') return false;
+    const sourceText = annotation.pdfjsSourceText || annotation.originalText || annotation.text || '';
+    if (!isPdfjsAcroChromeGlyphText(sourceText)) return false;
+    const rect = annotationBaselinePdfBox(annotation) || annotationCurrentPdfBox(annotation);
+    if (!rect || rect.w > 24 || rect.h > 32) return false;
+    return pdfRectNearAny(rect, acroFormWidgetPdfRectsForPage(annotationPageIndex(annotation)), 8);
+}
+
+function collectAcroWidgetLayerRects(pageView, pageDiv, relativeRect) {
+    const widgetRects = [];
+    const annLayerEl = pageView?.annotationLayer?.div
+        || pageDiv?.querySelector?.(':scope > .annotationLayer');
+    if (!annLayerEl || !relativeRect) return widgetRects;
+    const widgetEls = annLayerEl.querySelectorAll(
+        '.textWidgetAnnotation, .buttonWidgetAnnotation, '
+        + '.choiceWidgetAnnotation, .signatureWidgetAnnotation',
+    );
+    for (const w of widgetEls) {
+        const wr = w.getBoundingClientRect();
+        if (wr.width <= 0 || wr.height <= 0) continue;
+        widgetRects.push({
+            left: wr.left - relativeRect.left,
+            top: wr.top - relativeRect.top,
+            right: wr.right - relativeRect.left,
+            bottom: wr.bottom - relativeRect.top,
+        });
+    }
+    return widgetRects;
+}
+
+function layerRectIntersectsWidget(rect, widgetRects, padding = 0, tolerance = 0) {
+    if (!rect || !Array.isArray(widgetRects) || !widgetRects.length) return false;
+    const r = {
+        left: Number(rect.left),
+        top: Number(rect.top),
+        right: Number(rect.right ?? (Number(rect.left) + Number(rect.width))),
+        bottom: Number(rect.bottom ?? (Number(rect.top) + Number(rect.height))),
+    };
+    if (![r.left, r.top, r.right, r.bottom].every(Number.isFinite)) return false;
+    for (const w of widgetRects) {
+        const ix0 = Math.max(r.left, Number(w.left) - padding);
+        const iy0 = Math.max(r.top, Number(w.top) - padding);
+        const ix1 = Math.min(r.right, Number(w.right) + padding);
+        const iy1 = Math.min(r.bottom, Number(w.bottom) + padding);
+        if ((ix1 - ix0) > tolerance && (iy1 - iy0) > tolerance) return true;
+    }
+    return false;
+}
+
+function sourceGroupLooksLikeAcroWidgetChrome(group, rect, widgetRects, scale = 1) {
+    if (!group || !rect || !Array.isArray(widgetRects) || !widgetRects.length) return false;
+    const sourceText = group.text || group.visualText || group.anchor?.dataset?.enpvOriginal || group.anchor?.textContent || '';
+    const compactText = normalizeComparableText(sourceText).replace(/\s+/g, '');
+    if (!isPdfjsAcroChromeGlyphText(compactText)) return false;
+    return layerRectIntersectsWidget(rect, widgetRects, Math.max(8, 8 * scale), -0.5);
 }
 
 function immutableSourceNumber(existingValue, fallbackValue) {
@@ -901,6 +1001,7 @@ function findPersistedPromotedAnnotationByText(pageIndex, text) {
 function shouldIncludeInPdfjsVisibleExport(annotation) {
     if (!annotation || typeof annotation !== 'object') return false;
     if (isEmptyUserCreatedTextAnnotation(annotation)) return false;
+    if (isPdfjsSourceBackedAcroWidgetChromeAnnotation(annotation)) return false;
     if (
         boolish(annotation.imageToPdfOcr)
         && !boolish(annotation.userAuthored)
@@ -919,11 +1020,16 @@ function shouldIncludeInPdfjsVisibleExport(annotation) {
 
 function shouldIncludeInPdfjsSessionPayload(annotation) {
     if (!annotation || typeof annotation !== 'object') return false;
+    if (isPdfjsSourceBackedAcroWidgetChromeAnnotation(annotation)) return false;
     return !isEmptyUserCreatedTextAnnotation(annotation);
 }
 
 function isShapeAnnotation(annotation) {
     return String(annotation?.type || '').toLowerCase() === 'shape';
+}
+
+function isHighlightAnnotation(annotation) {
+    return isShapeAnnotation(annotation) && normalizeShapeType(annotation?.shapeType) === 'highlight';
 }
 
 function isImageAnnotation(annotation) {
@@ -1118,6 +1224,11 @@ function deleteLayerPanelAnnotation(annotation, options = {}) {
         .map((value) => String(value || '').trim())
         .filter(Boolean)
         .forEach((value) => pendingDeletedAnnotationIds.add(value));
+    const deletionMaskAnnotation = deletedMaskAnnotationFromAnnotation(annotation);
+    if (deletionMaskAnnotation) {
+        recordPendingAcroFormClearForDeletedAnnotation(deletionMaskAnnotation);
+        upsertPersistedAnnotation(deletionMaskAnnotation);
+    }
     deletePersistedAnnotation(annotation.id);
     if (annotation.pdfjsAnchorUid) annotationOffsetsPts.delete(String(annotation.pdfjsAnchorUid));
     const pageIndex = annotationPageIndex(annotation);
@@ -2030,6 +2141,8 @@ function captureHistorySnapshot() {
     return {
         annotations: Array.from(persistedAnnotationsById.values()).map((annotation) => cloneForHistory(annotation)),
         deletedAnnotationIds: Array.from(pendingDeletedAnnotationIds),
+        clearedAcroFormKeys: Array.from(pendingClearedAcroFormKeys),
+        acroFormClearRegions: cloneForHistory(pendingAcroFormClearRegions),
         offsets: Array.from(annotationOffsetsPts.entries()).map(([uid, offset]) => [uid, { ...offset }]),
     };
 }
@@ -2065,6 +2178,11 @@ function restoreHistorySnapshot(snapshot) {
         replacePersistedAnnotations(cloneForHistory(snapshot?.annotations || []));
         pendingDeletedAnnotationIds.clear();
         (snapshot?.deletedAnnotationIds || []).forEach((id) => pendingDeletedAnnotationIds.add(String(id)));
+        pendingClearedAcroFormKeys.clear();
+        (snapshot?.clearedAcroFormKeys || []).forEach((key) => pendingClearedAcroFormKeys.add(String(key)));
+        pendingAcroFormClearRegions = Array.isArray(snapshot?.acroFormClearRegions)
+            ? cloneForHistory(snapshot.acroFormClearRegions).filter(Boolean)
+            : [];
         annotationOffsetsPts.clear();
         (snapshot?.offsets || []).forEach(([uid, offset]) => {
             if (!uid || !offset) return;
@@ -6371,8 +6489,7 @@ function deletedMaskAnnotationFromBox(box) {
     if (!box) return null;
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     if (isUserCreatedTextBox(box, existing)) return null;
-    const sourceText = String(existing?.pdfjsSourceText || existing?.originalText || box.dataset.baseText || box.dataset.originalText || '').trim();
-    if (!sourceText) return null;
+    const sourceText = String(existing?.pdfjsSourceText || existing?.originalText || box.dataset.baseText || box.dataset.originalText || '');
     const layer = box.parentElement;
     const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
     const pageView = Number.isFinite(pageIndex) && pageIndex >= 0 ? pdfViewer.getPageView(pageIndex) : null;
@@ -6389,7 +6506,7 @@ function deletedMaskAnnotationFromBox(box) {
         return null;
     }
     const originalId = String(box.dataset.annotationId || box.dataset.uid || generateUuidV4()).replace(/[^a-zA-Z0-9:_-]/g, '_');
-    const text = sourceText;
+    const text = sourceText.trim();
     return {
         id: `pdfjs_deleted_${originalId}`,
         type: 'text',
@@ -6413,6 +6530,184 @@ function deletedMaskAnnotationFromBox(box) {
         pdfjsAnchorUid: String(box.dataset.uid || ''),
         pdfjsSourceOccurrence: String(box.dataset.occurrence || '0'),
     };
+}
+
+function deletedMaskAnnotationFromAnnotation(annotation) {
+    if (!annotation || typeof annotation !== 'object') return null;
+    if (isUserCreatedTextAnnotation(annotation)) return null;
+    const sourceText = String(annotation.pdfjsSourceText || annotation.originalText || annotation.text || '').trim();
+    if (!sourceText) return null;
+    const sourceRect = annotationBaselinePdfBox(annotation) || annotationCurrentPdfBox(annotation);
+    if (!sourceRect || sourceRect.w <= 0 || sourceRect.h <= 0) return null;
+    const pageIndex = annotationPageIndex(annotation);
+    if (!Number.isFinite(pageIndex) || pageIndex < 0) return null;
+    const originalId = String(annotation.id || annotation.pdfjsAnchorUid || generateUuidV4()).replace(/[^a-zA-Z0-9:_-]/g, '_');
+    return {
+        id: `pdfjs_deleted_${originalId}`,
+        type: 'text',
+        pageIndex,
+        text: '',
+        originalText: sourceText,
+        pdfX: sourceRect.x,
+        pdfY: sourceRect.y,
+        pdfWidth: sourceRect.w,
+        pdfHeight: sourceRect.h,
+        fontSize: Number(annotation.fontSize) || 12,
+        savedTextOverlay: true,
+        pdfjsDeleted: true,
+        pdfjsDeletedAnnotationId: String(annotation.id || ''),
+        pdfjsSourceX: sourceRect.x,
+        pdfjsSourceY: sourceRect.y,
+        pdfjsSourceW: sourceRect.w,
+        pdfjsSourceH: sourceRect.h,
+        pdfjsSourcePageHeight: Number(annotation.pdfjsSourcePageHeight) || undefined,
+        pdfjsSourceText: sourceText,
+        pdfjsAnchorUid: String(annotation.pdfjsAnchorUid || annotation.id || ''),
+        pdfjsSourceOccurrence: String(annotation.pdfjsSourceOccurrence || '0'),
+    };
+}
+
+function normalizedPdfRectFromArray(rect) {
+    if (!Array.isArray(rect) || rect.length < 4) return null;
+    const x0 = Number(rect[0]);
+    const y0 = Number(rect[1]);
+    const x1 = Number(rect[2]);
+    const y1 = Number(rect[3]);
+    if (![x0, y0, x1, y1].every(Number.isFinite)) return null;
+    const left = Math.min(x0, x1);
+    const bottom = Math.min(y0, y1);
+    const width = Math.abs(x1 - x0);
+    const height = Math.abs(y1 - y0);
+    if (width <= 0 || height <= 0) return null;
+    return { x: left, y: bottom, w: width, h: height };
+}
+
+function annotationPdfBoxForAcroClear(annotation) {
+    if (!annotation || typeof annotation !== 'object') return null;
+    const rect = deletedSourceRedactionBbox(annotation)
+        || annotationBaselinePdfBox(annotation)
+        || annotationCurrentPdfBox(annotation);
+    if (!rect || rect.w <= 0 || rect.h <= 0) return null;
+    return rect;
+}
+
+function recordPendingAcroFormClearRegion(pageIndex, rect) {
+    const normalizedPageIndex = Number(pageIndex);
+    if (!Number.isFinite(normalizedPageIndex) || normalizedPageIndex < 0) return false;
+    if (!rect || rect.w <= 0 || rect.h <= 0) return false;
+    const region = {
+        pageIndex: Math.floor(normalizedPageIndex),
+        x: Number(rect.x),
+        y: Number(rect.y),
+        w: Number(rect.w),
+        h: Number(rect.h),
+    };
+    if (![region.x, region.y, region.w, region.h].every(Number.isFinite)) return false;
+    const duplicate = pendingAcroFormClearRegions.some((existing) => (
+        existing.pageIndex === region.pageIndex
+        && approxEqual(existing.x, region.x, 0.5)
+        && approxEqual(existing.y, region.y, 0.5)
+        && approxEqual(existing.w, region.w, 0.5)
+        && approxEqual(existing.h, region.h, 0.5)
+    ));
+    if (!duplicate) pendingAcroFormClearRegions.push(region);
+    return true;
+}
+
+function recordPendingAcroFormClearForDeletedAnnotation(annotation) {
+    const pageIndex = annotationPageIndex(annotation);
+    const rect = annotationPdfBoxForAcroClear(annotation);
+    return recordPendingAcroFormClearRegion(pageIndex, rect);
+}
+
+function acroWidgetMatchesPendingClear(w, pageIndex, key = '') {
+    const keys = [key, w?.fieldName, w?.id, w?.fullName]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean);
+    if (keys.some((candidate) => pendingClearedAcroFormKeys.has(candidate))) return true;
+    const widgetRect = normalizedPdfRectFromArray(w?.rect);
+    if (!widgetRect) return false;
+    const normalizedPageIndex = Number(pageIndex);
+    return pendingAcroFormClearRegions.some((region) => {
+        if (!region || Number(region.pageIndex) !== normalizedPageIndex) return false;
+        const overlap = pdfRectOverlapArea(region, widgetRect);
+        if (overlap <= 0) return false;
+        const minArea = Math.max(0.0001, Math.min(pdfRectArea(region), pdfRectArea(widgetRect)));
+        if (overlap / minArea >= 0.35) return true;
+        const cx = region.x + (region.w / 2);
+        const cy = region.y + (region.h / 2);
+        return cx >= widgetRect.x
+            && cx <= widgetRect.x + widgetRect.w
+            && cy >= widgetRect.y
+            && cy <= widgetRect.y + widgetRect.h;
+    });
+}
+
+function clearAcroFormWidgetsOverlappingBox(box) {
+    if (!box) return false;
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    if (isUserCreatedTextBox(box, existing)) return false;
+    if (existing || String(box.dataset.baseText || box.dataset.originalText || '').trim()) {
+        const pageIndexForRegion = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+        const sourceRect = {
+            x: Number.parseFloat(box.dataset.sourceBboxX || box.dataset.baseBboxX || ''),
+            y: Number.parseFloat(box.dataset.sourceBboxY || box.dataset.baseBboxY || ''),
+            w: Number.parseFloat(box.dataset.sourceBboxW || box.dataset.baseBboxW || ''),
+            h: Number.parseFloat(box.dataset.sourceBboxH || box.dataset.baseBboxH || ''),
+        };
+        if ([sourceRect.x, sourceRect.y, sourceRect.w, sourceRect.h].every(Number.isFinite)) {
+            recordPendingAcroFormClearRegion(pageIndexForRegion, sourceRect);
+        }
+    }
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    const pageDiv = Number.isFinite(pageIndex) && pageIndex >= 0 ? pdfViewer.getPageView(pageIndex)?.div : null;
+    const annLayerEl = pageDiv?.querySelector(':scope > .annotationLayer') || null;
+    if (!pageDiv || !annLayerEl) return false;
+    const boxRect = box.getBoundingClientRect();
+    if (!boxRect || boxRect.width <= 0 || boxRect.height <= 0) return false;
+    let cleared = false;
+    const clearedKeys = new Set();
+    const widgets = annLayerEl.querySelectorAll('input, textarea, select');
+    widgets.forEach((el) => {
+        const widgetRect = el.getBoundingClientRect?.();
+        if (!widgetRect || widgetRect.width <= 0 || widgetRect.height <= 0) return;
+        const overlapW = Math.max(0, Math.min(boxRect.right, widgetRect.right) - Math.max(boxRect.left, widgetRect.left));
+        const overlapH = Math.max(0, Math.min(boxRect.bottom, widgetRect.bottom) - Math.max(boxRect.top, widgetRect.top));
+        if (overlapW <= 0 || overlapH <= 0) return;
+        const overlapArea = overlapW * overlapH;
+        const minArea = Math.max(1, Math.min(boxRect.width * boxRect.height, widgetRect.width * widgetRect.height));
+        if (overlapArea / minArea < 0.45) return;
+
+        const host = el.closest('[data-annotation-id]');
+        const annotationId = String(host?.dataset?.annotationId || '').trim();
+        const fieldName = String(el.getAttribute('name') || '').trim();
+        const type = String(el.getAttribute('type') || '').toLowerCase();
+        if (type === 'checkbox' || type === 'radio') {
+            el.checked = false;
+            if (annotationId && currentPdfDoc?.annotationStorage) {
+                try { currentPdfDoc.annotationStorage.setValue(annotationId, { value: false }); } catch (_) {}
+            }
+        } else {
+            el.value = '';
+            if (annotationId && currentPdfDoc?.annotationStorage) {
+                try { currentPdfDoc.annotationStorage.setValue(annotationId, { value: '' }); } catch (_) {}
+            }
+        }
+        [fieldName, annotationId].filter(Boolean).forEach((key) => {
+            clearedKeys.add(key);
+            pendingClearedAcroFormKeys.add(key);
+        });
+        cleared = true;
+    });
+    if (clearedKeys.size && Array.isArray(acroFormEntries)) {
+        acroFormEntries = acroFormEntries.map((entry) => {
+            const keys = [entry?.key, entry?.fieldName].map((value) => String(value || '').trim()).filter(Boolean);
+            if (!keys.some((key) => clearedKeys.has(key))) return entry;
+            return { ...entry, value: '' };
+        });
+        latestAcroFormEntriesSnapshot = acroFormEntries;
+    }
+    return cleared;
 }
 
 function sourceMaskRectForBox(box) {
@@ -8212,6 +8507,8 @@ function disableEditorModesForNotes() {
 
 function openNotesPanel(options = {}) {
     if (!notesPanel || !NOTES_URL) return;
+    hideAnnotationFormatBar();
+    shapeToolPanel?.classList.remove('is-visible');
     disableEditorModesForNotes();
     notesPanel.hidden = false;
     notesPanel.setAttribute('aria-hidden', 'false');
@@ -8924,9 +9221,11 @@ function activeDirectDrawOpacity() {
 }
 
 function syncDrawToolPanelUi() {
+    const selectedDrawBox = document.querySelector('.enpv-annotation-box.enpv-direct-draw-box.is-selected');
+    const shouldShowPanel = drawModeActive || Boolean(selectedDrawBox);
     if (drawToolPanel) {
-        drawToolPanel.classList.toggle('is-visible', drawModeActive);
-        drawToolPanel.setAttribute('aria-hidden', drawModeActive ? 'false' : 'true');
+        drawToolPanel.classList.toggle('is-visible', shouldShowPanel);
+        drawToolPanel.setAttribute('aria-hidden', shouldShowPanel ? 'false' : 'true');
     }
     if (floatingDrawButton) {
         floatingDrawButton.classList.toggle('is-active', drawModeActive);
@@ -9021,6 +9320,170 @@ function directDrawVectorToSvgDataUrl(vector) {
     if (!paths) return '';
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">${paths}</svg>`;
     return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function restyleDirectDrawVector(vector, style = {}) {
+    if (!vector || typeof vector !== 'object') return null;
+    const width = Math.max(1, Number(vector.width) || 1);
+    const height = Math.max(1, Number(vector.height) || 1);
+    const brushSize = Math.max(0.25, Number(style.brushSize) || 1);
+    const color = cssColorToHex(style.color, '#111827');
+    const opacity = clamp01(style.opacity ?? 1, 1);
+    const sourceStrokes = Array.isArray(vector.strokes) ? vector.strokes : [];
+    const strokes = sourceStrokes.map((stroke) => {
+        const points = Array.isArray(stroke?.points)
+            ? stroke.points.map((point) => ({
+                x: clampDirectDrawVectorNumber(point?.x, 0),
+                y: clampDirectDrawVectorNumber(point?.y, 0),
+            }))
+            : [];
+        return points.length ? { color, opacity, brushSize, points } : null;
+    }).filter(Boolean);
+    if (!strokes.length) return null;
+
+    const radius = brushSize / 2;
+    let minX = width;
+    let minY = height;
+    let maxX = 0;
+    let maxY = 0;
+    strokes.forEach((stroke) => {
+        stroke.points.forEach((point) => {
+            minX = Math.min(minX, point.x - radius);
+            minY = Math.min(minY, point.y - radius);
+            maxX = Math.max(maxX, point.x + radius);
+            maxY = Math.max(maxY, point.y + radius);
+        });
+    });
+    const addLeft = Math.ceil(Math.max(0, -minX));
+    const addTop = Math.ceil(Math.max(0, -minY));
+    const addRight = Math.ceil(Math.max(0, maxX - width));
+    const addBottom = Math.ceil(Math.max(0, maxY - height));
+    if (addLeft || addTop) {
+        strokes.forEach((stroke) => {
+            stroke.points = stroke.points.map((point) => ({
+                x: point.x + addLeft,
+                y: point.y + addTop,
+            }));
+        });
+    }
+    return {
+        vector: {
+            version: 1,
+            width: width + addLeft + addRight,
+            height: height + addTop + addBottom,
+            strokes,
+        },
+        addLeft,
+        addTop,
+        addRight,
+        addBottom,
+        oldWidth: width,
+        oldHeight: height,
+    };
+}
+
+function directDrawPrimaryStroke(annotation) {
+    const strokes = Array.isArray(annotation?.directDrawVector?.strokes) ? annotation.directDrawVector.strokes : [];
+    return strokes[0] || null;
+}
+
+function reflectDirectDrawAnnotationToInputs(annotation) {
+    if (!isDirectDrawAnnotation(annotation)) return;
+    const stroke = directDrawPrimaryStroke(annotation);
+    drawToolType = isDirectDrawEraserAnnotation(annotation) ? 'eraser' : 'pen';
+    if (stroke && drawToolType !== 'eraser') {
+        drawStrokeColor = cssColorToHex(stroke.color || annotation.drawStrokeColor, drawStrokeColor);
+        drawOpacity = clamp01(stroke.opacity ?? drawOpacity, drawOpacity);
+    }
+    if (stroke) {
+        drawBrushSize = Math.max(2, Number(stroke.brushSize) || drawBrushSize);
+    }
+    syncDrawToolPanelUi();
+}
+
+function applyDrawPanelStateToSelectedDirectDrawAnnotations(options = {}) {
+    const boxes = hasMultiSelection()
+        ? multiSelectedBoxes().filter((box) => box.classList.contains('enpv-direct-draw-box'))
+        : [findSelectedBox()].filter((box) => box?.classList?.contains('enpv-direct-draw-box'));
+    const editableBoxes = boxes.filter((box) => box?.isConnected && !isAnnBoxLocked(box));
+    if (!editableBoxes.length) return false;
+
+    const updates = [];
+    for (const box of editableBoxes) {
+        const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+        if (!isDirectDrawAnnotation(existing) || !existing.directDrawVector) continue;
+        const current = buildAnnotationFromBox(box, existing) || existing;
+        const isEraser = isDirectDrawEraserAnnotation(existing);
+        const styled = restyleDirectDrawVector(existing.directDrawVector, {
+            color: isEraser ? '#ffffff' : drawStrokeColor,
+            opacity: isEraser ? 1 : drawOpacity,
+            brushSize: drawBrushSize,
+        });
+        if (!styled?.vector) continue;
+        updates.push({ box, existing, current, styled, isEraser });
+    }
+    if (!updates.length) return false;
+    if (options.pushHistory === true) pushHistorySnapshot('change drawing style');
+
+    for (const { box, existing, current, styled, isEraser } of updates) {
+        const unitX = Math.max(0.0001, (Number(current.pdfWidth) || Number(existing.pdfWidth) || 1) / Math.max(1, styled.oldWidth));
+        const unitY = Math.max(0.0001, (Number(current.pdfHeight) || Number(existing.pdfHeight) || 1) / Math.max(1, styled.oldHeight));
+        const next = normalizeImageAnnotation({
+            ...existing,
+            ...current,
+            imageToolSource: 'direct-draw',
+            directDrawTool: isEraser ? 'eraser' : 'pen',
+            drawStrokeColor: isEraser ? '#ffffff' : cssColorToHex(drawStrokeColor, '#111827'),
+            directDrawVector: styled.vector,
+            dataUrl: directDrawVectorToSvgDataUrl(styled.vector),
+            fileName: 'drawing.svg',
+            mimeType: 'image/svg+xml',
+            intrinsicWidth: styled.vector.width,
+            intrinsicHeight: styled.vector.height,
+            pdfX: (Number(current.pdfX) || 0) - (styled.addLeft * unitX),
+            pdfY: (Number(current.pdfY) || 0) - (styled.addBottom * unitY),
+            pdfWidth: (Number(current.pdfWidth) || Number(existing.pdfWidth) || 1) + ((styled.addLeft + styled.addRight) * unitX),
+            pdfHeight: (Number(current.pdfHeight) || Number(existing.pdfHeight) || 1) + ((styled.addTop + styled.addBottom) * unitY),
+            userCreated: true,
+        });
+        upsertPersistedAnnotation(next);
+
+        const layer = box.parentElement;
+        const scale = Number.parseFloat(layer?.dataset?.scale || '1') || 1;
+        const pageView = pdfViewer.getPageView(annotationPageIndex(next));
+        const viewportHeight = Number(pageView?.viewport?.height) || 0;
+        if (layer && viewportHeight > 0) {
+            box.style.left = `${next.pdfX * scale}px`;
+            box.style.top = `${viewportHeight - ((next.pdfY + next.pdfHeight) * scale)}px`;
+            box.style.width = `${Math.max(1, next.pdfWidth * scale)}px`;
+            box.style.height = `${Math.max(1, next.pdfHeight * scale)}px`;
+        }
+        const img = box.querySelector('.enpv-image-img');
+        if (img) img.src = directDrawVectorToSvgDataUrl(styled.vector);
+        box.dataset.pendingEdit = '1';
+        box.dataset.directDraw = '1';
+        box.dataset.directDrawTool = next.directDrawTool;
+        box.classList.add('enpv-direct-draw-box', 'is-selected');
+    }
+    if (!hasMultiSelection()) {
+        const selected = editableBoxes[0];
+        if (selected) selectedAnnBoxUid = selected.dataset.uid || selectedAnnBoxUid;
+    }
+    markManualSaveNeeded();
+    return true;
+}
+
+function applyLiveDrawPanelStateToSelectedDirectDrawAnnotations() {
+    const applied = applyDrawPanelStateToSelectedDirectDrawAnnotations({
+        pushHistory: !drawStyleLiveEditHistoryCaptured,
+    });
+    if (applied) drawStyleLiveEditHistoryCaptured = true;
+    return applied;
+}
+
+function finishLiveDrawPanelStateEdit() {
+    applyDrawPanelStateToSelectedDirectDrawAnnotations({ pushHistory: false });
+    drawStyleLiveEditHistoryCaptured = false;
 }
 
 function directDrawVectorFromSession(session, cropLeft, cropTop, cropWidth, cropHeight) {
@@ -9220,6 +9683,11 @@ function setDrawMode(active) {
     if (nextActive && document.body.classList.contains('enpv-add-text-on')) setAddTextMode(false);
     if (nextActive && document.body.classList.contains('enpv-shape-on')) setShapeMode(false);
     if (nextActive && highlightModeActive) setHighlightMode(false);
+    if (nextActive) {
+        closeNotesPanel();
+        hideAnnotationFormatBar();
+        shapeToolPanel?.classList.remove('is-visible');
+    }
     if (!nextActive) clearActiveDrawSession();
     drawToolType = 'pen';
     drawModeActive = nextActive;
@@ -9243,9 +9711,11 @@ function setHighlightToolStatus(message) {
 }
 
 function syncHighlightToolPanelUi() {
+    const selectedHighlightBox = document.querySelector('.enpv-annotation-box.enpv-highlight-box.is-selected');
+    const shouldShowPanel = highlightModeActive || Boolean(selectedHighlightBox);
     if (highlightToolPanel) {
-        highlightToolPanel.classList.toggle('is-visible', highlightModeActive);
-        highlightToolPanel.setAttribute('aria-hidden', highlightModeActive ? 'false' : 'true');
+        highlightToolPanel.classList.toggle('is-visible', shouldShowPanel);
+        highlightToolPanel.setAttribute('aria-hidden', shouldShowPanel ? 'false' : 'true');
     }
     if (floatingHighlightButton) {
         floatingHighlightButton.classList.toggle('active', highlightModeActive);
@@ -9266,6 +9736,65 @@ function syncHighlightToolPanelUi() {
         : 'Select text to highlight it, or drag over the page.');
 }
 
+function reflectHighlightAnnotationToInputs(annotation) {
+    if (!isHighlightAnnotation(annotation)) return;
+    highlightColor = cssColorToHex(
+        annotation.highlightColor
+        || annotation.fillColor
+        || annotation.strokeColor
+        || highlightColor,
+        '#facc15',
+    );
+    highlightOpacity = clamp01(
+        annotation.highlightOpacity
+        ?? annotation.fillOpacity
+        ?? annotation.opacity
+        ?? highlightOpacity,
+        0.35,
+    );
+    syncHighlightToolPanelUi();
+}
+
+function applyHighlightPanelStateToSelectedAnnotations(options = {}) {
+    const boxes = hasMultiSelection()
+        ? multiSelectedBoxes().filter((box) => box.classList.contains('enpv-highlight-box'))
+        : [findSelectedBox()].filter((box) => box?.classList?.contains('enpv-highlight-box'));
+    const editableBoxes = boxes.filter((box) => box?.isConnected && !isAnnBoxLocked(box));
+    if (!editableBoxes.length) return false;
+    if (options.pushHistory === true) pushHistorySnapshot('change highlight style');
+
+    for (const box of editableBoxes) {
+        const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+        if (!isHighlightAnnotation(existing)) continue;
+        const current = buildAnnotationFromBox(box, existing) || existing;
+        const annotation = normalizeShapeAnnotation({
+            ...existing,
+            ...current,
+            type: 'shape',
+            shapeType: 'highlight',
+            strokeColor: highlightColor,
+            strokeOpacity: 0,
+            strokeWidth: Number(current.strokeWidth || existing.strokeWidth || 1) || 1,
+            strokeTransparent: true,
+            fillColor: highlightColor,
+            fillOpacity: highlightOpacity,
+            fillTransparent: false,
+            opacity: highlightOpacity,
+            highlightColor,
+            highlightOpacity,
+            userCreated: true,
+            userAuthored: true,
+        });
+        upsertPersistedAnnotation(annotation);
+        applyShapeAnnotationToBoxDataset(box, annotation);
+        updateShapeSvgForBox(box, annotation, Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1);
+        box.classList.add('is-selected', 'enpv-highlight-box');
+        box.dataset.pendingEdit = '1';
+    }
+    markManualSaveNeeded();
+    return true;
+}
+
 function clearHighlightDragSession() {
     activeHighlightDragSession?.previewEl?.remove?.();
     activeHighlightDragSession = null;
@@ -9277,6 +9806,11 @@ function setHighlightMode(active) {
     if (nextActive && document.body.classList.contains('enpv-add-text-on')) setAddTextMode(false);
     if (nextActive && document.body.classList.contains('enpv-shape-on')) setShapeMode(false);
     if (nextActive && drawModeActive) setDrawMode(false);
+    if (nextActive) {
+        closeNotesPanel();
+        hideAnnotationFormatBar();
+        shapeToolPanel?.classList.remove('is-visible');
+    }
     if (!nextActive) clearHighlightDragSession();
     highlightModeActive = nextActive;
     document.body.classList.toggle('enpv-highlight-on', highlightModeActive);
@@ -9675,6 +10209,11 @@ function createImageBoxElement(annotation, pageIndex, viewport, scale, editModeO
     box.dataset.annotationType = 'image';
     box.dataset.locked = annotation.locked ? '1' : '0';
     box.dataset.zIndex = String(Number(annotation.zIndex) || (isDirectDrawEraserAnnotation(annotation) ? 1000 : (isDirectDrawAnnotation(annotation) ? 2 : 6)));
+    if (isDirectDrawAnnotation(annotation)) {
+        box.dataset.directDraw = '1';
+        box.dataset.directDrawTool = String(annotation.directDrawTool || '').toLowerCase() === 'eraser' ? 'eraser' : 'pen';
+        box.classList.add('enpv-direct-draw-box');
+    }
     box.dataset.basePageHeight = String(Number(viewport.height) / scale);
     box.style.left = `${rect.left}px`;
     box.style.top = `${rect.top}px`;
@@ -9931,7 +10470,15 @@ function createAnnotationBoxFromSpan(spanEl) {
     };
     if (rawRect.width <= 0 || rawRect.height <= 0) return null;
     const onDemandFsPx = parseFloat(window.getComputedStyle(anchorSpan)?.fontSize || '') || spanRect.height || rawRect.height;
-    const rect = expandSourceRectToGlyphLine(rawRect, onDemandFsPx, sourceGroupForSpan(spanEl), sourceGroupsByPage.get(pageIndex)?.groups);
+    const sourceGroup = sourceGroupForSpan(spanEl);
+    const rect = expandSourceRectToGlyphLine(rawRect, onDemandFsPx, sourceGroup, sourceGroupsByPage.get(pageIndex)?.groups);
+    const textLayerRect = textLayerEl.getBoundingClientRect?.();
+    if (textLayerRect && sourceGroupLooksLikeAcroWidgetChrome(
+        sourceGroup,
+        rect,
+        collectAcroWidgetLayerRects(pageView, pageView.div, textLayerRect),
+        scale,
+    )) return null;
 
     const sourceBbox = {
         x: rect.left / scale,
@@ -11948,8 +12495,11 @@ async function collectAcroFormEntriesForSave() {
         const existing = existingByKey.get(key) || existingByKey.get(String(w.fieldName || '')) || null;
         const isCheck = w.checkBox === true;
         const isRadio = w.radioButton === true;
+        const forceClear = acroWidgetMatchesPendingClear(w, pageIndex, key);
         let value;
-        if (domValue && Object.prototype.hasOwnProperty.call(domValue, 'value')) {
+        if (forceClear) {
+            value = '';
+        } else if (domValue && Object.prototype.hasOwnProperty.call(domValue, 'value')) {
             value = domValue.value;
         } else if (stored && Object.prototype.hasOwnProperty.call(stored, 'value')) {
             value = stored.value;
@@ -11958,7 +12508,13 @@ async function collectAcroFormEntriesForSave() {
         } else {
             return; // never touched and no prior entry — skip
         }
-        if (domValue && Object.prototype.hasOwnProperty.call(domValue, 'value')) {
+        if (forceClear) {
+            if (w.id && storage && typeof storage.setValue === 'function') {
+                try { storage.setValue(w.id, { value: isCheck || isRadio ? false : '' }); } catch (_) {}
+            }
+            pendingClearedAcroFormKeys.add(key);
+            if (w.fieldName) pendingClearedAcroFormKeys.add(String(w.fieldName));
+        } else if (domValue && Object.prototype.hasOwnProperty.call(domValue, 'value')) {
             if (isCheck) {
                 value = domValue.value ? (w.exportValue || domValue.value || '1') : '';
             } else if (isRadio) {
@@ -11998,7 +12554,9 @@ async function collectAcroFormEntriesForSave() {
     // currently in the rendered PDF (defensive — keeps server state
     // intact even if a widget couldn't be resolved this round).
     for (const [key, entry] of existingByKey) {
-        if (!seenKeys.has(key)) out.push(entry);
+        if (!seenKeys.has(key)) {
+            out.push(pendingClearedAcroFormKeys.has(key) ? { ...entry, value: '' } : entry);
+        }
     }
     return out;
 }
@@ -12984,6 +13542,7 @@ function renderAnnotationBoxLayer(pageIndex) {
     const visiblePersistedTextAnnotations = persistedTextAnnotations.filter(
         (annotation) => annotation.pdfjsDeleted !== true
             && annotation._pdfjsCanvasRewritten !== true
+            && !isPdfjsSourceBackedAcroWidgetChromeAnnotation(annotation)
             && !isRedundantPdfjsSourceOverlay(annotation),
     );
     const visiblePromotedTextAnnotations = promotedTextAnnotations.filter(
@@ -13207,25 +13766,7 @@ function renderAnnotationBoxLayer(pageIndex) {
     // widgets render inside pageView.annotationLayer.div). We suppress
     // any text-layer-derived box that overlaps a widget so the editing
     // bounding box does not paint over interactive form fields.
-    const widgetRects = [];
-    const annLayerEl = pageView?.annotationLayer?.div
-        || pageDiv.querySelector(':scope > .annotationLayer');
-    if (annLayerEl) {
-        const widgetEls = annLayerEl.querySelectorAll(
-            '.textWidgetAnnotation, .buttonWidgetAnnotation, ' +
-            '.choiceWidgetAnnotation, .signatureWidgetAnnotation'
-        );
-        for (const w of widgetEls) {
-            const wr = w.getBoundingClientRect();
-            if (wr.width <= 0 || wr.height <= 0) continue;
-            widgetRects.push({
-                left: wr.left - textLayerRect.left,
-                top: wr.top - textLayerRect.top,
-                right: wr.right - textLayerRect.left,
-                bottom: wr.bottom - textLayerRect.top,
-            });
-        }
-    }
+    const widgetRects = collectAcroWidgetLayerRects(pageView, pageDiv, textLayerRect);
     // Cache widget rects in PDF points for this page so postBboxMove can
     // forward them to the server, which uses them to lock acroform-field
     // text against being relocated.
@@ -13241,18 +13782,9 @@ function renderAnnotationBoxLayer(pageIndex) {
         annotation._renderMatched = false;
     });
     function intersectsWidget(r) {
-        const tolerance = 5;
-        for (const w of widgetRects) {
-            const ix0 = Math.max(r.left, w.left);
-            const iy0 = Math.max(r.top, w.top);
-            const ix1 = Math.min(r.right, w.right);
-            const iy1 = Math.min(r.bottom, w.bottom);
-            // Meaningful overlap: never paint a draggable box over an
-            // acroform widget. Ignore tiny edge contact caused by source-handle
-            // line-height expansion so nearby PDF text still becomes editable.
-            if ((ix1 - ix0) > tolerance && (iy1 - iy0) > tolerance) return true;
-        }
-        return false;
+        // Meaningful overlap: never paint a draggable box over an acroform
+        // widget. Tiny edge contacts are handled separately for chrome glyphs.
+        return layerRectIntersectsWidget(r, widgetRects, 0, 5);
     }
 
     const promotedSourceBlockGroups = new Set();
@@ -13329,6 +13861,7 @@ function renderAnnotationBoxLayer(pageIndex) {
         const groupFsPx = parseFloat(window.getComputedStyle(span)?.fontSize || '') || spanRect.height || paintedRect.height;
         const rect = expandSourceRectToGlyphLine(paintedRect, groupFsPx, group, sourceGroups);
         if (persistedOverlayRects.some((overlayRect) => rectsOverlap(rect, overlayRect, 5))) continue;
+        if (sourceGroupLooksLikeAcroWidgetChrome(group, rect, widgetRects, scale)) continue;
         if (intersectsWidget({
             left: paintedRect.left, top: paintedRect.top,
             right: paintedRect.left + paintedRect.width, bottom: paintedRect.top + paintedRect.height,
@@ -13903,6 +14436,7 @@ function startDirectDrawGesture(ev) {
     if (!drawModeActive) return;
     if (ev.button !== 0) return;
     if (ev.target?.closest?.('#draw-tool-panel, .floating-tool-bar, .top-bar, .enpv-ann-menu')) return;
+    if (ev.target?.closest?.('.enpv-direct-draw-box')) return;
     const pageIndex = pageIndexFromEventTarget(ev.target);
     if (!Number.isFinite(pageIndex) || pageIndex < 0) return;
     beginDirectPenStroke(ev, pageIndex);
@@ -14078,6 +14612,22 @@ function selectMultipleAnnBoxes(boxes) {
     setStatus(`${multiSelectedAnnBoxUids.size} annotations selected.`);
 }
 
+function selectCurrentPageDirectDrawAnnotations() {
+    const pageIndex = Math.max(0, (Number(pdfViewer?.currentPageNumber) || 1) - 1);
+    renderAnnotationBoxLayer(pageIndex);
+    const pageDiv = pdfViewer.getPageView(pageIndex)?.div || null;
+    const boxes = Array.from(pageDiv?.querySelectorAll?.('.enpv-annotation-box.enpv-direct-draw-box') || [])
+        .filter((box) => box.isConnected && !isAnnBoxLocked(box));
+    if (!boxes.length) {
+        clearMultiSelection();
+        setStatus('No drawings on this page to select.', true);
+        return false;
+    }
+    selectMultipleAnnBoxes(boxes);
+    setStatus(`${boxes.length} drawing${boxes.length === 1 ? '' : 's'} selected on this page.`);
+    return true;
+}
+
 function isAnnBoxLocked(box) {
     return box?.dataset?.locked === '1' || box?.classList?.contains('is-locked');
 }
@@ -14233,40 +14783,10 @@ function hideAnnotationFormatBar() {
 
 function positionAnnotationFormatBarUnderMenu(box = null) {
     if (!annFormatBar || !annFormatBar.classList.contains('is-visible')) return;
-    const margin = 8;
-    const viewportWidth = Math.max(document.documentElement?.clientWidth || 0, window.innerWidth || 0);
-    const viewportHeight = Math.max(document.documentElement?.clientHeight || 0, window.innerHeight || 0);
-    if (!viewportWidth || !viewportHeight) return;
-
-    const preferredWidth = Math.min(900, Math.max(320, viewportWidth - (margin * 2)));
-    annFormatBar.style.width = `${preferredWidth}px`;
-    annFormatBar.style.transform = 'none';
-
-    const measuredWidth = Math.min(annFormatBar.offsetWidth || preferredWidth, viewportWidth - (margin * 2));
-    const measuredHeight = annFormatBar.offsetHeight || 86;
-    // NK-14: the sticky format bar (font controls) sits directly below the
-    // floating tool bar, centered on it. The dark hover menu stays anchored
-    // to the annotation itself.
-    const gap = 8;
-    const toolbar = document.getElementById('floating-tool-bar');
-    const tbRect = toolbar ? toolbar.getBoundingClientRect() : null;
-    let anchorCenterX;
-    let top;
-    if (tbRect && tbRect.width > 0 && tbRect.height > 0) {
-        anchorCenterX = tbRect.left + (tbRect.width / 2);
-        top = tbRect.bottom + gap;
-    } else {
-        anchorCenterX = viewportWidth / 2;
-        top = 120;
-    }
-    const maxTop = Math.max(margin, viewportHeight - measuredHeight - margin);
-    top = Math.max(margin, Math.min(maxTop, top));
-    const centeredLeft = anchorCenterX - (measuredWidth / 2);
-    const maxLeft = Math.max(margin, viewportWidth - measuredWidth - margin);
-    const left = Math.max(margin, Math.min(maxLeft, centeredLeft));
-
-    annFormatBar.style.left = `${left}px`;
-    annFormatBar.style.top = `${top}px`;
+    annFormatBar.style.removeProperty('left');
+    annFormatBar.style.removeProperty('top');
+    annFormatBar.style.removeProperty('width');
+    annFormatBar.style.removeProperty('transform');
 }
 
 function selectedBoxFontFamily(box) {
@@ -14397,6 +14917,10 @@ function updateAnnotationFormatBarForBox(box) {
     [afbFont, afbSize, afbTextColor, afbBgColor, afbOpacity, afbBold, afbItalic, afbUnderline, afbAlign, afbValign, afbCopy, afbDelete].forEach((control) => {
         if (control) control.disabled = locked;
     });
+    if (!document.body.classList.contains('enpv-shape-on')) {
+        shapeToolPanel?.classList.remove('is-visible');
+    }
+    closeNotesPanel();
     annFormatBar.classList.add('is-visible');
     requestAnimationFrame(() => positionAnnotationFormatBarUnderMenu(box));
 }
@@ -14648,11 +15172,15 @@ function refreshAnnMenuState(box) {
     const annotation = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     const burnable = canBurnAnnotation(annotation);
     const isImageMenu = annotationType === 'image';
+    const isSignatureMenu = annotationType === 'signature';
     const isShapeMenu = annotationType === 'shape';
-    const compactMenuActions = isShapeMenu
+    const compactMenuActions = isSignatureMenu
+        ? new Set(['move', 'lock', 'front', 'back', 'edit', 'debug', 'burn', 'copy', 'delete'])
+        : (isShapeMenu
         ? new Set(['move', 'cut', 'burn', 'lock', 'debug', 'delete'])
-        : new Set(['lock', 'front', 'back', 'burn', 'debug', 'delete']);
+        : new Set(['lock', 'front', 'back', 'burn', 'debug', 'delete']));
     annMenu.classList.toggle('is-image-menu', isImageMenu);
+    annMenu.classList.toggle('is-signature-menu', isSignatureMenu);
     annMenu.classList.toggle('is-shape-menu', isShapeMenu);
     annMenu.querySelectorAll('[data-action]').forEach((button) => {
         const action = String(button.dataset.action || '');
@@ -14660,14 +15188,14 @@ function refreshAnnMenuState(box) {
             ? (isShapeMenu && canCutShapeBox(box))
             : (action === 'burn'
                 ? burnable
-                : ((!isImageMenu && !isShapeMenu) || compactMenuActions.has(action)));
+                : ((!isImageMenu && !isShapeMenu && !isSignatureMenu) || compactMenuActions.has(action)));
         button.hidden = !visible;
         button.style.display = visible ? '' : 'none';
         button.setAttribute('aria-hidden', visible ? 'false' : 'true');
     });
     annMenu.querySelectorAll('.enpv-ann-menu-divider').forEach((divider) => {
-        divider.hidden = isImageMenu || isShapeMenu;
-        divider.style.display = (isImageMenu || isShapeMenu) ? 'none' : '';
+        divider.hidden = isImageMenu || isShapeMenu || isSignatureMenu;
+        divider.style.display = (isImageMenu || isShapeMenu || isSignatureMenu) ? 'none' : '';
         divider.setAttribute('aria-hidden', 'true');
     });
     const lockButton = annMenu.querySelector('[data-action="lock"]');
@@ -15201,7 +15729,7 @@ function snapshotAnnotationBoxForClipboard(box) {
     const annotation = buildAnnotationFromBox(box, existing) || existing;
     if (!annotation) return null;
     const annotationType = String(box.dataset.annotationType || annotation.type || 'text').toLowerCase();
-    if (annotationType !== 'text' && annotationType !== 'shape') return null;
+    if (annotationType !== 'text' && annotationType !== 'shape' && annotationType !== 'signature') return null;
     return {
         annotation: cloneForHistory(annotation),
         annotationType,
@@ -15253,7 +15781,9 @@ function pasteAnnotationClipboard() {
     const rawY = (Number(source.pdfY) || 0) - offsetPts;
     const pdfX = Math.max(0, Math.min(rawX, Math.max(0, pageSize.width - width)));
     const pdfY = Math.max(0, Math.min(rawY, Math.max(0, pageSize.height - height)));
-    const uidPrefix = snapshot.annotationType === 'shape' ? 'shape' : 'new';
+    const uidPrefix = snapshot.annotationType === 'shape'
+        ? 'shape'
+        : (snapshot.annotationType === 'signature' ? 'signature' : 'new');
     const uid = `${uidPrefix}_${generateUuidV4()}`;
     const id = buildPdfjsAnnotationId(pageIndex, uid);
     const next = {
@@ -15287,6 +15817,14 @@ function pasteAnnotationClipboard() {
         delete next.pdfjsEditorMode;
         delete next.richTextHtml;
         delete next.pdfjsSourceText;
+    } else if (snapshot.annotationType === 'signature') {
+        next.type = 'signature';
+        delete next.savedTextOverlay;
+        delete next.userForcedRichText;
+        delete next.pdfjsEditorMode;
+        delete next.richTextHtml;
+        delete next.pdfjsSourceText;
+        next.text = '';
     } else {
         next.type = 'text';
     }
@@ -15294,7 +15832,7 @@ function pasteAnnotationClipboard() {
     pushHistorySnapshot('paste annotation');
     const normalized = snapshot.annotationType === 'shape'
         ? normalizeShapeAnnotation(next)
-        : next;
+        : (snapshot.annotationType === 'signature' ? normalizeImageAnnotation(next) : next);
     upsertPersistedAnnotation(normalized);
     renderAnnotationBoxLayer(pageIndex);
     const copyBox = pdfViewer.getPageView(pageIndex)?.div
@@ -15315,9 +15853,13 @@ function deleteAnnBox(box, options = {}) {
         return;
     }
     if (options.skipHistory !== true) pushHistorySnapshot('delete annotation');
+    clearAcroFormWidgetsOverlappingBox(box);
     rememberDeletedAnnotation(box);
     const deletionMaskAnnotation = deletedMaskAnnotationFromBox(box);
-    if (deletionMaskAnnotation) upsertPersistedAnnotation(deletionMaskAnnotation);
+    if (deletionMaskAnnotation) {
+        recordPendingAcroFormClearForDeletedAnnotation(deletionMaskAnnotation);
+        upsertPersistedAnnotation(deletionMaskAnnotation);
+    }
     if (box.dataset.annotationId) deletePersistedAnnotation(box.dataset.annotationId);
     if (box.dataset.uid) annotationOffsetsPts.delete(String(box.dataset.uid));
     if (box._enpvOrigMask) {
@@ -15345,6 +15887,49 @@ function copyAnnBox(box) {
     const layer = box.parentElement;
     if (!layer) return;
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    if (box.dataset.annotationType === 'signature' || isSignatureAnnotation(existing)) {
+        const source = buildAnnotationFromBox(box, existing) || existing;
+        if (!source) return;
+        pushHistorySnapshot('copy signature');
+        const scale = Number.parseFloat(layer.dataset.scale || '1') || 1;
+        const offset = 12 / scale;
+        const pageIndex = Number.parseInt(box.dataset.pageIndex || '0', 10) || 0;
+        const uid = `signature_${generateUuidV4()}`;
+        const width = Math.max(1, Number(source.pdfWidth) || Number(source.pdfjsSourceW) || 60);
+        const height = Math.max(1, Number(source.pdfHeight) || Number(source.pdfjsSourceH) || 18);
+        const pageSize = pageSizePtsForIndex(pageIndex);
+        const rawX = (Number(source.pdfX) || 0) + offset;
+        const rawY = (Number(source.pdfY) || 0) - offset;
+        const pdfX = pageSize ? Math.max(0, Math.min(rawX, Math.max(0, pageSize.width - width))) : rawX;
+        const pdfY = pageSize ? Math.max(0, Math.min(rawY, Math.max(0, pageSize.height - height))) : Math.max(0, rawY);
+        const ann = normalizeImageAnnotation({
+            ...cloneForHistory(source),
+            id: buildPdfjsAnnotationId(pageIndex, uid),
+            _uid: uid,
+            pageIndex,
+            type: 'signature',
+            pdfX,
+            pdfY,
+            pdfWidth: width,
+            pdfHeight: height,
+            pdfjsSourceX: pdfX,
+            pdfjsSourceY: pdfY,
+            pdfjsSourceW: width,
+            pdfjsSourceH: height,
+            pdfjsAnchorUid: uid,
+            userCreated: true,
+            locked: false,
+            zIndex: (Number(source.zIndex) || 6) + 1,
+            text: '',
+        });
+        upsertPersistedAnnotation(ann);
+        renderAnnotationBoxLayer(pageIndex);
+        const copyBox = pdfViewer.getPageView(pageIndex)?.div
+            ?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(ann.id)}"]`) || null;
+        if (copyBox) selectAnnBox(copyBox);
+        markManualSaveNeeded();
+        return;
+    }
     if (isShapeBox(box, existing)) {
         const source = buildAnnotationFromBox(box, existing) || existing;
         if (!source) return;
@@ -15478,6 +16063,52 @@ function positionAnnMenuOver(box) {
     positionAnnotationFormatBarUnderMenu(box);
 }
 
+function hideSelectionSidePanels(except = '') {
+    if (except !== 'text') hideAnnotationFormatBar();
+    if (except !== 'shape' && !document.body.classList.contains('enpv-shape-on')) {
+        shapeToolPanel?.classList.remove('is-visible');
+    }
+    if (except !== 'draw' && !drawModeActive) {
+        drawToolPanel?.classList.remove('is-visible');
+        drawToolPanel?.setAttribute('aria-hidden', 'true');
+    }
+    if (except !== 'highlight' && !highlightModeActive) {
+        highlightToolPanel?.classList.remove('is-visible');
+        highlightToolPanel?.setAttribute('aria-hidden', 'true');
+    }
+    if (except !== 'notes') closeNotesPanel();
+}
+
+function routeSidePanelForSelectedBox(box) {
+    if (!box) return;
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    if (isDirectDrawAnnotation(existing)) {
+        hideSelectionSidePanels('draw');
+        reflectDirectDrawAnnotationToInputs(existing);
+        syncDrawToolPanelUi();
+        return;
+    }
+    if (isHighlightAnnotation(existing)) {
+        hideSelectionSidePanels('highlight');
+        reflectHighlightAnnotationToInputs(existing);
+        syncHighlightToolPanelUi();
+        return;
+    }
+    if (isShapeBox(box, existing)) {
+        const annotation = buildAnnotationFromBox(box, existing) || existing;
+        if (annotation) reflectShapeStateToInputs(annotation, shapeInspectorRefs);
+        hideSelectionSidePanels('shape');
+        if (shapeToolPanel) shapeToolPanel.classList.add('is-visible');
+        return;
+    }
+    const type = String(box.dataset.annotationType || existing?.type || '').toLowerCase();
+    if (type === 'text') {
+        hideSelectionSidePanels('text');
+        return;
+    }
+    hideSelectionSidePanels('');
+}
+
 function selectAnnBox(box) {
     if (!box) return;
     // If this box is already the selected one, do nothing — calling
@@ -15485,6 +16116,7 @@ function selectAnnBox(box) {
     // contenteditable, focus) and trigger a commit, which we don't want
     // when the user is just starting a resize gesture on the same box.
     if (box.classList.contains('is-selected')) {
+        routeSidePanelForSelectedBox(box);
         return;
     }
     clearMultiSelection();
@@ -15493,12 +16125,7 @@ function selectAnnBox(box) {
     box.classList.add('is-selected');
     positionAnnMenuOver(box);
     updateAnnotationFormatBarForBox(box);
-    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
-    if (isShapeBox(box, existing)) {
-        const annotation = buildAnnotationFromBox(box, existing) || existing;
-        if (annotation) reflectShapeStateToInputs(annotation, shapeInspectorRefs);
-        if (shapeToolPanel) shapeToolPanel.classList.add('is-visible');
-    }
+    routeSidePanelForSelectedBox(box);
     renderLayersPanel();
 }
 
@@ -15734,6 +16361,8 @@ function deselectAnnBox(options = {}) {
     document.querySelectorAll('.enpv-annotation-box.is-selected').forEach((b) => b.classList.remove('is-selected'));
     clearMultiSelection();
     if (!document.body.classList.contains('enpv-shape-on')) syncShapePanelUi();
+    syncDrawToolPanelUi();
+    syncHighlightToolPanelUi();
     renderLayersPanel();
 }
 
@@ -17062,6 +17691,8 @@ window.addEventListener('pointerdown', (ev) => {
     if (ev.target?.closest('#redo-btn')) return;
     if (ev.target?.closest('#ann-format-bar')) return;
     if (ev.target?.closest('#shape-tool-panel')) return;
+    if (ev.target?.closest('#draw-tool-panel')) return;
+    if (ev.target?.closest('#highlight-tool-panel')) return;
     if (ev.target?.closest('#enpv-layers-panel')) return;
     if (ev.target?.closest('#enpv-guided-helper-panel')) return;
     if (ev.target?.closest('#enpv-debug-panel')) return;
@@ -17089,6 +17720,12 @@ window.addEventListener('keydown', (ev) => {
         if (key === 'z' && ev.shiftKey) redoHistory();
         else if (key === 'z') undoHistory();
         else if (key === 'y') redoHistory();
+        return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key === 'a' && drawModeActive) {
+        if (activeElementAcceptsNativeClipboard() || windowHasSelectedText()) return;
+        ev.preventDefault();
+        selectCurrentPageDirectDrawAnnotations();
         return;
     }
     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key === 'c') {
@@ -17329,6 +17966,7 @@ afbAlign?.addEventListener('change', () => {
 afbValign?.addEventListener('change', () => {
     applyVerticalAlignToSelectedBox(afbValign.value);
 });
+afbClose?.addEventListener('click', hideAnnotationFormatBar);
 afbCopy?.addEventListener('click', () => {
     const box = findSelectedBox();
     if (box) copyAnnBox(box);
@@ -17691,7 +18329,7 @@ async function buildPdfjsDownloadPayload() {
     syncRenderedPersistedOverlayBoxesToPersistedAnnotations();
     const sessionAnnotationsPayload = Array.from(persistedAnnotationsById.values())
         .filter((annotation) => !isRedundantPdfjsSourceOverlay(annotation))
-        .filter((annotation) => !isSuppressedStalePdfjsOverlay(annotation))
+        .filter((annotation) => boolish(annotation.pdfjsDeleted) || !isSuppressedStalePdfjsOverlay(annotation))
         .map((annotation) => stripTransientAnnotationFields(annotation))
         .filter((annotation) => shouldIncludeInPdfjsSessionPayload(annotation))
         .filter(Boolean);
@@ -17701,11 +18339,14 @@ async function buildPdfjsDownloadPayload() {
         console.warn('Failed to collect AcroForm entries for download', err);
         return Array.isArray(acroFormEntries) ? acroFormEntries : [];
     });
+    const deletedPromotedSourceKeys = Array.from(pendingDeletedAnnotationIds)
+        .map((value) => String(value || '').trim())
+        .filter((sourceKey) => /^block-\d+-\d+(?:-.+)?$/.test(sourceKey));
     return {
         annotations: visibleAnnotationsPayload,
         session_annotations: sessionAnnotationsPayload,
         acro_form_entries: acroPayload,
-        deleted_promoted_source_keys: Array.from(pendingDeletedAnnotationIds),
+        deleted_promoted_source_keys: deletedPromotedSourceKeys,
         use_exact_download_path: true,
         use_pdfjs_visible_export: true,
         session_id: getSessionId(),
@@ -17753,6 +18394,10 @@ async function downloadStampedPdf() {
             window.location.assign(url);
         }
         setTimeout(() => { URL.revokeObjectURL(url); }, 60000);
+        acroFormEntries = Array.isArray(payload.acro_form_entries) ? payload.acro_form_entries : acroFormEntries;
+        latestAcroFormEntriesSnapshot = acroFormEntries;
+        pendingClearedAcroFormKeys.clear();
+        pendingAcroFormClearRegions = [];
         pendingDeletedAnnotationIds.clear();
         setSaveStatus(payload.annotations.length ? 'Saved' : 'No changes');
         setStatus('PDF ready.');
@@ -17851,6 +18496,8 @@ async function saveAnnotationStateToDb(options = {}) {
         }
         acroFormEntries = Array.isArray(acroPayload) ? acroPayload : [];
         latestAcroFormEntriesSnapshot = acroFormEntries;
+        pendingClearedAcroFormKeys.clear();
+        pendingAcroFormClearRegions = [];
         const savedChangeCount = annotationsPayload.length + acroFormEntries.length;
         setSaveStatus(savedChangeCount ? 'Saved' : 'No changes');
         setStatus(savedChangeCount ? 'Document state saved.' : 'No changes to save.');
@@ -18077,16 +18724,53 @@ async function revealWhenEditedDocumentReady(loadGeneration) {
     }
 }
 
-// Anchor #pages-wrap below the legacy top-bar accurately.
+// Anchor #pages-wrap below the visible fixed editor chrome so the PDF does
+// not render underneath the floating toolbars.
+function getTopChromeBottomEdge() {
+    let bottom = 0;
+    [
+        document.querySelector('.top-bar'),
+        document.getElementById('floating-tool-bar'),
+    ].forEach((element) => {
+        if (!(element instanceof HTMLElement)) return;
+        const style = window.getComputedStyle(element);
+        if (style.display === 'none' || style.visibility === 'hidden') return;
+        const rect = element.getBoundingClientRect();
+        if (rect.height <= 0 || rect.bottom <= 0) return;
+        bottom = Math.max(bottom, rect.bottom);
+    });
+    return Math.max(0, bottom);
+}
+
 function syncPagesTop() {
     const wrap = document.getElementById('pages-wrap');
-    const top = document.querySelector('.top-bar');
-    if (!wrap || !top) return;
-    wrap.style.top = `${top.offsetHeight}px`;
+    if (!wrap) return;
+    const chromeBottom = getTopChromeBottomEdge();
+    wrap.style.top = `${Math.ceil(chromeBottom + 28)}px`;
 }
 window.addEventListener('load', syncPagesTop);
 window.addEventListener('resize', syncPagesTop);
 syncPagesTop();
+
+const topChromeElements = [
+    document.querySelector('.top-bar'),
+    document.getElementById('floating-tool-bar'),
+].filter((element) => element instanceof HTMLElement);
+
+if (typeof ResizeObserver !== 'undefined') {
+    const topChromeResizeObserver = new ResizeObserver(() => syncPagesTop());
+    topChromeElements.forEach((element) => topChromeResizeObserver.observe(element));
+}
+
+if (typeof MutationObserver !== 'undefined') {
+    const topChromeMutationObserver = new MutationObserver(() => syncPagesTop());
+    topChromeElements.forEach((element) => {
+        topChromeMutationObserver.observe(element, {
+            attributes: true,
+            attributeFilter: ['class', 'style', 'hidden'],
+        });
+    });
+}
 
 // ---- Edit-mode toggle (legacy topbar + floating toolbar controls) --------
 //
@@ -18125,6 +18809,10 @@ function setShapeMode(on, options = {}) {
     if (active && document.body.classList.contains('enpv-add-text-on')) setAddTextMode(false);
     if (active && drawModeActive) setDrawMode(false);
     if (active && highlightModeActive) setHighlightMode(false);
+    if (active) {
+        closeNotesPanel();
+        hideAnnotationFormatBar();
+    }
     if (!active && shapeCreationState) {
         const pageIndex = shapeCreationState.pageIndex;
         removeShapeCreationPreview(shapeCreationState);
@@ -18241,7 +18929,7 @@ if (floatingGuidedConvertButton) {
                 throw new Error(result.error || result.message || 'Conversion failed.');
             }
             setStatus('Converted. Opening editable PDF...');
-            window.location.href = result.edit_url || window.location.href;
+            window.location.replace(result.edit_url || window.location.href);
         } catch (error) {
             floatingGuidedConvertButton.disabled = false;
             floatingGuidedConvertButton.classList.remove('is-busy');
@@ -18261,15 +18949,29 @@ for (const button of addShapeButtons) {
         setShapeMode(!document.body.classList.contains('enpv-shape-on'));
     });
 }
+shapeToolClose?.addEventListener('click', () => {
+    if (document.body.classList.contains('enpv-shape-on')) {
+        setShapeMode(false);
+    }
+    shapeToolPanel?.classList.remove('is-visible');
+});
 syncShapePanelUi();
 floatingDrawButton?.addEventListener('click', () => {
     setDrawMode(!drawModeActive);
 });
-drawToolClose?.addEventListener('click', () => setDrawMode(false));
+drawToolClose?.addEventListener('click', () => {
+    setDrawMode(false);
+    drawToolPanel?.classList.remove('is-visible');
+    drawToolPanel?.setAttribute('aria-hidden', 'true');
+});
 floatingHighlightButton?.addEventListener('click', () => {
     setHighlightMode(!highlightModeActive);
 });
-highlightToolClose?.addEventListener('click', () => setHighlightMode(false));
+highlightToolClose?.addEventListener('click', () => {
+    setHighlightMode(false);
+    highlightToolPanel?.classList.remove('is-visible');
+    highlightToolPanel?.setAttribute('aria-hidden', 'true');
+});
 floatingNotesButton?.addEventListener('click', () => {
     if (isPremiumLockedControl(floatingNotesButton) || !NOTES_URL) {
         showPremiumFeatureMessage(floatingNotesButton?.dataset?.premiumFeature || 'Notes');
@@ -18343,15 +19045,28 @@ highlightColorSwatches.forEach((button) => {
     button.addEventListener('click', () => {
         highlightColor = cssColorToHex(button.dataset.highlightColor, highlightColor);
         syncHighlightToolPanelUi();
+        applyHighlightPanelStateToSelectedAnnotations({ pushHistory: true });
     });
 });
 highlightColorInput?.addEventListener('input', () => {
     highlightColor = cssColorToHex(highlightColorInput.value, highlightColor);
     syncHighlightToolPanelUi();
+    applyHighlightPanelStateToSelectedAnnotations({ pushHistory: false });
+});
+highlightColorInput?.addEventListener('change', () => {
+    highlightColor = cssColorToHex(highlightColorInput.value, highlightColor);
+    syncHighlightToolPanelUi();
+    applyHighlightPanelStateToSelectedAnnotations({ pushHistory: true });
 });
 highlightOpacityInput?.addEventListener('input', () => {
     highlightOpacity = clamp01((Number(highlightOpacityInput.value) || 35) / 100, 0.35);
     syncHighlightToolPanelUi();
+    applyHighlightPanelStateToSelectedAnnotations({ pushHistory: false });
+});
+highlightOpacityInput?.addEventListener('change', () => {
+    highlightOpacity = clamp01((Number(highlightOpacityInput.value) || 35) / 100, 0.35);
+    syncHighlightToolPanelUi();
+    applyHighlightPanelStateToSelectedAnnotations({ pushHistory: true });
 });
 drawToolButtons.forEach((button) => {
     button.addEventListener('click', () => {
@@ -18363,19 +19078,39 @@ drawColorSwatches.forEach((button) => {
     button.addEventListener('click', () => {
         drawStrokeColor = cssColorToHex(button.dataset.drawColor, drawStrokeColor);
         syncDrawToolPanelUi();
+        applyDrawPanelStateToSelectedDirectDrawAnnotations({ pushHistory: true });
+        drawStyleLiveEditHistoryCaptured = false;
     });
 });
 drawToolColorInput?.addEventListener('input', () => {
     drawStrokeColor = cssColorToHex(drawToolColorInput.value, drawStrokeColor);
     syncDrawToolPanelUi();
+    applyLiveDrawPanelStateToSelectedDirectDrawAnnotations();
+});
+drawToolColorInput?.addEventListener('change', () => {
+    drawStrokeColor = cssColorToHex(drawToolColorInput.value, drawStrokeColor);
+    syncDrawToolPanelUi();
+    finishLiveDrawPanelStateEdit();
 });
 drawToolSizeInput?.addEventListener('input', () => {
     drawBrushSize = Math.max(2, Number(drawToolSizeInput.value) || 10);
     syncDrawToolPanelUi();
+    applyLiveDrawPanelStateToSelectedDirectDrawAnnotations();
+});
+drawToolSizeInput?.addEventListener('change', () => {
+    drawBrushSize = Math.max(2, Number(drawToolSizeInput.value) || 10);
+    syncDrawToolPanelUi();
+    finishLiveDrawPanelStateEdit();
 });
 drawToolOpacityInput?.addEventListener('input', () => {
     drawOpacity = clamp01((Number(drawToolOpacityInput.value) || 100) / 100, 1);
     syncDrawToolPanelUi();
+    applyLiveDrawPanelStateToSelectedDirectDrawAnnotations();
+});
+drawToolOpacityInput?.addEventListener('change', () => {
+    drawOpacity = clamp01((Number(drawToolOpacityInput.value) || 100) / 100, 1);
+    syncDrawToolPanelUi();
+    finishLiveDrawPanelStateEdit();
 });
 syncDrawToolPanelUi();
 syncHighlightToolPanelUi();
@@ -18398,12 +19133,184 @@ function setImageImportStatus(text, isError = false) {
     _setImageImportStatus(imageImportStatus, text, isError);
 }
 
+function setImageImportTab(tab) {
+    const nextTab = tab === 'logos' ? 'logos' : 'upload';
+    imageImportTabs.forEach((button) => {
+        const active = button.dataset.imageImportTab === nextTab;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    imageImportPanels.forEach((panel) => {
+        const active = panel.dataset.imageImportPanel === nextTab;
+        panel.classList.toggle('is-active', active);
+        panel.hidden = !active;
+    });
+    if (nextTab === 'logos') loadImageImportLogos();
+}
+
+let imageImportLogoItems = [];
+let imageImportLogosLoaded = false;
+let imageImportLogosLoading = false;
+let selectedImageImportLogoKey = '';
+
+function imageImportLogoKey(logo) {
+    return `${logo?.id || 'logo'}:${logo?.image_index ?? logo?.url ?? ''}`;
+}
+
+function setImageImportLogoStatus(text, isError = false) {
+    if (!imageImportLogoStatus) return;
+    imageImportLogoStatus.textContent = text;
+    imageImportLogoStatus.classList.toggle('is-error', !!isError);
+}
+
+function imageImportLogoFileName(logo, responseType = '') {
+    const source = String(logo?.original_url || logo?.url || '');
+    const path = String(new URL(source, window.location.href).pathname || '');
+    const match = path.match(/\/([^/?#]+\.(?:svg|png|jpe?g|gif|webp))$/i);
+    if (match) return decodeURIComponent(match[1]);
+    const ext = String(responseType || logo?.mime_type || '').includes('svg')
+        ? 'svg'
+        : (String(responseType || logo?.mime_type || '').includes('webp') ? 'webp' : 'png');
+    const label = String(logo?.domain || 'generated-logo')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'generated-logo';
+    return `${label}-${logo?.id || 'logo'}-${logo?.image_index ?? 0}.${ext}`;
+}
+
+function clearImageImportLogoSelection() {
+    selectedImageImportLogoKey = '';
+    imageImportLogoGrid?.querySelectorAll('.image-import-logo-card.is-selected')
+        ?.forEach((button) => button.classList.remove('is-selected'));
+}
+
+function renderImageImportLogos() {
+    if (!imageImportLogoGrid) return;
+    imageImportLogoGrid.innerHTML = '';
+
+    if (!EDITOR_AUTHENTICATED) {
+        setImageImportLogoStatus('Sign in to use generated logos.');
+        return;
+    }
+
+    if (!imageImportLogoItems.length) {
+        setImageImportLogoStatus(imageImportLogosLoaded ? 'No generated logos yet.' : 'Loading logos...');
+        return;
+    }
+
+    setImageImportLogoStatus(`${imageImportLogoItems.length} logo${imageImportLogoItems.length === 1 ? '' : 's'} available.`);
+    const fragment = document.createDocumentFragment();
+    for (const logo of imageImportLogoItems) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'image-import-logo-card';
+        button.dataset.logoKey = imageImportLogoKey(logo);
+        button.setAttribute('aria-label', `Use ${logo?.domain || 'generated logo'}`);
+        if (button.dataset.logoKey === selectedImageImportLogoKey) button.classList.add('is-selected');
+
+        const img = document.createElement('img');
+        img.src = logo.preview_url || logo.url || logo.original_url || '';
+        img.alt = '';
+        img.loading = 'lazy';
+        button.appendChild(img);
+
+        const meta = document.createElement('span');
+        meta.className = 'image-import-logo-card__meta';
+
+        const name = document.createElement('span');
+        name.className = 'image-import-logo-card__name';
+        name.textContent = logo.domain || 'Generated logo';
+        meta.appendChild(name);
+
+        const type = document.createElement('span');
+        type.className = 'image-import-logo-card__type';
+        type.textContent = logo.isVector ? 'Vector' : 'Raster';
+        meta.appendChild(type);
+
+        button.appendChild(meta);
+        button.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            selectImageImportLogo(logo);
+        });
+        fragment.appendChild(button);
+    }
+    imageImportLogoGrid.appendChild(fragment);
+}
+
+async function loadImageImportLogos(options = {}) {
+    if (!imageImportLogoGrid || !USER_LOGOS_URL || !EDITOR_AUTHENTICATED) {
+        renderImageImportLogos();
+        return;
+    }
+    if (imageImportLogosLoading) return;
+    if (imageImportLogosLoaded && options.force !== true) {
+        renderImageImportLogos();
+        return;
+    }
+
+    imageImportLogosLoading = true;
+    imageImportLogoRefresh?.setAttribute('disabled', 'disabled');
+    setImageImportLogoStatus('Loading logos...');
+    try {
+        const response = await fetch(USER_LOGOS_URL, {
+            headers: {
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': CSRF || '',
+            },
+            credentials: 'same-origin',
+        });
+        const data = await response.json();
+        if (!response.ok || data?.success !== true) {
+            throw new Error(data?.error || 'Could not load generated logos.');
+        }
+        imageImportLogoItems = Array.isArray(data.logos) ? data.logos : [];
+        imageImportLogosLoaded = true;
+        renderImageImportLogos();
+    } catch (error) {
+        imageImportLogoItems = [];
+        imageImportLogosLoaded = true;
+        imageImportLogoGrid.innerHTML = '';
+        setImageImportLogoStatus(error?.message || 'Could not load generated logos.', true);
+    } finally {
+        imageImportLogosLoading = false;
+        imageImportLogoRefresh?.removeAttribute('disabled');
+    }
+}
+
+async function selectImageImportLogo(logo) {
+    if (!logo) return;
+    const key = imageImportLogoKey(logo);
+    selectedImageImportLogoKey = key;
+    renderImageImportLogos();
+    setImageImportStatus('Preparing logo...');
+    try {
+        const sourceUrl = logo.original_url || logo.url || logo.preview_url || '';
+        if (!sourceUrl) throw new Error('Logo file is missing.');
+        const response = await fetch(sourceUrl, {
+            headers: { Accept: 'image/*,*/*' },
+            credentials: 'same-origin',
+        });
+        if (!response.ok) throw new Error('Could not load that logo.');
+        const blob = await response.blob();
+        const mimeType = blob.type || logo.mime_type || (logo.isVector ? 'image/svg+xml' : 'image/png');
+        const file = new File([blob], imageImportLogoFileName(logo, mimeType), { type: mimeType });
+        await _imageImportLoadFile(file, imageImportRefs());
+    } catch (error) {
+        clearImageImportLogoSelection();
+        setImageImportStatus(error?.message || 'Could not prepare that logo.', true);
+    }
+}
+
 function clearImageImportSelection() {
     _clearImageImportSelection(imageImportRefs());
+    clearImageImportLogoSelection();
 }
 
 function closeImageImportModal() {
     _closeImageImportModal(imageImportRefs());
+    setImageImportTab('upload');
 }
 
 function openImageImportModal() {
@@ -18413,13 +19320,21 @@ function openImageImportModal() {
     setHighlightMode(false);
     signatureFeature?.cancelSignaturePlacement?.();
     _openImageImportModal(imageImportRefs());
+    setImageImportTab('upload');
+    loadImageImportLogos();
 }
 
 function imageImportLoadFile(file) {
+    clearImageImportLogoSelection();
+    setImageImportTab('upload');
     _imageImportLoadFile(file, imageImportRefs());
 }
 
 floatingAddImageButton?.addEventListener('click', () => openImageImportModal());
+imageImportTabs.forEach((button) => {
+    button.addEventListener('click', () => setImageImportTab(button.dataset.imageImportTab || 'upload'));
+});
+imageImportLogoRefresh?.addEventListener('click', () => loadImageImportLogos({ force: true }));
 imageImportScrim?.addEventListener('click', () => closeImageImportModal());
 imageImportClose?.addEventListener('click', () => closeImageImportModal());
 imageImportCancel?.addEventListener('click', () => closeImageImportModal());

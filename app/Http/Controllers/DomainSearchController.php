@@ -443,7 +443,7 @@ class DomainSearchController extends Controller
             'settings.logo_domain' => 'nullable|string|max:100',
             'settings.logo_prompt' => 'nullable|string|max:2000',
             'settings.logo_style' => 'required|string|in:' . $this->allowedLogoStylesForValidation(),
-            'settings.logo_theme' => 'nullable|string|in:real_estate,nature',
+            'settings.logo_theme' => 'nullable|string|in:real_estate,nature,fantasy',
             'settings.logo_color_palette' => 'required|string|max:60',
             'settings.logo_custom_colors' => 'nullable|array|min:2|max:5',
             'settings.logo_custom_colors.*' => ['required', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
@@ -513,7 +513,7 @@ class DomainSearchController extends Controller
             ? (string) $settings['logo_style']
             : 'default';
 
-        $theme = in_array(($settings['logo_theme'] ?? ''), ['real_estate', 'nature'], true)
+        $theme = in_array(($settings['logo_theme'] ?? ''), ['real_estate', 'nature', 'fantasy'], true)
             ? (string) $settings['logo_theme']
             : '';
 
@@ -583,8 +583,8 @@ class DomainSearchController extends Controller
 
         $result = [];
         foreach ($logos as $logo) {
-            $urls = is_array($logo->image_urls) ? $logo->image_urls : [];
-            foreach ($urls as $url) {
+            $urls = array_values(array_filter(is_array($logo->image_urls) ? $logo->image_urls : []));
+            foreach ($urls as $idx => $url) {
                 if (!is_string($url) || $url === '' || $url === '[base64-omitted]') {
                     continue;
                 }
@@ -595,20 +595,21 @@ class DomainSearchController extends Controller
                     $url = $parsed['path'];
                 }
 
-                $isVector = str_ends_with(strtolower($url), '.svg') || 
-                           $logo->output_format === 'vector' || 
-                           $logo->mime_type === 'image/svg+xml';
-
-                // Only include vector/SVG logos
-                if (!$isVector) {
-                    continue;
-                }
+                $path = strtolower((string) parse_url($url, PHP_URL_PATH));
+                $isVector = str_ends_with($path, '.svg')
+                    || $logo->output_format === 'vector'
+                    || $logo->mime_type === 'image/svg+xml';
 
                 $result[] = [
                     'id' => $logo->id,
+                    'image_index' => (int) $idx,
                     'url' => $url,
+                    'preview_url' => route('generatedImages.preview', ['logoRequest' => $logo->id, 'index' => $idx]),
+                    'original_url' => route('generatedImages.original', ['logoRequest' => $logo->id, 'index' => $idx]),
                     'domain' => $logo->domain,
                     'isVector' => $isVector,
+                    'output_format' => $logo->output_format,
+                    'mime_type' => $logo->mime_type,
                     'created' => $logo->created_at?->diffForHumans(),
                     'created_at' => $logo->created_at?->timestamp ?? 0,
                 ];
@@ -2259,6 +2260,7 @@ class DomainSearchController extends Controller
         return match ($theme) {
             'real_estate' => 'Real estate theme: show a modern, premium property or real estate symbol, not an abstract emblem. Use broad property cues such as simplified building silhouettes, window grids, doors, keys, map pins, land parcels, skyline geometry, or clean property-brand shapes. Keep the mark contemporary, crisp, balanced, and spacious with flat vector-friendly geometry. Avoid people, initials, circular monograms, maze-like shapes, ambiguous abstract geometry, and decorative flowing underline strokes unless the user specifically asks for them.',
             'nature' => 'Nature theme: show unmistakable outdoor nature, not a generic eco or utility icon. Use the user requested natural elements literally: trees, forest silhouettes, leaves, branches, hills, landforms, sunrise, sun rays, and any requested season. If trees or a sun are requested, include recognizable tree forms and a visible rising sun or horizon. Do not default to a summer scene unless summer is requested. Avoid light bulbs, water droplets, flames, abstract drops, generic recycle or sustainability marks, unrelated objects, buildings, people, and ambiguous abstract symbols unless the user specifically asks for them.',
+            'fantasy' => 'Fantasy theme: show a clear fantasy-adventure visual, not a generic abstract emblem. Use the user requested fantasy elements literally: heroic characters, enchanted creatures, castles, swords, shields, spell effects, glowing runes, moons, mountains, forests, portals, treasure, or quest symbols when relevant. Keep the mark dramatic, readable, and game-ready with strong silhouettes, magical atmosphere, and coherent staging. Avoid corporate office cues, real-estate geometry, generic nature badges, plain monograms, and unrelated modern business symbols unless the user specifically asks for them.',
             default => '',
         };
     }
@@ -2341,7 +2343,7 @@ class DomainSearchController extends Controller
                 'total_count' => 'nullable|integer|min:1|max:4',
                 'batch_index' => 'nullable|integer|min:0|max:3',
                 'custom_prompt' => 'nullable|string|min:2|max:2000',
-                'logo_theme' => 'nullable|string|in:real_estate,nature',
+                'logo_theme' => 'nullable|string|in:real_estate,nature,fantasy',
                 'pro' => 'nullable|boolean',
                 'pro_size' => 'nullable|integer|in:512,1024,1536',
                 'icon_only' => 'nullable|boolean',
@@ -2416,6 +2418,11 @@ class DomainSearchController extends Controller
             // DALL-E always produces raster
             if ($imageModel === 'dalle') {
                 $outputFormat = 'raster';
+            }
+
+            if ($outputFormat === 'vector') {
+                $logoDetail = 'max';
+                $logoShape = 'none';
             }
 
             if ($this->isUnsupportedRecraftImageSize($imageModel, $outputFormat, $isPro, $genImageSize)) {

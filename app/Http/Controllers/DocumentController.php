@@ -1933,6 +1933,87 @@ class DocumentController extends Controller
         return $prepared;
     }
 
+    private function mergeSavedRichTextForPdfjsVisibleExport(
+        Document $document,
+        string $sessionId,
+        array $annotations
+    ): array {
+        if ($sessionId === '' || empty($annotations)) {
+            return $annotations;
+        }
+
+        $ids = array_values(array_unique(array_filter(array_map(
+            static fn ($annotation) => is_array($annotation) ? trim((string) ($annotation['id'] ?? '')) : '',
+            $annotations
+        ))));
+        if (empty($ids)) {
+            return $annotations;
+        }
+
+        $ownership = $this->resolvePdfStateOwnership($document);
+        $query = PdfState::query()
+            ->where('document_id', $document->id)
+            ->where('state', '!=', 'deleted')
+            ->whereIn(DB::raw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id'))"), $ids);
+        $this->applyPdfStateOwnershipScope($query, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+
+        $savedById = [];
+        foreach ($query->orderByDesc('updated_at')->get(['annotation_data']) as $record) {
+            $data = is_array($record->annotation_data) ? $record->annotation_data : [];
+            $id = trim((string) ($data['id'] ?? ''));
+            if ($id === '' || isset($savedById[$id])) {
+                continue;
+            }
+            if (trim((string) ($data['richTextHtml'] ?? '')) === '') {
+                continue;
+            }
+            $savedById[$id] = $data;
+        }
+
+        if (empty($savedById)) {
+            return $annotations;
+        }
+
+        $normalize = static function ($value): string {
+            return trim(preg_replace('/\s+/u', ' ', (string) ($value ?? '')) ?? '');
+        };
+
+        return array_map(function ($annotation) use ($savedById, $normalize) {
+            if (!is_array($annotation)) {
+                return $annotation;
+            }
+            $id = trim((string) ($annotation['id'] ?? ''));
+            $saved = $savedById[$id] ?? null;
+            if (!$saved) {
+                return $annotation;
+            }
+            if (trim((string) ($annotation['richTextHtml'] ?? '')) !== '') {
+                return $annotation;
+            }
+            if ($normalize($annotation['text'] ?? '') !== $normalize($saved['text'] ?? '')) {
+                return $annotation;
+            }
+
+            foreach ([
+                'richTextHtml',
+                'userForcedRichText',
+                'pdfjsEditorMode',
+                'richTextPromotionReason',
+                'styleDirty',
+                'fontFamily',
+                'fontSourceName',
+                'forceEmbeddedFont',
+                'pdfjsForceEmbeddedFont',
+            ] as $key) {
+                if (array_key_exists($key, $saved)) {
+                    $annotation[$key] = $saved[$key];
+                }
+            }
+
+            return $annotation;
+        }, $annotations);
+    }
+
     private function isUnchangedSyntheticSymbolAnnotation(array $annotation): bool
     {
         if (strtolower(trim((string) ($annotation['type'] ?? ''))) !== 'text') {
@@ -4387,7 +4468,7 @@ class DocumentController extends Controller
                 continue;
             }
             $normalized = trim($key);
-            if ($normalized !== '') {
+            if ($this->isPromotedSourceKey($normalized)) {
                 $mergedKeys[$normalized] = true;
             }
         }
@@ -4407,7 +4488,7 @@ class DocumentController extends Controller
                         return;
                     }
                     $sourceKey = trim((string) data_get($annotationData, 'promotedSourceKey', ''));
-                    if ($sourceKey !== '') {
+                    if ($this->isPromotedSourceKey($sourceKey)) {
                         $mergedKeys[$sourceKey] = true;
                     }
                 });
@@ -4419,7 +4500,7 @@ class DocumentController extends Controller
             }
 
             $activeSourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
-            if ($activeSourceKey !== '') {
+            if ($this->isPromotedSourceKey($activeSourceKey)) {
                 unset($mergedKeys[$activeSourceKey]);
             }
         }
@@ -4437,7 +4518,7 @@ class DocumentController extends Controller
     ): void {
         $sessionId = trim($sessionId);
         $sourceKey = trim($sourceKey);
-        if ($sessionId === '' || $sourceKey === '') {
+        if ($sessionId === '' || !$this->isPromotedSourceKey($sourceKey)) {
             return;
         }
 
@@ -4496,7 +4577,7 @@ class DocumentController extends Controller
         $normalizedKeys = array_values(array_unique(array_filter(array_map(
             static fn ($value) => is_string($value) ? trim($value) : '',
             $deletedPromotedSourceKeys
-        ))));
+        ), fn ($value) => $this->isPromotedSourceKey((string) $value))));
         $normalizedLookup = array_fill_keys($normalizedKeys, true);
 
         $existingDeletedRecordsQuery = PdfState::query()
@@ -4511,7 +4592,7 @@ class DocumentController extends Controller
                 continue;
             }
             $sourceKey = trim((string) data_get($record->annotation_data, 'promotedSourceKey', ''));
-            if ($sourceKey === '') {
+            if (!$this->isPromotedSourceKey($sourceKey)) {
                 continue;
             }
             $existingBySourceKey[$sourceKey] = $record;
@@ -4541,6 +4622,11 @@ class DocumentController extends Controller
 
         $pageNumber = (int) ($matches[1] ?? 0);
         return $pageNumber > 0 ? ($pageNumber - 1) : null;
+    }
+
+    private function isPromotedSourceKey(string $sourceKey): bool
+    {
+        return preg_match('/^block-\d+-\d+(?:-.+)?$/', trim($sourceKey)) === 1;
     }
 
     private function annotationCanBeDirectStamped(array $annotation): bool
@@ -5985,37 +6071,58 @@ class DocumentController extends Controller
             return response()->json(['error' => 'Failed to convert form fields to editable text.'], 500);
         }
 
-        if (!@copy($outputPath, $storedFull)) {
+        Storage::makeDirectory('documents');
+        $convertedStoredRelative = 'documents/' . Str::uuid()->toString() . '.pdf';
+        $convertedStoredFull = Storage::path($convertedStoredRelative);
+
+        if (!@copy($outputPath, $convertedStoredFull)) {
             @unlink($outputPath);
             if ($appliedPdfPath && $appliedPdfPath !== $storedFull) {
                 @unlink($appliedPdfPath);
             }
-            return response()->json(['error' => 'Failed to replace PDF with converted version.'], 500);
+            return response()->json(['error' => 'Failed to store converted PDF.'], 500);
         }
         @unlink($outputPath);
         if ($appliedPdfPath && $appliedPdfPath !== $storedFull) {
             @unlink($appliedPdfPath);
         }
 
-        PdfAcroForm::query()
-            ->where('document_id', $document->id)
-            ->delete();
+        $sessionId = $request->session()->getId();
+        if (!empty($acroFormEntries)) {
+            $this->upsertPdfAcroFormSessionState(
+                $document,
+                $sessionId,
+                $acroFormEntries,
+                $this->resolvePdfStateOwnership($document),
+                'saved'
+            );
+        }
 
-        $document->update([
+        $baseName = trim(pathinfo((string) $document->original_name, PATHINFO_FILENAME));
+        if ($baseName === '') {
+            $baseName = 'Converted guided document';
+        }
+        $convertedDocument = Document::create([
+            ...$this->documentOwnershipPayload($document),
+            'original_name' => $baseName . ' - Full Editor.pdf',
+            'path' => $convertedStoredRelative,
+            'original_backup_path' => $this->createOriginalBackup($convertedStoredRelative),
             'mime_type' => 'application/pdf',
-            'size_bytes' => filesize($storedFull),
+            'size_bytes' => filesize($convertedStoredFull),
             'mode' => 'full_editor',
             'template_type' => null,
             'template_slug' => null,
+            'form_data' => null,
         ]);
 
-        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $convertedDocument);
+
+        $this->refreshDocumentPreviewSnapshot($convertedDocument);
 
         $userEmail = $this->resolveEditorEmail();
-        $sessionId = $request->session()->getId();
         [$extractCode, $extractOutput] = $this->runFitzExtraction(
-            $document,
-            $storedFull,
+            $convertedDocument,
+            $convertedStoredFull,
             $userEmail,
             $sessionId,
             $pythonBinary
@@ -6023,7 +6130,8 @@ class DocumentController extends Controller
 
         if ($extractCode !== 0) {
             Log::warning('Converted guided PDF extraction failed', [
-                'document_id' => $document->id,
+                'document_id' => $convertedDocument->id,
+                'source_guided_document_id' => $document->id,
                 'exit_code' => $extractCode,
                 'output' => implode("\n", $extractOutput),
             ]);
@@ -6031,7 +6139,7 @@ class DocumentController extends Controller
 
         if (!empty($guidedLeaseAnnotations)) {
             $this->persistGuidedLeaseUnderlineShapeAnnotations(
-                $document,
+                $convertedDocument,
                 $sessionId,
                 $guidedLeaseAnnotations
             );
@@ -6039,8 +6147,11 @@ class DocumentController extends Controller
 
         return response()->json([
             'success' => true,
-            'edit_url' => route('documents.editPdfjs', $document),
-            'message' => 'Converted form fields to editable text.',
+            'edit_url' => route('documents.editPdfjs', $convertedDocument),
+            'guided_url' => route('documents.guided', $document),
+            'document_id' => $convertedDocument->id,
+            'guided_document_id' => $document->id,
+            'message' => 'Created a full-editor copy. The guided document was kept as guided.',
         ]);
     }
 
@@ -7387,6 +7498,10 @@ class DocumentController extends Controller
 
     public function guided(Document $document)
     {
+        if ($document->mode !== 'guided') {
+            return redirect()->route('documents.editPdfjs', $document);
+        }
+
         $storedFormData = $document->form_data;
         if (is_string($storedFormData)) {
             $decoded = json_decode($storedFormData, true);
@@ -11861,7 +11976,7 @@ class DocumentController extends Controller
                 continue;
             }
             $normalized = trim($key);
-            if ($normalized !== '') {
+            if ($this->isPromotedSourceKey($normalized)) {
                 $deletedPromotedSourceKeyLookup[$normalized] = true;
             }
         }
@@ -11878,8 +11993,9 @@ class DocumentController extends Controller
             }
 
             $annotationData = is_array($record->annotation_data) ? $record->annotation_data : [];
-            if (!empty($annotationData['promotedFromExtraction']) && !empty($annotationData['promotedSourceKey'])) {
-                $deletedPromotedSourceKeyLookup[trim((string) $annotationData['promotedSourceKey'])] = true;
+            $recordSourceKey = trim((string) ($annotationData['promotedSourceKey'] ?? ''));
+            if (!empty($annotationData['promotedFromExtraction']) && $this->isPromotedSourceKey($recordSourceKey)) {
+                $deletedPromotedSourceKeyLookup[$recordSourceKey] = true;
             }
 
             $record->annotation_data = $annotationData;
@@ -11889,7 +12005,7 @@ class DocumentController extends Controller
 
         $deletedPromotedSourceKeys = array_keys(array_filter(
             $deletedPromotedSourceKeyLookup,
-            static fn ($enabled, $sourceKey) => $enabled && $sourceKey !== '',
+            fn ($enabled, $sourceKey) => $enabled && $this->isPromotedSourceKey((string) $sourceKey),
             ARRAY_FILTER_USE_BOTH
         ));
         sort($deletedPromotedSourceKeys);
@@ -12142,6 +12258,18 @@ class DocumentController extends Controller
         $useOriginalPdf = $request->boolean('use_original_pdf');
         $useExactDownloadPath = $request->boolean('use_exact_download_path');
         $usePdfjsVisibleExport = $request->boolean('use_pdfjs_visible_export');
+        if ($usePdfjsVisibleExport) {
+            $annotationsPayload = $this->mergeSavedRichTextForPdfjsVisibleExport(
+                $document,
+                $sessionId,
+                $annotationsPayload
+            );
+            $sessionAnnotationsPayload = $this->mergeSavedRichTextForPdfjsVisibleExport(
+                $document,
+                $sessionId,
+                $sessionAnnotationsPayload
+            );
+        }
         $editorEmail = $this->resolveEditorEmail();
         $originalSourcePdfPath = $pdfPath;
         if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {

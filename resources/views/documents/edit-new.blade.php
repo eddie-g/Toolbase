@@ -41,7 +41,6 @@
 
 @include('documents.edit-new._pages')
 
-@include('documents.edit-new._floating-toolbar')
 @include('documents.edit-new._shape-panel')
 @include('documents.edit-new._draw-panel')
 @include('documents.edit-new._markup-modal')

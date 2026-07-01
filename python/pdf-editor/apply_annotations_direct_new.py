@@ -1366,6 +1366,16 @@ def pdfjs_source_mask_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fit
     # "repaired" neighbors or oversized masks.
     explicit_mask_rect = _pdfjs_explicit_source_mask_rect(page, ann)
     if explicit_mask_rect is not None and not explicit_mask_rect.is_empty:
+        if _boolish(ann.get("pdfjsDeleted")):
+            source_text = ann.get("pdfjsSourceText") or ann.get("originalText") or ann.get("text") or ""
+            padding_y = max(PDFJS_SOURCE_MASK_PADDING_Y_PTS, float(explicit_mask_rect.height) * 0.22)
+            return calculate_safe_pdfjs_source_mask_with_ignored_rects(
+                page,
+                explicit_mask_rect,
+                source_text,
+                None,
+                padding_y=padding_y,
+            )
         if _boolish(ann.get("movedTextOverlay")):
             source_text = ann.get("pdfjsSourceText") or ann.get("originalText") or ann.get("text") or ""
             ignored_source_rects = ann.get("__pdfjsMovedSourceRects") if isinstance(ann.get("__pdfjsMovedSourceRects"), list) else None
@@ -1381,6 +1391,16 @@ def pdfjs_source_mask_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fit
     base_rect = _pdfjs_source_base_rect(page, ann)
     if base_rect is None or base_rect.is_empty:
         return None
+    if _boolish(ann.get("pdfjsDeleted")):
+        source_text = ann.get("pdfjsSourceText") or ann.get("originalText") or ann.get("text") or ""
+        padding_y = max(PDFJS_SOURCE_MASK_PADDING_Y_PTS, float(base_rect.height) * 0.22)
+        return calculate_safe_pdfjs_source_mask_with_ignored_rects(
+            page,
+            base_rect,
+            source_text,
+            None,
+            padding_y=padding_y,
+        )
     if _boolish(ann.get("movedTextOverlay")):
         source_text = ann.get("pdfjsSourceText") or ann.get("originalText") or ann.get("text") or ""
         ignored_source_rects = ann.get("__pdfjsMovedSourceRects") if isinstance(ann.get("__pdfjsMovedSourceRects"), list) else None
@@ -1917,9 +1937,49 @@ def draw_pdfjs_source_mask(page: fitz.Page, ann: Dict[str, Any]) -> None:
             page.draw_rect(piece, color=None, fill=fill, width=0, overlay=True)
 
 
+def redact_pdfjs_deleted_source_rect(page: fitz.Page, source_rect: fitz.Rect) -> bool:
+    """Redact the ENTIRE captured source rect for a deleted PDF.js span.
+
+    Deleting a source span means every glyph inside the captured source
+    rectangle must disappear. Faux-bold / overprint source text paints each
+    glyph twice with a small horizontal offset, so the text-search redaction
+    path (`pdfjs_source_text_redaction_rects`) covers only one set of glyphs
+    and leaves the offset duplicates at word edges behind (the user-reported
+    stray "P I r i" of "Part II Seller/Transferor Information"). Redacting the
+    full source rect catches every glyph; `_shrink_redact_rect_to_avoid_neighbors`
+    keeps adjacent rows intact and `apply_redactions` runs with graphics=0 so
+    form rules/lines survive.
+    """
+    if source_rect is None or source_rect.is_empty:
+        return False
+    rect = fitz.Rect(source_rect) & page.rect
+    if rect.is_empty or rect.width <= 0.05 or rect.height <= 0.05:
+        return False
+    try:
+        page_words = page.get_text("words")
+    except Exception:
+        page_words = []
+    rect = _shrink_redact_rect_to_avoid_neighbors(page, rect, page_words)
+    if rect.is_empty or rect.width <= 0.05 or rect.height <= 0.05:
+        return False
+    try:
+        page.add_redact_annot(rect, fill=None)
+    except Exception:
+        return False
+    try:
+        _apply_redactions_compat(page)
+        return True
+    except Exception:
+        return False
+
+
 def erase_pdfjs_deleted_source_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
     rect = pdfjs_source_mask_rect(page, ann)
     if rect is None or rect.is_empty:
+        return
+    # Deleted spans wipe the whole source region. Use a full-rect redaction so
+    # overprint/faux-bold duplicate glyphs cannot survive at the word edges.
+    if redact_pdfjs_deleted_source_rect(page, rect):
         return
     if redact_pdfjs_source_text(page, ann, rect, None):
         return
@@ -3564,6 +3624,97 @@ def is_italic_style(value: Any) -> bool:
     return "italic" in lower or "oblique" in lower
 
 
+def _resolve_embedded_weight_sibling(
+    metadata: Dict[str, Any],
+    raw_exact: str,
+    wants_bold: bool,
+    wants_italic: bool,
+) -> Optional[Dict[str, Any]]:
+    """When a rich-text span requests a weight/style that differs from the
+    base source font, find the matching sibling face within the same family +
+    stretch (e.g. "HelveticaLTStd-Cond" + bold -> "HelveticaLTStd-BoldCond").
+
+    Returns None when the base face already matches the requested weight/style
+    (the normal name-scoring path handles those), when the source font can't be
+    located in the metadata, or when no better-matching sibling exists.
+    """
+    if not raw_exact:
+        return None
+
+    source_fd = None
+    for font_key, font_data in metadata.items():
+        if not isinstance(font_data, dict):
+            continue
+        clean_name = str(font_data.get("clean_name") or font_key or "").strip()
+        if clean_name.lower() == raw_exact.lower():
+            source_fd = font_data
+            break
+    if source_fd is None:
+        return None
+
+    try:
+        src_weight = int(float(source_fd.get("css_weight") or 400))
+    except Exception:
+        src_weight = 400
+    src_style = str(source_fd.get("css_style") or "normal").strip().lower()
+    src_is_bold = src_weight >= 600
+    src_is_italic = src_style == "italic"
+
+    # Base face already matches the request: let the normal path resolve it.
+    if src_is_bold == wants_bold and src_is_italic == wants_italic:
+        return None
+
+    family = str(source_fd.get("family") or "").strip().lower()
+    if not family:
+        return None
+    stretch = str(source_fd.get("css_stretch") or "normal").strip().lower()
+    target_weight = 700 if wants_bold else 400
+
+    best = None
+    best_key: tuple[int, int, int] | None = None
+    for font_key, font_data in metadata.items():
+        if not isinstance(font_data, dict):
+            continue
+        if str(font_data.get("family") or "").strip().lower() != family:
+            continue
+        if str(font_data.get("css_stretch") or "normal").strip().lower() != stretch:
+            continue
+        try:
+            weight_value = int(float(font_data.get("css_weight") or 400))
+        except Exception:
+            weight_value = 400
+        style_text = str(font_data.get("css_style") or "normal").strip().lower()
+        is_bold = weight_value >= 600
+        is_italic = style_text == "italic"
+        key = (
+            1 if is_italic == wants_italic else 0,
+            1 if is_bold == wants_bold else 0,
+            -abs(weight_value - target_weight),
+        )
+        if best_key is None or key > best_key:
+            absolute_path = embedded_font_public_path_to_absolute(font_data.get("file_path"))
+            if not absolute_path:
+                continue
+            best_key = key
+            best = {
+                "clean_name": str(font_data.get("clean_name") or font_key or "").strip(),
+                "family": str(font_data.get("family") or "").strip(),
+                "css_weight": weight_value,
+                "css_style": style_text,
+                "fontfile": absolute_path,
+            }
+
+    if best is None:
+        return None
+    # Only return a sibling that genuinely improves the weight match and isn't
+    # just the base face again.
+    if (best["css_weight"] >= 600) != wants_bold:
+        return None
+    if best["clean_name"].lower() == raw_exact.lower():
+        return None
+    return best
+
+
 def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if _boolish(ann.get("pdfjsAvoidEmbeddedSourceFont")):
         return None
@@ -3627,10 +3778,22 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
     wants_bold = is_bold_weight(resolve_annotation_font_weight(ann))
     wants_italic = is_italic_style(resolve_annotation_font_style(ann))
 
-    best_entry = None
+    # Rich-text spans may request a weight/style that differs from the base
+    # source font (e.g. a bold "13." span inside an otherwise regular
+    # "HelveticaLTStd-Cond" line). The exact-name scoring below always locks
+    # onto the base face because the +120/+100 name bonus dwarfs the ±20 weight
+    # bonus, so the bold span would silently render in regular weight. When the
+    # base source font's own metadata says its weight/style differs from what
+    # is requested, resolve the correct sibling face (same family + stretch,
+    # matching weight/style) first.
+    sibling_entry = _resolve_embedded_weight_sibling(
+        metadata, raw_exact, wants_bold, wants_italic
+    )
+
+    best_entry = sibling_entry
     best_score: tuple[int, int, int] | None = None
 
-    for font_key, font_data in metadata.items():
+    for font_key, font_data in (metadata.items() if sibling_entry is None else ()):
         if not isinstance(font_data, dict):
             continue
         clean_name = str(font_data.get("clean_name") or font_key or "").strip()
@@ -6457,7 +6620,8 @@ def should_preserve_pdfjs_moved_source_line(ann: Dict[str, Any], text: str) -> b
         or str(ann.get("pdfjsEditorMode") or "").strip().lower() == "rich"
         or str(ann.get("richTextPromotionReason") or "").strip().lower() == "manual-resize"
     ):
-        return False
+        if not ann.get("pdfjsSourceSpanRuns"):
+            return False
     normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
     return "\n" not in normalized
 
@@ -6481,6 +6645,82 @@ def should_preserve_pdfjs_source_inline_flow(ann: Dict[str, Any], text: str) -> 
     if source_text and current_text and source_text != current_text:
         return False
     return has_single_run_rich_text(ann, text)
+
+
+def rich_text_style_runs_for_exact_text(ann: Dict[str, Any], text: str) -> list[Dict[str, Any]]:
+    ops = parse_rich_text_layout_ops(ann)
+    if not ops:
+        return []
+    if _normalize_rich_text_compare_text(_rich_text_layout_ops_to_text(ops)) != _normalize_rich_text_compare_text(text):
+        return []
+    runs: list[Dict[str, Any]] = []
+    for entry in ops:
+        if entry.get("type") != "text":
+            continue
+        run_text = sanitize_pdf_text(entry.get("text") or "")
+        if not run_text:
+            continue
+        runs.append({
+            "text": run_text,
+            "font_family": entry.get("font_family"),
+            "font_source_name": entry.get("font_source_name"),
+            "font_weight": entry.get("font_weight"),
+            "font_style": entry.get("font_style"),
+            "color": entry.get("color"),
+            "underline": bool(entry.get("underline")),
+        })
+    return runs
+
+
+def rich_text_style_at_offset(rich_runs: list[Dict[str, Any]], offset: int) -> Dict[str, Any]:
+    cursor = 0
+    fallback: Dict[str, Any] = {}
+    for run in rich_runs:
+        run_text = str(run.get("text") or "")
+        if run_text.strip() and not fallback:
+            fallback = run
+        end = cursor + len(run_text)
+        if cursor <= offset < end:
+            return run
+        cursor = end
+    return fallback
+
+
+def apply_rich_style_to_pdfjs_source_run(run: Dict[str, Any], style: Dict[str, Any]) -> Dict[str, Any]:
+    if not style:
+        return run
+    updated = dict(run)
+    for key in ("font_family", "font_source_name", "font_weight", "font_style", "color", "underline"):
+        value = style.get(key)
+        if value is not None and value != "":
+            updated[key] = value
+    return updated
+
+
+def remap_changed_pdfjs_line_to_source_runs(
+    ann: Dict[str, Any],
+    text: str,
+    runs: list[Dict[str, Any]],
+) -> list[Dict[str, Any]]:
+    if len(runs) != 2:
+        return []
+    current_text = sanitize_pdfjs_source_text(text)
+    if not current_text:
+        return []
+    first_source_text = sanitize_pdfjs_source_text(runs[0].get("text") or "").strip()
+    if not first_source_text or not current_text.startswith(first_source_text):
+        return []
+    second_text = current_text[len(first_source_text):].lstrip()
+    if not second_text:
+        return []
+
+    rich_runs = rich_text_style_runs_for_exact_text(ann, current_text)
+    second_offset = len(first_source_text) + (len(current_text[len(first_source_text):]) - len(second_text))
+    mapped = [
+        apply_rich_style_to_pdfjs_source_run({**runs[0], "text": first_source_text}, rich_text_style_at_offset(rich_runs, 0)),
+        apply_rich_style_to_pdfjs_source_run({**runs[1], "text": second_text}, rich_text_style_at_offset(rich_runs, second_offset)),
+    ]
+    return mapped
 
 
 def normalize_pdfjs_source_span_run_layout(
@@ -6549,7 +6789,10 @@ def normalize_pdfjs_source_span_run_layout(
         reconstructed += str(run["text"])
         previous = run
     if normalize_pdfjs_compare_text(reconstructed) != normalize_pdfjs_compare_text(text):
-        return []
+        remapped_runs = remap_changed_pdfjs_line_to_source_runs(ann, text, runs)
+        if not remapped_runs:
+            return []
+        runs = remapped_runs
 
     min_left = min(float(run["left"]) for run in runs)
     max_right = max(float(run["right"]) for run in runs)
@@ -6583,8 +6826,8 @@ def normalize_pdfjs_source_span_run_layout(
             "font_size": font_size,
             "font_weight": run["font_weight"],
             "font_style": run["font_style"],
-            "color": ann.get("textColor") or "#000000",
-            "underline": bool(ann.get("underline")),
+            "color": run.get("color") or ann.get("textColor") or "#000000",
+            "underline": bool(run.get("underline")) if run.get("underline") is not None else bool(ann.get("underline")),
             "span_rotation": 0.0,
         })
 

@@ -44,6 +44,7 @@
      data-annotation-debug-url="{{ route('documents.annotationDebug.save', $document) }}"
      data-overwrite-url="{{ route('documents.overwriteAnnotationText') }}"
      data-editor-authenticated="{{ $editorCanUsePremiumFeatures ? '1' : '0' }}"
+     data-user-logos-url="{{ route('domainSearch.userLogos') }}"
      data-notes-url="{{ $editorCanUsePremiumFeatures ? route('documents.notes.index', $document) : '' }}"
      data-download-url="{{ route('documents.downloadAnnotatedPdf', $document) }}"
      data-convert-to-pdfa-url="{{ route('documents.convertToPdfA', $document) }}"
@@ -59,7 +60,6 @@
      The new pdf.js viewer takes over the canvas/page area below. --}}
 @include('documents.edit-new._topbar')
 @include('documents.edit-new._pages')
-@include('documents.edit-new._floating-toolbar')
 @include('documents.edit-new._shape-panel')
 @include('documents.edit-new._draw-panel')
 @include('documents.edit-new._highlight-panel')
@@ -223,6 +223,27 @@
           <span>Layers</span>
      </button>
 </div>
+
+@unless($guided ?? false)
+<div class="enpv-notes-rail" id="enpv-notes-rail">
+     <button type="button"
+             class="enpv-notes-open{{ $editorCanUsePremiumFeatures ? '' : ' is-premium-locked' }}"
+             id="ftb-notes"
+             title="{{ $editorCanUsePremiumFeatures ? 'Notes — premium note pins for logged-in users' : 'Notes require a free account' }}"
+             @unless($editorCanUsePremiumFeatures) data-premium-feature="Notes" @endunless>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+               <path d="M4 4h16v16H4z"></path>
+               <path d="M8 8h8"></path>
+               <path d="M8 12h8"></path>
+               <path d="M8 16h5"></path>
+          </svg>
+          <span>Notes</span>
+          @unless($editorCanUsePremiumFeatures)
+               <small class="ftb-premium-label">Premium</small>
+          @endunless
+     </button>
+</div>
+@endunless
 
 <aside class="enpv-layers-panel" id="enpv-layers-panel" aria-hidden="true" hidden>
      <div class="enpv-layers-header">

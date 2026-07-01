@@ -79,16 +79,5 @@ export function pdfjsPromotedOverlayShouldRenderAsPersistedOverlay(annotation) {
 
 export function pdfjsSourceOverlayShouldUseSourceBoxInEditMode(annotation, editModeOn = false) {
     if (!editModeOn) return false;
-    if (!annotation || String(annotation.type || '').toLowerCase() !== 'text') return false;
-    if (pdfjsPromotedOverlayShouldRenderAsPersistedOverlay(annotation)) return false;
-    if (!boolish(annotation.savedTextOverlay) || boolish(annotation.pdfjsDeleted)) return false;
-    if (boolish(annotation.movedTextOverlay)) return false;
-    if (boolish(annotation.styleDirty)) return false;
-    if (boolish(annotation.userForcedRichText)) return false;
-    if (String(annotation.pdfjsEditorMode || '').trim().toLowerCase() === 'rich') return false;
-    if (!isPdfjsSourceBackedTextAnnotation(annotation)) return false;
-
-    const savedText = normalizeComparableText(annotation.text);
-    const sourceText = normalizeComparableText(annotation.pdfjsSourceText || annotation.originalText || '');
-    return Boolean(sourceText && savedText === sourceText);
+    return false;
 }

@@ -20,6 +20,7 @@
     $sameHost = !$candidateHost || $candidateHost === $requestHost;
     $isLivewireUpdate = str_contains($normalizedCandidatePath, '/livewire/update')
         || (is_string($candidateBackUrl) && str_contains($candidateBackUrl, 'livewire/update'));
+    $isDocumentEditorCandidate = preg_match('#^/documents/\d+/(?:guided|edit|edit-new|edit-pdfjs|ai)(?:/|$)#', $normalizedCandidatePath) === 1;
     $cameFromAdmin = $explicitAdminOrigin
         || str_starts_with($normalizedCandidatePath, '/admin')
         || str_starts_with($normalizedCandidatePath, '/portal');
@@ -28,11 +29,12 @@
         && $candidateBackUrl !== ''
         && $candidateBackUrl !== $currentUrl
         && $sameHost
-        && !$isLivewireUpdate;
+        && !$isLivewireUpdate
+        && !$isDocumentEditorCandidate;
     $backUrl = $explicitAdminOrigin
         ? $adminBackUrl
         : ($hasUsableCandidate ? $candidateBackUrl : ($cameFromAdmin ? $adminBackUrl : $fallbackBackUrl));
-    $backLabel = $cameFromAdmin ? 'Back to admin' : 'Back to editor';
+    $backLabel = $cameFromAdmin ? 'Back to admin' : 'Back to documents';
 @endphp
 
 <div class="top-bar">
@@ -72,8 +74,12 @@
         <span class="guided-mode-label">Guided mode</span>
     @endif
     <span id="save-status" class="save-status">Saved</span>
-    <button id="undo-btn" type="button" class="history-btn" title="Undo (Ctrl+Z)" disabled>&#8592;</button>
-    <button id="redo-btn" type="button" class="history-btn" title="Redo (Ctrl+Y)" disabled>&#8594;</button>
+    @include('documents.edit-new._floating-toolbar')
+    <div class="top-bar-export-group" aria-label="History and export actions">
+        <button id="undo-btn" type="button" class="history-btn" title="Undo (Ctrl+Z)" disabled>&#8592;</button>
+        <button id="redo-btn" type="button" class="history-btn" title="Redo (Ctrl+Y)" disabled>&#8594;</button>
+        <button id="download-pdf-btn" type="button" class="download-btn">Download PDF</button>
+    </div>
     @unless($guided ?? false)
         <button id="edit-mode-toggle" type="button" class="edit-mode-toggle" aria-pressed="false" title="Turn edit mode on to show editable text boxes">
             <span class="edit-mode-toggle__icon" aria-hidden="true">
@@ -88,7 +94,6 @@
     <button id="add-text-btn" type="button" class="history-btn add-text-btn" title="Add Text — click or drag on the page to place a new text block">Add Text</button>
     <button id="add-shape-btn" type="button" class="history-btn add-shape-btn" title="Shapes — choose a shape and drag on the page to draw it">Shapes</button>
     <button id="save-btn" type="button" class="save-btn">Save</button>
-    <button id="download-pdf-btn" type="button" class="download-btn">Download PDF</button>
     <a href="{{ route('documents.edit', $document) }}" class="doc-top-edit-link">← Edit</a>
     <a href="{{ route('documents.index') }}" class="doc-top-documents-link">All documents</a>
 </div>

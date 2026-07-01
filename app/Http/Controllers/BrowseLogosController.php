@@ -40,8 +40,10 @@ class BrowseLogosController extends Controller
         $items = collect();
         foreach ($logos as $logo) {
             $urls = is_array($logo->image_urls) ? $logo->image_urls : [];
+            $showcaseIndexes = $this->showcaseIndexesFor($logo, $urls);
             foreach ($urls as $idx => $url) {
                 if (!is_string($url) || $url === '' || $url === '[base64-omitted]') continue;
+                if (!in_array((int) $idx, $showcaseIndexes, true)) continue;
 
                 $parsed = parse_url($url);
                 if (isset($parsed['host'], $parsed['path'])) {
@@ -49,8 +51,10 @@ class BrowseLogosController extends Controller
                 }
 
                 $resultData = is_string($logo->result_data)
-                    ? json_decode($logo->result_data, true)
+                    ? (json_decode($logo->result_data, true) ?: [])
                     : (is_array($logo->result_data) ? $logo->result_data : []);
+                $imageData = $resultData['images'][$idx] ?? [];
+                $imageSeed = is_array($imageData) ? ($imageData['seed'] ?? null) : null;
 
                 $items->push([
                     'logo_id'          => $logo->id,
@@ -59,7 +63,7 @@ class BrowseLogosController extends Controller
                     'model'            => $logo->model ?? 'unknown',
                     'style'            => $logo->style,
                     'domain'           => $logo->domain,
-                    'seed_number'      => $logo->seed_number,
+                    'seed_number'      => $imageSeed ?? $logo->seed_number,
                     'width'            => $logo->width,
                     'height'           => $logo->height,
                     'response_time_ms' => $logo->response_time_ms,
@@ -84,8 +88,7 @@ class BrowseLogosController extends Controller
             ->whereNotNull('model')->where('model', '!=', '')
             ->distinct()->orderBy('model')->pluck('model');
 
-        $showcaseCount = AiLogoRequest::where('is_showcase', true)
-            ->where('status', 'completed')->count();
+        $showcaseCount = $this->showcaseImageCount();
 
         return view('browse-logos', [
             'items'         => $items,
@@ -111,5 +114,39 @@ class BrowseLogosController extends Controller
             str_contains($model, 'dall-e')               => 'DALL·E',
             default                                      => $model,
         };
+    }
+
+    /**
+     * New showcase records store exact selected image indexes. Legacy records
+     * only have is_showcase=true, so keep showing all their images.
+     *
+     * @return list<int>
+     */
+    private function showcaseIndexesFor(AiLogoRequest $logo, array $urls): array
+    {
+        $indexes = $logo->showcase_image_indexes;
+
+        if (!is_array($indexes) || $indexes === []) {
+            return array_keys($urls);
+        }
+
+        return array_values(array_unique(array_filter(
+            array_map('intval', $indexes),
+            fn (int $index): bool => array_key_exists($index, $urls)
+        )));
+    }
+
+    private function showcaseImageCount(): int
+    {
+        return AiLogoRequest::query()
+            ->where('status', 'completed')
+            ->where('is_showcase', true)
+            ->whereNotNull('image_urls')
+            ->get(['image_urls', 'showcase_image_indexes'])
+            ->sum(function (AiLogoRequest $logo): int {
+                $urls = is_array($logo->image_urls) ? $logo->image_urls : [];
+
+                return count($this->showcaseIndexesFor($logo, $urls));
+            });
     }
 }

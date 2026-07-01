@@ -132,6 +132,8 @@ export function installSignatureFeature(deps) {
     const signatureFontInput = document.getElementById('signature-font');
     const signatureTypeColorInput = document.getElementById('signature-type-color');
     const signatureTypeColorValue = document.getElementById('signature-type-color-value');
+    const signatureTypeSizeInput = document.getElementById('signature-type-size');
+    const signatureTypeSizeValue = document.getElementById('signature-type-size-value');
     const signatureImageInput = document.getElementById('signature-image-input');
     const signatureImageName = document.getElementById('signature-image-name');
     const signatureLibrarySelect = document.getElementById('signature-library-select');
@@ -170,6 +172,10 @@ export function installSignatureFeature(deps) {
     const persistSavedSignatureLibrary = _persistSavedSignatureLibrary;
     const loadSavedSignatureLibrary = () => _loadSavedSignatureLibrary({ signatureLibraryList, signatureLibrarySelect, signatureLibraryLoadBtn });
     const makeSavedSignatureName = () => _makeSavedSignatureName(signatureSaveNameInput);
+    const typedSignatureFontSize = () => Math.max(24, Math.min(240, Number(signatureTypeSizeInput?.value) || 136));
+    const syncSignatureTypeSizeLabel = () => {
+        if (signatureTypeSizeValue) signatureTypeSizeValue.textContent = `${Math.round(typedSignatureFontSize())}px`;
+    };
 
     function updateSignatureModeUi() {
         signatureTabs.forEach((tab) => {
@@ -232,7 +238,7 @@ export function installSignatureFeature(deps) {
         clearSignatureCanvas();
         const inkColor = signatureTypeColorInput?.value || '#111827';
         const maxWidth = signatureCanvas.width * 0.82;
-        let fontSize = 136;
+        let fontSize = typedSignatureFontSize();
         signatureCtx.textAlign = 'center';
         signatureCtx.textBaseline = 'middle';
         signatureCtx.fillStyle = inkColor;
@@ -244,6 +250,55 @@ export function installSignatureFeature(deps) {
         signatureCtx.fillText(text, signatureCanvas.width / 2, signatureCanvas.height / 2);
         setSignatureDirtyState(true);
         setSignatureStatus('Typed signature ready to place.', 'ready');
+    }
+
+    function trimmedSignatureCanvasAsset() {
+        if (!signatureCanvas || !signatureCtx) return null;
+        const width = signatureCanvas.width;
+        const height = signatureCanvas.height;
+        if (!(width > 0) || !(height > 0)) return null;
+        let data;
+        try {
+            data = signatureCtx.getImageData(0, 0, width, height);
+        } catch (_) {
+            return null;
+        }
+
+        let minX = width;
+        let minY = height;
+        let maxX = -1;
+        let maxY = -1;
+        const pixels = data.data;
+        for (let y = 0; y < height; y += 1) {
+            for (let x = 0; x < width; x += 1) {
+                if (pixels[((y * width + x) * 4) + 3] <= 8) continue;
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+        if (maxX < minX || maxY < minY) return null;
+
+        const contentWidth = maxX - minX + 1;
+        const contentHeight = maxY - minY + 1;
+        const padX = Math.max(2, Math.ceil(contentWidth * 0.05));
+        const padY = Math.max(2, Math.ceil(contentHeight * 0.05));
+        const sx = Math.max(0, minX - padX);
+        const sy = Math.max(0, minY - padY);
+        const sw = Math.min(width - sx, contentWidth + (padX * 2));
+        const sh = Math.min(height - sy, contentHeight + (padY * 2));
+        const trimmed = document.createElement('canvas');
+        trimmed.width = Math.max(1, sw);
+        trimmed.height = Math.max(1, sh);
+        const ctx = trimmed.getContext('2d');
+        if (!ctx) return null;
+        ctx.drawImage(signatureCanvas, sx, sy, sw, sh, 0, 0, trimmed.width, trimmed.height);
+        return {
+            dataUrl: trimmed.toDataURL('image/png'),
+            width: trimmed.width,
+            height: trimmed.height,
+        };
     }
 
     async function renderSignatureImagePreview() {
@@ -279,10 +334,12 @@ export function installSignatureFeature(deps) {
         if (signatureImageName) signatureImageName.textContent = 'No file selected';
         if (signatureColorInput) signatureColorInput.value = '#111827';
         if (signatureTypeColorInput) signatureTypeColorInput.value = '#111827';
+        if (signatureTypeSizeInput) signatureTypeSizeInput.value = '136';
         if (signatureWidthInput) signatureWidthInput.value = '3';
         if (signatureSmoothingInput) signatureSmoothingInput.value = '58';
         if (signatureFontInput) signatureFontInput.value = 'Great Vibes';
         syncSignatureColorLabels();
+        syncSignatureTypeSizeLabel();
         clearSignatureDrawingState();
         setSignatureDirtyState(false);
         setSignatureStatus('Create a signature, then place it on the current page.');
@@ -321,10 +378,11 @@ export function installSignatureFeature(deps) {
                 },
             };
         }
+        const trimmedAsset = trimmedSignatureCanvasAsset();
         const canvasAsset = {
-            dataUrl: signatureCanvas.toDataURL('image/png'),
-            width: signatureCanvas.width,
-            height: signatureCanvas.height,
+            dataUrl: trimmedAsset?.dataUrl || signatureCanvas.toDataURL('image/png'),
+            width: trimmedAsset?.width || signatureCanvas.width,
+            height: trimmedAsset?.height || signatureCanvas.height,
             fileName: 'signature.png',
             mimeType: 'image/png',
             signatureSourceMode: signatureMode,
@@ -335,6 +393,7 @@ export function installSignatureFeature(deps) {
                 text: String(signatureTextInput?.value || '').trim(),
                 fontFamily: String(signatureFontInput?.value || 'Great Vibes').trim(),
                 inkColor: normalizeHexColor(signatureTypeColorInput?.value, '#111827'),
+                fontSize: typedSignatureFontSize(),
             };
             return canvasAsset;
         }
@@ -359,7 +418,9 @@ export function installSignatureFeature(deps) {
             if (signatureTextInput) signatureTextInput.value = String(composer.text || '');
             if (signatureFontInput) signatureFontInput.value = String(composer.fontFamily || 'Great Vibes');
             if (signatureTypeColorInput) signatureTypeColorInput.value = normalizeHexColor(composer.inkColor, '#111827');
+            if (signatureTypeSizeInput) signatureTypeSizeInput.value = String(Math.max(24, Math.min(240, Number(composer.fontSize) || 136)));
             syncSignatureColorLabels();
+            syncSignatureTypeSizeLabel();
             setSignatureMode('type');
             await renderTypedSignaturePreview();
             setSignatureStatus('Typed signature loaded. Update it and save it back to the page.', signatureDirty ? 'ready' : 'default');
@@ -674,6 +735,12 @@ export function installSignatureFeature(deps) {
             if (signatureMode === 'type') renderTypedSignaturePreview();
         });
     }
+    if (signatureTypeSizeInput) {
+        signatureTypeSizeInput.addEventListener('input', () => {
+            syncSignatureTypeSizeLabel();
+            if (signatureMode === 'type') renderTypedSignaturePreview();
+        });
+    }
     if (signatureTextInput) {
         signatureTextInput.addEventListener('input', () => { renderTypedSignaturePreview(); });
     }
@@ -901,6 +968,10 @@ export function installSignatureFeature(deps) {
         if (src) img.src = src;
         img.alt = 'Signature';
         box.appendChild(img);
+        const label = document.createElement('span');
+        label.className = 'enpv-signature-selection-label';
+        label.textContent = 'Signature';
+        box.appendChild(label);
 
         if (hooks) {
             box.addEventListener('pointerdown', hooks.onAnnBoxPointerDown);
@@ -910,7 +981,7 @@ export function installSignatureFeature(deps) {
                 hooks.selectAnnBox(box);
                 openSignatureEditModalForAnnotation(annotation);
             });
-            for (const edge of ['t', 'r', 'b', 'l']) {
+            for (const edge of ['nw', 'ne', 'sw', 'se', 't', 'r', 'b', 'l']) {
                 const handle = document.createElement('div');
                 handle.className = `enpv-resize-handle ${edge}`;
                 handle.dataset.edge = edge;

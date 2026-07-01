@@ -1,7 +1,7 @@
-<!-- Floating tool bar -->
+<!-- Editor tool buttons -->
 @php($editorCanUsePremiumFeatures = auth()->check() || auth('admin')->check())
 @php($editorShowPremiumLocks = request()->query('pdfjs') === '1' && ! $editorCanUsePremiumFeatures)
-<div class="floating-tool-bar" id="floating-tool-bar">
+<div class="floating-tool-bar top-bar-toolset" id="floating-tool-bar">
     <!-- Group 1: Selection tools -->
     <div class="ftb-group">
         @unless($guided ?? false)
@@ -18,24 +18,6 @@
                     <small class="ftb-premium-label">Premium</small>
                 @endif
             </button>
-            @if(request()->query('pdfjs') === '1')
-                <button type="button"
-                        class="ftb-btn{{ $editorShowPremiumLocks ? ' is-premium-locked' : '' }}"
-                        id="ftb-notes"
-                        title="{{ $editorShowPremiumLocks ? 'Notes require a free account' : 'Notes — premium note pins for logged-in users' }}"
-                        @if($editorShowPremiumLocks) data-premium-feature="Notes" @endif>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M4 4h16v16H4z"></path>
-                        <path d="M8 8h8"></path>
-                        <path d="M8 12h8"></path>
-                        <path d="M8 16h5"></path>
-                    </svg>
-                    <span>Notes</span>
-                    @if($editorShowPremiumLocks)
-                        <small class="ftb-premium-label">Premium</small>
-                    @endif
-                </button>
-            @endif
         @endunless
         @if($guided ?? false)
             <button type="button" class="ftb-btn ftb-guided-convert" id="ftb-guided-convert" title="Convert fields into editable text">

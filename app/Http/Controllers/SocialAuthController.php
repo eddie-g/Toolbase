@@ -12,6 +12,12 @@ class SocialAuthController extends Controller
 {
     public function redirectToGoogle()
     {
+        if (!$this->hasConfiguredGoogleOAuth()) {
+            return redirect('/login')->withErrors([
+                'msg' => 'Google login is not configured. Set GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, and GOOGLE_REDIRECT_URL.',
+            ]);
+        }
+
         return Socialite::driver('google')->redirect();
     }
 
@@ -57,5 +63,38 @@ class SocialAuthController extends Controller
         } catch (\Exception $e) {
             return redirect('/login')->withErrors(['msg' => 'Google Login failed: ' . $e->getMessage()]);
         }
+    }
+
+    private function hasConfiguredGoogleOAuth(): bool
+    {
+        $values = [
+            config('services.google.client_id'),
+            config('services.google.client_secret'),
+            config('services.google.redirect'),
+        ];
+
+        foreach ($values as $value) {
+            if (!$this->isConfiguredOAuthValue($value)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private function isConfiguredOAuthValue(?string $value): bool
+    {
+        $value = trim((string) $value);
+
+        if ($value === '') {
+            return false;
+        }
+
+        $lowerValue = strtolower($value);
+
+        return !str_starts_with($lowerValue, 'your-')
+            && !str_contains($lowerValue, 'your_')
+            && !str_contains($lowerValue, 'changeme')
+            && !str_contains($lowerValue, 'placeholder');
     }
 }
