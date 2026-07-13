@@ -44,6 +44,7 @@
      data-annotation-debug-url="{{ route('documents.annotationDebug.save', $document) }}"
      data-overwrite-url="{{ route('documents.overwriteAnnotationText') }}"
      data-editor-authenticated="{{ $editorCanUsePremiumFeatures ? '1' : '0' }}"
+     data-user-logos-url="{{ route('domainSearch.userLogos') }}"
      data-notes-url="{{ $editorCanUsePremiumFeatures ? route('documents.notes.index', $document) : '' }}"
      data-download-url="{{ route('documents.downloadAnnotatedPdf', $document) }}"
      data-convert-to-pdfa-url="{{ route('documents.convertToPdfA', $document) }}"
@@ -59,7 +60,6 @@
      The new pdf.js viewer takes over the canvas/page area below. --}}
 @include('documents.edit-new._topbar')
 @include('documents.edit-new._pages')
-@include('documents.edit-new._floating-toolbar')
 @include('documents.edit-new._shape-panel')
 @include('documents.edit-new._draw-panel')
 @include('documents.edit-new._highlight-panel')
@@ -143,12 +143,6 @@
           <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-ok" data-action="edit" title="Edit text" aria-label="Edit text">
                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
           </button>
-          <button type="button" class="enpv-ann-menu-btn enpv-ann-menu-debug" data-action="debug" title="Debug mask" aria-label="Debug mask">
-               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M9 9h6"></path><path d="M9 13h6"></path><path d="M12 17h.01"></path><rect x="5" y="6" width="14" height="15" rx="2"></rect></svg>
-          </button>
-          <div class="enpv-ann-menu-divider" aria-hidden="true"></div>
-          <button type="button" class="enpv-ann-menu-btn" data-action="uppercase" title="UPPERCASE" aria-label="Uppercase"><span>Tt</span></button>
-          <button type="button" class="enpv-ann-menu-btn" data-action="lowercase" title="lowercase" aria-label="Lowercase"><span>tl</span></button>
           <div class="enpv-ann-menu-divider" aria-hidden="true"></div>
           <button type="button" class="enpv-ann-menu-btn" data-action="copy" title="Copy text" aria-label="Copy text">
                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
@@ -223,6 +217,27 @@
           <span>Layers</span>
      </button>
 </div>
+
+@unless($guided ?? false)
+<div class="enpv-notes-rail" id="enpv-notes-rail">
+     <button type="button"
+             class="enpv-notes-open{{ $editorCanUsePremiumFeatures ? '' : ' is-premium-locked' }}"
+             id="ftb-notes"
+             title="{{ $editorCanUsePremiumFeatures ? 'Notes — premium note pins for logged-in users' : 'Notes require a free account' }}"
+             @unless($editorCanUsePremiumFeatures) data-premium-feature="Notes" @endunless>
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+               <path d="M4 4h16v16H4z"></path>
+               <path d="M8 8h8"></path>
+               <path d="M8 12h8"></path>
+               <path d="M8 16h5"></path>
+          </svg>
+          <span>Notes</span>
+          @unless($editorCanUsePremiumFeatures)
+               <small class="ftb-premium-label">Premium</small>
+          @endunless
+     </button>
+</div>
+@endunless
 
 <aside class="enpv-layers-panel" id="enpv-layers-panel" aria-hidden="true" hidden>
      <div class="enpv-layers-header">

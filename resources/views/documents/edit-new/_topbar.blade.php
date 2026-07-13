@@ -20,6 +20,7 @@
     $sameHost = !$candidateHost || $candidateHost === $requestHost;
     $isLivewireUpdate = str_contains($normalizedCandidatePath, '/livewire/update')
         || (is_string($candidateBackUrl) && str_contains($candidateBackUrl, 'livewire/update'));
+    $isDocumentEditorCandidate = preg_match('#^/documents/\d+/(?:guided|edit|edit-new|edit-pdfjs|ai)(?:/|$)#', $normalizedCandidatePath) === 1;
     $cameFromAdmin = $explicitAdminOrigin
         || str_starts_with($normalizedCandidatePath, '/admin')
         || str_starts_with($normalizedCandidatePath, '/portal');
@@ -28,11 +29,12 @@
         && $candidateBackUrl !== ''
         && $candidateBackUrl !== $currentUrl
         && $sameHost
-        && !$isLivewireUpdate;
+        && !$isLivewireUpdate
+        && !$isDocumentEditorCandidate;
     $backUrl = $explicitAdminOrigin
         ? $adminBackUrl
         : ($hasUsableCandidate ? $candidateBackUrl : ($cameFromAdmin ? $adminBackUrl : $fallbackBackUrl));
-    $backLabel = $cameFromAdmin ? 'Back to admin' : 'Back to editor';
+    $backLabel = $cameFromAdmin ? 'Back to admin' : 'Back to documents';
 @endphp
 
 <div class="top-bar">
@@ -72,8 +74,50 @@
         <span class="guided-mode-label">Guided mode</span>
     @endif
     <span id="save-status" class="save-status">Saved</span>
-    <button id="undo-btn" type="button" class="history-btn" title="Undo (Ctrl+Z)" disabled>&#8592;</button>
-    <button id="redo-btn" type="button" class="history-btn" title="Redo (Ctrl+Y)" disabled>&#8594;</button>
+    @include('documents.edit-new._floating-toolbar')
+    <div class="top-bar-export-group" aria-label="History and export actions">
+        <button id="undo-btn" type="button" class="history-btn" title="Undo (Ctrl+Z)" disabled>&#8592;</button>
+        <button id="redo-btn" type="button" class="history-btn" title="Redo (Ctrl+Y)" disabled>&#8594;</button>
+        <div class="enpv-settings-wrap">
+            <button id="settings-gear-btn" type="button" class="history-btn enpv-settings-btn" title="Settings" aria-label="Settings" aria-expanded="false" aria-controls="settings-popover">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                </svg>
+            </button>
+            <div id="settings-popover" class="enpv-settings-popover" hidden>
+                <div class="enpv-settings-title">Settings</div>
+                <div class="enpv-gridlines-row">
+                    <div>
+                        <div class="enpv-settings-label">Gridlines</div>
+                        <div class="enpv-settings-hint">Alignment guides on pages</div>
+                    </div>
+                    <label class="enpv-grid-toggle" aria-label="Toggle gridlines">
+                        <input type="checkbox" id="settings-gridlines-toggle">
+                        <span class="grid-toggle-slider"></span>
+                    </label>
+                </div>
+                <div id="settings-gridlines-options" class="enpv-gridlines-options" hidden>
+                    <div class="enpv-gridlines-setting">
+                        <span>Spacing</span>
+                        <span id="settings-gridlines-spacing-label" class="enpv-gridlines-value">50px</span>
+                    </div>
+                    <input type="range" id="settings-gridlines-spacing" min="10" max="200" value="50" step="5">
+                    <div class="enpv-gridlines-two-col">
+                        <label>
+                            <span>Color</span>
+                            <input type="color" id="settings-gridlines-color" value="#3b82f6">
+                        </label>
+                        <label>
+                            <span>Opacity</span>
+                            <input type="range" id="settings-gridlines-opacity" min="5" max="50" value="15">
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <button id="download-pdf-btn" type="button" class="download-btn">Download PDF</button>
+    </div>
     @unless($guided ?? false)
         <button id="edit-mode-toggle" type="button" class="edit-mode-toggle" aria-pressed="false" title="Turn edit mode on to show editable text boxes">
             <span class="edit-mode-toggle__icon" aria-hidden="true">
@@ -88,7 +132,6 @@
     <button id="add-text-btn" type="button" class="history-btn add-text-btn" title="Add Text — click or drag on the page to place a new text block">Add Text</button>
     <button id="add-shape-btn" type="button" class="history-btn add-shape-btn" title="Shapes — choose a shape and drag on the page to draw it">Shapes</button>
     <button id="save-btn" type="button" class="save-btn">Save</button>
-    <button id="download-pdf-btn" type="button" class="download-btn">Download PDF</button>
     <a href="{{ route('documents.edit', $document) }}" class="doc-top-edit-link">← Edit</a>
     <a href="{{ route('documents.index') }}" class="doc-top-documents-link">All documents</a>
 </div>

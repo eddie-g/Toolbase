@@ -75,6 +75,13 @@
                             <span class="signature-color-chip__value" id="signature-type-color-value">#111827</span>
                         </label>
                     </div>
+                    <div class="signature-field">
+                        <span class="signature-field__label">Font size</span>
+                        <div class="signature-field__row">
+                            <input id="signature-type-size" type="range" min="48" max="180" step="2" value="136" aria-label="Typed signature font size">
+                            <span class="signature-slider-readout" id="signature-type-size-value">136px</span>
+                        </div>
+                    </div>
                 </div>
                 <div class="signature-modal__panel" data-signature-panel="upload">
                     <h3 class="signature-modal__panel-title">Use an image</h3>

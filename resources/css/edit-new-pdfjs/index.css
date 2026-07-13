@@ -21,7 +21,7 @@
     --scale-round-x: 1px;
     --scale-round-y: 1px;
     --enpv-bg: #404040;
-    --enpv-page-top-gutter: 144px;
+    --enpv-page-top-gutter: 96px;
     --enpv-page-bottom-gap: 16px;
 }
 
@@ -68,10 +68,16 @@ body.enpv-body .floating-zoom-bar button:disabled {
 }
 
 body.enpv-body .top-bar {
-    display: grid;
-    grid-template-columns: auto minmax(120px, 1fr) repeat(8, auto);
+    display: flex;
+    flex-wrap: nowrap;
     align-items: center;
     gap: 8px;
+    min-height: 70px;
+    z-index: 2147483560;
+}
+
+body.enpv-body {
+    --enpv-topbar-offset: 70px;
 }
 
 body.enpv-body .top-bar .doc-top-back-btn {
@@ -121,7 +127,7 @@ body.enpv-body .top-bar .doc-top-back-btn:focus-visible {
 
 body.enpv-body .top-bar .doc-name-wrap {
     order: 2;
-    flex: none;
+    flex: 1 1 180px;
     min-width: 0;
 }
 
@@ -134,10 +140,8 @@ body.enpv-body .top-bar .guided-mode-label {
 }
 
 body.enpv-guided .top-bar .guided-mode-label {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
+    order: 3;
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -324,16 +328,62 @@ body.enpv-body .top-bar #doc-name-input {
 }
 
 body.enpv-body .top-bar #undo-btn {
-    order: 3;
+    order: initial;
 }
 
 body.enpv-body .top-bar #redo-btn {
-    order: 4;
+    order: initial;
 }
 
 body.enpv-body .top-bar #download-pdf-btn {
+    order: initial;
+    margin-left: 8px;
+}
+
+body.enpv-body .top-bar #floating-tool-bar.top-bar-toolset {
+    order: 3;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    margin-left: 0;
+    margin-right: 0;
+}
+
+body.enpv-body .top-bar .top-bar-export-group {
+    order: 4;
+    margin-left: auto;
+}
+
+body.enpv-guided .top-bar #floating-tool-bar.top-bar-toolset {
+    position: static;
+    top: auto;
+    left: auto;
+    transform: none;
+    order: 4;
+    flex: 0 0 auto;
+}
+
+body.enpv-guided .top-bar .top-bar-export-group {
     order: 5;
-    justify-self: end;
+    margin-left: 0;
+}
+
+@media (max-width: 1180px) {
+    body.enpv-body .top-bar {
+        flex-wrap: wrap;
+    }
+
+    body.enpv-body .top-bar #floating-tool-bar.top-bar-toolset {
+        position: static;
+        top: auto;
+        left: auto;
+        transform: none;
+        order: 10;
+        flex: 1 1 100%;
+        margin-left: 0;
+        margin-right: 0;
+    }
 }
 
 body.enpv-body .top-bar #save-status,
@@ -384,6 +434,9 @@ body.enpv-body #ftb-edit-mode,
 body.enpv-body #ftb-guided-convert,
 body.enpv-body #ftb-add-text,
 body.enpv-body #ftb-add-image,
+body.enpv-body #ftb-fields,
+body.enpv-body .ftb-fields-menu,
+body.enpv-body .ftb-fields-menu button,
 body.enpv-body #ftb-convert,
 body.enpv-body #ftb-encrypt,
 body.enpv-body #ftb-draw-erase,
@@ -393,9 +446,9 @@ body.enpv-body #ftb-add-shape,
 body.enpv-body #shape-tool-panel,
 body.enpv-body #shape-tool-panel button,
 body.enpv-body #shape-tool-panel input,
-body.enpv-body #draw-tool-panel,
-body.enpv-body #draw-tool-panel button,
-body.enpv-body #draw-tool-panel input,
+body.enpv-body .draw-tool-panel,
+body.enpv-body .draw-tool-panel button,
+body.enpv-body .draw-tool-panel input,
 body.enpv-body #highlight-tool-panel,
 body.enpv-body #highlight-tool-panel button,
 body.enpv-body #highlight-tool-panel input,
@@ -407,10 +460,49 @@ body.enpv-body #enpv-notes-panel input {
     opacity: 1;
     cursor: pointer !important;
 }
+
+body.enpv-body .ftb-field-wrap {
+    position: relative;
+    display: inline-flex;
+}
+
+body.enpv-body .ftb-fields-menu[hidden] {
+    display: none;
+}
+
+body.enpv-body .ftb-fields-menu {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 8px);
+    z-index: 2147483601;
+    min-width: 156px;
+    padding: 6px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 8px;
+    background: #111827;
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.3);
+}
+
+body.enpv-body .ftb-fields-menu button {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #e5e7eb;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: left;
+}
+
+body.enpv-body .ftb-fields-menu button:hover {
+    background: rgba(59, 130, 246, 0.22);
+}
 body.enpv-body #shape-tool-panel {
     z-index: 2147483502;
 }
-body.enpv-body #draw-tool-panel {
+body.enpv-body .draw-tool-panel {
     z-index: 2147483502;
 }
 body.enpv-body #highlight-tool-panel {
@@ -427,34 +519,299 @@ body.enpv-body #download-pdf-btn {
     cursor: pointer !important;
 }
 
+body.enpv-body #settings-gear-btn,
+body.enpv-body .enpv-settings-popover input {
+    pointer-events: auto;
+    opacity: 1;
+    cursor: pointer !important;
+}
+
+body.enpv-body .enpv-settings-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+body.enpv-body .enpv-settings-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    min-width: 34px;
+    padding: 0;
+}
+
+body.enpv-body .enpv-settings-popover[hidden] {
+    display: none;
+}
+
+body.enpv-body .enpv-settings-popover {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    z-index: 2147483562;
+    width: min(300px, calc(100vw - 24px));
+    padding: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 8px;
+    background: #111827;
+    color: #e5e7eb;
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.38);
+}
+
+body.enpv-body .enpv-settings-popover::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    right: 12px;
+    width: 12px;
+    height: 12px;
+    transform: rotate(45deg);
+    border-left: 1px solid rgba(148, 163, 184, 0.28);
+    border-top: 1px solid rgba(148, 163, 184, 0.28);
+    background: #111827;
+}
+
+body.enpv-body .enpv-settings-title {
+    margin-bottom: 12px;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+body.enpv-body .enpv-gridlines-row,
+body.enpv-body .enpv-gridlines-setting,
+body.enpv-body .enpv-gridlines-two-col,
+body.enpv-body .enpv-gridlines-two-col label {
+    display: flex;
+    align-items: center;
+}
+
+body.enpv-body .enpv-gridlines-row,
+body.enpv-body .enpv-gridlines-setting {
+    justify-content: space-between;
+    gap: 12px;
+}
+
+body.enpv-body .enpv-settings-label {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+body.enpv-body .enpv-settings-hint {
+    margin-top: 2px;
+    color: #9ca3af;
+    font-size: 11px;
+}
+
+body.enpv-body .enpv-grid-toggle {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex: 0 0 auto;
+    cursor: pointer;
+}
+
+body.enpv-body .enpv-grid-toggle input {
+    width: 0;
+    height: 0;
+    opacity: 0;
+}
+
+body.enpv-body .grid-toggle-slider {
+    position: absolute;
+    inset: 0;
+    border-radius: 24px;
+    background: #4b5563;
+    transition: background 0.18s ease;
+}
+
+body.enpv-body .grid-toggle-slider::before {
+    content: "";
+    position: absolute;
+    left: 3px;
+    bottom: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
+    transition: transform 0.18s ease;
+}
+
+body.enpv-body #settings-gridlines-toggle:checked + .grid-toggle-slider {
+    background: #3b82f6;
+}
+
+body.enpv-body #settings-gridlines-toggle:checked + .grid-toggle-slider::before {
+    transform: translateX(20px);
+}
+
+body.enpv-body .enpv-gridlines-options {
+    margin-top: 14px;
+}
+
+body.enpv-body .enpv-gridlines-options[hidden] {
+    display: none;
+}
+
+body.enpv-body .enpv-gridlines-setting {
+    margin-bottom: 6px;
+    color: #cbd5e1;
+    font-size: 12px;
+}
+
+body.enpv-body .enpv-gridlines-value {
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #f8fafc;
+    font-weight: 700;
+}
+
+body.enpv-body .enpv-gridlines-options input[type="range"] {
+    width: 100%;
+    accent-color: #3b82f6;
+}
+
+body.enpv-body .enpv-gridlines-two-col {
+    gap: 12px;
+    margin-top: 10px;
+}
+
+body.enpv-body .enpv-gridlines-two-col label {
+    min-width: 0;
+    flex: 1 1 0;
+    gap: 8px;
+    color: #cbd5e1;
+    font-size: 12px;
+}
+
+body.enpv-body .enpv-gridlines-two-col input[type="color"] {
+    width: 30px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    border-radius: 6px;
+    background: transparent;
+}
+
+.enpv-gridlines-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 25;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
+}
+
 /* The shared /edit-new format bar is mounted on this route and wired into
  * the pdf.js text-overlay model. */
 body.enpv-body #ann-format-bar {
     z-index: 2147483501;
+    top: var(--enpv-topbar-offset);
+    right: 0;
+    bottom: 0;
+    left: auto;
+    width: min(430px, 96vw);
+    max-width: 96vw;
+    height: calc(100% - var(--enpv-topbar-offset));
     transform: none;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-    width: min(900px, calc(100vw - 16px));
-    max-width: calc(100vw - 16px);
-    padding: 8px 10px 9px;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0;
+    padding: 0 18px 20px;
     white-space: normal;
-    overflow: visible;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+    box-shadow: -22px 0 70px rgba(15, 23, 42, 0.24);
+}
+body.enpv-body #ann-format-bar .afb-sidebar-header {
+    min-height: 58px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 0 -18px 4px;
+    padding: 0 16px 0 20px;
+    border-bottom: 1px solid #e5e7eb;
+}
+body.enpv-body #ann-format-bar .afb-sidebar-header h2 {
+    margin: 0;
+    color: #0f172a;
+    font-size: 18px;
+    line-height: 1.2;
+    font-weight: 700;
+}
+body.enpv-body #ann-format-bar .afb-sidebar-header p {
+    margin: 4px 0 0;
+    color: #64748b;
+    font-size: 12px;
+}
+body.enpv-body #ann-format-bar .afb-sidebar-close {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+}
+body.enpv-body #ann-format-bar .afb-sidebar-close:hover,
+body.enpv-body #ann-format-bar .afb-sidebar-close:focus-visible {
+    background: #f1f5f9;
+    color: #0f172a;
+    outline: none;
+}
+body.enpv-body #ann-format-bar .afb-divider {
+    width: 100%;
+    height: 1px;
+    margin: 0;
+    background: #e5e7eb;
+    flex: 0 0 auto;
+}
+body.enpv-body #ann-format-bar .afb-control-group {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    padding: 14px 0;
+    flex: 0 0 auto;
+}
+body.enpv-body #ann-format-bar .afb-control-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+body.enpv-body #ann-format-bar .afb-control-label {
+    display: block;
+    color: #475569;
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 750;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 body.enpv-body #ann-format-bar .afb-size-group {
-    order: 100;
-    flex: 0 0 100%;
+    flex: 0 0 auto;
     display: grid;
-    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    grid-template-columns: minmax(0, 1fr) max-content;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     width: 100%;
-    margin-top: 2px;
-    padding-top: 8px;
-    border-top: 1px solid #e5e7eb;
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
 }
 body.enpv-body #ann-format-bar .afb-size-group + .afb-divider {
-    display: none;
+    display: block;
 }
 body.enpv-body #ann-format-bar .afb-size-slider {
     width: 100%;
@@ -465,12 +822,393 @@ body.enpv-body #ann-format-bar .afb-size-value {
     min-width: 44px;
     justify-self: end;
 }
+body.enpv-body #ann-format-bar select,
+body.enpv-body #ann-format-bar .afb-opacity-group select {
+    width: 100% !important;
+    min-width: 0;
+}
+body.enpv-body #ann-format-bar .afb-font-select {
+    width: 100%;
+    height: 36px;
+}
+body.enpv-body #ann-format-bar .afb-opacity-group {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 18px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+}
+body.enpv-body #ann-format-bar .afb-color-wrap {
+    width: 44px;
+    height: 36px;
+    margin-left: 0 !important;
+}
+body.enpv-body #ann-format-bar .afb-btn {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 auto;
+}
+body.enpv-body #ann-format-bar .afb-align-group .afb-control-row,
+body.enpv-body #ann-format-bar .afb-action-group .afb-control-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+body.enpv-body #ann-format-bar .afb-style-group .afb-control-row {
+    display: grid;
+    grid-template-columns: repeat(3, 36px);
+}
+body.enpv-body #ann-format-bar .afb-text-tools-group .afb-control-row {
+    display: grid;
+    grid-template-columns: repeat(3, 36px);
+}
+body.enpv-body #ann-format-bar .afb-debug {
+    color: #7c3aed;
+}
+body.enpv-body #ann-format-bar .afb-color-group .afb-control-row {
+    display: grid;
+    grid-template-columns: repeat(2, 44px);
+}
 body.enpv-body #ann-format-bar button,
 body.enpv-body #ann-format-bar input,
 body.enpv-body #ann-format-bar select {
     pointer-events: auto;
     opacity: 1;
     cursor: inherit;
+}
+
+body.enpv-body #shape-tool-panel {
+    z-index: 2147483501;
+    top: var(--enpv-topbar-offset);
+    right: 0;
+    bottom: 0;
+    left: auto;
+    width: min(430px, 96vw);
+    max-width: 96vw;
+    height: calc(100% - var(--enpv-topbar-offset));
+    transform: none;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0;
+    padding: 0 18px 20px;
+    white-space: normal;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+    background: #ffffff;
+    box-shadow: -22px 0 70px rgba(15, 23, 42, 0.24);
+}
+body.enpv-body #shape-tool-panel .sfb-sidebar-header {
+    min-height: 58px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 0 -18px 4px;
+    padding: 0 16px 0 20px;
+    border-bottom: 1px solid #e5e7eb;
+}
+body.enpv-body #shape-tool-panel .sfb-sidebar-header h2 {
+    margin: 0;
+    color: #0f172a;
+    font-size: 18px;
+    line-height: 1.2;
+    font-weight: 700;
+}
+body.enpv-body #shape-tool-panel .sfb-sidebar-header p {
+    margin: 4px 0 0;
+    color: #64748b;
+    font-size: 12px;
+}
+body.enpv-body #shape-tool-panel .sfb-sidebar-close {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+}
+body.enpv-body #shape-tool-panel .sfb-sidebar-close:hover,
+body.enpv-body #shape-tool-panel .sfb-sidebar-close:focus-visible {
+    background: #f1f5f9;
+    color: #0f172a;
+    outline: none;
+}
+body.enpv-body #shape-tool-panel .afb-divider {
+    width: 100%;
+    height: 1px;
+    margin: 0;
+    background: #e5e7eb;
+    flex: 0 0 auto;
+}
+body.enpv-body #shape-tool-panel .sfb-control-group {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    padding: 14px 0;
+    flex: 0 0 auto;
+}
+body.enpv-body #shape-tool-panel .sfb-control-label {
+    display: block;
+    color: #475569;
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 750;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+body.enpv-body #shape-tool-panel .sfb-shape-grid {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0;
+    background: transparent;
+}
+body.enpv-body #shape-tool-panel .sfb-extra-shapes {
+    margin-left: 0;
+}
+body.enpv-body #shape-tool-panel .sfb-shape-btn {
+    width: 100%;
+    height: 40px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+body.enpv-body #shape-tool-panel .sfb-shape-btn:hover,
+body.enpv-body #shape-tool-panel .sfb-shape-btn:focus-visible {
+    border-color: #94a3b8;
+    background: #ffffff;
+    outline: none;
+}
+body.enpv-body #shape-tool-panel .sfb-shape-btn.is-active {
+    border-color: #2563eb;
+    background: #eff6ff;
+    color: #1d4ed8;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+body.enpv-body #shape-tool-panel .sfb-more-shapes-toggle[aria-expanded="true"] {
+    border-color: #7c3aed;
+    background: #f5f3ff;
+    color: #5b21b6;
+}
+body.enpv-body #shape-tool-panel .sfb-color {
+    width: 44px;
+    height: 36px;
+}
+body.enpv-body #shape-tool-panel .sfb-range-row {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr) 48px;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+}
+body.enpv-body #shape-tool-panel .sfb-mini-label {
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 650;
+    letter-spacing: 0;
+    text-transform: none;
+}
+body.enpv-body #shape-tool-panel .sfb-slider {
+    width: 100%;
+    min-width: 0;
+}
+body.enpv-body #shape-tool-panel .sfb-readout {
+    min-width: 48px;
+    text-align: right;
+    color: #334155;
+}
+body.enpv-body #shape-tool-panel button,
+body.enpv-body #shape-tool-panel input {
+    pointer-events: auto;
+    opacity: 1;
+}
+
+body.enpv-body .draw-tool-panel {
+    z-index: 2147483501;
+    top: var(--enpv-topbar-offset);
+    right: 0;
+    bottom: 0;
+    left: auto;
+    width: min(430px, 96vw);
+    max-width: 96vw;
+    height: calc(100% - var(--enpv-topbar-offset));
+    transform: none;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 0;
+    padding: 0 18px 20px;
+    white-space: normal;
+    overflow-y: auto;
+    overflow-x: hidden;
+    border-width: 0 0 0 1px;
+    border-radius: 0;
+    background: #ffffff;
+    box-shadow: -22px 0 70px rgba(15, 23, 42, 0.24);
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__head {
+    min-height: 58px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    order: initial;
+    margin: 0 -18px 4px;
+    padding: 0 16px 0 20px;
+    border-bottom: 1px solid #e5e7eb;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__title {
+    display: block;
+    margin: 0;
+    color: #0f172a;
+    font-size: 18px;
+    line-height: 1.2;
+    font-weight: 700;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__subtitle {
+    display: block;
+    margin: 4px 0 0;
+    color: #64748b;
+    font-size: 12px;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__close {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #64748b;
+    cursor: pointer;
+    font-size: 0;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__close:hover,
+body.enpv-body .draw-tool-panel .draw-tool-panel__close:focus-visible {
+    background: #f1f5f9;
+    color: #0f172a;
+    outline: none;
+}
+body.enpv-body .draw-tool-panel .afb-divider {
+    width: 100%;
+    height: 1px;
+    margin: 0;
+    background: #e5e7eb;
+    flex: 0 0 auto;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__stack {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 0;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__section {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+    gap: 10px;
+    padding: 14px 0;
+    flex: 0 0 auto;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__section-label {
+    display: block;
+    color: #475569;
+    font-size: 11px;
+    line-height: 1;
+    font-weight: 750;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__tool-group {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0;
+    background: transparent;
+}
+body.enpv-body .draw-tool-panel .draw-tool-btn {
+    width: 100%;
+    height: 40px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+body.enpv-body .draw-tool-panel .draw-tool-btn:hover,
+body.enpv-body .draw-tool-panel .draw-tool-btn:focus-visible {
+    border-color: #94a3b8;
+    background: #ffffff;
+    outline: none;
+}
+body.enpv-body .draw-tool-panel .draw-tool-btn.is-active {
+    border-color: #2563eb;
+    background: #eff6ff;
+    color: #1d4ed8;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__slider-wrap {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 48px;
+    align-items: center;
+    gap: 12px;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__slider-wrap input[type="range"] {
+    width: 100%;
+    min-width: 0;
+    height: 24px;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__readout {
+    min-width: 48px;
+    text-align: right;
+    color: #334155;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__color-row {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 44px;
+    align-items: center;
+    gap: 12px;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__colors {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(6, 28px);
+    align-items: center;
+    gap: 8px;
+}
+body.enpv-body .draw-tool-panel .draw-color-swatch {
+    width: 28px;
+    height: 28px;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__custom-color {
+    width: 44px;
+    height: 36px;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__status {
+    display: block;
+    margin-top: 2px;
+    border-radius: 8px;
+    padding: 10px 12px;
+    background: #f8fafc;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.35;
+}
+body.enpv-body .draw-tool-panel button,
+body.enpv-body .draw-tool-panel input {
+    pointer-events: auto;
+    opacity: 1;
 }
 
 body.enpv-body .enpv-convert-modal[hidden] {
@@ -1111,12 +1849,20 @@ body.enpv-body .enpv-page-manager-open:focus-visible {
 
 body.enpv-body .enpv-layers-rail {
     position: fixed;
-    right: 14px;
-    top: 148px;
+    left: 14px;
+    top: 214px;
     z-index: 2147483400;
 }
 
-body.enpv-body .enpv-layers-open {
+body.enpv-body .enpv-notes-rail {
+    position: fixed;
+    left: 14px;
+    top: 280px;
+    z-index: 2147483400;
+}
+
+body.enpv-body .enpv-layers-open,
+body.enpv-body .enpv-notes-open {
     display: inline-flex;
     flex-direction: column;
     align-items: center;
@@ -1135,11 +1881,31 @@ body.enpv-body .enpv-layers-open {
 
 body.enpv-body .enpv-layers-open:hover,
 body.enpv-body .enpv-layers-open:focus-visible,
-body.enpv-body .enpv-layers-open[aria-expanded='true'] {
+body.enpv-body .enpv-layers-open[aria-expanded='true'],
+body.enpv-body .enpv-notes-open:hover,
+body.enpv-body .enpv-notes-open:focus-visible,
+body.enpv-body .enpv-notes-open.is-active {
     color: #0f172a;
     background: #f8fafc;
     border-color: rgba(37, 99, 235, 0.48);
     outline: none;
+}
+
+body.enpv-body #ftb-notes.enpv-notes-open.is-premium-locked {
+    color: #6b7280;
+    cursor: not-allowed !important;
+}
+
+body.enpv-body .enpv-notes-open .ftb-premium-label {
+    min-height: 11px;
+    border-radius: 999px;
+    padding: 1px 4px;
+    background: #fef3c7;
+    color: #92400e;
+    font-size: 7px;
+    line-height: 1;
+    font-weight: 800;
+    text-transform: uppercase;
 }
 
 body.enpv-body .enpv-guided-helper-rail {
@@ -1181,11 +1947,11 @@ body.enpv-body .enpv-guided-helper-panel[hidden] {
 
 body.enpv-body .enpv-guided-helper-panel {
     position: fixed;
-    top: 0;
+    top: var(--enpv-topbar-offset);
     right: 0;
     z-index: 2147483552;
     width: min(460px, 96vw);
-    height: 100%;
+    height: calc(100% - var(--enpv-topbar-offset));
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1385,11 +2151,11 @@ body.enpv-body .enpv-layers-panel[hidden] {
 
 body.enpv-body .enpv-layers-panel {
     position: fixed;
-    top: 0;
+    top: var(--enpv-topbar-offset);
     right: 0;
     z-index: 2147483550;
     width: min(430px, 96vw);
-    height: 100%;
+    height: calc(100% - var(--enpv-topbar-offset));
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1798,7 +2564,22 @@ body.enpv-body .enpv-page-manager-label span:last-child {
         bottom: 86px;
     }
 
-    body.enpv-body .enpv-page-manager-open {
+    body.enpv-body .enpv-layers-rail {
+        left: 10px;
+        right: auto;
+        top: auto;
+        bottom: 24px;
+    }
+
+    body.enpv-body .enpv-notes-rail {
+        left: 74px;
+        top: auto;
+        bottom: 24px;
+    }
+
+    body.enpv-body .enpv-page-manager-open,
+    body.enpv-body .enpv-layers-open,
+    body.enpv-body .enpv-notes-open {
         width: 54px;
         height: 54px;
     }
@@ -1960,7 +2741,6 @@ body.enpv-body.enpv-viewer-ready .enpv-loading-screen {
 }
 .pdfViewer canvas {
     max-width: none !important;
-    height: auto !important;
     display: block;
 }
 
@@ -2101,6 +2881,10 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
 }
 .enpv-annotation-box.is-user-sized-text .enpv-text-content {
     overflow: hidden;
+    /* Resizing changes the container, never the glyph aspect ratio. */
+    transform: none !important;
+    transform-origin: initial !important;
+    width: 100% !important;
 }
 .enpv-annotation-box.is-editing.is-source-fidelity .enpv-text-content {
     display: block;
@@ -2247,9 +3031,11 @@ body.enpv-shape-on .enpv-annotation-box.is-persisted-overlay.enpv-shape-box[data
     outline: none;
     box-shadow: none;
 }
-body.enpv-body .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"].is-readonly,
-body.enpv-edit-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"]:not(.is-selected) {
+body.enpv-body .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"].is-readonly {
     pointer-events: none;
+}
+.enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"] .enpv-shape-angle-badge {
+    display: none !important;
 }
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-editing .enpv-text-content {
     pointer-events: auto;
@@ -2338,7 +3124,9 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
 }
 .enpv-annotation-box.is-selected.is-editing .enpv-resize-handle,
 .enpv-annotation-box.is-selected.enpv-shape-box .enpv-resize-handle,
-.enpv-annotation-box.is-selected.enpv-image-box .enpv-resize-handle { display: block; }
+.enpv-annotation-box.is-selected.enpv-signature-box .enpv-resize-handle,
+.enpv-annotation-box.is-selected.enpv-image-box .enpv-resize-handle,
+.enpv-annotation-box.is-selected.enpv-field-box .enpv-resize-handle { display: block; }
 .enpv-resize-handle.t { top: 0;    left: 50%; cursor: ns-resize; }
 .enpv-resize-handle.b { top: 100%; left: 50%; cursor: ns-resize; }
 .enpv-resize-handle.l { top: 50%;  left: 0;   cursor: ew-resize; }
@@ -2458,6 +3246,14 @@ body.enpv-shape-cutting * { cursor: crosshair !important; }
 body.enpv-draw-on .pdfViewer .page,
 body.enpv-draw-on .enpv-annotation-box-layer,
 body.enpv-draw-on .enpv-annotation-box { cursor: crosshair !important; }
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box,
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box * {
+    cursor: grab !important;
+}
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected,
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected * {
+    cursor: move !important;
+}
 body.enpv-highlight-on .pdfViewer .page,
 body.enpv-highlight-on .textLayer,
 body.enpv-highlight-on .textLayer span,
@@ -2584,11 +3380,11 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
 }
 .enpv-notes-panel {
     position: fixed;
-    top: 0;
+    top: var(--enpv-topbar-offset);
     right: 0;
     z-index: 2147483550;
     width: min(430px, 96vw);
-    height: 100%;
+    height: calc(100% - var(--enpv-topbar-offset));
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -2947,6 +3743,7 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
     overflow: visible;
     pointer-events: none;
 }
+body.enpv-edit-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"]::before,
 body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"]::before {
     content: "";
     position: absolute;
@@ -3062,12 +3859,6 @@ body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underli
     background: rgba(251, 146, 60, 0.15);
     border-color: rgba(251, 146, 60, 0.35);
 }
-.enpv-ann-menu .enpv-ann-menu-debug { color: #c4b5fd; }
-.enpv-ann-menu .enpv-ann-menu-debug:hover {
-    color: #ddd6fe;
-    background: rgba(196, 181, 253, 0.16);
-    border-color: rgba(196, 181, 253, 0.34);
-}
 .enpv-ann-menu .enpv-ann-menu-divider {
     width: 1px;
     height: 18px;
@@ -3077,8 +3868,10 @@ body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underli
 
 .enpv-debug-panel {
     position: fixed;
-    top: 72px;
-    right: 18px;
+    top: 50%;
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, -50%);
     z-index: 2147483200;
     width: min(380px, calc(100vw - 36px));
     max-height: calc(100vh - 96px);
@@ -3439,14 +4232,18 @@ body.enpv-signature-placing .pdfViewer .page,
 body.enpv-signature-placing .pdfViewer .page *,
 body.enpv-image-placing #viewerContainer,
 body.enpv-image-placing .pdfViewer .page,
-body.enpv-image-placing .pdfViewer .page * {
+body.enpv-image-placing .pdfViewer .page *,
+body.enpv-field-placing #viewerContainer,
+body.enpv-field-placing .pdfViewer .page,
+body.enpv-field-placing .pdfViewer .page * {
     cursor: copy !important;
 }
 
 /* Signature annotation boxes — image-backed stamps that can be dragged
  * via the existing onAnnBoxPointerDown / floating menu. */
 .enpv-annotation-box.enpv-signature-box,
-.enpv-annotation-box.enpv-image-box {
+.enpv-annotation-box.enpv-image-box,
+.enpv-annotation-box.enpv-field-box {
     background: transparent;
     border: 1px dashed transparent;
     overflow: visible;
@@ -3454,30 +4251,38 @@ body.enpv-image-placing .pdfViewer .page * {
     pointer-events: auto;
 }
 body.enpv-body .enpv-annotation-box.enpv-signature-box.is-persisted-overlay,
-.enpv-annotation-box.enpv-image-box.is-persisted-overlay {
+.enpv-annotation-box.enpv-image-box.is-persisted-overlay,
+.enpv-annotation-box.enpv-field-box.is-persisted-overlay {
     background: transparent;
     pointer-events: auto;
 }
-body:not(.enpv-edit-on) .enpv-annotation-box.enpv-image-box.is-persisted-overlay {
+body:not(.enpv-edit-on) .enpv-annotation-box.enpv-image-box.is-persisted-overlay,
+body:not(.enpv-edit-on) .enpv-annotation-box.enpv-field-box.is-persisted-overlay {
     pointer-events: auto;
 }
 body.enpv-edit-on .enpv-annotation-box.enpv-signature-box,
 body.enpv-edit-on .enpv-annotation-box.enpv-image-box,
+body.enpv-edit-on .enpv-annotation-box.enpv-field-box,
 body.enpv-body .enpv-annotation-box.enpv-signature-box.is-selected,
-body.enpv-body .enpv-annotation-box.enpv-image-box.is-selected {
+body.enpv-body .enpv-annotation-box.enpv-image-box.is-selected,
+body.enpv-body .enpv-annotation-box.enpv-field-box.is-selected {
     border-color: rgba(96, 165, 250, 0.55);
 }
 body.enpv-edit-on .enpv-annotation-box.enpv-signature-box.is-selected,
 body.enpv-edit-on .enpv-annotation-box.enpv-image-box.is-selected,
+body.enpv-edit-on .enpv-annotation-box.enpv-field-box.is-selected,
 body.enpv-body .enpv-annotation-box.enpv-signature-box.is-selected,
-body.enpv-body .enpv-annotation-box.enpv-image-box.is-selected {
+body.enpv-body .enpv-annotation-box.enpv-image-box.is-selected,
+body.enpv-body .enpv-annotation-box.enpv-field-box.is-selected {
     border-color: rgba(59, 130, 246, 0.9);
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
 }
 body.enpv-edit-on .enpv-annotation-box.enpv-signature-box.is-locked,
 body.enpv-edit-on .enpv-annotation-box.enpv-image-box.is-locked,
+body.enpv-edit-on .enpv-annotation-box.enpv-field-box.is-locked,
 body.enpv-body .enpv-annotation-box.enpv-signature-box.is-locked,
-body.enpv-body .enpv-annotation-box.enpv-image-box.is-locked {
+body.enpv-body .enpv-annotation-box.enpv-image-box.is-locked,
+body.enpv-body .enpv-annotation-box.enpv-field-box.is-locked {
     border-color: rgba(248, 113, 113, 0.7);
 }
 .enpv-annotation-box.enpv-signature-box > .enpv-signature-img,
@@ -3495,7 +4300,9 @@ body.enpv-body .enpv-annotation-box.enpv-image-box.is-locked {
 .enpv-annotation-box.enpv-image-box > .enpv-image-img {
     object-fit: fill;
 }
-.enpv-image-selection-label {
+.enpv-image-selection-label,
+.enpv-signature-selection-label,
+.enpv-field-selection-label {
     position: absolute;
     left: -1px;
     top: -22px;
@@ -3508,14 +4315,52 @@ body.enpv-body .enpv-annotation-box.enpv-image-box.is-locked {
     color: #fff;
     font: 700 10px/18px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     letter-spacing: 0;
-    text-transform: lowercase;
     pointer-events: none;
     user-select: none;
     white-space: nowrap;
     z-index: 3;
 }
-.enpv-annotation-box.enpv-image-box.is-selected > .enpv-image-selection-label {
+.enpv-image-selection-label {
+    text-transform: lowercase;
+}
+.enpv-field-selection-label {
+    text-transform: none;
+}
+.enpv-signature-selection-label {
+    text-transform: none;
+}
+.enpv-annotation-box.enpv-signature-box.is-selected > .enpv-signature-selection-label,
+.enpv-annotation-box.enpv-image-box.is-selected > .enpv-image-selection-label,
+.enpv-annotation-box.enpv-field-box.is-selected > .enpv-field-selection-label {
     display: inline-flex;
+}
+
+.enpv-annotation-box.enpv-field-box {
+    border-color: rgba(37, 99, 235, 0.95);
+    background: rgba(219, 234, 254, 0.62);
+}
+
+.enpv-field-preview {
+    position: absolute;
+    inset: 0;
+    display: block;
+    padding: 0 9px;
+    border: 1px solid rgba(37, 99, 235, 0.95);
+    border-bottom-width: 2px;
+    background: rgba(219, 234, 254, 0.86);
+    color: #1e3a8a;
+    font: 700 12px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    pointer-events: none;
+    user-select: none;
+    box-sizing: border-box;
+}
+
+.enpv-field-preview::before {
+    content: none;
+}
+
+.enpv-annotation-box[data-field-kind="signature"] .enpv-field-preview {
+    font-style: normal;
 }
 
 /* ---------------------------------------------------------------------
@@ -3537,6 +4382,8 @@ body.enpv-guided #ftb-convert,
 body.enpv-guided #ftb-encrypt,
 body.enpv-guided #add-shape-btn,
 body.enpv-guided #enpv-page-manager-rail,
+body.enpv-guided #enpv-layers-rail,
+body.enpv-guided #enpv-notes-rail,
 body.enpv-guided .top-bar .doc-top-edit-link {
     display: none !important;
 }

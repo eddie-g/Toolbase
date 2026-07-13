@@ -28,6 +28,7 @@ Thumbs.db
 /python/__pycache__
 /python/.playwright
 /python/screenshots
+/tests/
 
 # Debug/temp files
 /tmp/

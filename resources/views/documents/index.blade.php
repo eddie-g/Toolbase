@@ -1220,12 +1220,7 @@
                                         ? route('documents.guided', $document)
                                         : ($document->mode === 'ai'
                                             ? route('documents.ai', $document)
-                                            : ($document->mode === 'full_editor'
-                                                ? route('documents.editPdfjs', $document)
-                                                : route('documents.edit', $document)));
-                                    $openNewUrl = $document->mode === 'guided'
-                                        ? route('documents.guided', $document)
-                                        : route('documents.editNew', ['document' => $document, 'pdfjs' => 1]);
+                                            : route('documents.editPdfjs', $document));
                                     $sizeMb = $document->size_bytes > 0 ? number_format($document->size_bytes / (1024 * 1024), 1) : '0.0';
                                     $updatedLabel = optional($document->updated_at)->diffForHumans() ?: 'just now';
                                     $paperClass = $document->mode === 'ai' ? 'ai-mode' : ($document->mode === 'guided' ? 'guided-mode' : '');
@@ -1267,9 +1262,6 @@
                                         <div class="doc-meta">Edited {{ strtoupper($updatedLabel) }} &bull; {{ $sizeMb }} MB</div>
                                         <div class="doc-actions">
                                             <a href="{{ $editUrl }}" class="doc-link">Open</a>
-                                            @if(strtolower((string) config('pdf_editor.layout_mode', 'default')) === 'new_writer')
-                                            <a href="{{ $openNewUrl }}" target="_blank" class="doc-link doc-link-outline">Open New</a>
-                                            @endif
                                             <form action="{{ route('documents.destroy', $document) }}" method="POST" style="margin:0;">
                                                 @csrf
                                                 @method('DELETE')

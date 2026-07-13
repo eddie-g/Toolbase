@@ -500,6 +500,42 @@ def _needs_truetype_web_repair(ttf_data: bytes) -> bool:
     return False
 
 
+def _sanitize_cmap_language_fields(font_data: bytes, font_name: str = 'UnknownFont') -> bytes:
+    """
+    Browsers run every webfont through the OTS sanitizer, which rejects the
+    whole font when a Unicode/Windows-platform cmap subtable carries a
+    non-zero ``language`` field ("cmap: format 12 subtable language should
+    be zero"). PDF subsetters sometimes leave garbage in that field (seen:
+    Calibri subsets with language=2434252499 → doc 4392), so the extracted
+    font silently fails to load and the editor falls back to a default
+    serif. Zero the field and re-save; returns the original bytes when
+    nothing needs fixing or the font can't be parsed.
+    """
+    try:
+        from io import BytesIO
+        from fontTools.ttLib import TTFont
+        font = TTFont(BytesIO(font_data))
+        if 'cmap' not in font:
+            return font_data
+        dirty = False
+        for sub in getattr(font['cmap'], 'tables', []) or []:
+            # Mac-platform (1) subtables legitimately use language = id + 1;
+            # OTS only enforces zero for Unicode (0) and Windows (3) tables.
+            if getattr(sub, 'platformID', None) not in (0, 3):
+                continue
+            if getattr(sub, 'language', 0) not in (0, None):
+                sub.language = 0
+                dirty = True
+        if not dirty:
+            return font_data
+        out = BytesIO()
+        font.save(out)
+        print(f"    ↳ Zeroed non-conformant cmap language field(s): {font_name}")
+        return out.getvalue()
+    except Exception:
+        return font_data
+
+
 def _truetype_glyph_health(ttf_data: bytes):
     """
     Inspect a TrueType font and return (cmap_count, empty_count, filled_count)
@@ -1628,6 +1664,11 @@ def extract_embedded_fonts(pdf_path, document_id, output_dir=None):
                 except Exception as ttf_err:
                     actual_content = content
                     print(f"    ⚠ TrueType web repair failed for {clean_name}: {ttf_err}")
+
+            # Browsers (OTS) reject fonts whose Unicode/Windows cmap subtables
+            # carry a non-zero language field — a common PDF-subsetter defect.
+            if actual_ext in ('ttf', 'otf'):
+                actual_content = _sanitize_cmap_language_fields(actual_content, clean_name)
 
             # Final integrity gate: if the TrueType outlines are mostly empty
             # the browser will load the font and silently render nothing for

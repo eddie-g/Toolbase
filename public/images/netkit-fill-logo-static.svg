@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="360" viewBox="100 800 1845 445" role="img" aria-label="Netkit">
   <style>
-    .netkit-flight { display: none; }
+    .netkit-flight, .netkit-ambient { display: none; }
     .netkit-settled, .netkit-solid-underlay { opacity: 1; }
 
     @media (prefers-reduced-motion: reduce) {

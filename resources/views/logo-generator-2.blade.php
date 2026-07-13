@@ -21,7 +21,7 @@
     <x-site-header :compact="true" />
     
     @if ($logoUser ?? false)
-    <div x-data="logoGenerator()" class="min-h-screen flex flex-col">
+    <div x-data="logoGenerator()" x-effect="if (outputFormat === 'vector' && logoMode === 'icon_text') logoMode = 'icon_only'" class="min-h-screen flex flex-col">
         <!-- Top Bar -->
         <div class="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 mt-[70px]">
             <div id="subpanel-bar" class="px-3 md:px-6 py-3 md:py-4 flex items-center justify-between gap-2">
@@ -191,54 +191,8 @@
                         </div>
                     </div>
 
-                    <!-- Logo Mode -->
-                    <div class="space-y-3">
-                        <label class="block text-sm font-semibold text-gray-900 dark:text-white">Logo Mode</label>
-                        <div class="grid grid-cols-3 gap-2">
-                            <button 
-                                type="button"
-                                @click="logoMode = 'icon_only'; logoDomain = ''; if (outputFormat === 'vector' && isTextStyle(logoStyle)) logoStyle = 'default'; fetchLogoPrice()"
-                                :class="logoMode === 'icon_only' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
-                                class="px-2 py-2.5 border rounded-lg font-medium text-xs transition-colors"
-                            >
-                                Icon Only
-                            </button>
-                            <button 
-                                type="button"
-                                @click="if (workMode !== 'logo') { logoMode = 'icon_text'; fetchLogoPrice(); }"
-                                :disabled="workMode === 'logo'"
-                                :class="[
-                                    logoMode === 'icon_text' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600',
-                                    workMode === 'logo' ? 'opacity-50 cursor-not-allowed' : ''
-                                ]"
-                                class="px-2 py-2.5 border rounded-lg font-medium text-xs transition-colors"
-                            >
-                                Icon + Text
-                            </button>
-                            <button 
-                                type="button"
-                                @click="logoMode = 'text_only'; if (logoStyle !== 'default' && !isTextStyle(logoStyle)) logoStyle = 'modern_sans'; fetchLogoPrice()"
-                                :class="logoMode === 'text_only' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600'"
-                                class="px-2 py-2.5 border rounded-lg font-medium text-xs transition-colors"
-                            >
-                                Text Only
-                            </button>
-                        </div>
-                        <p x-show="workMode === 'logo'" x-transition class="text-xs text-amber-600 dark:text-amber-400">
-                            For vector generation, logo and text should be generated separately to ensure professional quality and positioning control.
-                        </p>
-                        <input 
-                            type="text" 
-                            x-model="logoDomain"
-                            @input="fetchLogoPrice()"
-                            x-show="logoMode !== 'icon_only'"
-                            placeholder="e.g., TechStart, CloudSync, DataFlow, etc."
-                            class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white dark:bg-gray-800 dark:text-white transition-colors"
-                        >
-                    </div>
-
                     <!-- Detail Level -->
-                    <div>
+                    <div x-show="outputFormat !== 'vector'" x-transition>
                         <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Detail Level</label>
                         <div class="flex gap-2">
                             <template x-for="level in [{id:'min',label:'Minimal'},{id:'medium',label:'Medium'},{id:'max',label:'Maximum'}]" :key="level.id">
@@ -255,7 +209,7 @@
                     </div>
 
                     <!-- Shape Container -->
-                    <div>
+                    <div x-show="outputFormat !== 'vector'" x-transition>
                         <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-3">Shape</label>
                         <div class="grid grid-cols-3 gap-2">
                             <template x-for="shape in [{id:'',label:'None'},{id:'circle',label:'Circle'},{id:'square',label:'Square'},{id:'hexagon',label:'Hexagon'},{id:'triangle',label:'Triangle'},{id:'pentagon',label:'Pentagon'}]" :key="shape.id">
@@ -564,15 +518,56 @@
                     <div class="p-8">
                     <!-- Custom Prompt -->
                     <div class="mb-6 rounded-lg border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 p-4">
-                        <label class="block text-sm font-semibold text-gray-900 dark:text-white mb-2">Custom Prompt (Optional)</label>
+                        <div class="mb-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-white">Custom Prompt (Optional)</label>
+                            <div class="inline-flex flex-wrap gap-2 rounded-lg bg-gray-100 dark:bg-gray-800 p-1">
+                                <button 
+                                    type="button"
+                                    @click="logoMode = 'icon_only'; logoDomain = ''; if (outputFormat === 'vector' && isTextStyle(logoStyle)) logoStyle = 'default'; fetchLogoPrice()"
+                                    :class="logoMode === 'icon_only' ? 'bg-violet-600 text-white shadow-sm' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                    class="px-3 py-2 rounded-md font-semibold text-xs transition-colors"
+                                >
+                                    Icon Only
+                                </button>
+                                <button 
+                                    type="button"
+                                    x-show="outputFormat !== 'vector'"
+                                    x-transition
+                                    @click="logoMode = 'icon_text'; fetchLogoPrice()"
+                                    :class="logoMode === 'icon_text' ? 'bg-violet-600 text-white shadow-sm' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                    class="px-3 py-2 rounded-md font-semibold text-xs transition-colors"
+                                >
+                                    Icon + Text
+                                </button>
+                                <button 
+                                    type="button"
+                                    @click="logoMode = 'text_only'; if (logoStyle !== 'default' && !isTextStyle(logoStyle)) logoStyle = 'modern_sans'; fetchLogoPrice()"
+                                    :class="logoMode === 'text_only' ? 'bg-violet-600 text-white shadow-sm' : 'bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600'"
+                                    class="px-3 py-2 rounded-md font-semibold text-xs transition-colors"
+                                >
+                                    Text Only
+                                </button>
+                            </div>
+                        </div>
+                        <input 
+                            type="text" 
+                            x-model="logoDomain"
+                            @input="fetchLogoPrice()"
+                            x-show="logoMode !== 'icon_only'"
+                            x-transition
+                            placeholder="Logo text, e.g. TechStart, CloudSync, DataFlow"
+                            class="mb-3 w-full px-4 py-3 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent bg-white dark:bg-gray-800 dark:text-white transition-colors"
+                        >
                         <textarea
                             x-model="logoPrompt"
                             @input="fetchLogoPrice()"
+                            x-show="logoMode !== 'text_only'"
+                            x-transition
                             rows="4"
                             placeholder="Describe your logo in detail: style (modern, vintage, minimalist), mood (professional, playful, elegant), imagery (abstract shapes, tech elements, nature), colors, and any specific elements you want..."
                             class="w-full px-4 py-3.5 text-base border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-y bg-white dark:bg-gray-800 dark:text-white leading-relaxed"
                         ></textarea>
-                        <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">Be specific about style, colors, and elements for best results.</p>
+                        <p x-show="logoMode !== 'text_only'" x-transition class="mt-2 text-xs text-gray-500 dark:text-gray-400">Be specific about style, colors, and elements for best results.</p>
                     </div>
 
                     <!-- Error Display -->
@@ -1116,6 +1111,27 @@
                                 </div>
                             </div>
                         </button>
+                        <button type="button" @click="selectTheme('fantasy')"
+                            class="group w-full rounded-xl border-2 p-3 text-left transition-all"
+                            :class="logoTheme === 'fantasy' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="flex gap-3">
+                                <div class="h-20 w-28 flex-shrink-0 rounded-lg bg-gray-100 flex items-center justify-center overflow-hidden">
+                                    <svg class="h-full w-full" viewBox="0 0 112 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                        <rect width="112" height="80" rx="8" fill="#1e1b4b"/>
+                                        <path d="M14 62L31 36L42 50L54 25L75 62H14Z" fill="#312e81"/>
+                                        <path d="M57 62L73 32L96 62H57Z" fill="#4338ca"/>
+                                        <path d="M58 14L63 25L75 26L66 34L69 46L58 39L47 46L50 34L41 26L53 25L58 14Z" fill="#facc15"/>
+                                        <path d="M26 62C34 49 42 43 50 44C61 46 65 58 78 62H26Z" fill="#7c3aed"/>
+                                        <path d="M25 63H88" stroke="#c4b5fd" stroke-width="4" stroke-linecap="round"/>
+                                        <path d="M35 53L41 48L47 53M69 53L75 48L81 53" stroke="#fef3c7" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                </div>
+                                <div class="min-w-0 py-1">
+                                    <div class="text-sm font-semibold" :class="logoTheme === 'fantasy' ? 'text-blue-700' : 'text-gray-800'">Fantasy</div>
+                                    <div class="mt-1 text-xs text-gray-500">Magic, quests, creatures, castles, weapons, and dramatic adventure silhouettes.</div>
+                                </div>
+                            </div>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -1307,7 +1323,7 @@
                     this.logoDomain = String(settings.logo_domain || '');
                     this.logoPrompt = String(settings.logo_prompt || '');
                     this.logoStyle = String(settings.logo_style || 'default');
-                    this.logoTheme = ['real_estate', 'nature'].includes(settings.logo_theme) ? settings.logo_theme : '';
+                    this.logoTheme = ['real_estate', 'nature', 'fantasy'].includes(settings.logo_theme) ? settings.logo_theme : '';
                     this.logoColorPalette = String(settings.logo_color_palette || 'none');
 
                     const colors = this.normalizePaletteColors(settings.logo_custom_colors || []);
@@ -1768,7 +1784,7 @@
                 },
 
                 getThemeLabel() {
-                    const labels = { real_estate: 'Real Estate', nature: 'Nature' };
+                    const labels = { real_estate: 'Real Estate', nature: 'Nature', fantasy: 'Fantasy' };
                     return labels[this.logoTheme] || 'None';
                 },
 
@@ -2028,8 +2044,8 @@
                             output_format: this.outputFormat,
                             image_format: this.outputFormat === 'raster' && this.selectedModel === 'dalle' ? this.imageFormat : null,
                             color_palette: this.logoColorPalette !== 'none' ? this.getSelectedPaletteColors() : null,
-                            logo_shape: this.shapeContainer || 'none',
-                            logo_detail: this.detailLevel || 'medium',
+                            logo_shape: this.outputFormat === 'vector' ? 'none' : (this.shapeContainer || 'none'),
+                            logo_detail: this.outputFormat === 'vector' ? 'max' : (this.detailLevel || 'medium'),
                             gen_mode: isImageContent ? 'image' : 'logo',
                             image_size: isImageContent ? this.imageSize : null
                         };

@@ -49,6 +49,23 @@
                 }
             }
 
+            @keyframes netkit-logo-orbit {
+                0% {
+                    opacity: 0;
+                    transform: translate(-50%, -50%) rotate(var(--particle-start)) translateX(var(--particle-radius)) scale(0.78);
+                }
+                6%, 86% {
+                    opacity: var(--particle-opacity, 0.62);
+                }
+                56% {
+                    opacity: calc(var(--particle-opacity, 0.62) + 0.12);
+                }
+                100% {
+                    opacity: 0;
+                    transform: translate(-50%, -50%) rotate(calc(var(--particle-start) + var(--particle-turn))) translateX(var(--particle-radius)) scale(1.04);
+                }
+            }
+
             .netkit-hero-planet {
                 position: absolute;
                 top: 50%;
@@ -94,12 +111,20 @@
                 z-index: 0;
             }
 
-            .netkit-fill-logo {
+            .netkit-logo-hover-wrap {
                 display: block;
                 width: 60.75%;
                 max-width: 802px;
-                height: auto;
                 margin: 0 auto 0.25rem;
+                position: relative;
+                z-index: 1;
+            }
+
+            .netkit-fill-logo {
+                display: block;
+                width: 100%;
+                height: auto;
+                margin: 0;
                 position: relative;
                 z-index: 1;
             }
@@ -114,6 +139,56 @@
 
             .dark .netkit-fill-logo-dark {
                 display: block;
+            }
+
+            .netkit-logo-hover-particles {
+                position: absolute;
+                inset: -46% -28%;
+                pointer-events: none;
+                opacity: 1;
+                transform: rotate(-8deg) scaleY(0.34);
+                transform-origin: 50% 50%;
+                transition: opacity 420ms ease;
+                z-index: 2;
+            }
+
+            .netkit-logo-hover-wrap.is-dimmed .netkit-logo-hover-particles {
+                opacity: 0;
+            }
+
+            .netkit-logo-hover-particle {
+                position: absolute;
+                left: 50%;
+                top: 50%;
+                width: var(--particle-size);
+                height: var(--particle-size);
+                border-radius: 9999px;
+                opacity: 0;
+                transform-origin: 50% 50%;
+                animation: netkit-logo-orbit var(--particle-duration) linear infinite;
+                animation-delay: var(--particle-delay);
+            }
+
+            .netkit-logo-hover-particle::before {
+                content: '';
+                display: block;
+                width: 100%;
+                height: 100%;
+                border-radius: inherit;
+                background: var(--particle-color);
+                box-shadow: 0 0 14px color-mix(in srgb, var(--particle-color) 58%, transparent);
+                transform: scaleY(2.94);
+            }
+
+            @media (max-width: 640px) {
+                .netkit-logo-hover-particles {
+                    inset: -34% -42%;
+                    transform: rotate(-8deg) scaleY(0.18);
+                }
+
+                .netkit-logo-hover-particle::before {
+                    transform: scaleY(5.56);
+                }
             }
 
             .netkit-home-hero.netkit-hero-circuits,
@@ -223,6 +298,7 @@
 
             .netkit-home-hero {
                 background-color: #1b2230;
+                padding-top: 5.5rem;
             }
 
             .dark .netkit-home-hero {
@@ -235,9 +311,14 @@
                 .netkit-ring-spin-fast,
                 .netkit-ring-spin-slow,
                 .netkit-star,
-                .netkit-hero-night-sky {
+                .netkit-hero-night-sky,
+                .netkit-logo-hover-particle {
                     animation: none;
                     transition: none;
+                }
+
+                .netkit-logo-hover-particles {
+                    display: none;
                 }
             }
         </style>
@@ -249,13 +330,37 @@
 
         <!-- Hero Section -->
         @php
-            $netkitAnimationCookie = 'netkit_intro_seen';
-            $showNetkitAnimation = ! request()->cookies->has($netkitAnimationCookie);
-            $netkitLogoLight = asset('images/' . ($showNetkitAnimation ? 'netkit-fill-logo.svg' : 'netkit-fill-logo-static.svg'));
-            $netkitLogoDark = asset('images/' . ($showNetkitAnimation ? 'netkit-fill-logo-dark.svg' : 'netkit-fill-logo-dark-static.svg'));
-            $netkitLogoStaticLight = asset('images/netkit-fill-logo-static.svg');
-            $netkitLogoStaticDark = asset('images/netkit-fill-logo-dark-static.svg');
+            $netkitLogoLight = asset('images/netkit-fill-logo-static.svg');
+            $netkitLogoDark = asset('images/netkit-fill-logo-dark-static.svg');
             $heroBackground = config('home.hero_background', 'fill_logo');
+            $netkitLogoParticles = [];
+            $particleBands = [
+                ['count' => 34, 'radius' => 'clamp(142px, 30vw, 350px)', 'duration' => 17.5, 'turn' => '360deg', 'offset' => -22, 'opacity' => 0.62],
+                ['count' => 38, 'radius' => 'clamp(174px, 36vw, 420px)', 'duration' => 23.5, 'turn' => '360deg', 'offset' => 8, 'opacity' => 0.54],
+                ['count' => 32, 'radius' => 'clamp(206px, 42vw, 485px)', 'duration' => 29.0, 'turn' => '-360deg', 'offset' => 29, 'opacity' => 0.44],
+                ['count' => 24, 'radius' => 'clamp(234px, 48vw, 545px)', 'duration' => 34.0, 'turn' => '-360deg', 'offset' => -6, 'opacity' => 0.3],
+            ];
+            $particleColors = ['#174ea6', '#f97316', '#38bdf8', '#fb923c'];
+
+            foreach ($particleBands as $bandIndex => $band) {
+                for ($i = 0; $i < $band['count']; $i++) {
+                    $angle = ($i / $band['count']) * 360 + $band['offset'] + (($i % 3) - 1) * 2.5;
+                    $duration = $band['duration'] + (($i % 5) - 2) * 0.9;
+                    $size = 3 + (($i + $bandIndex) % 6);
+                    $opacity = max(0.22, min(0.72, $band['opacity'] + (($i % 4) - 1.5) * 0.035));
+
+                    $netkitLogoParticles[] = [
+                        'size' => $size . 'px',
+                        'color' => $particleColors[($i + $bandIndex) % count($particleColors)],
+                        'radius' => $band['radius'],
+                        'start' => round($angle, 2) . 'deg',
+                        'turn' => $band['turn'],
+                        'duration' => round($duration, 2) . 's',
+                        'delay' => '-' . round(($duration / $band['count']) * $i + $bandIndex * 0.85, 2) . 's',
+                        'opacity' => round($opacity, 2),
+                    ];
+                }
+            }
             $stars = [];
             mt_srand(20260531);
             for ($i = 0; $i < 130; $i++) {
@@ -271,7 +376,7 @@
                 ];
             }
         @endphp
-        <section class="netkit-home-hero netkit-hero-{{ $heroBackground }} relative overflow-hidden pt-20 pb-4 px-4 sm:px-6 lg:px-8">
+        <section class="netkit-home-hero netkit-hero-{{ $heroBackground }} relative overflow-hidden pb-4 px-4 sm:px-6 lg:px-8">
             <div class="netkit-hero-night-sky absolute inset-0 pointer-events-none" aria-hidden="true">
                 <svg class="netkit-hero-starfield" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" role="img" focusable="false">
                     @foreach ($stars as $s)
@@ -359,12 +464,19 @@
             </div>
             <div class="relative container mx-auto">
                 <div class="text-center max-w-4xl mx-auto mb-4">
-                    @if ($heroBackground === 'circuits')
-                    <img class="netkit-fill-logo netkit-fill-logo-light" src="{{ $netkitLogoLight }}" data-netkit-intro-logo data-static-src="{{ $netkitLogoStaticLight }}" alt="Netkit" />
-                    <img class="netkit-fill-logo netkit-fill-logo-dark" src="{{ $netkitLogoDark }}" data-netkit-intro-logo data-static-src="{{ $netkitLogoStaticDark }}" alt="Netkit" />
-                    @elseif ($heroBackground === 'fill_logo')
-                    <img class="netkit-fill-logo netkit-fill-logo-light" src="{{ $netkitLogoLight }}" data-netkit-intro-logo data-static-src="{{ $netkitLogoStaticLight }}" alt="Netkit" />
-                    <img class="netkit-fill-logo netkit-fill-logo-dark" src="{{ $netkitLogoDark }}" data-netkit-intro-logo data-static-src="{{ $netkitLogoStaticDark }}" alt="Netkit" />
+                    @if (in_array($heroBackground, ['circuits', 'fill_logo'], true))
+                    <span class="netkit-logo-hover-wrap" data-netkit-hover-logo>
+                        <img class="netkit-fill-logo netkit-fill-logo-light" src="{{ $netkitLogoLight }}" alt="Netkit" />
+                        <img class="netkit-fill-logo netkit-fill-logo-dark" src="{{ $netkitLogoDark }}" alt="Netkit" />
+                        <span class="netkit-logo-hover-particles" aria-hidden="true">
+                            @foreach ($netkitLogoParticles as $particle)
+                                <span
+                                    class="netkit-logo-hover-particle"
+                                    style="--particle-size: {{ $particle['size'] }}; --particle-color: {{ $particle['color'] }}; --particle-radius: {{ $particle['radius'] }}; --particle-start: {{ $particle['start'] }}; --particle-turn: {{ $particle['turn'] }}; --particle-duration: {{ $particle['duration'] }}; --particle-delay: {{ $particle['delay'] }}; --particle-opacity: {{ $particle['opacity'] }};"
+                                ></span>
+                            @endforeach
+                        </span>
+                    </span>
                     @endif
                     <h1 class="netkit-hero-heading leading-tight font-bold text-white py-4 mb-3 nkheader">
                         Expertly crafted tools, one place to manage them all
@@ -377,36 +489,24 @@
 
         <script>
             (() => {
-                const COOKIE_NAME = 'netkit_intro_seen';
-                const COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24;
-                const ANIMATION_DURATION_MS = 3600;
+                const logoWraps = document.querySelectorAll('[data-netkit-hover-logo]');
 
-                const hasCookie = () => document.cookie
-                    .split(';')
-                    .some((cookie) => cookie.trim().startsWith(`${COOKIE_NAME}=`));
-
-                const setCookie = () => {
-                    document.cookie = `${COOKIE_NAME}=1; max-age=${COOKIE_MAX_AGE_SECONDS}; path=/; samesite=lax`;
-                };
-
-                const showStaticLogo = () => {
-                    document.querySelectorAll('[data-netkit-intro-logo]').forEach((logo) => {
-                        const staticSrc = logo.getAttribute('data-static-src');
-                        if (staticSrc && logo.getAttribute('src') !== staticSrc) {
-                            logo.setAttribute('src', staticSrc);
-                        }
-                    });
-                };
-
-                if (hasCookie()) {
-                    showStaticLogo();
+                if (!logoWraps.length) {
                     return;
                 }
 
-                window.setTimeout(() => {
-                    showStaticLogo();
-                    setCookie();
-                }, ANIMATION_DURATION_MS);
+                const syncParticleVisibility = () => {
+                    const shouldDim = document.hidden || !document.hasFocus();
+
+                    logoWraps.forEach((logoWrap) => {
+                        logoWrap.classList.toggle('is-dimmed', shouldDim);
+                    });
+                };
+
+                document.addEventListener('visibilitychange', syncParticleVisibility);
+                window.addEventListener('blur', syncParticleVisibility);
+                window.addEventListener('focus', syncParticleVisibility);
+                syncParticleVisibility();
             })();
         </script>
 
