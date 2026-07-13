@@ -140,6 +140,19 @@
         </div>
     </div>
     <div class="afb-divider"></div>
+    @if(request()->boolean('pdfjs'))
+    <div class="afb-control-group afb-text-tools-group">
+        <span class="afb-control-label">Text tools</span>
+        <div class="afb-control-row">
+            <button type="button" class="afb-btn" id="afb-uppercase" title="Uppercase" aria-label="Uppercase">Tt</button>
+            <button type="button" class="afb-btn" id="afb-lowercase" title="Lowercase" aria-label="Lowercase">tl</button>
+            <button type="button" class="afb-btn afb-debug" id="afb-debug" title="Debug mask" aria-label="Debug mask">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M9 9h6"></path><path d="M9 13h6"></path><path d="M12 17h.01"></path><rect x="5" y="6" width="14" height="15" rx="2"></rect></svg>
+            </button>
+        </div>
+    </div>
+    <div class="afb-divider"></div>
+    @endif
     <div class="afb-control-group afb-action-group">
         <span class="afb-control-label">Actions</span>
         <div class="afb-control-row">

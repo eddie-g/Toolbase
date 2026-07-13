@@ -73,6 +73,11 @@ body.enpv-body .top-bar {
     align-items: center;
     gap: 8px;
     min-height: 70px;
+    z-index: 2147483560;
+}
+
+body.enpv-body {
+    --enpv-topbar-offset: 70px;
 }
 
 body.enpv-body .top-bar .doc-top-back-btn {
@@ -429,6 +434,9 @@ body.enpv-body #ftb-edit-mode,
 body.enpv-body #ftb-guided-convert,
 body.enpv-body #ftb-add-text,
 body.enpv-body #ftb-add-image,
+body.enpv-body #ftb-fields,
+body.enpv-body .ftb-fields-menu,
+body.enpv-body .ftb-fields-menu button,
 body.enpv-body #ftb-convert,
 body.enpv-body #ftb-encrypt,
 body.enpv-body #ftb-draw-erase,
@@ -452,6 +460,45 @@ body.enpv-body #enpv-notes-panel input {
     opacity: 1;
     cursor: pointer !important;
 }
+
+body.enpv-body .ftb-field-wrap {
+    position: relative;
+    display: inline-flex;
+}
+
+body.enpv-body .ftb-fields-menu[hidden] {
+    display: none;
+}
+
+body.enpv-body .ftb-fields-menu {
+    position: absolute;
+    left: 0;
+    top: calc(100% + 8px);
+    z-index: 2147483601;
+    min-width: 156px;
+    padding: 6px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 8px;
+    background: #111827;
+    box-shadow: 0 14px 34px rgba(15, 23, 42, 0.3);
+}
+
+body.enpv-body .ftb-fields-menu button {
+    display: block;
+    width: 100%;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: #e5e7eb;
+    font-size: 12px;
+    font-weight: 700;
+    text-align: left;
+}
+
+body.enpv-body .ftb-fields-menu button:hover {
+    background: rgba(59, 130, 246, 0.22);
+}
 body.enpv-body #shape-tool-panel {
     z-index: 2147483502;
 }
@@ -472,17 +519,204 @@ body.enpv-body #download-pdf-btn {
     cursor: pointer !important;
 }
 
+body.enpv-body #settings-gear-btn,
+body.enpv-body .enpv-settings-popover input {
+    pointer-events: auto;
+    opacity: 1;
+    cursor: pointer !important;
+}
+
+body.enpv-body .enpv-settings-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+body.enpv-body .enpv-settings-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    min-width: 34px;
+    padding: 0;
+}
+
+body.enpv-body .enpv-settings-popover[hidden] {
+    display: none;
+}
+
+body.enpv-body .enpv-settings-popover {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    z-index: 2147483562;
+    width: min(300px, calc(100vw - 24px));
+    padding: 14px;
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    border-radius: 8px;
+    background: #111827;
+    color: #e5e7eb;
+    box-shadow: 0 18px 42px rgba(15, 23, 42, 0.38);
+}
+
+body.enpv-body .enpv-settings-popover::before {
+    content: "";
+    position: absolute;
+    top: -6px;
+    right: 12px;
+    width: 12px;
+    height: 12px;
+    transform: rotate(45deg);
+    border-left: 1px solid rgba(148, 163, 184, 0.28);
+    border-top: 1px solid rgba(148, 163, 184, 0.28);
+    background: #111827;
+}
+
+body.enpv-body .enpv-settings-title {
+    margin-bottom: 12px;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+body.enpv-body .enpv-gridlines-row,
+body.enpv-body .enpv-gridlines-setting,
+body.enpv-body .enpv-gridlines-two-col,
+body.enpv-body .enpv-gridlines-two-col label {
+    display: flex;
+    align-items: center;
+}
+
+body.enpv-body .enpv-gridlines-row,
+body.enpv-body .enpv-gridlines-setting {
+    justify-content: space-between;
+    gap: 12px;
+}
+
+body.enpv-body .enpv-settings-label {
+    font-size: 13px;
+    font-weight: 700;
+}
+
+body.enpv-body .enpv-settings-hint {
+    margin-top: 2px;
+    color: #9ca3af;
+    font-size: 11px;
+}
+
+body.enpv-body .enpv-grid-toggle {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 24px;
+    flex: 0 0 auto;
+    cursor: pointer;
+}
+
+body.enpv-body .enpv-grid-toggle input {
+    width: 0;
+    height: 0;
+    opacity: 0;
+}
+
+body.enpv-body .grid-toggle-slider {
+    position: absolute;
+    inset: 0;
+    border-radius: 24px;
+    background: #4b5563;
+    transition: background 0.18s ease;
+}
+
+body.enpv-body .grid-toggle-slider::before {
+    content: "";
+    position: absolute;
+    left: 3px;
+    bottom: 3px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #ffffff;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.24);
+    transition: transform 0.18s ease;
+}
+
+body.enpv-body #settings-gridlines-toggle:checked + .grid-toggle-slider {
+    background: #3b82f6;
+}
+
+body.enpv-body #settings-gridlines-toggle:checked + .grid-toggle-slider::before {
+    transform: translateX(20px);
+}
+
+body.enpv-body .enpv-gridlines-options {
+    margin-top: 14px;
+}
+
+body.enpv-body .enpv-gridlines-options[hidden] {
+    display: none;
+}
+
+body.enpv-body .enpv-gridlines-setting {
+    margin-bottom: 6px;
+    color: #cbd5e1;
+    font-size: 12px;
+}
+
+body.enpv-body .enpv-gridlines-value {
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #f8fafc;
+    font-weight: 700;
+}
+
+body.enpv-body .enpv-gridlines-options input[type="range"] {
+    width: 100%;
+    accent-color: #3b82f6;
+}
+
+body.enpv-body .enpv-gridlines-two-col {
+    gap: 12px;
+    margin-top: 10px;
+}
+
+body.enpv-body .enpv-gridlines-two-col label {
+    min-width: 0;
+    flex: 1 1 0;
+    gap: 8px;
+    color: #cbd5e1;
+    font-size: 12px;
+}
+
+body.enpv-body .enpv-gridlines-two-col input[type="color"] {
+    width: 30px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    border-radius: 6px;
+    background: transparent;
+}
+
+.enpv-gridlines-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 25;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
+}
+
 /* The shared /edit-new format bar is mounted on this route and wired into
  * the pdf.js text-overlay model. */
 body.enpv-body #ann-format-bar {
     z-index: 2147483501;
-    top: 0;
+    top: var(--enpv-topbar-offset);
     right: 0;
     bottom: 0;
     left: auto;
     width: min(430px, 96vw);
     max-width: 96vw;
-    height: 100%;
+    height: calc(100% - var(--enpv-topbar-offset));
     transform: none;
     flex-direction: column;
     flex-wrap: nowrap;
@@ -623,6 +857,13 @@ body.enpv-body #ann-format-bar .afb-style-group .afb-control-row {
     display: grid;
     grid-template-columns: repeat(3, 36px);
 }
+body.enpv-body #ann-format-bar .afb-text-tools-group .afb-control-row {
+    display: grid;
+    grid-template-columns: repeat(3, 36px);
+}
+body.enpv-body #ann-format-bar .afb-debug {
+    color: #7c3aed;
+}
 body.enpv-body #ann-format-bar .afb-color-group .afb-control-row {
     display: grid;
     grid-template-columns: repeat(2, 44px);
@@ -637,13 +878,13 @@ body.enpv-body #ann-format-bar select {
 
 body.enpv-body #shape-tool-panel {
     z-index: 2147483501;
-    top: 0;
+    top: var(--enpv-topbar-offset);
     right: 0;
     bottom: 0;
     left: auto;
     width: min(430px, 96vw);
     max-width: 96vw;
-    height: 100%;
+    height: calc(100% - var(--enpv-topbar-offset));
     transform: none;
     flex-direction: column;
     flex-wrap: nowrap;
@@ -791,13 +1032,13 @@ body.enpv-body #shape-tool-panel input {
 
 body.enpv-body .draw-tool-panel {
     z-index: 2147483501;
-    top: 0;
+    top: var(--enpv-topbar-offset);
     right: 0;
     bottom: 0;
     left: auto;
     width: min(430px, 96vw);
     max-width: 96vw;
-    height: 100%;
+    height: calc(100% - var(--enpv-topbar-offset));
     transform: none;
     flex-direction: column;
     flex-wrap: nowrap;
@@ -1706,11 +1947,11 @@ body.enpv-body .enpv-guided-helper-panel[hidden] {
 
 body.enpv-body .enpv-guided-helper-panel {
     position: fixed;
-    top: 0;
+    top: var(--enpv-topbar-offset);
     right: 0;
     z-index: 2147483552;
     width: min(460px, 96vw);
-    height: 100%;
+    height: calc(100% - var(--enpv-topbar-offset));
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1910,11 +2151,11 @@ body.enpv-body .enpv-layers-panel[hidden] {
 
 body.enpv-body .enpv-layers-panel {
     position: fixed;
-    top: 0;
+    top: var(--enpv-topbar-offset);
     right: 0;
     z-index: 2147483550;
     width: min(430px, 96vw);
-    height: 100%;
+    height: calc(100% - var(--enpv-topbar-offset));
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -2500,7 +2741,6 @@ body.enpv-body.enpv-viewer-ready .enpv-loading-screen {
 }
 .pdfViewer canvas {
     max-width: none !important;
-    height: auto !important;
     display: block;
 }
 
@@ -2641,6 +2881,10 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
 }
 .enpv-annotation-box.is-user-sized-text .enpv-text-content {
     overflow: hidden;
+    /* Resizing changes the container, never the glyph aspect ratio. */
+    transform: none !important;
+    transform-origin: initial !important;
+    width: 100% !important;
 }
 .enpv-annotation-box.is-editing.is-source-fidelity .enpv-text-content {
     display: block;
@@ -2787,9 +3031,11 @@ body.enpv-shape-on .enpv-annotation-box.is-persisted-overlay.enpv-shape-box[data
     outline: none;
     box-shadow: none;
 }
-body.enpv-body .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"].is-readonly,
-body.enpv-edit-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"]:not(.is-selected) {
+body.enpv-body .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"].is-readonly {
     pointer-events: none;
+}
+.enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"] .enpv-shape-angle-badge {
+    display: none !important;
 }
 body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-editing .enpv-text-content {
     pointer-events: auto;
@@ -2879,7 +3125,8 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
 .enpv-annotation-box.is-selected.is-editing .enpv-resize-handle,
 .enpv-annotation-box.is-selected.enpv-shape-box .enpv-resize-handle,
 .enpv-annotation-box.is-selected.enpv-signature-box .enpv-resize-handle,
-.enpv-annotation-box.is-selected.enpv-image-box .enpv-resize-handle { display: block; }
+.enpv-annotation-box.is-selected.enpv-image-box .enpv-resize-handle,
+.enpv-annotation-box.is-selected.enpv-field-box .enpv-resize-handle { display: block; }
 .enpv-resize-handle.t { top: 0;    left: 50%; cursor: ns-resize; }
 .enpv-resize-handle.b { top: 100%; left: 50%; cursor: ns-resize; }
 .enpv-resize-handle.l { top: 50%;  left: 0;   cursor: ew-resize; }
@@ -3133,11 +3380,11 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
 }
 .enpv-notes-panel {
     position: fixed;
-    top: 0;
+    top: var(--enpv-topbar-offset);
     right: 0;
     z-index: 2147483550;
     width: min(430px, 96vw);
-    height: 100%;
+    height: calc(100% - var(--enpv-topbar-offset));
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -3496,6 +3743,7 @@ body.enpv-dragging * { cursor: grabbing !important; user-select: none !important
     overflow: visible;
     pointer-events: none;
 }
+body.enpv-edit-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"]::before,
 body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underline="1"]::before {
     content: "";
     position: absolute;
@@ -3611,12 +3859,6 @@ body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underli
     background: rgba(251, 146, 60, 0.15);
     border-color: rgba(251, 146, 60, 0.35);
 }
-.enpv-ann-menu .enpv-ann-menu-debug { color: #c4b5fd; }
-.enpv-ann-menu .enpv-ann-menu-debug:hover {
-    color: #ddd6fe;
-    background: rgba(196, 181, 253, 0.16);
-    border-color: rgba(196, 181, 253, 0.34);
-}
 .enpv-ann-menu .enpv-ann-menu-divider {
     width: 1px;
     height: 18px;
@@ -3626,8 +3868,10 @@ body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underli
 
 .enpv-debug-panel {
     position: fixed;
-    top: 72px;
-    right: 18px;
+    top: 50%;
+    left: 50%;
+    right: auto;
+    transform: translate(-50%, -50%);
     z-index: 2147483200;
     width: min(380px, calc(100vw - 36px));
     max-height: calc(100vh - 96px);
@@ -3988,14 +4232,18 @@ body.enpv-signature-placing .pdfViewer .page,
 body.enpv-signature-placing .pdfViewer .page *,
 body.enpv-image-placing #viewerContainer,
 body.enpv-image-placing .pdfViewer .page,
-body.enpv-image-placing .pdfViewer .page * {
+body.enpv-image-placing .pdfViewer .page *,
+body.enpv-field-placing #viewerContainer,
+body.enpv-field-placing .pdfViewer .page,
+body.enpv-field-placing .pdfViewer .page * {
     cursor: copy !important;
 }
 
 /* Signature annotation boxes — image-backed stamps that can be dragged
  * via the existing onAnnBoxPointerDown / floating menu. */
 .enpv-annotation-box.enpv-signature-box,
-.enpv-annotation-box.enpv-image-box {
+.enpv-annotation-box.enpv-image-box,
+.enpv-annotation-box.enpv-field-box {
     background: transparent;
     border: 1px dashed transparent;
     overflow: visible;
@@ -4003,30 +4251,38 @@ body.enpv-image-placing .pdfViewer .page * {
     pointer-events: auto;
 }
 body.enpv-body .enpv-annotation-box.enpv-signature-box.is-persisted-overlay,
-.enpv-annotation-box.enpv-image-box.is-persisted-overlay {
+.enpv-annotation-box.enpv-image-box.is-persisted-overlay,
+.enpv-annotation-box.enpv-field-box.is-persisted-overlay {
     background: transparent;
     pointer-events: auto;
 }
-body:not(.enpv-edit-on) .enpv-annotation-box.enpv-image-box.is-persisted-overlay {
+body:not(.enpv-edit-on) .enpv-annotation-box.enpv-image-box.is-persisted-overlay,
+body:not(.enpv-edit-on) .enpv-annotation-box.enpv-field-box.is-persisted-overlay {
     pointer-events: auto;
 }
 body.enpv-edit-on .enpv-annotation-box.enpv-signature-box,
 body.enpv-edit-on .enpv-annotation-box.enpv-image-box,
+body.enpv-edit-on .enpv-annotation-box.enpv-field-box,
 body.enpv-body .enpv-annotation-box.enpv-signature-box.is-selected,
-body.enpv-body .enpv-annotation-box.enpv-image-box.is-selected {
+body.enpv-body .enpv-annotation-box.enpv-image-box.is-selected,
+body.enpv-body .enpv-annotation-box.enpv-field-box.is-selected {
     border-color: rgba(96, 165, 250, 0.55);
 }
 body.enpv-edit-on .enpv-annotation-box.enpv-signature-box.is-selected,
 body.enpv-edit-on .enpv-annotation-box.enpv-image-box.is-selected,
+body.enpv-edit-on .enpv-annotation-box.enpv-field-box.is-selected,
 body.enpv-body .enpv-annotation-box.enpv-signature-box.is-selected,
-body.enpv-body .enpv-annotation-box.enpv-image-box.is-selected {
+body.enpv-body .enpv-annotation-box.enpv-image-box.is-selected,
+body.enpv-body .enpv-annotation-box.enpv-field-box.is-selected {
     border-color: rgba(59, 130, 246, 0.9);
     box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.25);
 }
 body.enpv-edit-on .enpv-annotation-box.enpv-signature-box.is-locked,
 body.enpv-edit-on .enpv-annotation-box.enpv-image-box.is-locked,
+body.enpv-edit-on .enpv-annotation-box.enpv-field-box.is-locked,
 body.enpv-body .enpv-annotation-box.enpv-signature-box.is-locked,
-body.enpv-body .enpv-annotation-box.enpv-image-box.is-locked {
+body.enpv-body .enpv-annotation-box.enpv-image-box.is-locked,
+body.enpv-body .enpv-annotation-box.enpv-field-box.is-locked {
     border-color: rgba(248, 113, 113, 0.7);
 }
 .enpv-annotation-box.enpv-signature-box > .enpv-signature-img,
@@ -4045,7 +4301,8 @@ body.enpv-body .enpv-annotation-box.enpv-image-box.is-locked {
     object-fit: fill;
 }
 .enpv-image-selection-label,
-.enpv-signature-selection-label {
+.enpv-signature-selection-label,
+.enpv-field-selection-label {
     position: absolute;
     left: -1px;
     top: -22px;
@@ -4066,12 +4323,44 @@ body.enpv-body .enpv-annotation-box.enpv-image-box.is-locked {
 .enpv-image-selection-label {
     text-transform: lowercase;
 }
+.enpv-field-selection-label {
+    text-transform: none;
+}
 .enpv-signature-selection-label {
     text-transform: none;
 }
 .enpv-annotation-box.enpv-signature-box.is-selected > .enpv-signature-selection-label,
-.enpv-annotation-box.enpv-image-box.is-selected > .enpv-image-selection-label {
+.enpv-annotation-box.enpv-image-box.is-selected > .enpv-image-selection-label,
+.enpv-annotation-box.enpv-field-box.is-selected > .enpv-field-selection-label {
     display: inline-flex;
+}
+
+.enpv-annotation-box.enpv-field-box {
+    border-color: rgba(37, 99, 235, 0.95);
+    background: rgba(219, 234, 254, 0.62);
+}
+
+.enpv-field-preview {
+    position: absolute;
+    inset: 0;
+    display: block;
+    padding: 0 9px;
+    border: 1px solid rgba(37, 99, 235, 0.95);
+    border-bottom-width: 2px;
+    background: rgba(219, 234, 254, 0.86);
+    color: #1e3a8a;
+    font: 700 12px/1.2 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    pointer-events: none;
+    user-select: none;
+    box-sizing: border-box;
+}
+
+.enpv-field-preview::before {
+    content: none;
+}
+
+.enpv-annotation-box[data-field-kind="signature"] .enpv-field-preview {
+    font-style: normal;
 }
 
 /* ---------------------------------------------------------------------

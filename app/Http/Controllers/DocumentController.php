@@ -1289,7 +1289,7 @@ class DocumentController extends Controller
     private function isPdfjsVisibleExportAnnotation(array $annotation): bool
     {
         $type = strtolower(trim((string) ($annotation['type'] ?? '')));
-        if (!in_array($type, ['text', 'image', 'signature', 'shape'], true)) {
+        if (!in_array($type, ['text', 'image', 'signature', 'shape', 'field'], true)) {
             return false;
         }
         $state = strtolower(trim((string) ($annotation['db_state'] ?? $annotation['state'] ?? '')));
@@ -1897,14 +1897,6 @@ class DocumentController extends Controller
             $enriched = $this->normalizeTextAnnotationBackgroundForExport(
                 $annotationAssets->enrichForPython($annotation)
             );
-            $annotationType = strtolower((string) ($enriched['type'] ?? ''));
-
-            // Interactive PDF form fields are exported client-side with pdf-lib.
-            // The Python stamping pipeline only supports visual annotations.
-            if ($annotationType === 'field') {
-                return null;
-            }
-
             if ($this->isUnchangedSyntheticSymbolAnnotation($enriched)) {
                 return null;
             }
@@ -1931,87 +1923,6 @@ class DocumentController extends Controller
         }
 
         return $prepared;
-    }
-
-    private function mergeSavedRichTextForPdfjsVisibleExport(
-        Document $document,
-        string $sessionId,
-        array $annotations
-    ): array {
-        if ($sessionId === '' || empty($annotations)) {
-            return $annotations;
-        }
-
-        $ids = array_values(array_unique(array_filter(array_map(
-            static fn ($annotation) => is_array($annotation) ? trim((string) ($annotation['id'] ?? '')) : '',
-            $annotations
-        ))));
-        if (empty($ids)) {
-            return $annotations;
-        }
-
-        $ownership = $this->resolvePdfStateOwnership($document);
-        $query = PdfState::query()
-            ->where('document_id', $document->id)
-            ->where('state', '!=', 'deleted')
-            ->whereIn(DB::raw("JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id'))"), $ids);
-        $this->applyPdfStateOwnershipScope($query, $ownership['user_id'], $ownership['admin_id'], $sessionId);
-
-        $savedById = [];
-        foreach ($query->orderByDesc('updated_at')->get(['annotation_data']) as $record) {
-            $data = is_array($record->annotation_data) ? $record->annotation_data : [];
-            $id = trim((string) ($data['id'] ?? ''));
-            if ($id === '' || isset($savedById[$id])) {
-                continue;
-            }
-            if (trim((string) ($data['richTextHtml'] ?? '')) === '') {
-                continue;
-            }
-            $savedById[$id] = $data;
-        }
-
-        if (empty($savedById)) {
-            return $annotations;
-        }
-
-        $normalize = static function ($value): string {
-            return trim(preg_replace('/\s+/u', ' ', (string) ($value ?? '')) ?? '');
-        };
-
-        return array_map(function ($annotation) use ($savedById, $normalize) {
-            if (!is_array($annotation)) {
-                return $annotation;
-            }
-            $id = trim((string) ($annotation['id'] ?? ''));
-            $saved = $savedById[$id] ?? null;
-            if (!$saved) {
-                return $annotation;
-            }
-            if (trim((string) ($annotation['richTextHtml'] ?? '')) !== '') {
-                return $annotation;
-            }
-            if ($normalize($annotation['text'] ?? '') !== $normalize($saved['text'] ?? '')) {
-                return $annotation;
-            }
-
-            foreach ([
-                'richTextHtml',
-                'userForcedRichText',
-                'pdfjsEditorMode',
-                'richTextPromotionReason',
-                'styleDirty',
-                'fontFamily',
-                'fontSourceName',
-                'forceEmbeddedFont',
-                'pdfjsForceEmbeddedFont',
-            ] as $key) {
-                if (array_key_exists($key, $saved)) {
-                    $annotation[$key] = $saved[$key];
-                }
-            }
-
-            return $annotation;
-        }, $annotations);
     }
 
     private function isUnchangedSyntheticSymbolAnnotation(array $annotation): bool
@@ -5375,7 +5286,7 @@ class DocumentController extends Controller
             'guided' => route('documents.guided', $document),
             'ai' => route('documents.ai', $document),
             'full_editor' => route('documents.editPdfjs', $document),
-            default => route('documents.edit', $document),
+            default => route('documents.editPdfjs', $document),
         };
     }
 
@@ -5468,7 +5379,7 @@ class DocumentController extends Controller
         ProcessUploadedDocumentJob::dispatch($document->id, $userEmail, $sessionId);
 
         return redirect()
-            ->route('documents.edit', $document)
+            ->route('documents.editPdfjs', $document)
             ->with('status', 'PDF uploaded. Document loading continues in the background.');
     }
 
@@ -10347,7 +10258,7 @@ class DocumentController extends Controller
                     'session_id' => $latestRecord->session_id,
                     'annotation_count' => $group->count(),
                     'updated_at' => optional($latestRecord->updated_at)?->toIso8601String(),
-                    'edit_url' => route('documents.edit', $document),
+                    'edit_url' => $this->resolveDocumentEditorUrl($document),
                     'load_url' => route('documents.loadSavedPdf', $document),
                     'delete_url' => route('documents.deleteSavedPdfOption', $document),
                 ];
@@ -10395,7 +10306,7 @@ class DocumentController extends Controller
                     'annotation_count' => $savedEntry['annotation_count'] ?? 0,
                     'has_saved_state' => (bool) $savedEntry,
                     'updated_at' => $savedUpdatedAt ?: $documentUpdatedAt,
-                    'edit_url' => route('documents.edit', $document),
+                    'edit_url' => $this->resolveDocumentEditorUrl($document),
                     'load_url' => route('documents.loadSavedPdf', $document),
                     'delete_url' => route('documents.deleteSavedPdfOption', $document),
                     '_sort_timestamp' => $sortTimestamp,
@@ -10618,7 +10529,7 @@ class DocumentController extends Controller
             'session_id' => $resolvedSessionId !== '' ? $resolvedSessionId : null,
             'loaded_annotations' => count($annotationsPayload),
             'file_url' => route('documents.file', $document) . '?v=' . urlencode((string) now()->timestamp),
-            'edit_url' => route('documents.edit', $document),
+            'edit_url' => $this->resolveDocumentEditorUrl($document),
         ]);
     }
 
@@ -12258,18 +12169,11 @@ class DocumentController extends Controller
         $useOriginalPdf = $request->boolean('use_original_pdf');
         $useExactDownloadPath = $request->boolean('use_exact_download_path');
         $usePdfjsVisibleExport = $request->boolean('use_pdfjs_visible_export');
-        if ($usePdfjsVisibleExport) {
-            $annotationsPayload = $this->mergeSavedRichTextForPdfjsVisibleExport(
-                $document,
-                $sessionId,
-                $annotationsPayload
-            );
-            $sessionAnnotationsPayload = $this->mergeSavedRichTextForPdfjsVisibleExport(
-                $document,
-                $sessionId,
-                $sessionAnnotationsPayload
-            );
-        }
+        // The browser payload is the live editor state and must remain
+        // authoritative. Re-merging a prior PdfState row here used to replace
+        // current style flags, font choices, and rich-text mode whenever the
+        // text itself was unchanged, producing a download that looked like an
+        // older save. Persistence happens after the PDF has been generated.
         $editorEmail = $this->resolveEditorEmail();
         $originalSourcePdfPath = $pdfPath;
         if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
@@ -12384,8 +12288,13 @@ class DocumentController extends Controller
             return response()->json(['success' => false, 'message' => 'Failed to prepare annotations payload.'], 500);
         }
 
+        $containsFieldAnnotations = count(array_filter(
+            $preparedAnnotationsForPython,
+            static fn ($annotation) => is_array($annotation)
+                && strtolower((string) ($annotation['type'] ?? '')) === 'field'
+        )) > 0;
         $script = base_path(
-            ($useExactDownloadPath || $usePdfjsVisibleExport)
+            ($useExactDownloadPath || $usePdfjsVisibleExport || $containsFieldAnnotations)
                 ? 'python/pdf-editor/apply_annotations_direct_new.py'
                 : 'python/pdf-editor/apply_annotations_direct.py'
         );

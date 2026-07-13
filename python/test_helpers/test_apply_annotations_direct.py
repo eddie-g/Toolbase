@@ -148,6 +148,76 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertAlmostEqual(background_rect.y1, expected_bottom, places=3)
         self.assertGreater(background_rect.y1, insert_point.y)
 
+    def test_guided_lease_helvetica_field_uses_pdf_base_font(self):
+        annotation = {
+            "type": "text",
+            "text": "Jun 28, 2025",
+            "pdfX": 295.503,
+            "pdfY": 423.57,
+            "pdfWidth": 55.8984,
+            "pdfHeight": 11.4,
+            "fontFamily": "Helvetica",
+            "fontSourceName": "Helvetica",
+            "fontSize": 9,
+            "lineHeight": 10.8,
+            "textColor": "#111827",
+            "backgroundColor": "transparent",
+            "guidedLeaseField": True,
+            "savedTextOverlay": True,
+            "userCreated": True,
+            "userAuthored": True,
+            "userSizedTextBox": True,
+            "userForcedRichText": True,
+            "forceEmbeddedFont": True,
+            "pdfjsForceEmbeddedFont": True,
+            "skipPdfjsSourceMask": True,
+            "pageIndex": 0,
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_text(page, annotation)
+
+        self.assertEqual(len(page.insert_text_calls), 1)
+        insert_point, _, kwargs = page.insert_text_calls[0]
+        self.assertEqual(kwargs.get("fontname"), "helv")
+        font = fitz.Font("helv")
+        ascender, _ = self.module.resolve_font_vertical_metrics(font)
+        expected_unlifted_baseline = (
+            self.module.to_rect(page, annotation).y0
+            + (annotation["fontSize"] * ascender)
+        )
+        expected_lift = (
+            annotation["fontSize"]
+            * self.module.GUIDED_LEASE_FIELD_BASELINE_LIFT_RATIO
+        )
+        self.assertAlmostEqual(insert_point.y, expected_unlifted_baseline - expected_lift, places=3)
+
+    def test_guided_lease_field_mask_only_clears_field_rect(self):
+        annotation = {
+            "type": "text",
+            "text": "Jul 6, 2026",
+            "pdfX": 358.332,
+            "pdfY": 680.7,
+            "pdfWidth": 54.0384,
+            "pdfHeight": 12.75,
+            "fontFamily": "Helvetica",
+            "fontSize": 9,
+            "guidedLeaseField": True,
+            "pageIndex": 0,
+        }
+
+        page = self.FakePage()
+
+        self.module.draw_text(page, annotation, mask_only=True)
+
+        self.assertEqual(len(page.draw_rect_calls), 1)
+        mask_rect, kwargs = page.draw_rect_calls[0]
+        self.assertEqual(kwargs.get("fill"), (1, 1, 1))
+        self.assertEqual(kwargs.get("width"), 0)
+        self.assertAlmostEqual(mask_rect.x0, annotation["pdfX"], places=3)
+        self.assertAlmostEqual(mask_rect.x1, annotation["pdfX"] + annotation["pdfWidth"], places=3)
+
     def test_pdfjs_source_overlay_white_text_does_not_get_placeholder_background(self):
         annotation = {
             "type": "text",
@@ -1236,6 +1306,74 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertLess(spans[1]["font_size"], spans[0]["font_size"])
         self.assertLess(spans[1]["baseline_y"], spans[0]["baseline_y"])
 
+    def test_edited_pdfjs_line_never_reuses_stale_hyphen_source_span(self):
+        annotation = {
+            "id": "pdfjs_4423_0_0:45",
+            "type": "text",
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "userSizedTextBox": True,
+            "userForcedRichText": True,
+            "pdfjsEditorMode": "rich",
+            "richTextPromotionReason": "manual-resize",
+            "text": "Wherever possible test files avoid to touch more than one aspect of the standard",
+            "originalText": "Wherever possible test files avoid to touch more than one aspect of the stan-",
+            "pdfjsSourceText": "Wherever possible test files avoid to touch more than one aspect of the stan-",
+            "fontFamily": "sans-serif",
+            "fontSize": 10,
+            "pdfX": 101.7282,
+            "pdfY": 209.351,
+            "pdfWidth": 384.615,
+            "pdfHeight": 14.7,
+            "lineHeight": 14.00001,
+            "richTextHtml": (
+                '<span style="font-family: sans-serif; font-size: 10pt">'
+                "Wherever possible test files avoid to touch more than one aspect of the standard"
+                "</span>"
+            ),
+            "pdfjsSourceSpanRunsScale": 3.333333333333333,
+            "pdfjsSourceSpanRuns": [
+                {
+                    "text": "Wherever possible test files avoid to touch more than one aspect of the stan",
+                    "leftPx": 339.09375,
+                    "rightPx": 1459.2265625,
+                    "topPx": 2059.828125,
+                    "bottomPx": 2109.21875,
+                    "fontSizePx": 33.33333333333333,
+                    "fontFamily": "sans-serif",
+                },
+                {
+                    "text": "-",
+                    "leftPx": 1459.2265625,
+                    "rightPx": 1470.3359375,
+                    "topPx": 2059.828125,
+                    "bottomPx": 2109.21875,
+                    "fontSizePx": 33.33333333333333,
+                    "fontFamily": "sans-serif",
+                },
+            ],
+        }
+        text = annotation["text"]
+
+        self.assertEqual(
+            self.module.normalize_pdfjs_source_span_run_layout(
+                annotation,
+                text,
+                fitz.Rect(101.7282, 617.949, 486.3432, 632.649),
+                10,
+            ),
+            [],
+        )
+
+        page = self.FakePage()
+        self.module.draw_text(page, annotation, source_masks_already_drawn=True)
+
+        rendered_text = "".join(call[1] for call in page.insert_text_calls)
+        self.assertEqual(len(page.insert_text_calls), 1)
+        self.assertEqual(rendered_text, text)
+        self.assertTrue(rendered_text.endswith("standard"))
+
     def test_promoted_source_erase_draws_fill_when_custom_background_requested(self):
         annotation = {
             "promotedFromExtraction": True,
@@ -2121,6 +2259,57 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             )
         )
 
+    def test_promoted_source_content_insets_match_pdfjs_run_origin(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "pdfjsSourceSpanRunsScale": "3.333333333333333",
+            "pdfjsSourceSpanRuns": (
+                '[{"leftPx":359,"topPx":1672.625},'
+                '{"leftPx":359,"topPx":1719.21875}]'
+            ),
+        }
+        # Document 4423 promoted_1_10: the resized browser box begins at
+        # (105.8499, 495.981), while its captured text starts farther in.
+        rect = fitz.Rect(105.8499, 495.981, 540.9159, 546.981)
+
+        left, top = self.module.promoted_source_content_insets(annotation, rect)
+
+        self.assertAlmostEqual(left, 1.8501, places=3)
+        self.assertAlmostEqual(top, 5.8065, places=3)
+
+    def test_promoted_source_content_insets_use_browser_24px_cap(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "pdfjsSourceSpanRunsScale": 2,
+            "pdfjsSourceSpanRuns": [{"leftPx":100, "topPx":100}],
+        }
+
+        left, top = self.module.promoted_source_content_insets(
+            annotation,
+            fitz.Rect(0, 0, 200, 100),
+        )
+
+        self.assertEqual(left, 12)
+        self.assertEqual(top, 12)
+
+    def test_promoted_flowing_textbox_drops_stale_source_run_inset(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "styleDirty": True,
+            "userSizedTextBox": True,
+            "userForcedRichText": True,
+            "pdfjsEditorMode": "rich",
+            "pdfjsSourceSpanRunsScale": 3.333333333333333,
+            "pdfjsSourceSpanRuns": [{"leftPx": 359, "topPx": 1672.625}],
+        }
+
+        self.assertIsNone(
+            self.module.promoted_source_content_insets(
+                annotation,
+                fitz.Rect(74.6499, 498.981, 520.5159, 549.981),
+            )
+        )
+
     def test_pdfjs_source_inline_rich_label_does_not_wrap_on_metric_drift(self):
         annotation = {
             "id": "pdfjs_4184_0_0:23",
@@ -2470,6 +2659,106 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertAlmostEqual(morph[1].b, 1.0, places=3)
         self.assertAlmostEqual(morph[1].c, -1.0, places=3)
         self.assertAlmostEqual(morph[1].d, 0.0, places=3)
+
+    def test_source_mask_matches_operator_boundary_duplicate_to_canonical_text(self):
+        source_line = (
+            "Fusce efficitur mi ex. Quisque elementum elementum odio, "
+            "a accumsan nibh consectetur sed."
+        )
+        canonical_paragraph = (
+            "Fusce efficitur mi ex. Quisque elementum odio, a accumsan nibh consectetur sed.\n"
+            "Interdum et malesuada fames ac ante ipsum primis in faucibus."
+        )
+
+        self.assertTrue(
+            self.module._source_mask_line_matches_source_text(
+                source_line,
+                canonical_paragraph,
+            )
+        )
+
+    def test_exact_source_span_layout_rejects_duplicated_boundary_text(self):
+        annotation = {
+            "sourceBlockLeft": 72,
+            "sourceBlockTop": 469,
+            "sourceBlockWidth": 470,
+            "sourceBlockHeight": 54,
+            "sourceLineBBoxes": [[72, 469, 542, 480]],
+            "sourceTextLines": [
+                "Fusce efficitur mi ex. Quisque elementum odio, a accumsan nibh consectetur sed.",
+            ],
+            "sourceSpans": [{
+                "text": "Fusce efficitur mi ex. Quisque elementum elementum odio, a accumsan nibh consectetur sed.",
+                "bbox": [72, 469, 542, 480],
+                "origin": [72, 478],
+                "font": "Open Sans",
+                "fontSize": 10.56,
+            }],
+        }
+        canonical = "Fusce efficitur mi ex. Quisque elementum odio, a accumsan nibh consectetur sed."
+
+        layout = self.module.normalize_exact_source_span_layout(
+            annotation,
+            canonical,
+            10.56,
+            fitz.Rect(70, 462, 541, 520),
+        )
+
+        self.assertEqual(layout, [])
+
+    def test_resized_moved_paragraph_does_not_reuse_source_run_geometry(self):
+        annotation = {
+            "movedTextOverlay": True,
+            "savedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "pdfWidth": 271.224,
+            "pdfHeight": 64.7391,
+            "sourceBlockWidth": 470.625,
+            "sourceBlockHeight": 24.84,
+            "pdfjsSourceSpanRuns": "[{}]",
+        }
+
+        self.assertFalse(
+            self.module.should_preserve_pdfjs_moved_source_line(
+                annotation,
+                "A resized paragraph must reflow",
+            )
+        )
+
+    def test_rich_resize_keeps_user_selected_font_family(self):
+        annotation = {
+            "promotedFromExtraction": True,
+            "preserveSourceTypography": True,
+            "fontFamily": "Verdana",
+            "fontSourceName": "Verdana",
+            "sourceSpans": [{
+                "font": "Open Sans",
+                "embedded_font_name": "Open Sans",
+                "embedded_font_family": "Open Sans",
+                "fontSize": 10.56,
+                "fontWeight": "400",
+                "fontStyle": "normal",
+            }],
+        }
+        layout = [{
+            "rect": fitz.Rect(0, 0, 200, 40),
+            "spans": [{
+                "text": "Resized paragraph",
+                "font_family": "Verdana",
+                "font_source_name": "Verdana",
+                "font_size": 10.6,
+                "font_weight": "400",
+                "font_style": "normal",
+            }],
+        }]
+
+        repaired = self.module.apply_source_faces_to_rich_span_layout(annotation, layout)
+
+        self.assertEqual(repaired[0]["spans"][0]["font_family"], "Verdana")
+        self.assertEqual(repaired[0]["spans"][0]["font_source_name"], "Verdana")
+        self.assertAlmostEqual(repaired[0]["spans"][0]["font_size"], 10.6)
 
     def test_normalize_exact_source_line_layout_prefers_edited_annotation_color(self):
         annotation = {

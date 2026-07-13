@@ -1414,6 +1414,7 @@ PYTHON;
         }
 
         $annotations = collect($this->mergeContainedPromotedAnnotationsForEditor($annotations->values()->all()))->values();
+        $annotations = collect($this->mergeLogicalListParagraphAnnotationsForEditor($annotations->values()->all()))->values();
         $annotations = collect($this->normalizeDotLeaderPromotedAnnotationsForEditor($annotations->values()->all()))->values();
         $annotations = collect($this->suppressPromotedAnnotationsCoveredByPdfjsSourceEdits($annotations->values()->all()))->values();
 
@@ -2740,6 +2741,274 @@ PYTHON;
         return array_values($result);
     }
 
+    private function promotedAnnotationLooksLikeListMarker(array $annotation): bool
+    {
+        if (empty($annotation['promotedFromExtraction']) || $this->promotedAnnotationHasUnsafeMergeEdits($annotation)) {
+            return false;
+        }
+
+        $lines = $this->sanitizeSourceTextLines($annotation['sourceTextLines'] ?? []);
+        if (count($lines) !== 1) {
+            return false;
+        }
+
+        $text = trim((string) $lines[0]);
+
+        return preg_match('/^(?:(?:\d{1,3}|[A-Za-z])[.)]|[\x{2022}\x{2023}\x{25A0}-\x{25FF}])$/u', $text) === 1;
+    }
+
+    private function promotedLineVerticalOverlapRatio(array $leftBox, array $rightBox): float
+    {
+        $leftHeight = max(0.001, (float) $leftBox[3] - (float) $leftBox[1]);
+        $rightHeight = max(0.001, (float) $rightBox[3] - (float) $rightBox[1]);
+        $overlap = max(0.0, min((float) $leftBox[3], (float) $rightBox[3]) - max((float) $leftBox[1], (float) $rightBox[1]));
+
+        return $overlap / min($leftHeight, $rightHeight);
+    }
+
+    private function mergeLogicalListParagraphAnnotationsForEditor(array $annotations): array
+    {
+        if (count($annotations) < 2) {
+            return $annotations;
+        }
+
+        $items = array_values($annotations);
+        $removed = [];
+
+        // An edited logical paragraph is saved under its original marker id.
+        // Keep that single edited owner and suppress the clean extraction rows
+        // from which it was composed; otherwise they reappear as independent
+        // source handles after reload.
+        foreach ($items as $ownerIndex => $owner) {
+            if (!is_array($owner) || !$this->promotedAnnotationHasMaterialEdits($owner)) {
+                continue;
+            }
+            $memberKeys = array_values(array_filter(
+                is_array($owner['promotedMergedSourceKeys'] ?? null) ? $owner['promotedMergedSourceKeys'] : [],
+                static fn ($value): bool => is_string($value) && trim($value) !== ''
+            ));
+            if (count($memberKeys) < 2) {
+                continue;
+            }
+            $memberLookup = array_fill_keys(array_map('trim', $memberKeys), true);
+            foreach ($items as $candidateIndex => $candidate) {
+                if ($candidateIndex === $ownerIndex || !is_array($candidate)) {
+                    continue;
+                }
+                $candidateKey = trim((string) ($candidate['promotedSourceKey'] ?? ''));
+                if ($candidateKey !== '' && isset($memberLookup[$candidateKey])) {
+                    $removed[$candidateIndex] = true;
+                }
+            }
+        }
+
+        foreach ($items as $markerIndex => $marker) {
+            if (isset($removed[$markerIndex]) || !is_array($marker) || !$this->promotedAnnotationLooksLikeListMarker($marker)) {
+                continue;
+            }
+
+            $markerBoxes = $this->sanitizeSourceLineBBoxes($marker['sourceLineBBoxes'] ?? []);
+            if (count($markerBoxes) !== 1) {
+                continue;
+            }
+            $markerBox = $markerBoxes[0];
+            $markerHeight = max(1.0, (float) $markerBox[3] - (float) $markerBox[1]);
+            $pageIndex = (int) ($marker['pageIndex'] ?? 0);
+
+            $bodyIndex = null;
+            $bodyGap = null;
+            foreach ($items as $candidateIndex => $candidate) {
+                if ($candidateIndex === $markerIndex || isset($removed[$candidateIndex]) || !is_array($candidate)) {
+                    continue;
+                }
+                if ((int) ($candidate['pageIndex'] ?? -1) !== $pageIndex
+                    || empty($candidate['promotedFromExtraction'])
+                    || $this->promotedAnnotationHasUnsafeMergeEdits($candidate)
+                    || !$this->promotedAnnotationsShareCompatibleTypography($marker, $candidate)) {
+                    continue;
+                }
+                $candidateLines = $this->sanitizeSourceTextLines($candidate['sourceTextLines'] ?? []);
+                $candidateBoxes = $this->sanitizeSourceLineBBoxes($candidate['sourceLineBBoxes'] ?? []);
+                if (empty($candidateLines) || count($candidateLines) !== count($candidateBoxes)) {
+                    continue;
+                }
+                $firstText = trim((string) $candidateLines[0]);
+                if (preg_match_all('/[\pL\pN]+/u', $firstText) < 5) {
+                    continue;
+                }
+                $firstBox = $candidateBoxes[0];
+                $horizontalGap = (float) $firstBox[0] - (float) $markerBox[2];
+                if ($horizontalGap < -1.0 || $horizontalGap > max(48.0, $markerHeight * 6.0)) {
+                    continue;
+                }
+                if ($this->promotedLineVerticalOverlapRatio($markerBox, $firstBox) < 0.55) {
+                    continue;
+                }
+                if ($bodyGap === null || $horizontalGap < $bodyGap) {
+                    $bodyIndex = $candidateIndex;
+                    $bodyGap = $horizontalGap;
+                }
+            }
+
+            if ($bodyIndex === null) {
+                continue;
+            }
+
+            $memberIndexes = [$markerIndex, $bodyIndex];
+            $body = $items[$bodyIndex];
+            $bodyBoxes = $this->sanitizeSourceLineBBoxes($body['sourceLineBBoxes'] ?? []);
+            $bodyLeft = (float) $bodyBoxes[0][0];
+            $lastBottom = max(array_map(static fn (array $box): float => (float) $box[3], $bodyBoxes));
+            $lineHeight = max(
+                $markerHeight,
+                ...array_map(static fn (array $box): float => max(1.0, (float) $box[3] - (float) $box[1]), $bodyBoxes)
+            );
+
+            // Extraction engines frequently split the first visual row of a
+            // hanging-indent list item from the remaining rows. Absorb only
+            // immediately adjacent, same-indent prose so tables and nearby
+            // paragraphs retain independent owners.
+            while (true) {
+                $nextIndex = null;
+                $nextTop = null;
+                foreach ($items as $candidateIndex => $candidate) {
+                    if (in_array($candidateIndex, $memberIndexes, true) || isset($removed[$candidateIndex]) || !is_array($candidate)) {
+                        continue;
+                    }
+                    if ((int) ($candidate['pageIndex'] ?? -1) !== $pageIndex
+                        || empty($candidate['promotedFromExtraction'])
+                        || $this->promotedAnnotationHasUnsafeMergeEdits($candidate)
+                        || $this->promotedAnnotationLooksLikeListMarker($candidate)
+                        || !$this->promotedAnnotationsShareCompatibleTypography($body, $candidate)) {
+                        continue;
+                    }
+                    $candidateLines = $this->sanitizeSourceTextLines($candidate['sourceTextLines'] ?? []);
+                    $candidateBoxes = $this->sanitizeSourceLineBBoxes($candidate['sourceLineBBoxes'] ?? []);
+                    if (empty($candidateLines) || count($candidateLines) !== count($candidateBoxes)) {
+                        continue;
+                    }
+                    $firstBox = $candidateBoxes[0];
+                    $top = (float) $firstBox[1];
+                    $verticalGap = $top - $lastBottom;
+                    if ($verticalGap < -1.0 || $verticalGap > max(4.0, $lineHeight * 0.65)) {
+                        continue;
+                    }
+                    if (abs((float) $firstBox[0] - $bodyLeft) > max(3.0, $lineHeight * 0.5)) {
+                        continue;
+                    }
+                    if ($nextTop === null || $top < $nextTop) {
+                        $nextIndex = $candidateIndex;
+                        $nextTop = $top;
+                    }
+                }
+                if ($nextIndex === null) {
+                    break;
+                }
+                $memberIndexes[] = $nextIndex;
+                $nextBoxes = $this->sanitizeSourceLineBBoxes($items[$nextIndex]['sourceLineBBoxes'] ?? []);
+                $lastBottom = max(array_map(static fn (array $box): float => (float) $box[3], $nextBoxes));
+            }
+
+            $bodyLineCount = array_sum(array_map(function (int $index) use ($items): int {
+                return count($this->sanitizeSourceTextLines($items[$index]['sourceTextLines'] ?? []));
+            }, array_slice($memberIndexes, 1)));
+            if ($bodyLineCount < 2) {
+                continue;
+            }
+
+            $lineEntries = [];
+            $mergedSpans = [];
+            $mergedSourceKeys = [];
+            $mergedAnnotationIds = [];
+            foreach ($memberIndexes as $memberIndex) {
+                $member = $items[$memberIndex];
+                $lines = $this->sanitizeSourceTextLines($member['sourceTextLines'] ?? []);
+                $boxes = $this->sanitizeSourceLineBBoxes($member['sourceLineBBoxes'] ?? []);
+                foreach ($lines as $lineIndex => $lineText) {
+                    $lineEntries[] = ['text' => $lineText, 'bbox' => $boxes[$lineIndex]];
+                }
+                $mergedSpans = array_merge($mergedSpans, array_values(array_filter(
+                    is_array($member['sourceSpans'] ?? null) ? $member['sourceSpans'] : [],
+                    static fn ($span): bool => is_array($span)
+                )));
+                $sourceKey = trim((string) ($member['promotedSourceKey'] ?? ''));
+                if ($sourceKey !== '') {
+                    $mergedSourceKeys[] = $sourceKey;
+                }
+                $annotationId = trim((string) ($member['id'] ?? ''));
+                if ($annotationId !== '') {
+                    $mergedAnnotationIds[] = $annotationId;
+                }
+            }
+
+            usort($lineEntries, static function (array $left, array $right): int {
+                $topDelta = (float) $left['bbox'][1] - (float) $right['bbox'][1];
+                if (abs($topDelta) > 0.25) {
+                    return $topDelta < 0 ? -1 : 1;
+                }
+                return ((float) $left['bbox'][0]) <=> ((float) $right['bbox'][0]);
+            });
+            $visualLines = [];
+            foreach ($lineEntries as $entry) {
+                $last = count($visualLines) - 1;
+                if ($last >= 0 && $this->promotedLineVerticalOverlapRatio($visualLines[$last]['bbox'], $entry['bbox']) >= 0.55) {
+                    $visualLines[$last]['text'] = trim($visualLines[$last]['text'] . ' ' . $entry['text']);
+                    $visualLines[$last]['bbox'] = [
+                        min((float) $visualLines[$last]['bbox'][0], (float) $entry['bbox'][0]),
+                        min((float) $visualLines[$last]['bbox'][1], (float) $entry['bbox'][1]),
+                        max((float) $visualLines[$last]['bbox'][2], (float) $entry['bbox'][2]),
+                        max((float) $visualLines[$last]['bbox'][3], (float) $entry['bbox'][3]),
+                    ];
+                    continue;
+                }
+                $visualLines[] = $entry;
+            }
+
+            usort($mergedSpans, static function (array $left, array $right): int {
+                $leftBox = is_array($left['bbox'] ?? null) ? $left['bbox'] : [0, 0, 0, 0];
+                $rightBox = is_array($right['bbox'] ?? null) ? $right['bbox'] : [0, 0, 0, 0];
+                $topDelta = (float) ($leftBox[1] ?? 0) - (float) ($rightBox[1] ?? 0);
+                return abs($topDelta) > 0.25
+                    ? ($topDelta < 0 ? -1 : 1)
+                    : ((float) ($leftBox[0] ?? 0)) <=> ((float) ($rightBox[0] ?? 0));
+            });
+
+            $merged = $marker;
+            $merged['sourceTextLines'] = array_values(array_map(static fn (array $entry): string => (string) $entry['text'], $visualLines));
+            $merged['sourceLineBBoxes'] = array_values(array_map(static fn (array $entry): array => $entry['bbox'], $visualLines));
+            $merged['text'] = implode("\n", $merged['sourceTextLines']);
+            $merged['originalText'] = $merged['text'];
+            $merged['sourceSpans'] = $mergedSpans;
+            $merged['promotedMergedSourceKeys'] = array_values(array_unique($mergedSourceKeys));
+            $merged['promotedMergedAnnotationIds'] = array_values(array_unique($mergedAnnotationIds));
+            $merged['promotedLogicalParagraph'] = true;
+            $mergedLeft = min(array_map(static fn (array $entry): float => (float) $entry['bbox'][0], $visualLines));
+            $mergedTop = min(array_map(static fn (array $entry): float => (float) $entry['bbox'][1], $visualLines));
+            $mergedRight = max(array_map(static fn (array $entry): float => (float) $entry['bbox'][2], $visualLines));
+            $mergedBottom = max(array_map(static fn (array $entry): float => (float) $entry['bbox'][3], $visualLines));
+            $mergedPageHeight = isset($merged['sourcePageHeight']) && is_numeric($merged['sourcePageHeight'])
+                ? (float) $merged['sourcePageHeight']
+                : 0.0;
+            if ($mergedPageHeight > 0.0) {
+                $merged['pdfX'] = $mergedLeft;
+                $merged['pdfY'] = $mergedPageHeight - $mergedBottom;
+                $merged['pdfWidth'] = $mergedRight - $mergedLeft;
+                $merged['pdfHeight'] = $mergedBottom - $mergedTop;
+            }
+            $merged = $this->syncAnnotationGeometryFromSourceLineBBoxes($merged);
+            $items[$markerIndex] = $merged;
+            foreach (array_slice($memberIndexes, 1) as $memberIndex) {
+                $removed[$memberIndex] = true;
+            }
+        }
+
+        return array_values(array_filter(
+            $items,
+            static fn ($annotation, $index): bool => !isset($removed[$index]),
+            ARRAY_FILTER_USE_BOTH
+        ));
+    }
+
     private function normalizeDotLeaderPromotedAnnotationsForEditor(array $annotations): array
     {
         if (count($annotations) < 2) {
@@ -3804,6 +4073,9 @@ PYTHON;
         }
 
         $annotations = collect($this->mergeContainedPromotedAnnotationsForEditor(
+            $annotations->values()->all()
+        ))->values();
+        $annotations = collect($this->mergeLogicalListParagraphAnnotationsForEditor(
             $annotations->values()->all()
         ))->values();
         $annotations = collect($this->normalizeDotLeaderPromotedAnnotationsForEditor(

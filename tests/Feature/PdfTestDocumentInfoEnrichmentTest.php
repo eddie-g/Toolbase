@@ -1350,4 +1350,126 @@ class PdfTestDocumentInfoEnrichmentTest extends TestCase
             'U.S. State-issued non-driver identity card; or',
         ], $annotations->firstWhere('id', 'promoted_2_16')['sourceTextLines'] ?? null);
     }
+
+    public function test_document_info_groups_isartor_numbered_paragraph_into_one_editor_owner(): void
+    {
+        $user = User::factory()->create(['email' => 'isartor-list-owner@example.com']);
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'isartor.pdf',
+            'path' => 'documents/isartor.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 100,
+        ]);
+        PdfExtractionFitz::query()->create([
+            'document_id' => $document->id,
+            'session_id' => 'fitz-session',
+            'pdf_filename' => 'isartor.pdf',
+            'total_pages' => 1,
+            'total_words' => 50,
+            'full_text' => 'sample',
+            'extraction_data' => [],
+        ]);
+
+        $common = [
+            'type' => 'text',
+            'pageIndex' => 0,
+            'fontSize' => 7.98,
+            'fontFamily' => 'Verdana',
+            'fontSourceName' => 'Verdana',
+            'fontWeight' => '400',
+            'fontStyle' => 'normal',
+            'textColor' => '#000000',
+            'lineHeight' => 7.98,
+            'sourcePageHeight' => 842,
+            'promotedFromExtraction' => true,
+            'promotedDirty' => false,
+            'sourceSpans' => [],
+        ];
+        $rows = [
+            array_merge($common, [
+                'id' => 'promoted_1_15',
+                'text' => '1.',
+                'originalText' => '1.',
+                'pdfX' => 107.70,
+                'pdfY' => 128.246,
+                'pdfWidth' => 8.004,
+                'pdfHeight' => 7.98,
+                'promotedSourceKey' => 'block-1-15',
+                'sourceBlockLeft' => 107.70,
+                'sourceBlockTop' => 705.773,
+                'sourceBlockWidth' => 8.004,
+                'sourceBlockHeight' => 7.98,
+                'sourceTextLines' => ['1.'],
+                'sourceLineBBoxes' => [[107.70, 705.773, 115.704, 713.754]],
+            ]),
+            array_merge($common, [
+                'id' => 'promoted_1_18',
+                'text' => 'The Isartor test suite is named after the location of the first meeting of the TWG (see chapter 5,',
+                'originalText' => 'The Isartor test suite is named after the location of the first meeting of the TWG (see chapter 5,',
+                'pdfX' => 124.682,
+                'pdfY' => 128.246,
+                'pdfWidth' => 385.975,
+                'pdfHeight' => 7.98,
+                'promotedSourceKey' => 'block-1-18',
+                'sourceBlockLeft' => 124.682,
+                'sourceBlockTop' => 705.773,
+                'sourceBlockWidth' => 385.975,
+                'sourceBlockHeight' => 7.98,
+                'sourceTextLines' => ['The Isartor test suite is named after the location of the first meeting of the TWG (see chapter 5,'],
+                'sourceLineBBoxes' => [[124.682, 705.773, 510.657, 713.754]],
+            ]),
+            array_merge($common, [
+                'id' => 'promoted_1_19',
+                'text' => "Who created the Test Suite?, page 10), a medieval gate towards the river Isar in the center of\nMunich/Germany, see for example www.munich-info.de/portrait/p_isartor_en.html.",
+                'originalText' => "Who created the Test Suite?, page 10), a medieval gate towards the river Isar in the center of\nMunich/Germany, see for example www.munich-info.de/portrait/p_isartor_en.html.",
+                'pdfX' => 124.680,
+                'pdfY' => 108.207,
+                'pdfWidth' => 385.684,
+                'pdfHeight' => 18.00,
+                'promotedSourceKey' => 'block-1-19',
+                'sourceBlockLeft' => 124.680,
+                'sourceBlockTop' => 715.793,
+                'sourceBlockWidth' => 385.684,
+                'sourceBlockHeight' => 18.00,
+                'sourceTextLines' => [
+                    'Who created the Test Suite?, page 10), a medieval gate towards the river Isar in the center of',
+                    'Munich/Germany, see for example www.munich-info.de/portrait/p_isartor_en.html.',
+                ],
+                'sourceLineBBoxes' => [
+                    [124.680, 715.793, 510.363, 723.773],
+                    [124.680, 725.813, 460.265, 733.793],
+                ],
+            ]),
+        ];
+        foreach ($rows as $row) {
+            PdfState::query()->create([
+                'document_id' => $document->id,
+                'pdf_extraction_fitz_id' => null,
+                'user_id' => $user->id,
+                'session_id' => 'state-session',
+                'page_number' => 0,
+                'state' => 'not_saved',
+                'annotation_data' => $row,
+            ]);
+        }
+
+        $response = $this->actingAs($user)->getJson(route('pdfTests.documentInfo', $document));
+        $response->assertOk()->assertJson(['success' => true]);
+
+        $annotations = collect($response->json('annotations'));
+        $paragraph = $annotations->firstWhere('id', 'promoted_1_15');
+        $this->assertNotNull($paragraph);
+        $this->assertNull($annotations->firstWhere('id', 'promoted_1_18'));
+        $this->assertNull($annotations->firstWhere('id', 'promoted_1_19'));
+        $this->assertTrue($paragraph['promotedLogicalParagraph'] ?? false);
+        $this->assertSame(['block-1-15', 'block-1-18', 'block-1-19'], $paragraph['promotedMergedSourceKeys'] ?? null);
+        $this->assertSame([
+            '1. The Isartor test suite is named after the location of the first meeting of the TWG (see chapter 5,',
+            'Who created the Test Suite?, page 10), a medieval gate towards the river Isar in the center of',
+            'Munich/Germany, see for example www.munich-info.de/portrait/p_isartor_en.html.',
+        ], $paragraph['sourceTextLines'] ?? null);
+        $this->assertSame(107.70, round((float) $paragraph['pdfX'], 2));
+        $this->assertSame(28.02, round((float) $paragraph['pdfHeight'], 2));
+    }
 }

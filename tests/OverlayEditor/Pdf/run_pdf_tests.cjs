@@ -625,6 +625,7 @@ const EDIT_NEW_WHATS_NEW_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..'
 const EDIT_NEW_F1040S1_FIXTURE_PATH = path.resolve(__dirname, '..', '..', 'OverlayEditor', 'f1040s1.pdf');
 const EDIT_NEW_SS5_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'ss-5.pdf');
 const FSS4_FIXTURE_PATH = path.resolve(__dirname, '..', '..', 'OverlayEditor', 'fixtures', 'fss4.pdf');
+const PDFJS_TEST_PDF_1_FIXTURE_PATH = path.resolve(__dirname, '..', '..', 'pdfjs', 'test_pdf_1.pdf');
 // Specific paragraph the user called out — the noop-edit parity test must
 // confirm this annotation exists, gets clicked into edit mode, blurred back
 // out, and survives the round-trip with byte-identical text + geometry +
@@ -769,6 +770,20 @@ const TESTS = {
         description: 'In /edit-new?pdfjs=1, create three side-by-side Lorem Ipsum paragraph annotations, save and download a PDF after each operation stage: resize, reorder, font metrics, color, word deletion, and font-size changes. Each downloaded PDF is inspected with PyMuPDF against the expected text, geometry, style, and color for that stage.',
         test_category: 'PDF JS Test Suite',
         run: runPdfJsThreeLoremParagraphsComprehensiveFlow,
+    },
+    pdf_js_test_pdf_1_move_promoted_paragraphs_no_artifacts: {
+        key: 'pdf_js_test_pdf_1_move_promoted_paragraphs_no_artifacts',
+        label: 'PDF.js Test Suite : Move Every Promoted Text Block and Verify Every Source Line',
+        description: 'Upload tests/pdfjs/test_pdf_1.pdf, open /edit-new?pdfjs=1, move each promoted multi-line text block one at a time across every page, and download the PDF after every individual move. Every canonical source line owned by the moved block must appear accurately in each download, every original source row must remain hidden and mask-covered, and the exported PDF must contain no duplicated operator-boundary text. Specifically guards the duplicated "Fusce efficitur" / "elementum elementum" failure.',
+        test_category: 'PDF JS Test Suite',
+        run: runPdfJsTestPdf1MovePromotedParagraphsNoArtifactsFlow,
+    },
+    pdf_js_test_pdf_1_resize_promoted_paragraph_matches_download: {
+        key: 'pdf_js_test_pdf_1_resize_promoted_paragraph_matches_download',
+        label: 'PDF.js Test Suite : Resized Paragraph Matches Download',
+        description: 'Upload tests/pdfjs/test_pdf_1.pdf, resize promoted_1_5 through the real PDF.js paragraph resize handle, capture the live editor box width, height, font size, and visual line count, download the PDF, and require the exported paragraph to match those metrics without shrinking back to the original two source rows.',
+        test_category: 'PDF JS Test Suite',
+        run: runPdfJsTestPdf1ResizeParagraphMatchesDownloadFlow,
     },
     pdf_js_ss4_moved_label_source_mask_no_widget_overlap: {
         key: 'pdf_js_ss4_moved_label_source_mask_no_widget_overlap',
@@ -1253,6 +1268,21 @@ const TEST_CRITERIA = {
         'Color stage downloaded PDF reflects the expected text color for each paragraph',
         'Delete-words stage downloaded PDF removes the requested words while preserving the remaining paragraphs',
         'Font-size stage downloaded PDF reflects the expected font size changes for each paragraph',
+    ],
+    pdf_js_test_pdf_1_move_promoted_paragraphs_no_artifacts: [
+        'tests/pdfjs/test_pdf_1.pdf uploads and opens in /edit-new?pdfjs=1 Edit PDF mode',
+        'promoted_1_3 is present and includes the Fusce efficitur source row even when PDF.js repeats the boundary word elementum',
+        'Moving promoted_1_3 hides and masks every source row, including the formerly duplicated Fusce efficitur line',
+        'PDF is downloaded after every individual text-block move and every canonical source line is verified in that stage download',
+        'Downloaded PDF contains exactly one clean Fusce efficitur line and no elementum elementum boundary duplication',
+        'Every promoted multi-line paragraph across every PDF page can be moved without leaving an unmasked source glyph row behind',
+        'Moved paragraph overlays keep their source masks and artifact-free state after every affected page is revisited',
+    ],
+    pdf_js_test_pdf_1_resize_promoted_paragraph_matches_download: [
+        'tests/pdfjs/test_pdf_1.pdf uploads and promoted_1_5 opens in PDF.js Edit PDF mode',
+        'promoted_1_5 is resized narrower and taller through the production resize handle',
+        'Downloaded paragraph matches the editor width, height, font size, text, and visual line count',
+        'Downloaded paragraph does not fall back to scaled original source-row geometry',
     ],
     test_19_loaded_saved_standalone_no_duplicate: [
         'Blank PDF created and standalone text annotation saved',
@@ -4338,6 +4368,630 @@ async function runPdfJsThreeLoremParagraphsComprehensiveFlow() {
             } catch (_error) {
                 // Cleanup failures should not hide the PDF export regression result.
             }
+        }
+        await browser.close();
+    }
+}
+
+// Regression for tests/pdfjs/test_pdf_1.pdf: PDF.js repeats "elementum" at
+// the boundary of two source operators in promoted_1_3. The promoted block's
+// canonical extraction contains the word once, so strict text containment
+// used to leave the first Fusce row outside the block. Moving the paragraph
+// then masked rows 2-4 but left row 1 painted on the source canvas.
+async function runPdfJsTestPdf1MovePromotedParagraphsNoArtifactsFlow() {
+    const test = TESTS.pdf_js_test_pdf_1_move_promoted_paragraphs_no_artifacts;
+    ensureOutputDir();
+
+    const runToken = buildRunToken();
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1800, height: 1200 } });
+    const checks = [];
+    const artifacts = [];
+    const paragraphResults = [];
+    let documentId = null;
+
+    const addCheck = (item, passed, description, detail = '') => {
+        checks.push({ item, result: passed ? 'PASS' : 'FAIL', description, detail });
+    };
+
+    const readParagraphState = async (annotationId) => page.evaluate((id) => {
+        const selector = `.enpv-annotation-box[data-annotation-id="${CSS.escape(id)}"]`;
+        const box = document.querySelector(selector);
+        if (!(box instanceof HTMLElement)) return { id, found: false };
+        const pageDiv = box.closest('.pdfViewer .page');
+        // A live drag stores its mask on box._enpvSourceMask. After a page is
+        // virtualized away and revisited, createPersistedOverlayBox rebuilds
+        // the same masks in the shared source-mask layer without retaining
+        // that private box reference, so inspect the page layer as fallback.
+        const ownMask = box._enpvSourceMask instanceof HTMLElement ? box._enpvSourceMask : null;
+        const masks = ownMask
+            ? [ownMask]
+            : Array.from(pageDiv?.querySelectorAll('.enpv-source-mask, .enpv-orig-mask') || []);
+        const rawPieces = masks.flatMap((mask) => (
+            mask.children.length ? Array.from(mask.children) : [mask]
+        ));
+        const pieces = rawPieces.map((piece) => {
+            const rect = piece.getBoundingClientRect();
+            return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+        }).filter((rect) => rect.right > rect.left && rect.bottom > rect.top);
+        const containsPoint = (x, y) => pieces.some((piece) => (
+            x >= piece.left - 0.5 && x <= piece.right + 0.5
+            && y >= piece.top - 0.5 && y <= piece.bottom + 0.5
+        ));
+        const spans = Array.from(pageDiv?.querySelectorAll('.textLayer span[data-enpv-persistent-id]') || [])
+            .filter((span) => String(span.dataset.enpvPersistentId || '') === id)
+            .map((span) => {
+                const rect = span.getBoundingClientRect();
+                const inset = Math.min(2, rect.width * 0.05);
+                const y = rect.top + rect.height / 2;
+                const samples = rect.width > 0 && rect.height > 0
+                    ? [rect.left + inset, rect.left + rect.width / 2, rect.right - inset]
+                        .map((x) => containsPoint(x, y))
+                    : [];
+                return {
+                    text: String(span.textContent || ''),
+                    top: rect.top,
+                    width: rect.width,
+                    movedHidden: span.dataset.enpvMovedSourceHidden === '1',
+                    promotedHidden: span.dataset.enpvPromotedBlockHidden === '1',
+                    covered: samples.length > 0 && samples.every(Boolean),
+                    sampleCoverage: samples,
+                };
+            })
+            .filter((span) => span.width > 0);
+        const sourceRows = Array.from(new Set(spans.map((span) => Math.round(span.top * 10) / 10)));
+        const rect = box.getBoundingClientRect();
+        return {
+            id,
+            found: true,
+            text: String(box.dataset.baseText || box.dataset.originalText || ''),
+            moved: box.dataset.movedTextOverlay === '1',
+            rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+            spanCount: spans.length,
+            sourceRowCount: sourceRows.length,
+            maskPieceCount: pieces.length,
+            allHidden: spans.length > 0 && spans.every((span) => span.movedHidden || span.promotedHidden),
+            allCovered: spans.length > 0 && spans.every((span) => span.covered),
+            spans,
+        };
+    }, annotationId);
+
+    try {
+        documentId = await createFixtureDocument(page, PDFJS_TEST_PDF_1_FIXTURE_PATH);
+        // Upload extraction/materialization finishes asynchronously. Wait for
+        // the canonical promoted states before opening edit-new; otherwise its
+        // one-shot info request can win the race, receive zero annotations,
+        // and render only per-line PDF.js source handles for the whole run.
+        let promotedStatesReady = false;
+        const materializationDeadline = Date.now() + 120000;
+        while (!promotedStatesReady && Date.now() < materializationDeadline) {
+            promotedStatesReady = await page.evaluate(async (id) => {
+                try {
+                    const response = await fetch(`/pdf-tests/document/${id}/info`, {
+                        credentials: 'same-origin',
+                        headers: { Accept: 'application/json' },
+                    });
+                    if (!response.ok) return false;
+                    const body = await response.json();
+                    return Array.isArray(body?.annotations)
+                        && body.annotations.some((annotation) => annotation?.id === 'promoted_1_3');
+                } catch (_error) {
+                    return false;
+                }
+            }, documentId);
+            if (!promotedStatesReady) await page.waitForTimeout(500);
+        }
+        if (!promotedStatesReady) {
+            throw new Error(`Timed out waiting for promoted extraction states for document ${documentId}`);
+        }
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, {
+            waitUntil: 'domcontentloaded',
+            timeout: 90000,
+        });
+        await page.waitForSelector('body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]', { timeout: 120000 });
+        await page.evaluate(() => {
+            const toggle = document.getElementById('edit-mode-toggle') || document.getElementById('ftb-edit-mode');
+            if (toggle && !document.body.classList.contains('enpv-edit-on')) toggle.click();
+        });
+        await page.waitForSelector('body.enpv-edit-on', { timeout: 10000 });
+        await page.waitForSelector('.enpv-annotation-box.is-promoted-source-block', {
+            state: 'attached',
+            timeout: 60000,
+        });
+        await page.waitForTimeout(800);
+
+        const pageCount = await page.locator('.pdfViewer .page').count();
+        const paragraphEntries = [];
+        for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+            const pageLocator = page.locator(`.pdfViewer .page[data-page-number="${pageNumber}"]`);
+            await pageLocator.scrollIntoViewIfNeeded();
+            await page.waitForSelector(`.pdfViewer .page[data-page-number="${pageNumber}"] .textLayer`, {
+                state: 'attached',
+                timeout: 60000,
+            });
+            await page.waitForTimeout(450);
+            const pageEntries = await page.evaluate((currentPage) => Array.from(
+                document.querySelectorAll(`.pdfViewer .page[data-page-number="${currentPage}"] .enpv-annotation-box.is-promoted-source-block`),
+            ).filter((box) => String(box.dataset.baseText || box.dataset.originalText || '').includes('\n'))
+                .map((box) => ({
+                    id: String(box.dataset.annotationId || ''),
+                    pageNumber: currentPage,
+                }))
+                .filter((entry) => entry.id), pageNumber);
+            paragraphEntries.push(...pageEntries);
+        }
+        const orderedEntries = Array.from(new Map(
+            paragraphEntries.map((entry) => [entry.id, entry]),
+        ).values()).sort((left, right) => {
+            if (left.id === 'promoted_1_3') return -1;
+            if (right.id === 'promoted_1_3') return 1;
+            if (left.pageNumber !== right.pageNumber) return left.pageNumber - right.pageNumber;
+            return left.id.localeCompare(right.id, undefined, { numeric: true });
+        });
+        const orderedIds = orderedEntries.map((entry) => entry.id);
+
+        addCheck(
+            'fixture_loaded_with_promoted_paragraphs',
+            orderedIds.length >= 2,
+            'The fixture opens in PDF.js Edit PDF mode with multiple promoted paragraph handles.',
+            `document=${documentId}; pageCount=${pageCount}; paragraphs=${JSON.stringify(orderedEntries)}`,
+        );
+        addCheck(
+            'target_promoted_1_3_present',
+            orderedIds.includes('promoted_1_3'),
+            'The reported promoted_1_3 paragraph is available for the move regression.',
+            `paragraphIds=${JSON.stringify(orderedIds)}`,
+        );
+
+        const targetEntry = orderedEntries.find((entry) => entry.id === 'promoted_1_3') || null;
+        if (targetEntry) {
+            await page.locator(`.pdfViewer .page[data-page-number="${targetEntry.pageNumber}"]`).scrollIntoViewIfNeeded();
+            await page.waitForSelector('.enpv-annotation-box[data-annotation-id="promoted_1_3"]', { state: 'attached', timeout: 30000 });
+            await page.waitForTimeout(250);
+        }
+        const targetBefore = targetEntry ? await readParagraphState('promoted_1_3') : null;
+        const targetFusceRowsBefore = targetBefore?.spans?.filter((span) => span.text.includes('Fusce efficitur')) || [];
+        addCheck(
+            'target_owns_duplicated_operator_boundary_row',
+            targetFusceRowsBefore.length > 0,
+            'promoted_1_3 owns the Fusce source row even though PDF.js repeats “elementum” at the operator boundary.',
+            JSON.stringify(targetFusceRowsBefore),
+        );
+
+        for (const entry of orderedEntries) {
+            const annotationId = entry.id;
+            const pageNumber = entry.pageNumber;
+            const pageLocator = page.locator(`.pdfViewer .page[data-page-number="${pageNumber}"]`);
+            await pageLocator.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(300);
+            const selector = `.enpv-annotation-box[data-annotation-id="${annotationId.replace(/(["\\])/g, '\\$1')}"]`;
+            const locator = page.locator(selector).first();
+            await locator.waitFor({ state: 'attached', timeout: 30000 });
+            await locator.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(100);
+            const before = await readParagraphState(annotationId);
+            const boxRect = await locator.boundingBox();
+            const pageRect = await pageLocator.boundingBox();
+            if (!boxRect || !pageRect) throw new Error(`Missing drag geometry for ${annotationId}`);
+            const roomBelow = (pageRect.y + pageRect.height) - (boxRect.y + boxRect.height);
+            const deltaY = roomBelow >= 70 ? 56 : -56;
+            const startX = boxRect.x + Math.min(24, Math.max(8, boxRect.width / 4));
+            const startY = boxRect.y + Math.min(16, Math.max(8, boxRect.height / 4));
+            // Dispatch to the intended box rather than hit-testing the page:
+            // paragraphs moved earlier in this same sweep can overlap a later
+            // paragraph's source position and intercept real mouse input. The
+            // events still traverse the production pointerdown/move/up drag
+            // handlers, but every paragraph is deterministically exercised.
+            const pointerId = 900 + paragraphResults.length;
+            await locator.dispatchEvent('pointerdown', {
+                pointerId,
+                pointerType: 'mouse',
+                isPrimary: true,
+                button: 0,
+                buttons: 1,
+                clientX: startX,
+                clientY: startY,
+            });
+            await page.evaluate(({ id, x, y }) => {
+                window.dispatchEvent(new PointerEvent('pointermove', {
+                    pointerId: id,
+                    pointerType: 'mouse',
+                    isPrimary: true,
+                    button: -1,
+                    buttons: 1,
+                    clientX: x,
+                    clientY: y,
+                    bubbles: true,
+                }));
+            }, { id: pointerId, x: startX, y: startY + deltaY });
+            await page.waitForTimeout(50);
+            await page.evaluate(({ id, x, y }) => {
+                window.dispatchEvent(new PointerEvent('pointerup', {
+                    pointerId: id,
+                    pointerType: 'mouse',
+                    isPrimary: true,
+                    button: 0,
+                    buttons: 0,
+                    clientX: x,
+                    clientY: y,
+                    bubbles: true,
+                }));
+            }, { id: pointerId, x: startX, y: startY + deltaY });
+            await page.waitForTimeout(350);
+
+            const after = await readParagraphState(annotationId);
+            const movedDistance = Math.abs(Number(after?.rect?.top || 0) - Number(before?.rect?.top || 0));
+            const result = {
+                id: annotationId,
+                pageNumber,
+                beforeRows: before.sourceRowCount,
+                afterRows: after.sourceRowCount,
+                movedDistance,
+                maskPieceCount: after.maskPieceCount,
+                allHidden: after.allHidden,
+                allCovered: after.allCovered,
+                uncovered: (after.spans || []).filter((span) => !span.covered).map((span) => span.text),
+                unhidden: (after.spans || []).filter((span) => !(span.movedHidden || span.promotedHidden)).map((span) => span.text),
+            };
+            paragraphResults.push(result);
+            addCheck(
+                `paragraph_move_artifact_free:${annotationId}`,
+                after.found
+                    && after.moved
+                    && movedDistance >= 20
+                    && after.sourceRowCount >= 2
+                    && after.maskPieceCount >= after.sourceRowCount
+                    && after.allHidden
+                    && after.allCovered,
+                `${annotationId} moves while every one of its PDF.js source rows remains owned, hidden, and covered by the source mask.`,
+                JSON.stringify(result),
+            );
+
+            // Exercise the real server exporter after every individual move,
+            // not only after the complete sweep. The previous regression
+            // stopped at DOM mask geometry, which allowed a broken download
+            // to pass. Each source row owned by this text block must be present
+            // canonically in the downloaded PDF, and the known operator-
+            // boundary duplication must never reappear at any stage.
+            const perMoveDownloadName = buildArtifactName(
+                test.key,
+                runToken,
+                `after_move_${annotationId.replace(/[^a-zA-Z0-9_-]+/g, '_')}`,
+                'pdf',
+            );
+            const perMoveDownloadPath = path.join(OUTPUT_DIR, perMoveDownloadName);
+            await downloadPdfJsSuiteStageViaToolbar(page, perMoveDownloadPath);
+            artifacts.push({
+                label: `Downloaded PDF after moving ${annotationId}`,
+                kind: 'pdf',
+                filename: perMoveDownloadName,
+            });
+            const perMoveText = execFileSync(PYTHON_BIN, ['-c', [
+                'import fitz, sys',
+                'doc=fitz.open(sys.argv[1])',
+                'print("\\n".join(page.get_text() for page in doc))',
+            ].join(';'), perMoveDownloadPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+            const normalizePdfText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const normalizedDownloadText = normalizePdfText(perMoveText);
+            const canonicalRows = String(before?.text || '')
+                .split(/\r?\n/)
+                .map(normalizePdfText)
+                .filter(Boolean);
+            const missingCanonicalRows = canonicalRows.filter((line) => !normalizedDownloadText.includes(line));
+            const fusceOccurrences = (perMoveText.match(/Fusce efficitur/g) || []).length;
+            const hasDuplicatedElementum = perMoveText.includes('elementum elementum');
+            addCheck(
+                `download_after_individual_move:${annotationId}`,
+                missingCanonicalRows.length === 0
+                    && !hasDuplicatedElementum
+                    && (annotationId !== 'promoted_1_3' || fusceOccurrences === 1),
+                `After moving ${annotationId}, every canonical source row is present in the downloaded PDF with no duplicated operator-boundary text.`,
+                JSON.stringify({ missingCanonicalRows, fusceOccurrences, hasDuplicatedElementum }),
+            );
+
+            if (annotationId === 'promoted_1_3') {
+                const targetAfterName = buildArtifactName(test.key, runToken, 'promoted_1_3_after_move');
+                await pageLocator.screenshot({ path: path.join(OUTPUT_DIR, targetAfterName) });
+                artifacts.push({ label: 'promoted_1_3 after move', kind: 'image', filename: targetAfterName });
+                const fusceRows = (after.spans || []).filter((span) => span.text.includes('Fusce efficitur'));
+                addCheck(
+                    'target_fusce_row_hidden_and_masked_after_move',
+                    fusceRows.length > 0
+                        && fusceRows.every((span) => span.movedHidden && span.covered),
+                    'The formerly duplicated Fusce source line is hidden and fully masked after moving promoted_1_3.',
+                    JSON.stringify(fusceRows),
+                );
+            }
+        }
+
+        const finalStates = [];
+        const affectedPages = Array.from(new Set(orderedEntries.map((entry) => entry.pageNumber))).sort((a, b) => a - b);
+        for (const pageNumber of affectedPages) {
+            const pageLocator = page.locator(`.pdfViewer .page[data-page-number="${pageNumber}"]`);
+            await pageLocator.scrollIntoViewIfNeeded();
+            await page.waitForTimeout(450);
+            for (const entry of orderedEntries.filter((candidate) => candidate.pageNumber === pageNumber)) {
+                await page.waitForSelector(`.enpv-annotation-box[data-annotation-id="${entry.id}"]`, {
+                    state: 'attached',
+                    timeout: 30000,
+                });
+                finalStates.push({
+                    ...(await readParagraphState(entry.id)),
+                    pageNumber,
+                });
+            }
+            const finalName = buildArtifactName(test.key, runToken, `page_${pageNumber}_all_paragraphs_after_move`);
+            await pageLocator.screenshot({ path: path.join(OUTPUT_DIR, finalName) });
+            artifacts.push({
+                label: `Page ${pageNumber} promoted paragraphs after move`,
+                kind: 'image',
+                filename: finalName,
+            });
+        }
+        addCheck(
+            'all_moved_paragraphs_remain_artifact_free',
+            finalStates.length === orderedIds.length
+                && finalStates.every((state) => state.moved && state.allHidden && state.allCovered),
+            'After moving every promoted paragraph, all source rows remain hidden and mask-covered.',
+            JSON.stringify(finalStates.map((state) => ({
+                id: state.id,
+                pageNumber: state.pageNumber,
+                rows: state.sourceRowCount,
+                maskPieces: state.maskPieceCount,
+                allHidden: state.allHidden,
+                allCovered: state.allCovered,
+            }))),
+        );
+
+        const downloadName = buildArtifactName(test.key, runToken, 'moved_paragraphs_download', 'pdf');
+        const downloadPath = path.join(OUTPUT_DIR, downloadName);
+        await downloadPdfJsSuiteStageViaToolbar(page, downloadPath);
+        artifacts.push({ label: 'Downloaded PDF after moving promoted paragraphs', kind: 'pdf', filename: downloadName });
+        const downloadedText = execFileSync(PYTHON_BIN, ['-c', [
+            'import fitz, sys',
+            'doc=fitz.open(sys.argv[1])',
+            'print("\\n".join(page.get_text() for page in doc))',
+        ].join(';'), downloadPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        const cleanFusceLine = 'Fusce efficitur mi ex. Quisque elementum odio, a accumsan nibh consectetur sed.';
+        const fusceCount = downloadedText.split('Fusce efficitur').length - 1;
+        const cleanLineCount = downloadedText.split(cleanFusceLine).length - 1;
+        const hasDuplicatedBoundary = downloadedText.includes('elementum elementum');
+        addCheck(
+            'downloaded_pdf_has_one_clean_fusce_line',
+            fusceCount === 1 && cleanLineCount === 1 && !hasDuplicatedBoundary,
+            'The downloaded PDF contains exactly one canonical Fusce line and never exports the repeated operator-boundary word.',
+            JSON.stringify({ fusceCount, cleanLineCount, hasDuplicatedBoundary }),
+        );
+
+        const status = checks.length > 0 && checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        const result = buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status,
+            checks,
+            artifacts,
+            fileSize: fs.statSync(PDFJS_TEST_PDF_1_FIXTURE_PATH).size,
+            metadata: {
+                document_id: documentId,
+                fixture_path: PDFJS_TEST_PDF_1_FIXTURE_PATH,
+                page_count: pageCount,
+                paragraphs: orderedEntries,
+                paragraph_results: paragraphResults,
+            },
+        });
+        result.page_count = pageCount;
+        return result;
+    } catch (error) {
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status: 'error',
+            checks,
+            artifacts,
+            error: error.stack || String(error),
+        });
+    } finally {
+        if (documentId) {
+            try { await cleanupDocument(page, documentId); } catch (_error) { /* ignore cleanup failure */ }
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfJsTestPdf1ResizeParagraphMatchesDownloadFlow() {
+    const test = TESTS.pdf_js_test_pdf_1_resize_promoted_paragraph_matches_download;
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1800, height: 1200 } });
+    const checks = [];
+    const artifacts = [];
+    let documentId = null;
+    const addCheck = (item, passed, description, detail = '') => checks.push({
+        item, result: passed ? 'PASS' : 'FAIL', description, detail,
+    });
+
+    const readState = async () => page.locator('.enpv-annotation-box[data-annotation-id="promoted_1_5"]').evaluate((box) => {
+        const text = box.querySelector('.enpv-text-content');
+        const pageIndex = Number(box.dataset.pageIndex || 0);
+        const scale = Number(window.__enpv?.pdfViewer?.getPageView(pageIndex)?.viewport?.scale || 1);
+        const tops = [];
+        const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            for (let index = 0; index < node.textContent.length; index += 1) {
+                if (/\s/.test(node.textContent[index])) continue;
+                const range = document.createRange();
+                range.setStart(node, index);
+                range.setEnd(node, index + 1);
+                const rect = range.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) tops.push(rect.top);
+            }
+        }
+        const lineTops = [];
+        tops.sort((a, b) => a - b).forEach((top) => {
+            if (!lineTops.some((known) => Math.abs(known - top) <= 1)) lineTops.push(top);
+        });
+        const rect = box.getBoundingClientRect();
+        const style = getComputedStyle(text);
+        return {
+            widthPx: rect.width,
+            heightPx: rect.height,
+            widthPts: rect.width / scale,
+            heightPts: rect.height / scale,
+            fontSizePts: (Number.parseFloat(style.fontSize) || 0) / scale,
+            lineCount: lineTops.length,
+            text: String(text.textContent || ''),
+        };
+    });
+
+    try {
+        documentId = await createFixtureDocument(page, PDFJS_TEST_PDF_1_FIXTURE_PATH);
+        const deadline = Date.now() + 120000;
+        let ready = false;
+        while (!ready && Date.now() < deadline) {
+            ready = await page.evaluate(async (id) => {
+                const response = await fetch(`/pdf-tests/document/${id}/info`, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+                if (!response.ok) return false;
+                const body = await response.json();
+                return Array.isArray(body?.annotations) && body.annotations.some((annotation) => annotation?.id === 'promoted_1_5');
+            }, documentId).catch(() => false);
+            if (!ready) await page.waitForTimeout(500);
+        }
+        if (!ready) throw new Error('Timed out waiting for promoted_1_5 extraction state');
+
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, { waitUntil: 'domcontentloaded', timeout: 90000 });
+        await page.waitForSelector('body.enpv-viewer-ready', { timeout: 120000 });
+        await page.evaluate(() => {
+            const toggle = document.getElementById('edit-mode-toggle') || document.getElementById('ftb-edit-mode');
+            if (toggle && !document.body.classList.contains('enpv-edit-on')) toggle.click();
+        });
+        await page.waitForSelector('body.enpv-edit-on', { timeout: 10000 });
+        const selector = '.enpv-annotation-box[data-annotation-id="promoted_1_5"]';
+        const box = page.locator(selector);
+        await box.waitFor({ state: 'attached', timeout: 30000 });
+        await box.scrollIntoViewIfNeeded();
+        await box.click({ position: { x: 20, y: 12 } });
+        await page.locator('#enpv-ann-menu [data-action="edit"]').click();
+        await page.waitForSelector(`${selector}.is-editing`, { timeout: 10000 });
+        const before = await readState();
+        const rightHandleRect = await box.locator(':scope > .enpv-resize-handle.r').boundingBox();
+        if (!rightHandleRect) throw new Error('Missing promoted paragraph right resize handle');
+        let startX = rightHandleRect.x + rightHandleRect.width / 2;
+        let startY = rightHandleRect.y + rightHandleRect.height / 2;
+        await box.locator(':scope > .enpv-resize-handle.r').dispatchEvent('pointerdown', {
+            pointerId: 1501, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientX: startX, clientY: startY,
+        });
+        await page.evaluate(({ x, y }) => {
+            window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1501, pointerType: 'mouse', isPrimary: true, button: -1, buttons: 1, clientX: x, clientY: y, bubbles: true }));
+            window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1501, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 0, clientX: x, clientY: y, bubbles: true }));
+        }, { x: startX - (before.widthPx * 0.42), y: startY });
+        await page.waitForTimeout(100);
+        const bottomHandleRect = await box.locator(':scope > .enpv-resize-handle.b').boundingBox();
+        if (!bottomHandleRect) throw new Error('Missing promoted paragraph bottom resize handle');
+        startX = bottomHandleRect.x + bottomHandleRect.width / 2;
+        startY = bottomHandleRect.y + bottomHandleRect.height / 2;
+        await box.locator(':scope > .enpv-resize-handle.b').dispatchEvent('pointerdown', {
+            pointerId: 1502, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientX: startX, clientY: startY,
+        });
+        await page.evaluate(({ x, y }) => {
+            window.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1502, pointerType: 'mouse', isPrimary: true, button: -1, buttons: 1, clientX: x, clientY: y, bubbles: true }));
+            window.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1502, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 0, clientX: x, clientY: y, bubbles: true }));
+        }, { x: startX, y: startY + Math.max(80, before.heightPx * 1.2) });
+        await page.waitForTimeout(300);
+        const after = await readState();
+        await page.locator('.top-bar').click({ position: { x: 420, y: 20 } });
+
+        addCheck(
+            'fixture_and_target_ready',
+            Boolean(documentId) && before.lineCount >= 2,
+            'tests/pdfjs/test_pdf_1.pdf uploads and promoted_1_5 opens in PDF.js Edit PDF mode.',
+            JSON.stringify({ documentId, before }),
+        );
+        addCheck(
+            'paragraph_resized_through_ui',
+            after.widthPts < before.widthPts * 0.75 && after.heightPts > before.heightPts * 1.5 && after.lineCount > before.lineCount,
+            'promoted_1_5 is resized narrower and taller through the production resize handle.',
+            JSON.stringify({ before, after }),
+        );
+
+        const pdfName = buildArtifactName(test.key, runToken, 'resized_download', 'pdf');
+        const pdfPath = path.join(OUTPUT_DIR, pdfName);
+        const download = await downloadPdfJsSuiteStageViaToolbar(page, pdfPath);
+        artifacts.push({ label: 'Downloaded PDF after paragraph resize', kind: 'pdf', filename: pdfName });
+        const annotation = (download.payload?.annotations || []).find((entry) => entry.id === 'promoted_1_5');
+        if (!annotation) throw new Error('promoted_1_5 missing from resize download payload');
+        const raw = execFileSync(PYTHON_BIN, ['-c', `
+import fitz,json,sys
+doc=fitz.open(sys.argv[1]); page=doc[0]; ann=json.loads(sys.argv[2])
+top=float(page.rect.height)-(float(ann['pdfY'])+float(ann['pdfHeight']))
+target=fitz.Rect(float(ann['pdfX'])-5,top-5,float(ann['pdfX'])+float(ann['pdfWidth'])+5,top+float(ann['pdfHeight'])+10)
+rows=[]
+for block in page.get_text('dict').get('blocks',[]):
+  for line in block.get('lines',[]) or []:
+    spans=[s for s in line.get('spans',[]) if s.get('text','').strip()]
+    if not spans: continue
+    box=fitz.Rect(min(s['bbox'][0] for s in spans),min(s['bbox'][1] for s in spans),max(s['bbox'][2] for s in spans),max(s['bbox'][3] for s in spans))
+    if target.contains(fitz.Point((box.x0+box.x1)/2,(box.y0+box.y1)/2)) and box.x1 <= target.x1 + 1: rows.append((box,spans))
+spans=[s for _b,ss in rows for s in ss]
+result=None
+if spans:
+  bbox=[min(s['bbox'][0] for s in spans),min(s['bbox'][1] for s in spans),max(s['bbox'][2] for s in spans),max(s['bbox'][3] for s in spans)]
+  text='\\n'.join(''.join(s.get('text','') for s in ss) for _b,ss in sorted(rows,key=lambda item:item[0].y0))
+  sizes=sorted(float(s.get('size',0)) for s in spans)
+  result={'bbox':bbox,'text':text,'lineCount':len(rows),'fontSize':sizes[len(sizes)//2]}
+print(json.dumps(result))
+`, pdfPath, JSON.stringify(annotation)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+        const rendered = JSON.parse(raw);
+        const normalize = (value) => String(value || '').replace(/\s+/g, '').toLowerCase();
+        const renderedWidth = rendered ? rendered.bbox[2] - rendered.bbox[0] : 0;
+        const renderedHeight = rendered ? rendered.bbox[3] - rendered.bbox[1] : 0;
+        const metricsMatch = Boolean(rendered)
+            && normalize(rendered.text) === normalize(after.text)
+            && rendered.lineCount === after.lineCount
+            && Math.abs(rendered.fontSize - after.fontSizePts) <= 1
+            && renderedWidth <= after.widthPts + 5
+            && renderedHeight <= after.heightPts + 10;
+        addCheck(
+            'download_matches_resized_editor',
+            metricsMatch,
+            'Downloaded paragraph matches the editor width, height, font size, text, and visual line count.',
+            JSON.stringify({ after, annotation, rendered, renderedWidth, renderedHeight }),
+        );
+        addCheck(
+            'download_does_not_reuse_original_source_rows',
+            Boolean(rendered) && rendered.lineCount > before.lineCount && rendered.fontSize >= after.fontSizePts - 1,
+            'Downloaded paragraph does not shrink the original source rows to fit the resized box.',
+            JSON.stringify({ beforeLines: before.lineCount, afterLines: after.lineCount, rendered }),
+        );
+
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status,
+            checks,
+            artifacts,
+            fileSize: fs.statSync(pdfPath).size,
+            metadata: { document_id: documentId, before, after, rendered },
+        });
+    } catch (error) {
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status: 'error', checks, artifacts, error: error.stack || String(error),
+        });
+    } finally {
+        if (documentId) {
+            try { await cleanupDocument(page, documentId); } catch (_error) {}
         }
         await browser.close();
     }
