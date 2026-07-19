@@ -1219,7 +1219,7 @@ def generate_security_deposit_return(data: dict, output_path: str):
     W, H = 612, 792
     M = 44
     doc = fitz.open()
-    page = doc.new_page(width=W, height=H)
+    page = None
 
     navy = _hex("#1e3a5f")
     blue_light = _hex("#eef4ff")
@@ -1244,6 +1244,15 @@ def generate_security_deposit_return(data: dict, output_path: str):
     deductions = data.get("deductions") or [
         {"type": "", "description": "", "cost": ""},
     ]
+    property_rows = data.get("property_rows") or []
+    if not isinstance(property_rows, list):
+        property_rows = []
+    property_rows = [row for row in property_rows[:100] if isinstance(row, dict)]
+    if not isinstance(deductions, list):
+        deductions = []
+    deductions = [row for row in deductions[:200] if isinstance(row, dict)]
+    if not deductions:
+        deductions = [{"type": "", "description": "", "cost": ""}]
 
     def write(x, y, text, font=FONT_HELV, size=9, color=dark):
         tw = fitz.TextWriter(page.rect)
@@ -1266,15 +1275,36 @@ def generate_security_deposit_return(data: dict, output_path: str):
             border_width=0.55,
         )
 
-    page.draw_rect(fitz.Rect(0, 0, W, 76), color=None, fill=navy)
     title = "SECURITY DEPOSIT RETURN"
-    title_w = FONT_HEBO.text_length(title, fontsize=17)
-    write((W - title_w) / 2, 32, title, font=FONT_HEBO, size=17, color=white)
-    subtitle = "Itemized Statement of Deposit, Deductions, and Refund"
-    subtitle_w = FONT_HELV.text_length(subtitle, fontsize=9)
-    write((W - subtitle_w) / 2, 52, subtitle, size=9, color=(0.86, 0.91, 0.96))
+    content_bottom = H - 46
 
-    y = 104
+    def new_page(first=False):
+        nonlocal page
+        page = doc.new_page(width=W, height=H)
+        if first:
+            page.draw_rect(fitz.Rect(0, 0, W, 76), color=None, fill=navy)
+            title_w = FONT_HEBO.text_length(title, fontsize=17)
+            write((W - title_w) / 2, 32, title, font=FONT_HEBO, size=17, color=white)
+            subtitle = "Itemized Statement of Deposit, Deductions, and Refund"
+            subtitle_w = FONT_HELV.text_length(subtitle, fontsize=9)
+            write((W - subtitle_w) / 2, 52, subtitle, size=9, color=(0.86, 0.91, 0.96))
+            return 104
+
+        page.draw_rect(fitz.Rect(0, 0, W, 44), color=None, fill=navy)
+        continued_title = f"{title} — CONTINUED"
+        continued_w = FONT_HEBO.text_length(continued_title, fontsize=11)
+        write((W - continued_w) / 2, 27, continued_title, font=FONT_HEBO, size=11, color=white)
+        return 62
+
+    y = new_page(first=True)
+
+    def ensure_space(required_height):
+        nonlocal y
+        if y + required_height <= content_bottom:
+            return False
+        y = new_page()
+        return True
+
     col_gap = 24
     col_w = (W - 2 * M - col_gap) / 2
 
@@ -1299,13 +1329,37 @@ def generate_security_deposit_return(data: dict, output_path: str):
         ("Total Deposits Held", "sdr_total_deposits", total_deposits),
     ]
     for label, name, value in rows:
+        if ensure_space(row_h):
+            write(M, y, "Property / Tenancy Information — Continued", font=FONT_HEBO, size=10, color=navy)
+            y += 16
         page.draw_rect(fitz.Rect(M, y, W - M, y + row_h), color=rule, fill=(1, 1, 1), width=0.45)
         write(M + 10, y + 18, label, font=FONT_HEBO, size=8, color=gray)
         align = fitz.TEXT_ALIGN_RIGHT if name == "sdr_total_deposits" else fitz.TEXT_ALIGN_LEFT
         field(name, fitz.Rect(M + label_w, y + 6, W - M - 10, y + 22), value, size=9, align=align)
         y += row_h
 
+    for idx, item in enumerate(property_rows):
+        if ensure_space(row_h):
+            write(M, y, "Property / Tenancy Information — Continued", font=FONT_HEBO, size=10, color=navy)
+            y += 16
+        page.draw_rect(fitz.Rect(M, y, W - M, y + row_h), color=rule, fill=(1, 1, 1), width=0.45)
+        field(
+            f"sdr_property_row_{idx}_label",
+            fitz.Rect(M + 8, y + 5, M + label_w - 12, y + 22),
+            item.get("label", ""),
+            size=8,
+        )
+        write(M + label_w - 8, y + 18, ":", font=FONT_HEBO, size=8, color=gray)
+        field(
+            f"sdr_property_row_{idx}_value",
+            fitz.Rect(M + label_w, y + 5, W - M - 10, y + 22),
+            item.get("value", ""),
+            size=9,
+        )
+        y += row_h
+
     y += 26
+    ensure_space(10 + 14 + 24 + 26)
     write(M, y, "Itemized Deductions", font=FONT_HEBO, size=10, color=navy)
     y += 14
     table_x = M
@@ -1314,15 +1368,25 @@ def generate_security_deposit_return(data: dict, output_path: str):
     cost_w = 92
     desc_w = table_w - type_w - cost_w
     header_h = 24
-    page.draw_rect(fitz.Rect(table_x, y, table_x + table_w, y + header_h), color=None, fill=navy)
-    write(table_x + 10, y + 16, "Type", font=FONT_HEBO, size=8, color=white)
-    write(table_x + type_w + 10, y + 16, "Description", font=FONT_HEBO, size=8, color=white)
-    write(table_x + type_w + desc_w + 10, y + 16, "Cost", font=FONT_HEBO, size=8, color=white)
-    y += header_h
+    def draw_deduction_header(continued=False):
+        nonlocal y
+        if continued:
+            write(M, y, "Itemized Deductions — Continued", font=FONT_HEBO, size=10, color=navy)
+            y += 14
+        page.draw_rect(fitz.Rect(table_x, y, table_x + table_w, y + header_h), color=None, fill=navy)
+        write(table_x + 10, y + 16, "Type", font=FONT_HEBO, size=8, color=white)
+        write(table_x + type_w + 10, y + 16, "Description", font=FONT_HEBO, size=8, color=white)
+        write(table_x + type_w + desc_w + 10, y + 16, "Cost", font=FONT_HEBO, size=8, color=white)
+        y += header_h
+
+    draw_deduction_header()
 
     total_deductions = 0.0
-    deduction_count = max(1, min(8, len(deductions)))
+    deduction_count = len(deductions)
     for idx in range(deduction_count):
+        if y + 26 > content_bottom:
+            y = new_page()
+            draw_deduction_header(continued=True)
         item = deductions[idx] if idx < len(deductions) and isinstance(deductions[idx], dict) else {}
         item_type = item.get("type", "")
         desc = item.get("description", "")
@@ -1346,6 +1410,7 @@ def generate_security_deposit_return(data: dict, output_path: str):
         y += 26
 
     y += 24
+    ensure_space(84)
     summary_x = W - M - 230
     summary_label_w = 138
     deposits = float(total_deposits.replace(",", "") or 0)
@@ -1369,11 +1434,15 @@ def generate_security_deposit_return(data: dict, output_path: str):
         )
         y += 28
 
-    note_y = y + 24
+    y += 24
+    ensure_space(66)
+    note_y = y
     write(M, note_y, "Notes / Explanation", font=FONT_HEBO, size=9, color=navy)
     field("sdr_notes", fitz.Rect(M, note_y + 8, W - M, note_y + 58), notes, size=9, multiline=True)
 
-    sig_y = H - 88
+    y = note_y + 86
+    ensure_space(82)
+    sig_y = y + 24
     sig_w = 220
     for x, label, slug in [
         (M, "Landlord / Agent Signature", "landlord"),
@@ -1394,6 +1463,19 @@ def generate_security_deposit_return(data: dict, output_path: str):
             signature_date_value,
             size=8,
         )
+
+    for page_index, footer_page in enumerate(doc):
+        footer_page.draw_line(
+            fitz.Point(M, H - 32),
+            fitz.Point(W - M, H - 32),
+            color=rule,
+            width=0.45,
+        )
+        footer = f"Page {page_index + 1} of {doc.page_count}"
+        footer_w = FONT_HELV.text_length(footer, fontsize=8)
+        footer_writer = fitz.TextWriter(footer_page.rect)
+        footer_writer.append((W - M - footer_w, H - 17), footer, font=FONT_HELV, fontsize=8)
+        footer_writer.write_text(footer_page, color=gray)
 
     doc.need_appearances(True)
     doc.save(output_path)

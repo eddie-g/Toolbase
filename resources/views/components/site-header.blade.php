@@ -25,8 +25,7 @@
     <div class="container mx-auto px-4 sm:px-6 lg:px-8">
         <div class="flex items-center justify-between {{ $heightClass }}">
             <a href="{{ $homeHref }}" class="flex items-center gap-3" style="text-decoration:none;">
-                <img src="{{ asset('images/netkit_logo_black.svg') }}" alt="{{ $brand }} logo" class="{{ $logoSizeClass }} object-contain dark:hidden">
-                <img src="{{ asset('images/netkit_logo_white.svg') }}" alt="{{ $brand }} logo" class="{{ $logoSizeClass }} object-contain hidden dark:block">
+                <img src="{{ asset('images/netkit_logo_cube.svg') }}" alt="{{ $brand }} logo" class="{{ $logoSizeClass }} object-contain">
                 <span id="header_logo" class="{{ $brandSizeClass }} font-bold text-gray-900 dark:text-white">{{ $brand }}</span>
             </a>
 

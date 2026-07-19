@@ -64,7 +64,7 @@ def is_text_annotation(annotation: Dict[str, Any]) -> bool:
         return False
     return kind in {"", "text"} or any(
         key in annotation
-        for key in ("text", "richTextHtml", "sourceTextLines", "sourceSpans", "promotedFromExtraction")
+        for key in ("text", "richTextHtml", "richTextRuns", "sourceTextLines", "sourceSpans", "promotedFromExtraction")
     )
 
 
@@ -319,6 +319,33 @@ def normalize_annotation_for_pdf_export(annotation: Dict[str, Any]) -> Dict[str,
     if isinstance(normalized.get("richTextHtml"), str):
         normalized["richTextHtml"] = sanitize_rich_text_html(normalized.get("richTextHtml") or "")
 
+    rich_text_runs = normalized.get("richTextRuns")
+    if isinstance(rich_text_runs, list):
+        next_runs = []
+        for run in rich_text_runs:
+            if not isinstance(run, dict):
+                continue
+            next_run = copy.deepcopy(run)
+            if str(next_run.get("type") or "").strip().lower() == "text":
+                next_run["text"] = sanitizer(next_run.get("text") or "")
+            next_runs.append(next_run)
+        normalized["richTextRuns"] = next_runs
+        # Version-2 runs are the canonical rich-text document. Repair only a
+        # line-break-only drift in the redundant plain-text copy; never use
+        # styled runs to replace different user content.
+        if next_runs and str(normalized.get("richTextVersion") or "").strip() == "2":
+            runs_text = "".join(
+                "\n"
+                if str(run.get("type") or "").strip().lower() == "break"
+                else str(run.get("text") or "")
+                if str(run.get("type") or "").strip().lower() == "text"
+                else ""
+                for run in next_runs
+            )
+            plain_text = str(normalized.get("text") or "").replace("\r\n", "\n").replace("\r", "\n")
+            if runs_text and runs_text.replace("\n", "") == plain_text.replace("\n", ""):
+                normalized["text"] = runs_text
+
     source_text_lines = normalized.get("sourceTextLines")
     if isinstance(source_text_lines, list):
         normalized["sourceTextLines"] = [sanitize_pdf_text(value) for value in source_text_lines]
@@ -353,6 +380,14 @@ def assert_annotations_pdf_safe(annotations: Sequence[Dict[str, Any]]) -> None:
         rich_html = annotation.get("richTextHtml")
         if isinstance(rich_html, str) and (_FORBIDDEN_TEXT_RE.search(rich_html) or _NBSP_ENTITY_RE.search(rich_html)):
             violations.append(f"{annotation_id}.richTextHtml")
+        rich_text_runs = annotation.get("richTextRuns")
+        if isinstance(rich_text_runs, list):
+            for run_index, run in enumerate(rich_text_runs):
+                if not isinstance(run, dict):
+                    continue
+                value = run.get("text")
+                if isinstance(value, str) and _FORBIDDEN_TEXT_RE.search(value):
+                    violations.append(f"{annotation_id}.richTextRuns[{run_index}].text")
         source_text_lines = annotation.get("sourceTextLines")
         if isinstance(source_text_lines, list):
             for line_index, value in enumerate(source_text_lines):

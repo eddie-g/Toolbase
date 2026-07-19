@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <link rel="icon" type="image/svg+xml" href="{{ asset('images/netkit_logo_cube.svg') }}">
     <script>if(localStorage.getItem('darkMode')==='true')document.documentElement.classList.add('dark');</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -717,7 +718,7 @@
 
         <!-- Style Selection Modal -->
         <div x-show="showStyleModal" x-cloak x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" @click.self="showStyleModal = false" @keydown.escape.window="showStyleModal = false">
-            <div class="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden" @click.stop
+            <div class="relative flex max-h-[calc(100vh-2rem)] w-full max-w-lg flex-col overflow-hidden rounded-2xl bg-white shadow-2xl" @click.stop
                 x-transition:enter="ease-out duration-200" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
                 <div class="flex items-center justify-between px-5 py-4 border-b border-gray-200">
                     <h3 class="text-base font-semibold text-gray-900">Choose Style</h3>
@@ -727,7 +728,7 @@
                         </svg>
                     </button>
                 </div>
-                <div class="p-5">
+                <div class="overflow-y-auto p-5">
                     <div class="mb-5 grid grid-cols-2 rounded-lg border border-gray-200 bg-gray-50 p-1">
                         <button type="button" @click="styleModalTab = 'style'"
                             class="rounded-md px-3 py-2 text-xs font-bold uppercase tracking-wider transition"
@@ -1132,6 +1133,30 @@
                                 </div>
                             </div>
                         </button>
+                        <button type="button" @click="selectTheme('technology')"
+                            class="group w-full rounded-xl border-2 p-3 text-left transition-all"
+                            :class="logoTheme === 'technology' ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50' : 'border-gray-200 hover:border-gray-300'">
+                            <div class="flex gap-3">
+                                <div class="h-20 w-28 flex-shrink-0 rounded-lg bg-slate-950 flex items-center justify-center overflow-hidden">
+                                    <svg class="h-full w-full" viewBox="0 0 112 80" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                                        <rect width="112" height="80" rx="8" fill="#0f172a"/>
+                                        <path d="M18 23H31L39 31M18 57H31L39 49M94 23H81L73 31M94 57H81L73 49M56 12V22M56 58V68" stroke="#38bdf8" stroke-width="3" stroke-linecap="round"/>
+                                        <circle cx="17" cy="23" r="4" fill="#22d3ee"/>
+                                        <circle cx="17" cy="57" r="4" fill="#8b5cf6"/>
+                                        <circle cx="95" cy="23" r="4" fill="#8b5cf6"/>
+                                        <circle cx="95" cy="57" r="4" fill="#22d3ee"/>
+                                        <circle cx="56" cy="11" r="3" fill="#a78bfa"/>
+                                        <circle cx="56" cy="69" r="3" fill="#22d3ee"/>
+                                        <rect x="37" y="21" width="38" height="38" rx="9" fill="#2563eb"/>
+                                        <path d="M48 45L42 40L48 35M64 35L70 40L64 45M59 31L53 49" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+                                    </svg>
+                                </div>
+                                <div class="min-w-0 py-1">
+                                    <div class="text-sm font-semibold" :class="logoTheme === 'technology' ? 'text-blue-700' : 'text-gray-800'">Technology</div>
+                                    <div class="mt-1 text-xs text-gray-500">Software, AI, hardware, networks, cybersecurity, and clean digital geometry.</div>
+                                </div>
+                            </div>
+                        </button>
                     </div>
                 </div>
             </div>
@@ -1323,7 +1348,7 @@
                     this.logoDomain = String(settings.logo_domain || '');
                     this.logoPrompt = String(settings.logo_prompt || '');
                     this.logoStyle = String(settings.logo_style || 'default');
-                    this.logoTheme = ['real_estate', 'nature', 'fantasy'].includes(settings.logo_theme) ? settings.logo_theme : '';
+                    this.logoTheme = ['real_estate', 'nature', 'fantasy', 'technology'].includes(settings.logo_theme) ? settings.logo_theme : '';
                     this.logoColorPalette = String(settings.logo_color_palette || 'none');
 
                     const colors = this.normalizePaletteColors(settings.logo_custom_colors || []);
@@ -1784,7 +1809,7 @@
                 },
 
                 getThemeLabel() {
-                    const labels = { real_estate: 'Real Estate', nature: 'Nature', fantasy: 'Fantasy' };
+                    const labels = { real_estate: 'Real Estate', nature: 'Nature', fantasy: 'Fantasy', technology: 'Technology' };
                     return labels[this.logoTheme] || 'None';
                 },
 
@@ -2128,12 +2153,14 @@
                                             const displayUrl = this.displayUrlForGeneratedImage(img);
                                             const editUrl = this.editUrlForGeneratedImage(img);
                                             return {
-                                                key: `${jobId}-${resultIndex}`,
+                                                key: img.generation_id || `${jobId}-${resultIndex}`,
                                                 url: displayUrl,
                                                 displayUrl,
                                                 editUrl,
                                                 logoRequestId: jobId,
                                                 imageIndex: resultIndex,
+                                                generationId: img.generation_id || null,
+                                                providerImageId: img.provider_image_id || null,
                                                 seed: statusData.seed || null,
                                                 isVector: this.outputFormat === 'vector',
                                                 metadata: existingBatch?.metadata || {}

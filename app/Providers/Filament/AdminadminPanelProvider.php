@@ -25,6 +25,10 @@ class AdminadminPanelProvider extends PanelProvider
         return $panel
             ->id('adminadmin')
             ->path('adminadmin')
+            ->brandLogo(asset('images/netkit_logo_cube.svg'))
+            ->darkModeBrandLogo(asset('images/netkit_logo_cube.svg'))
+            ->brandLogoHeight('3rem')
+            ->favicon(asset('images/netkit_logo_cube.svg'))
             ->colors([
                 'primary' => Color::Amber,
             ])

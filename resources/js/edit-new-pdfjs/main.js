@@ -54,6 +54,8 @@ import { installSignatureFeature, isSignatureAnnotation } from './signature.js';
 import {
     pdfjsPromotedOverlayShouldRenderAsPersistedOverlay,
     pdfjsSourceOverlayShouldUseSourceBoxInEditMode,
+    reconcileRichTextRunWhitespace,
+    richTextViewportCssLength,
 } from './source-edit-contract.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
@@ -118,6 +120,7 @@ const afbValign = document.getElementById('afb-valign');
 const afbUppercase = document.getElementById('afb-uppercase');
 const afbLowercase = document.getElementById('afb-lowercase');
 const afbDebug = document.getElementById('afb-debug');
+const afbAnnotationId = document.getElementById('afb-annotation-id');
 const afbCopy = document.getElementById('afb-copy');
 const afbDelete = document.getElementById('afb-delete');
 const shapeToolPanel = document.getElementById('shape-tool-panel');
@@ -433,6 +436,10 @@ let gridlinesOpacity = 0.15;
 // and after annotation rebuilds. Each entry shape mirrors what /edit-new
 // posts: { key, fieldName, value, pageIndex, fieldType, rect, ... }.
 let acroFormEntries = [];
+// Tri-state capability supplied by documentInfo. `false` is only emitted for
+// a complete normalized extraction whose every page has an empty widget list;
+// `null` preserves the page scan for legacy or incomplete extraction data.
+let documentHasAcroFormWidgets = null;
 
 // Keep the pdjs editor at the same starting zoom as the legacy editor.
 // This must be seeded into PDFViewer before its first page view is created,
@@ -783,6 +790,8 @@ function stripTransientAnnotationFields(annotation) {
     if (boolish(cleaned.pdfjsDeleted)) {
         cleaned.text = '';
         delete cleaned.richTextHtml;
+        delete cleaned.richTextRuns;
+        delete cleaned.richTextVersion;
         delete cleaned.sourceTextLines;
     }
     return cleaned;
@@ -2028,16 +2037,35 @@ function richTextHtmlRenderRatioForAnnotation(annotation, renderScale) {
     return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
 }
 
-function rescaleRichTextInlinePxStyles(rootEl, ratio) {
-    if (!rootEl || !Number.isFinite(ratio) || ratio <= 0 || Math.abs(ratio - 1) <= 0.001) return;
+function rescaleRichTextInlinePxStyles(rootEl, ratio, pointScale = 0) {
+    if (!rootEl) return;
+    const shouldScalePixels = Number.isFinite(ratio) && ratio > 0 && Math.abs(ratio - 1) > 0.001;
+    const shouldConvertPoints = Number.isFinite(pointScale) && pointScale > 0;
+    if (!shouldScalePixels && !shouldConvertPoints) return;
     rootEl.querySelectorAll('[style]').forEach((el) => {
         for (const prop of ['font-size', 'line-height', 'word-spacing', 'letter-spacing']) {
             const value = String(el.style.getPropertyValue(prop) || '').trim();
-            const match = /^(-?\d*\.?\d+)px$/i.exec(value);
-            if (!match) continue;
-            el.style.setProperty(prop, `${Number.parseFloat(match[1]) * ratio}px`);
+            const nextValue = richTextViewportCssLength(value, {
+                pixelRatio: shouldScalePixels ? ratio : 1,
+                pointScale: shouldConvertPoints ? pointScale : 0,
+            });
+            if (nextValue !== value) {
+                // Version-2 compatibility HTML stores PDF points. CSS points
+                // are physical 1/72in units (1.333 CSS px), not PDF-viewer
+                // coordinates, so convert explicitly using the page scale.
+                el.style.setProperty(prop, nextValue);
+            }
         }
     });
+}
+
+function rescaleRichTextInlineStylesForAnnotation(rootEl, annotation, renderScale) {
+    const version = Number.parseInt(String(annotation?.richTextVersion ?? ''), 10);
+    rescaleRichTextInlinePxStyles(
+        rootEl,
+        richTextHtmlRenderRatioForAnnotation(annotation, renderScale),
+        version >= 2 ? renderScale : 0,
+    );
 }
 
 function richTextHtmlForBox(box) {
@@ -2054,6 +2082,193 @@ function richTextHtmlForBox(box) {
     probe.innerHTML = html;
     const hasInlineFormatting = Boolean(probe.querySelector('[style],b,strong,i,em,u'));
     return hasInlineFormatting ? html : '';
+}
+
+const RICH_TEXT_RUN_BLOCK_TAGS = new Set([
+    'ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DIV', 'FIGCAPTION', 'FIGURE',
+    'FOOTER', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'LI', 'MAIN',
+    'NAV', 'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TD', 'TFOOT', 'TH',
+    'THEAD', 'TR', 'UL',
+]);
+
+function normalizedRichTextRunStyle(node, renderScale) {
+    const element = node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement;
+    if (!(element instanceof Element)) return null;
+    const scale = Number(renderScale) > 0 ? Number(renderScale) : 1;
+    const cs = window.getComputedStyle(element);
+    const fontSizePx = Number.parseFloat(cs.fontSize || '');
+    const lineHeightPx = Number.parseFloat(cs.lineHeight || '');
+    const rawWeight = String(cs.fontWeight || element.style?.fontWeight || '400').trim().toLowerCase();
+    const numericWeight = Number.parseInt(rawWeight, 10);
+    const fontWeight = Number.isFinite(numericWeight)
+        ? String(Math.max(100, Math.min(900, Math.round(numericWeight / 100) * 100)))
+        : (rawWeight === 'bold' ? '700' : '400');
+    const rawStyle = String(cs.fontStyle || element.style?.fontStyle || 'normal').trim().toLowerCase();
+    const fontStyle = rawStyle === 'italic' || rawStyle === 'oblique' ? rawStyle : 'normal';
+    const decoration = String(
+        cs.textDecorationLine
+        || element.style?.textDecorationLine
+        || element.style?.textDecoration
+        || '',
+    ).toLowerCase();
+    const fontFamily = parseCssFontFamily(cs.fontFamily || element.style?.fontFamily || '') || 'Helvetica';
+    const embedded = embeddedFontOptionForValue(fontFamily);
+    return {
+        fontFamily,
+        fontSourceName: embedded?.cleanName || fontFamily,
+        fontSize: Number.isFinite(fontSizePx) && fontSizePx > 0
+            ? Math.round((fontSizePx / scale) * 1000) / 1000
+            : 12,
+        lineHeight: Number.isFinite(lineHeightPx) && lineHeightPx > 0
+            ? Math.round((lineHeightPx / scale) * 1000) / 1000
+            : undefined,
+        fontWeight,
+        fontStyle,
+        color: cssColorToHex(cs.color || element.style?.color || '', '#000000'),
+        underline: decoration.includes('underline') || isUnderlineElement(element),
+    };
+}
+
+function richTextRunStyleKey(style) {
+    return [
+        style?.fontFamily || '',
+        style?.fontSourceName || '',
+        Number(style?.fontSize || 0).toFixed(3),
+        Number(style?.lineHeight || 0).toFixed(3),
+        style?.fontWeight || '',
+        style?.fontStyle || '',
+        style?.color || '',
+        style?.underline ? '1' : '0',
+    ].join('|');
+}
+
+function richTextRunsPlainText(runs) {
+    return Array.from(runs || []).map((run) => (
+        run?.type === 'break' ? '\n' : (run?.type === 'text' ? String(run.text || '') : '')
+    )).join('');
+}
+
+function richTextDiffersOnlyByLineBreaks(left, right) {
+    const normalizeWithoutBreaks = (value) => normalizeRichPlainText(value).replace(/\n/g, '');
+    return normalizeWithoutBreaks(left) === normalizeWithoutBreaks(right);
+}
+
+// Serialize the effective DOM cascade, rather than nested authoring spans, to
+// a zoom-independent PDF contract. This keeps every run self-contained and
+// prevents later CSS or viewport changes from altering saved typography.
+function richTextRunsForBox(box, renderScale) {
+    const root = selectedBoxTextElement(box);
+    if (!root) return [];
+    const runs = [];
+    const appendBreak = (allowDuplicate = true) => {
+        if (!runs.length) return;
+        if (!allowDuplicate && runs[runs.length - 1]?.type === 'break') return;
+        runs.push({ type: 'break' });
+    };
+    const appendText = (value, style) => {
+        const normalized = String(value || '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/\u00a0/g, ' ')
+            .replace(/[\u200b\u200c\u200d\u2060\ufeff]/g, '');
+        if (!normalized) return;
+        const parts = normalized.split('\n');
+        parts.forEach((part, index) => {
+            if (part) {
+                const key = richTextRunStyleKey(style);
+                const previous = runs[runs.length - 1];
+                if (previous?.type === 'text' && previous._styleKey === key) {
+                    previous.text += part;
+                } else {
+                    runs.push({ type: 'text', text: part, ...style, _styleKey: key });
+                }
+            }
+            if (index < parts.length - 1) appendBreak(true);
+        });
+    };
+    const walk = (node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+            appendText(node.nodeValue || '', normalizedRichTextRunStyle(node, renderScale));
+            return;
+        }
+        if (node.nodeType !== Node.ELEMENT_NODE) return;
+        if (node.nodeName === 'BR') {
+            appendBreak(true);
+            return;
+        }
+        if (node.getAttribute?.('data-source-span-gap') === '1') {
+            appendText(' ', normalizedRichTextRunStyle(node, renderScale));
+            return;
+        }
+        const isBlock = RICH_TEXT_RUN_BLOCK_TAGS.has(node.nodeName);
+        if (isBlock) appendBreak(false);
+        const before = runs.length;
+        Array.from(node.childNodes || []).forEach(walk);
+        if (isBlock && runs.length > before) appendBreak(false);
+    };
+    Array.from(root.childNodes || []).forEach(walk);
+    while (runs[runs.length - 1]?.type === 'break') runs.pop();
+    runs.forEach((run) => delete run._styleKey);
+
+    const expected = normalizeRichPlainText(textContentForBox(box));
+    const actual = normalizeRichPlainText(richTextRunsPlainText(runs));
+    return expected && actual === expected ? runs : [];
+}
+
+function canonicalRichTextHtmlFromRuns(runs) {
+    if (!Array.isArray(runs) || !runs.length) return '';
+    const root = document.createElement('div');
+    runs.forEach((run) => {
+        if (run?.type === 'break') {
+            root.appendChild(document.createElement('br'));
+            return;
+        }
+        if (run?.type !== 'text' || !String(run.text || '')) return;
+        const span = document.createElement('span');
+        span.textContent = String(run.text || '');
+        if (run.fontFamily) span.style.fontFamily = String(run.fontFamily);
+        if (Number(run.fontSize) > 0) span.style.fontSize = `${Number(run.fontSize)}pt`;
+        if (Number(run.lineHeight) > 0) span.style.lineHeight = `${Number(run.lineHeight)}pt`;
+        if (run.fontWeight) span.style.fontWeight = String(run.fontWeight);
+        if (run.fontStyle) span.style.fontStyle = String(run.fontStyle);
+        if (run.color) span.style.color = String(run.color);
+        if (run.underline) span.style.textDecorationLine = 'underline';
+        root.appendChild(span);
+    });
+    return root.innerHTML.trim();
+}
+
+function renderRichTextRunsIntoElement(root, runs, renderScale, expectedText = '') {
+    if (!root || !Array.isArray(runs) || !runs.length) return false;
+    const reconciledRuns = reconcileRichTextRunWhitespace(runs, expectedText);
+    const renderRuns = reconciledRuns.length ? reconciledRuns : runs;
+    const actualText = normalizeRichPlainText(richTextRunsPlainText(renderRuns));
+    const normalizedExpectedText = normalizeRichPlainText(expectedText);
+    if (!actualText || (
+        normalizedExpectedText
+        && actualText !== normalizedExpectedText
+        && !richTextDiffersOnlyByLineBreaks(actualText, normalizedExpectedText)
+    )) return false;
+    const scale = Number(renderScale) > 0 ? Number(renderScale) : 1;
+    const fragment = document.createDocumentFragment();
+    renderRuns.forEach((run) => {
+        if (run?.type === 'break') {
+            fragment.appendChild(document.createElement('br'));
+            return;
+        }
+        if (run?.type !== 'text' || !String(run.text || '')) return;
+        const span = document.createElement('span');
+        span.textContent = String(run.text || '');
+        if (run.fontFamily) span.style.fontFamily = cssFontFamilyWithGenericFallback(String(run.fontFamily));
+        if (Number(run.fontSize) > 0) span.style.fontSize = `${Number(run.fontSize) * scale}px`;
+        if (Number(run.lineHeight) > 0) span.style.lineHeight = `${Number(run.lineHeight) * scale}px`;
+        if (run.fontWeight) span.style.fontWeight = String(run.fontWeight);
+        if (run.fontStyle) span.style.fontStyle = String(run.fontStyle);
+        if (run.color) span.style.color = cssColorToHex(run.color, '#000000');
+        if (run.underline) span.style.textDecorationLine = 'underline';
+        fragment.appendChild(span);
+    });
+    root.replaceChildren(fragment);
+    return true;
 }
 
 // Older promoted-rich saves could serialize one styled span per source line
@@ -2091,6 +2306,66 @@ function restorePromotedRichTextBoundaries(root, annotation) {
         child.after(document.createTextNode(' '));
     });
     return true;
+}
+
+// Legacy authored-rich annotations sometimes kept hard breaks only in `text`
+// while adjacent styled spans in `richTextHtml` had no <br>. Reconstruct those
+// breaks by character offset without flattening or otherwise changing the
+// nested inline styles.
+function restoreAuthoredRichTextLineBreaks(root, annotation) {
+    if (!root || !annotationPreservesDisplayLineBreaks(annotation)) return false;
+    const annotationText = normalizeRichPlainText(annotation?.text || '');
+    const standaloneSourceLines = isUserCreatedTextAnnotation(annotation)
+        && Array.isArray(annotation?.sourceTextLines)
+        && annotation.sourceTextLines.length > 1
+        ? normalizeRichPlainText(annotation.sourceTextLines.map((line) => String(line ?? '')).join('\n'))
+        : '';
+    const targetText = [annotationText, standaloneSourceLines].find((candidate) => (
+        candidate.includes('\n')
+        && richTextDiffersOnlyByLineBreaks(candidate, root.textContent || '')
+    )) || '';
+    if (!targetText.includes('\n')) return false;
+    if (normalizeRichPlainText(plainTextFromRichTextElement(root)) === targetText) return true;
+
+    const flattenedTarget = targetText.replace(/\n/g, '');
+    const flattenedDom = String(root.textContent || '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/\n/g, '')
+        .replace(/\u00a0/g, ' ')
+        .replace(/[\u200b\u200c\u200d\u2060\ufeff]/g, '');
+    if (flattenedDom !== flattenedTarget) return false;
+
+    root.querySelectorAll('br').forEach((br) => br.remove());
+    const breakOffsets = [];
+    let offset = 0;
+    for (const character of targetText) {
+        if (character === '\n') breakOffsets.push(offset);
+        else offset += 1;
+    }
+    const pointAtOffset = (targetOffset) => {
+        let cursor = 0;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let node = walker.nextNode();
+        while (node) {
+            const length = String(node.nodeValue || '').length;
+            if (targetOffset <= cursor + length) {
+                return { node, offset: Math.max(0, Math.min(length, targetOffset - cursor)) };
+            }
+            cursor += length;
+            node = walker.nextNode();
+        }
+        return { node: root, offset: root.childNodes.length };
+    };
+    [...breakOffsets].reverse().forEach((breakOffset) => {
+        const point = pointAtOffset(breakOffset);
+        const range = document.createRange();
+        range.setStart(point.node, point.offset);
+        range.collapse(true);
+        range.insertNode(document.createElement('br'));
+        range.detach?.();
+    });
+    root.normalize();
+    return normalizeRichPlainText(plainTextFromRichTextElement(root)) === targetText;
 }
 
 function parseCssFontFamily(value) {
@@ -3101,7 +3376,14 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     // Synthetic per-span display markup is rebuildable scaffolding, not user
     // rich-text authoring — never serialize it as richTextHtml or the reload
     // path would treat the block as user-formatted and lose source geometry.
-    const richTextHtml = displayMarkupTextOverride != null ? '' : richTextHtmlForBox(box);
+    const authoredRichTextHtml = displayMarkupTextOverride != null ? '' : richTextHtmlForBox(box);
+    const richTextRuns = displayMarkupTextOverride != null ? [] : richTextRunsForBox(box, scale);
+    // Keep HTML for compatibility with older save readers, but canonicalize it
+    // from the structured PDF-unit runs so line breaks and the effective style
+    // cascade cannot drift apart. Plain uniform text does not need an HTML copy.
+    const richTextHtml = authoredRichTextHtml && richTextRuns.length
+        ? canonicalRichTextHtmlFromRuns(richTextRuns)
+        : authoredRichTextHtml;
     const visualLines = tc ? readVisualLinesFromBox(tc) : [];
     const shouldPersistVisualLines = box.dataset.promotedParagraphFlow !== '1'
         && box.dataset.sourceSpanEditActive !== '1'
@@ -3192,7 +3474,9 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         pageIndex,
         text: textValue,
         richTextHtml: richTextHtml || undefined,
-        pdfjsRichTextHtmlScale: richTextHtml ? String(scale) : undefined,
+        richTextRuns: richTextRuns.length ? richTextRuns : undefined,
+        richTextVersion: richTextRuns.length ? 2 : undefined,
+        pdfjsRichTextHtmlScale: richTextHtml && !richTextRuns.length ? String(scale) : undefined,
         pdfjsVisualLines: shouldPersistVisualLines ? visualLines : undefined,
         originalText: String(existingAnnotation?.originalText || box.dataset.originalText || sourceText),
         pdfX: pdfRect.x,
@@ -3951,7 +4235,11 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     const storedLineHeightPts = Number(annotation?.lineHeight);
     const usesAuthoredFlow = boolish(annotation?.styleDirty)
         || boolish(annotation?.userForcedRichText);
-    const lineHeightPts = usesAuthoredFlow && Number.isFinite(fontSizePts) && fontSizePts > 0
+    const hasVersionedExplicitLineHeight = Number(annotation?.richTextVersion) >= 2
+        && Number.isFinite(storedLineHeightPts)
+        && storedLineHeightPts > 0;
+    const lineHeightPts = !hasVersionedExplicitLineHeight
+        && usesAuthoredFlow && Number.isFinite(fontSizePts) && fontSizePts > 0
         ? Math.max(Number.isFinite(storedLineHeightPts) ? storedLineHeightPts : 0, fontSizePts * 1.4)
         : storedLineHeightPts;
     if (Number.isFinite(lineHeightPts) && lineHeightPts > 0 && scale > 0) {
@@ -7126,17 +7414,28 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     const richTextHtml = sanitizeRichTextHtmlForAnnotation(annotation.richTextHtml || '', {
         preserveLineBreaks: annotationPreservesDisplayLineBreaks(annotation),
     });
-    if (richTextHtml) {
+    const renderedStructuredRichText = renderRichTextRunsIntoElement(
+        tc,
+        annotation.richTextRuns,
+        scale,
+        annotation.text || '',
+    );
+    if (renderedStructuredRichText) {
+        // Version 2 rich text is already expressed in PDF points and rendered
+        // above at the current viewport scale.
+    } else if (richTextHtml) {
         tc.innerHTML = richTextHtml;
-        restorePromotedRichTextBoundaries(tc, annotation);
-        rescaleRichTextInlinePxStyles(tc, richTextHtmlRenderRatioForAnnotation(annotation, scale));
+        if (!restoreAuthoredRichTextLineBreaks(tc, annotation)) {
+            restorePromotedRichTextBoundaries(tc, annotation);
+        }
+        rescaleRichTextInlineStylesForAnnotation(tc, annotation, scale);
     } else {
         tc.textContent = normalizeAnnotationTextForDisplay(annotation.text || '', {
             preserveLineBreaks: annotationPreservesDisplayLineBreaks(annotation),
         });
     }
     box.appendChild(tc);
-    const keepsPromotedBlockGeometry = !richTextHtml
+    const keepsPromotedBlockGeometry = !richTextHtml && !renderedStructuredRichText
         && promotedOverlayKeepsSourceBlockGeometry(annotation)
         && (() => {
             box.classList.add('is-promoted-source-block');
@@ -10631,8 +10930,14 @@ function mergeHighlightCanvasRects(rects) {
             ? Math.min(last.top + last.height, rect.top + rect.height) - Math.max(last.top, rect.top)
             : 0;
         const minHeight = samePage ? Math.min(last.height, rect.height) : 1;
+        const centerDistance = samePage
+            ? Math.abs((last.top + (last.height / 2)) - (rect.top + (rect.height / 2)))
+            : Number.POSITIVE_INFINITY;
         const horizontalGap = samePage ? rect.left - (last.left + last.width) : Number.POSITIVE_INFINITY;
-        if (samePage && verticalOverlap >= minHeight * 0.45 && horizontalGap <= 8) {
+        const maxInlineGap = Math.max(8, minHeight * 1.5);
+        const sameTextLine = verticalOverlap >= minHeight * 0.45
+            && centerDistance <= Math.max(3, minHeight * 0.65);
+        if (samePage && sameTextLine && horizontalGap <= maxInlineGap) {
             const left = Math.min(last.left, rect.left);
             const top = Math.min(last.top, rect.top);
             const right = Math.max(last.left + last.width, rect.left + rect.width);
@@ -10738,6 +11043,101 @@ function highlightRectsFromSelection(selection) {
     return rects;
 }
 
+function highlightRectsFromDragArea(state, canvasRect) {
+    const rects = [];
+    const pageIndex = Number(state?.pageIndex);
+    const pageDiv = state?.pageDiv;
+    const pageRect = state?.pageRect;
+    if (!Number.isFinite(pageIndex) || pageIndex < 0 || !pageDiv || !pageRect || !canvasRect) return rects;
+
+    const dragClientRect = [
+        state.startClientX,
+        state.startClientY,
+        state.currentClientX,
+        state.currentClientY,
+    ].every(Number.isFinite)
+        ? {
+            left: Math.min(state.startClientX, state.currentClientX),
+            top: Math.min(state.startClientY, state.currentClientY),
+            right: Math.max(state.startClientX, state.currentClientX),
+            bottom: Math.max(state.startClientY, state.currentClientY),
+        }
+        : {
+            left: pageRect.left + canvasRect.left,
+            top: pageRect.top + canvasRect.top,
+            right: pageRect.left + canvasRect.left + canvasRect.width,
+            bottom: pageRect.top + canvasRect.top + canvasRect.height,
+        };
+    if (dragClientRect.bottom - dragClientRect.top < 6) {
+        const centerY = (dragClientRect.top + dragClientRect.bottom) / 2;
+        dragClientRect.top = centerY - 3;
+        dragClientRect.bottom = centerY + 3;
+    }
+    const seen = new Set();
+    const appendTextClientRects = (clientRects) => {
+        Array.from(clientRects || []).forEach((textRect) => {
+            if (!textRect || textRect.width < 2 || textRect.height < 2) return;
+            const overlapTop = Math.max(textRect.top, dragClientRect.top);
+            const overlapBottom = Math.min(textRect.bottom, dragClientRect.bottom);
+            const overlapHeight = overlapBottom - overlapTop;
+            if (overlapHeight < Math.min(3, textRect.height * 0.2)) return;
+            const left = Math.max(textRect.left, dragClientRect.left);
+            const right = Math.min(textRect.right, dragClientRect.right);
+            if (right - left < 2) return;
+
+            // Keep the complete glyph height, like an inline background color,
+            // while clipping the first and last line to the horizontal drag.
+            const clientRect = {
+                left,
+                right,
+                top: textRect.top,
+                bottom: textRect.bottom,
+                width: right - left,
+                height: textRect.height,
+            };
+            const canvasTextRect = canvasRectFromClientRect(pageIndex, clientRect, 0.5);
+            if (!canvasTextRect) return;
+            const key = [
+                Math.round(canvasTextRect.left * 10),
+                Math.round(canvasTextRect.top * 10),
+                Math.round(canvasTextRect.width * 10),
+                Math.round(canvasTextRect.height * 10),
+            ].join(':');
+            if (seen.has(key)) return;
+            seen.add(key);
+            rects.push({ pageIndex, ...canvasTextRect });
+        });
+    };
+
+    pageDiv.querySelectorAll(':scope > .textLayer span:not(.markedContent)').forEach((span) => {
+        if (!String(span.textContent || '').trim()) return;
+        if (span.closest('[data-enpv-moved-source-hidden="1"], [data-enpv-deleted-source="1"], [data-enpv-promoted-block-hidden="1"], [data-enpv-clean-promoted-hidden="1"]')) return;
+        appendTextClientRects(span.getClientRects?.());
+    });
+
+    // Edited, added, and promoted text can replace its PDF.js source span
+    // with visible overlay markup. Range rectangles give us the same inline
+    // fragments (including wrapped lines and formatted runs) that browser
+    // selection exposes for untouched text-layer spans.
+    pageDiv.querySelectorAll(':scope > .enpv-annotation-box-layer .enpv-text-content').forEach((root) => {
+        if (!String(root.textContent || '').trim()) return;
+        const style = window.getComputedStyle(root);
+        if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        let textNode = walker.nextNode();
+        while (textNode) {
+            if (String(textNode.nodeValue || '').trim()) {
+                const range = document.createRange();
+                range.selectNodeContents(textNode);
+                appendTextClientRects(range.getClientRects());
+                range.detach?.();
+            }
+            textNode = walker.nextNode();
+        }
+    });
+    return mergeHighlightCanvasRects(rects);
+}
+
 function maybeCommitTextSelectionHighlight() {
     if (!highlightModeActive || activeHighlightDragSession) return false;
     const selection = window.getSelection?.();
@@ -10753,7 +11153,6 @@ function startHighlightDrag(ev) {
     if (!highlightModeActive) return;
     if (ev.button !== 0 || dragState || multiDragState || resizeState || shapeRotateState || shapeCutState?.armed || marqueeSelectionState) return;
     if (ev.target?.closest?.('#highlight-tool-panel, .floating-tool-bar, .top-bar, .enpv-ann-menu')) return;
-    if (ev.target?.closest?.('.textLayer span, .textLayer br')) return;
     const pageIndex = pageIndexFromEventTarget(ev.target);
     if (!Number.isFinite(pageIndex) || pageIndex < 0) return;
     const point = pdfjsPointFromPageClient(pageIndex, ev.clientX, ev.clientY);
@@ -10777,6 +11176,10 @@ function startHighlightDrag(ev) {
         pageRect: point.pageRect,
         startCanvasX: point.canvasX,
         startCanvasY: point.canvasY,
+        startClientX: point.pageRect.left + point.canvasX,
+        startClientY: point.pageRect.top + point.canvasY,
+        currentClientX: point.pageRect.left + point.canvasX,
+        currentClientY: point.pageRect.top + point.canvasY,
         previewEl,
         moved: false,
     };
@@ -10794,6 +11197,8 @@ function updateHighlightDrag(ev) {
     const top = Math.min(state.startCanvasY, currentY);
     const width = Math.abs(currentX - state.startCanvasX);
     const height = Math.abs(currentY - state.startCanvasY);
+    state.currentClientX = state.pageRect.left + currentX;
+    state.currentClientY = state.pageRect.top + currentY;
     state.previewEl.style.left = `${left}px`;
     state.previewEl.style.top = `${top}px`;
     state.previewEl.style.width = `${width}px`;
@@ -10812,8 +11217,15 @@ function finishHighlightDrag(ev) {
     const width = Number.parseFloat(state.previewEl.style.width || '0') || 0;
     const height = Number.parseFloat(state.previewEl.style.height || '0') || 0;
     clearHighlightDragSession();
-    if (!state.moved || width < 6 || height < 6) return;
-    commitHighlightAnnotations([{ pageIndex: state.pageIndex, left, top, width, height }], 'add highlight');
+    if (!state.moved || width < 6) return;
+    const canvasRect = { left, top, width, height };
+    const textRects = highlightRectsFromDragArea(state, canvasRect);
+    if (textRects.length) {
+        commitHighlightAnnotations(textRects, 'highlight text');
+        return;
+    }
+    if (height < 6) return;
+    commitHighlightAnnotations([{ pageIndex: state.pageIndex, ...canvasRect }], 'add highlight');
 }
 
 function cancelHighlightDrag(ev) {
@@ -11478,9 +11890,12 @@ function createAnnotationBoxFromSpan(spanEl) {
     tc.contentEditable = 'false';
     tc.spellcheck = false;
     const richTextHtml = sanitizeRichTextHtmlForAnnotation(matchedAnnotation?.richTextHtml || '');
-    if (richTextHtml) {
+    if (renderRichTextRunsIntoElement(tc, matchedAnnotation?.richTextRuns, scale, matchedAnnotation?.text || '')) {
+        // Structured runs already populated the element at this render scale.
+    } else if (richTextHtml) {
         tc.innerHTML = richTextHtml;
-        rescaleRichTextInlinePxStyles(tc, richTextHtmlRenderRatioForAnnotation(matchedAnnotation, scale));
+        restoreAuthoredRichTextLineBreaks(tc, matchedAnnotation);
+        rescaleRichTextInlineStylesForAnnotation(tc, matchedAnnotation, scale);
     } else {
         tc.textContent = normalizeAnnotationTextForDisplay(matchedAnnotation?.text || sourceInfo.visualText || sourceInfo.text || spanEl.textContent || spanEl.dataset.enpvOriginal || '');
     }
@@ -12817,6 +13232,10 @@ async function loadAnnotationBoxesOnce() {
         const data = await response.json();
         if (!data?.success) throw new Error(data?.message || 'Failed to load annotation boxes.');
 
+        if (typeof data.has_acro_form_widgets === 'boolean') {
+            documentHasAcroFormWidgets = data.has_acro_form_widgets;
+        }
+
         const raw = Array.isArray(data.annotations) ? data.annotations : [];
         const serverAnnotations = raw.filter((ann) => ann && ann.db_state !== 'deleted');
         const reloadOverride = pendingAnnotationStateOverride?.generation === viewerLoadGeneration
@@ -13386,6 +13805,19 @@ function collectRenderedAcroFormEntriesSnapshot() {
 // echoed by documentInfo, so the round-trip is loss-less.
 async function collectAcroFormEntriesForSave() {
     if (!currentPdfDoc) return Array.isArray(acroFormEntries) ? acroFormEntries : [];
+    if (documentHasAcroFormWidgets === false) {
+        // Avoid currentPdfDoc.getPage(...).getAnnotations(...) across every page
+        // when the server's complete normalized extraction proves that the PDF
+        // contains no widgets. A rendered widget is a cheap defensive override
+        // for stale metadata; legacy/unknown documents never enter this branch.
+        const renderedWidget = document.querySelector(
+            '.annotationLayer input, .annotationLayer textarea, .annotationLayer select'
+        );
+        if (!renderedWidget) {
+            return Array.isArray(acroFormEntries) ? acroFormEntries : [];
+        }
+        documentHasAcroFormWidgets = true;
+    }
     if (document.activeElement?.matches?.('.annotationLayer input, .annotationLayer textarea, .annotationLayer select')) {
         document.activeElement.blur();
     }
@@ -13847,6 +14279,57 @@ function collectSecurityDepositRowIndexes() {
     return Array.from(indexes).sort((a, b) => a - b);
 }
 
+function collectSecurityDepositPropertyRowIndexes() {
+    const indexes = new Set();
+    document.querySelectorAll('.annotationLayer input[name], .annotationLayer textarea[name]').forEach((el) => {
+        const match = String(el.getAttribute('name') || '').match(/^sdr_property_row_(\d+)_(label|value)$/);
+        if (match) indexes.add(Number(match[1]));
+    });
+    return Array.from(indexes).sort((a, b) => a - b);
+}
+
+function positionSecurityDepositPropertyRowAddButton() {
+    const button = document.getElementById('enpv-guided-sdr-property-row-add');
+    if (!button || !isSecurityDepositGuidedTemplate()) return;
+
+    const indexes = collectSecurityDepositPropertyRowIndexes();
+    const lastIndex = indexes.length ? indexes[indexes.length - 1] : null;
+    const anchor = [
+        lastIndex === null ? null : sdrField(`sdr_property_row_${lastIndex}_value`),
+        lastIndex === null ? null : sdrField(`sdr_property_row_${lastIndex}_label`),
+        sdrField('sdr_total_deposits'),
+    ].find((field) => visibleInvoiceFieldRect(field));
+
+    if (!anchor) {
+        button.hidden = true;
+        return;
+    }
+
+    const rect = visibleInvoiceFieldRect(anchor);
+    if (!rect) {
+        button.hidden = true;
+        return;
+    }
+
+    const topChrome = 66;
+    const visible = rect.bottom > topChrome
+        && rect.top < window.innerHeight - 8
+        && rect.right > 0
+        && rect.left < window.innerWidth;
+    if (!visible) {
+        button.hidden = true;
+        return;
+    }
+
+    button.hidden = false;
+    const size = button.offsetWidth || 36;
+    const preferredLeft = rect.right + 10 + size > window.innerWidth - 8
+        ? rect.left - size - 10
+        : rect.right + 10;
+    button.style.left = `${Math.max(8, Math.min(window.innerWidth - size - 8, preferredLeft))}px`;
+    button.style.top = `${Math.max(topChrome, Math.min(window.innerHeight - size - 8, rect.top + (rect.height / 2) - (size / 2)))}px`;
+}
+
 function positionSecurityDepositRowAddButton() {
     const button = document.getElementById('enpv-guided-sdr-row-add');
     if (!button || !isSecurityDepositGuidedTemplate()) return;
@@ -13907,6 +14390,7 @@ function updateSecurityDepositTotals(options = {}) {
 
     latestAcroFormEntriesSnapshot = collectRenderedAcroFormEntriesSnapshot();
     if (options.save !== false) scheduleAcroFormStateSave(500);
+    positionSecurityDepositPropertyRowAddButton();
     positionSecurityDepositRowAddButton();
 }
 
@@ -13923,6 +14407,10 @@ function collectSecurityDepositPayload() {
         tenancy_began: sdrFieldValue('sdr_tenancy_began'),
         keys_turned_in: sdrFieldValue('sdr_keys_turned_in'),
         total_deposits: sdrFieldValue('sdr_total_deposits'),
+        property_rows: collectSecurityDepositPropertyRowIndexes().map((index) => ({
+            label: sdrFieldValue(`sdr_property_row_${index}_label`),
+            value: sdrFieldValue(`sdr_property_row_${index}_value`),
+        })),
         notes: sdrFieldValue('sdr_notes'),
         signature_landlord: sdrFieldValue('sdr_signature_landlord'),
         signature_tenant: sdrFieldValue('sdr_signature_tenant'),
@@ -13971,6 +14459,14 @@ function securityDepositPayloadToAcroEntries(payload) {
             entries.push({ key: fieldName, fieldName, pageIndex: 0, fieldType: 'TX', value: value ?? '' });
         });
     });
+    (payload.property_rows || []).forEach((item, index) => {
+        [
+            [`sdr_property_row_${index}_label`, item?.label ?? ''],
+            [`sdr_property_row_${index}_value`, item?.value ?? ''],
+        ].forEach(([fieldName, value]) => {
+            entries.push({ key: fieldName, fieldName, pageIndex: 0, fieldType: 'TX', value: value ?? '' });
+        });
+    });
     entries.push({ key: 'sdr_summary_total_deposits', fieldName: 'sdr_summary_total_deposits', pageIndex: 0, fieldType: 'TX', value: formatInvoiceMoney(deposits) });
     entries.push({ key: 'sdr_summary_total_deductions', fieldName: 'sdr_summary_total_deductions', pageIndex: 0, fieldType: 'TX', value: formatInvoiceMoney(totalDeductions) });
     entries.push({ key: 'sdr_refund_due', fieldName: 'sdr_refund_due', pageIndex: 0, fieldType: 'TX', value: formatInvoiceMoney(deposits - totalDeductions) });
@@ -14013,9 +14509,64 @@ async function addSecurityDepositRow() {
     setStatus('Deduction row added.');
 }
 
+async function addSecurityDepositPropertyRow() {
+    if (!REGENERATE_TEMPLATE_URL) return;
+    updateSecurityDepositTotals({ save: false });
+    const payload = collectSecurityDepositPayload();
+    payload.property_rows.push({ label: '', value: '' });
+    const nextEntries = securityDepositPayloadToAcroEntries(payload);
+    setStatus('Adding property row...');
+    setSaveStatus('Regenerating...');
+
+    const response = await fetch(REGENERATE_TEMPLATE_URL, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'X-CSRF-TOKEN': CSRF,
+        },
+        body: JSON.stringify(payload),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result?.success) {
+        throw new Error(result?.error || result?.message || `Failed to add property row (${response.status})`);
+    }
+
+    acroFormEntries = nextEntries;
+    latestAcroFormEntriesSnapshot = nextEntries;
+    pendingAcroFormEntriesOverride = nextEntries;
+    await persistAcroFormStateOnly({ entries: nextEntries });
+
+    const reloadUrl = new URL(result.file_url || PDF_URL, window.location.origin);
+    reloadUrl.searchParams.set('_', String(Date.now()));
+    await loadPdfFromUrl(reloadUrl.toString());
+    setSaveStatus('Saved');
+    setStatus('Property row added.');
+}
+
 function installSecurityDepositControls() {
     if (!IS_GUIDED_MODE) return;
     if (document.getElementById('enpv-guided-sdr-row-add')) return;
+
+    const addPropertyButton = document.createElement('button');
+    addPropertyButton.type = 'button';
+    addPropertyButton.id = 'enpv-guided-sdr-property-row-add';
+    addPropertyButton.className = 'enpv-guided-sdr-property-row-add';
+    addPropertyButton.title = 'Add label and field row';
+    addPropertyButton.setAttribute('aria-label', 'Add label and field row');
+    addPropertyButton.textContent = '+';
+    addPropertyButton.hidden = true;
+    document.body.appendChild(addPropertyButton);
+
+    addPropertyButton.addEventListener('click', () => {
+        addSecurityDepositPropertyRow().catch((error) => {
+            console.error(error);
+            setSaveStatus('Add row failed', true);
+            setStatus(error?.message || 'Failed to add property row.', true);
+            showError(error?.message || 'Failed to add property row.');
+        });
+    });
 
     const addButton = document.createElement('button');
     addButton.type = 'button';
@@ -14047,8 +14598,11 @@ function installSecurityDepositControls() {
 
     eventBus.on('annotationlayerrendered', () => updateSecurityDepositTotals({ save: false }));
     eventBus.on('pagerendered', () => window.setTimeout(() => updateSecurityDepositTotals({ save: false }), 50));
+    container?.addEventListener?.('scroll', positionSecurityDepositPropertyRowAddButton, { passive: true });
     container?.addEventListener?.('scroll', positionSecurityDepositRowAddButton, { passive: true });
+    window.addEventListener('scroll', positionSecurityDepositPropertyRowAddButton, { passive: true });
     window.addEventListener('scroll', positionSecurityDepositRowAddButton, { passive: true });
+    window.addEventListener('resize', positionSecurityDepositPropertyRowAddButton);
     window.addEventListener('resize', positionSecurityDepositRowAddButton);
     window.setTimeout(() => updateSecurityDepositTotals({ save: false }), 500);
 }
@@ -14350,6 +14904,164 @@ function dominantPromotedSourceSpan(spans, fallback = null) {
     return dominant?.span || fallback || null;
 }
 
+function logicalParagraphFlowText(value) {
+    return String(value || '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/[ \t]*\n[ \t]*/g, ' ')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
+}
+
+function logicalParagraphInlineStyleFromSourceSpan(span, baseFontSizePts) {
+    const rawColor = String(span?.hex_color || span?.textColor || span?.color || '').trim();
+    const color = /^#[0-9a-f]{6}$/i.test(rawColor) ? rawColor.toLowerCase() : '';
+    const fontFamily = String(span?.embedded_font_name || span?.font || span?.embedded_font_family || '').trim();
+    const explicitWeight = Number.parseInt(String(span?.fontWeight || span?.font_weight || '').trim(), 10);
+    const fontWeight = Number.isFinite(explicitWeight) && explicitWeight > 0
+        ? String(explicitWeight)
+        : (boolish(span?.bold) ? '700' : '400');
+    const fontStyle = boolish(span?.italic) || /italic|oblique/i.test(fontFamily) ? 'italic' : 'normal';
+    const fontSizePts = Number(span?.fontSize ?? span?.font_size ?? 0);
+    const fontSizeEm = fontSizePts > 0 && baseFontSizePts > 0 ? fontSizePts / baseFontSizePts : 1;
+    return { color, fontFamily, fontWeight, fontStyle, fontSizeEm };
+}
+
+function logicalParagraphInlineStyleKey(style) {
+    return [
+        style?.color || '',
+        style?.fontFamily || '',
+        style?.fontWeight || '',
+        style?.fontStyle || '',
+        Number(style?.fontSizeEm || 1).toFixed(4),
+    ].join('|');
+}
+
+function logicalParagraphSourceSpanLines(annotation) {
+    const spans = (Array.isArray(annotation?.sourceSpans) ? annotation.sourceSpans : [])
+        .map((span) => ({ span, rect: normalizeTopOriginBBox(span?.bbox) }))
+        .filter((entry) => entry.rect && String(entry.span?.text || entry.span?.rawText || entry.span?.render_text || '').trim())
+        .sort((left, right) => {
+            const topDelta = left.rect.y0 - right.rect.y0;
+            return Math.abs(topDelta) > 0.25 ? topDelta : left.rect.x0 - right.rect.x0;
+        });
+    const lines = [];
+    for (const entry of spans) {
+        let bestLine = null;
+        let bestOverlap = 0;
+        for (const line of lines) {
+            const overlap = Math.max(0, Math.min(line.rect.y1, entry.rect.y1) - Math.max(line.rect.y0, entry.rect.y0));
+            const minHeight = Math.max(0.001, Math.min(line.rect.y1 - line.rect.y0, entry.rect.y1 - entry.rect.y0));
+            const ratio = overlap / minHeight;
+            if (ratio >= 0.5 && ratio > bestOverlap) {
+                bestLine = line;
+                bestOverlap = ratio;
+            }
+        }
+        if (!bestLine) {
+            bestLine = { rect: { ...entry.rect }, entries: [] };
+            lines.push(bestLine);
+        } else {
+            bestLine.rect = unionTopOriginRects([bestLine.rect, entry.rect]) || bestLine.rect;
+        }
+        bestLine.entries.push(entry);
+    }
+    lines.sort((left, right) => left.rect.y0 - right.rect.y0);
+    lines.forEach((line) => line.entries.sort((left, right) => left.rect.x0 - right.rect.x0));
+    return lines;
+}
+
+function logicalParagraphInlineSegments(annotation) {
+    const lines = logicalParagraphSourceSpanLines(annotation);
+    if (!lines.length) return [];
+    const baseFontSizePts = Number(annotation?.fontSize) || Math.max(
+        1,
+        ...lines.flatMap((line) => line.entries.map((entry) => Number(entry.span?.fontSize ?? entry.span?.font_size ?? 0))),
+    );
+    const segments = [];
+    const append = (text, style) => {
+        if (!text) return;
+        const key = logicalParagraphInlineStyleKey(style);
+        const previous = segments[segments.length - 1];
+        if (previous?.key === key) previous.text += text;
+        else segments.push({ text, style, key });
+    };
+    let previousLineEntry = null;
+    lines.forEach((line, lineIndex) => {
+        let previousEntry = null;
+        line.entries.forEach((entry, entryIndex) => {
+            const rawText = String(entry.span?.text || entry.span?.rawText || entry.span?.render_text || '');
+            const text = rawText.replace(/\s+/g, ' ').trim();
+            if (!text) return;
+            const style = logicalParagraphInlineStyleFromSourceSpan(entry.span, baseFontSizePts);
+            if (lineIndex > 0 && entryIndex === 0) {
+                append(' ', style);
+            } else if (previousEntry) {
+                const previousRaw = String(previousEntry.span?.text || previousEntry.span?.rawText || previousEntry.span?.render_text || '');
+                const explicitSpace = /\s$/.test(previousRaw) || /^\s/.test(rawText);
+                const gap = entry.rect.x0 - previousEntry.rect.x1;
+                const smallerFontSize = Math.max(1, Math.min(
+                    Number(previousEntry.span?.fontSize ?? previousEntry.span?.font_size ?? baseFontSizePts) || baseFontSizePts,
+                    Number(entry.span?.fontSize ?? entry.span?.font_size ?? baseFontSizePts) || baseFontSizePts,
+                ));
+                if (explicitSpace || gap > smallerFontSize * 0.16) append(' ', style);
+            } else if (previousLineEntry) {
+                append(' ', style);
+            }
+            append(text, style);
+            previousEntry = entry;
+            previousLineEntry = entry;
+        });
+    });
+    return segments;
+}
+
+function normalizeLogicalParagraphDomLineBreaks(root) {
+    if (!root) return;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    nodes.forEach((node) => {
+        node.nodeValue = String(node.nodeValue || '').replace(/[ \t]*\r?\n[ \t]*/g, ' ');
+    });
+    root.normalize();
+}
+
+function applyLogicalParagraphInlineFlow(root, annotation, targetText) {
+    if (!root || !annotation) return false;
+    const expectedText = logicalParagraphFlowText(targetText);
+    if (!expectedText) return false;
+
+    // Authored markup from a previous edit already carries the user's inline
+    // formatting. Only remove extraction-era hard line breaks from its text
+    // nodes; rebuilding it from source spans would discard later edits.
+    if (String(annotation.richTextHtml || '').trim() && root.childElementCount > 0) {
+        normalizeLogicalParagraphDomLineBreaks(root);
+        return normalizeComparableText(root.textContent) === normalizeComparableText(expectedText);
+    }
+
+    const segments = logicalParagraphInlineSegments(annotation);
+    const reconstructed = segments.map((segment) => segment.text).join('');
+    if (!segments.length || normalizeComparableText(reconstructed) !== normalizeComparableText(expectedText)) {
+        return false;
+    }
+
+    root.replaceChildren();
+    for (const segment of segments) {
+        const span = document.createElement('span');
+        span.dataset.enpvSourceInlineRun = '1';
+        span.textContent = segment.text;
+        if (segment.style.color) span.style.color = segment.style.color;
+        if (segment.style.fontFamily) span.style.fontFamily = cssFontFamilyWithGenericFallback(segment.style.fontFamily);
+        if (segment.style.fontWeight) span.style.fontWeight = segment.style.fontWeight;
+        if (segment.style.fontStyle) span.style.fontStyle = segment.style.fontStyle;
+        if (Math.abs(Number(segment.style.fontSizeEm || 1) - 1) > 0.01) {
+            span.style.fontSize = `${Number(segment.style.fontSizeEm).toFixed(4)}em`;
+        }
+        root.appendChild(span);
+    }
+    return true;
+}
+
 function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale, sourceGroups, textLayerEl) {
     const sourceBox = promotedSourceBlockPdfBox(annotation);
     const rect = pdfRectToCanvasRect(sourceBox, viewport, scale);
@@ -14446,9 +15158,12 @@ function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale,
     tc.contentEditable = 'false';
     tc.spellcheck = false;
     const richTextHtml = sanitizeRichTextHtmlForAnnotation(annotation.richTextHtml || '');
-    if (richTextHtml) {
+    if (renderRichTextRunsIntoElement(tc, annotation.richTextRuns, scale, annotation.text || '')) {
+        // Structured runs already populated the element at this render scale.
+    } else if (richTextHtml) {
         tc.innerHTML = richTextHtml;
-        rescaleRichTextInlinePxStyles(tc, richTextHtmlRenderRatioForAnnotation(annotation, scale));
+        restoreAuthoredRichTextLineBreaks(tc, annotation);
+        rescaleRichTextInlineStylesForAnnotation(tc, annotation, scale);
     } else {
         tc.textContent = normalizeRichPlainText(annotation.text || baseText);
     }
@@ -14984,9 +15699,12 @@ function renderAnnotationBoxLayer(pageIndex) {
         tc.contentEditable = 'false';
         tc.spellcheck = false;
         const richTextHtml = sanitizeRichTextHtmlForAnnotation(matchedAnnotation?.richTextHtml || '');
-        if (richTextHtml) {
+        if (renderRichTextRunsIntoElement(tc, matchedAnnotation?.richTextRuns, scale, matchedAnnotation?.text || '')) {
+            // Structured runs already populated the element at this render scale.
+        } else if (richTextHtml) {
             tc.innerHTML = richTextHtml;
-            rescaleRichTextInlinePxStyles(tc, richTextHtmlRenderRatioForAnnotation(matchedAnnotation, scale));
+            restoreAuthoredRichTextLineBreaks(tc, matchedAnnotation);
+            rescaleRichTextInlineStylesForAnnotation(tc, matchedAnnotation, scale);
         } else {
             tc.textContent = normalizeAnnotationTextForDisplay(matchedAnnotation?.text || group.visualText || group.text || span.textContent || span.dataset.enpvOriginal || '');
         }
@@ -15863,6 +16581,13 @@ function updateAnnotationFormatBarForBox(box) {
         if (first) afbFont.value = first.value;
     }
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    if (afbAnnotationId) {
+        const annotationId = String(box.dataset.annotationId || existing?.id || box.dataset.uid || '');
+        afbAnnotationId.value = annotationId;
+        afbAnnotationId.title = annotationId
+            ? `Click to select ${annotationId}`
+            : 'No annotation ID is available';
+    }
     const cs = selectedBoxComputedStyle(box);
     const fontSizePts = selectedBoxFontSizePts(box);
     if (afbSize) afbSize.value = String(fontPtToSliderValue(fontSizePts));
@@ -17284,10 +18009,11 @@ function beginEditMode(box) {
         const isLogicalParagraphFlow = box.classList.contains('is-promoted-source-block')
             && boolish(existing?.promotedLogicalParagraph);
         const editingText = isLogicalParagraphFlow
-            ? originalText.replace(/[ \t]*\r?\n[ \t]*/g, ' ')
+            ? logicalParagraphFlowText(originalText)
             : originalText;
         if (isLogicalParagraphFlow) {
-            tc.textContent = editingText;
+            const inlineFlowApplied = applyLogicalParagraphInlineFlow(tc, existing, editingText);
+            if (!inlineFlowApplied) tc.textContent = editingText;
             box.dataset.promotedParagraphFlow = '1';
             box.classList.add('is-promoted-paragraph-flow');
         } else {
@@ -17852,7 +18578,14 @@ function onShapeRotatePointerMove(ev) {
     shapeRotateState.currentRotation = nextRotation;
     box.dataset.rotation = String(Math.round(nextRotation * 10) / 10);
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
-    updateShapeSvgForBox(box, buildAnnotationFromBox(box, existing) || existing || {}, Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1);
+    const liveAnnotation = buildAnnotationFromBox(box, existing) || existing || {};
+    updateShapeSvgForBox(box, {
+        ...liveAnnotation,
+        // Persisted shapes remain in their stable read path until pointerup.
+        // Use the live DOM angle so the SVG follows the selection frame while
+        // the rotation gesture is still in progress.
+        rotation: nextRotation,
+    }, Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1);
 }
 
 function onShapeRotatePointerUp(ev) {
@@ -19128,6 +19861,13 @@ afbDebug?.addEventListener('click', () => {
         console.error(err);
         showError(err.message || 'Failed to open annotation debug panel.');
     });
+});
+afbAnnotationId?.addEventListener('click', () => {
+    afbAnnotationId.select();
+    afbAnnotationId.setSelectionRange?.(0, afbAnnotationId.value.length);
+});
+afbAnnotationId?.addEventListener('focus', () => {
+    afbAnnotationId.select();
 });
 afbClose?.addEventListener('click', hideAnnotationFormatBar);
 afbCopy?.addEventListener('click', () => {

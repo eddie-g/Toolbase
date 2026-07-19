@@ -5,8 +5,11 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import fitz
+from fontTools import subset
+from fontTools.ttLib import TTFont
 
 
 MODULE_PATH = pathlib.Path(__file__).resolve().parents[1] / "pdf-editor" / "apply_annotations_direct_new.py"
@@ -28,6 +31,418 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.module = load_module()
+
+    def test_legacy_zoom_px_rich_text_restores_breaks_and_per_run_point_sizes(self):
+        annotation = {
+            "type": "text",
+            "text": (
+                "Thank you for your order!\n"
+                "If you have any questions about your order, you can email us at support@example.com"
+            ),
+            "fontFamily": "Helvetica",
+            "fontSize": 10,
+            "lineHeight": 12,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "pdfjsRichTextHtmlScale": "3.333333333333333",
+            "richTextHtml": (
+                '<span style="font-size:46.6667px;line-height:56px">'
+                '<span style="font-size:50px;line-height:60px">Thank you for your order!</span>'
+                '</span>'
+                '<span style="font-size:30px;line-height:36px">'
+                '<span style="font-size:36.6667px;line-height:44px">'
+                '<span style="font-size:33.3333px;line-height:40px">'
+                'If you have any questions about your order, you can email us at support@example.com'
+                '</span></span></span>'
+            ),
+        }
+
+        ops = self.module.parse_rich_text_layout_ops(annotation)
+
+        self.assertEqual(self.module._rich_text_layout_ops_to_text(ops), annotation["text"])
+        text_ops = [op for op in ops if op.get("type") == "text"]
+        self.assertEqual(len(text_ops), 2)
+        self.assertAlmostEqual(text_ops[0]["font_size"], 15.0, places=3)
+        self.assertAlmostEqual(text_ops[0]["line_height"], 18.0, places=3)
+        self.assertAlmostEqual(text_ops[1]["font_size"], 10.0, places=3)
+        self.assertAlmostEqual(text_ops[1]["line_height"], 12.0, places=3)
+
+    def test_structured_rich_text_runs_preserve_complete_effective_styles(self):
+        annotation = {
+            "type": "text",
+            "text": "Large red\nSmall blue",
+            "fontFamily": "Helvetica",
+            "fontSize": 10,
+            "lineHeight": 12,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "richTextVersion": 2,
+            "richTextRuns": [
+                {
+                    "type": "text",
+                    "text": "Large red",
+                    "fontFamily": "Verdana",
+                    "fontSourceName": "Verdana",
+                    "fontSize": 18,
+                    "lineHeight": 22,
+                    "fontWeight": "700",
+                    "fontStyle": "italic",
+                    "color": "#cc1122",
+                    "underline": True,
+                },
+                {"type": "break"},
+                {
+                    "type": "text",
+                    "text": "Small blue",
+                    "fontFamily": "Courier",
+                    "fontSize": 9,
+                    "lineHeight": 11,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#2244cc",
+                    "underline": False,
+                },
+            ],
+            # Deliberately stale HTML: version-2 runs must be authoritative.
+            "richTextHtml": "<span>wrong</span>",
+        }
+
+        ops = self.module.parse_rich_text_layout_ops(annotation)
+
+        self.assertEqual(self.module._rich_text_layout_ops_to_text(ops), annotation["text"])
+        first, second = [op for op in ops if op.get("type") == "text"]
+        self.assertEqual(first["font_family"], "Verdana")
+        self.assertEqual(first["font_source_name"], "Verdana")
+        self.assertEqual(first["font_size"], 18)
+        self.assertEqual(first["line_height"], 22)
+        self.assertEqual(first["font_weight"], "700")
+        self.assertEqual(first["font_style"], "italic")
+        self.assertEqual(first["color"], "#cc1122")
+        self.assertTrue(first["underline"])
+        self.assertEqual(second["font_family"], "Courier")
+        self.assertEqual(second["font_size"], 9)
+        self.assertEqual(second["color"], "#2244cc")
+
+    def test_structured_mixed_paragraph_writes_distinct_pdf_span_styles(self):
+        annotation = {
+            "id": "pdfjs_rich_mixed_regression",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "Large red green italic\nSmall blue",
+            "pdfX": 72,
+            "pdfY": 620,
+            "pdfWidth": 468,
+            "pdfHeight": 80,
+            "fontFamily": "Helvetica",
+            "fontSize": 10,
+            "lineHeight": 12,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "opacity": 1,
+            "userCreated": True,
+            "userAuthored": True,
+            "savedTextOverlay": True,
+            "skipPdfjsSourceMask": True,
+            "richTextVersion": 2,
+            "richTextRuns": [
+                {
+                    "type": "text", "text": "Large red ",
+                    "fontFamily": "Verdana", "fontSize": 18, "lineHeight": 22,
+                    "fontWeight": "700", "fontStyle": "normal",
+                    "color": "#ff0000", "underline": True,
+                },
+                {
+                    "type": "text", "text": "green italic",
+                    "fontFamily": "Verdana", "fontSize": 12, "lineHeight": 16,
+                    "fontWeight": "400", "fontStyle": "italic",
+                    "color": "#00aa00", "underline": False,
+                },
+                {"type": "break"},
+                {
+                    "type": "text", "text": "Small blue",
+                    "fontFamily": "Courier", "fontSize": 9, "lineHeight": 11,
+                    "fontWeight": "400", "fontStyle": "normal",
+                    "color": "#0000ff", "underline": False,
+                },
+            ],
+            "richTextHtml": (
+                '<span style="font:700 18pt Verdana;color:#ff0000">Large red </span>'
+                '<span style="font:italic 12pt Verdana;color:#00aa00">green italic</span><br>'
+                '<span style="font:9pt Courier;color:#0000ff">Small blue</span>'
+            ),
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = pathlib.Path(temp_dir) / "mixed.pdf"
+            document = fitz.open()
+            document.new_page(width=612, height=792)
+            document.save(pdf_path)
+            document.close()
+
+            self.module.apply_annotations(str(pdf_path), [annotation])
+
+            output = fitz.open(pdf_path)
+            try:
+                spans = [
+                    span
+                    for block in output[0].get_text("dict").get("blocks", [])
+                    for line in block.get("lines", [])
+                    for span in line.get("spans", [])
+                    if span.get("text", "").strip()
+                ]
+                drawings = output[0].get_drawings()
+            finally:
+                output.close()
+
+        by_text = {span["text"].replace("\u00a0", " ").strip(): span for span in spans}
+        self.assertIn("Large red", by_text)
+        self.assertIn("green italic", by_text)
+        self.assertIn("Small blue", by_text)
+        self.assertAlmostEqual(by_text["Large red"]["size"], 18, delta=0.15)
+        self.assertAlmostEqual(by_text["green italic"]["size"], 12, delta=0.15)
+        self.assertAlmostEqual(by_text["Small blue"]["size"], 9, delta=0.15)
+        self.assertEqual(by_text["Large red"]["color"], 0xFF0000)
+        self.assertEqual(by_text["green italic"]["color"], 0x00AA00)
+        self.assertEqual(by_text["Small blue"]["color"], 0x0000FF)
+        self.assertLess(by_text["Large red"]["bbox"][1], by_text["Small blue"]["bbox"][1])
+        self.assertTrue(any(drawing.get("color") == (1.0, 0.0, 0.0) for drawing in drawings))
+
+    def test_preserved_pdfjs_source_runs_use_current_mixed_rich_styles(self):
+        text = "Foundation Account: 06039461"
+        annotation = {
+            "type": "text",
+            "text": text,
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "fontFamily": "sans-serif",
+            "fontSize": 9,
+            "fontWeight": "700",
+            "fontStyle": "normal",
+            "textColor": "#303038",
+            "richTextHtml": (
+                '<span style="font-weight:700;color:#303038">Foundation Account: </span>'
+                '<span style="font-weight:400;color:#a68930">06039461</span>'
+            ),
+            "pdfjsSourceSpanRunsScale": 1,
+            "pdfjsSourceSpanRuns": [
+                {
+                    "text": "Foundation Account:",
+                    "leftPx": 0,
+                    "rightPx": 90,
+                    "topPx": 0,
+                    "bottomPx": 12,
+                    "fontSizePx": 9,
+                    "fontFamily": "sans-serif",
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                },
+                {
+                    "text": "06039461",
+                    "leftPx": 95,
+                    "rightPx": 135,
+                    "topPx": 0,
+                    "bottomPx": 12,
+                    "fontSizePx": 9,
+                    "fontFamily": "sans-serif",
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_pdfjs_source_span_run_layout(
+            annotation,
+            text,
+            fitz.Rect(20, 20, 155, 32),
+            9,
+        )
+
+        self.assertEqual(len(layout), 1)
+        spans = layout[0]["spans"]
+        self.assertEqual([span["text"] for span in spans], ["Foundation Account:", "06039461"])
+        self.assertEqual([span["font_weight"] for span in spans], ["700", "400"])
+        self.assertEqual([span["color"] for span in spans], ["#303038", "#a68930"])
+
+    def test_style_dirty_rich_overlay_reflows_instead_of_reusing_stale_source_rects(self):
+        annotation = {
+            "movedTextOverlay": True,
+            "savedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "styleDirty": True,
+            "userForcedRichText": True,
+            "pdfjsEditorMode": "rich",
+            "pdfjsSourceSpanRuns": [
+                {"text": "Styled"},
+                {"text": "text"},
+            ],
+        }
+
+        self.assertFalse(
+            self.module.should_preserve_pdfjs_moved_source_line(
+                annotation,
+                "Styled text",
+            )
+        )
+
+    def test_rich_style_boundary_splits_a_preserved_pdfjs_source_run_generically(self):
+        text = "AlphaBeta Tail"
+        annotation = {
+            "type": "text",
+            "text": text,
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "fontFamily": "sans-serif",
+            "fontSize": 10,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#111111",
+            "richTextHtml": (
+                '<span style="font-weight:700;color:#112233">Alpha</span>'
+                '<span style="font-style:italic;color:#445566">Beta</span> Tail'
+            ),
+            "pdfjsSourceSpanRunsScale": 1,
+            "pdfjsSourceSpanRuns": [
+                {
+                    "text": "AlphaBeta",
+                    "leftPx": 0,
+                    "rightPx": 72,
+                    "topPx": 0,
+                    "bottomPx": 12,
+                    "fontSizePx": 10,
+                    "fontFamily": "sans-serif",
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                },
+                {
+                    "text": "Tail",
+                    "leftPx": 77,
+                    "rightPx": 100,
+                    "topPx": 0,
+                    "bottomPx": 12,
+                    "fontSizePx": 10,
+                    "fontFamily": "sans-serif",
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                },
+            ],
+        }
+
+        layout = self.module.normalize_pdfjs_source_span_run_layout(
+            annotation,
+            text,
+            fitz.Rect(20, 20, 120, 32),
+            10,
+        )
+
+        spans = layout[0]["spans"]
+        self.assertEqual([span["text"] for span in spans], ["Alpha", "Beta", "Tail"])
+        self.assertEqual([span["font_weight"] for span in spans], ["700", "400", "400"])
+        self.assertEqual([span["font_style"] for span in spans], ["normal", "italic", "normal"])
+        self.assertEqual([span["color"] for span in spans], ["#112233", "#445566", "#111111"])
+        self.assertAlmostEqual(spans[0]["rect"].x1, spans[1]["rect"].x0)
+        self.assertAlmostEqual(spans[1]["rect"].x1, 92.0)
+
+    def test_pdfjs_visual_lines_preserve_typographic_quotes(self):
+        text = 'Alpha “quoted text” omega'
+        annotation = {
+            "pdfjsVisualLines": [
+                'Alpha “quoted',
+                'text” omega',
+            ],
+        }
+
+        self.assertEqual(
+            self.module.normalized_pdfjs_visual_lines(annotation, text),
+            ['Alpha “quoted', 'text” omega'],
+        )
+
+    def test_pdfjs_visual_lines_draw_with_curly_quote_only_font_subset(self):
+        text = 'Alpha “quoted text” omega'
+        font_source = pathlib.Path(self.module.FONT_DIR) / "Verdana-Regular.ttf"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            subset_path = pathlib.Path(temp_dir) / "curly-quote-subset.ttf"
+            font = TTFont(font_source)
+            subsetter = subset.Subsetter()
+            subsetter.populate(text=text)
+            subsetter.subset(font)
+            font.save(subset_path)
+            font.close()
+
+            subset_font = TTFont(subset_path)
+            try:
+                cmap = subset_font.getBestCmap() or {}
+                self.assertIn(ord('“'), cmap)
+                self.assertIn(ord('”'), cmap)
+                self.assertNotIn(ord('"'), cmap)
+            finally:
+                subset_font.close()
+
+            pdf_path = pathlib.Path(temp_dir) / "visual-lines.pdf"
+            doc = fitz.open()
+            try:
+                doc.new_page(width=320, height=180)
+                doc.save(pdf_path)
+            finally:
+                doc.close()
+
+            annotation = {
+                "id": "generic_smart_quote_paragraph",
+                "type": "text",
+                "pageIndex": 0,
+                "text": text,
+                "originalText": "Original paragraph",
+                "pdfjsSourceText": "Original paragraph",
+                "pdfjsSourceX": 25,
+                "pdfjsSourceY": 30,
+                "pdfjsSourceW": 250,
+                "pdfjsSourceH": 40,
+                "pdfjsSourcePageHeight": 180,
+                "pdfX": 25,
+                "pdfY": 30,
+                "pdfWidth": 250,
+                "pdfHeight": 40,
+                "fontSize": 12,
+                "lineHeight": 16,
+                "fontFamily": "Verdana",
+                "fontWeight": "400",
+                "fontStyle": "normal",
+                "textColor": "#000000",
+                "promotedFromExtraction": True,
+                "promotedDirty": True,
+                "savedTextOverlay": True,
+                "movedTextOverlay": True,
+                "userForcedRichText": True,
+                "pdfjsEditorMode": "rich",
+                "pdfjsSourceFidelity": True,
+                "pdfjsVisualLines": [
+                    'Alpha “quoted',
+                    'text” omega',
+                ],
+            }
+
+            with patch.object(
+                self.module,
+                "resolve_text_fontfile_with_coverage",
+                return_value=str(subset_path),
+            ):
+                self.module.apply_annotations(str(pdf_path), [annotation])
+
+            output = fitz.open(pdf_path)
+            try:
+                rendered_text = output[0].get_text()
+            finally:
+                output.close()
+
+            self.assertIn('“quoted\ntext”', rendered_text)
+            self.assertNotIn("\x00", rendered_text)
 
     def test_pdfjs_redaction_uses_search_occurrence_when_browser_rect_drifted(self):
         doc = fitz.open()

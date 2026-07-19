@@ -864,6 +864,33 @@ body.enpv-body #ann-format-bar .afb-text-tools-group .afb-control-row {
 body.enpv-body #ann-format-bar .afb-debug {
     color: #7c3aed;
 }
+body.enpv-body #ann-format-bar .afb-annotation-id-label {
+    display: block;
+    margin-top: 4px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 700;
+}
+body.enpv-body #ann-format-bar .afb-annotation-id {
+    width: 100%;
+    min-width: 0;
+    height: 34px;
+    box-sizing: border-box;
+    border: 1px solid #cbd5e1;
+    border-radius: 7px;
+    padding: 6px 8px;
+    background: #f8fafc;
+    color: #334155;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 11px;
+    cursor: text;
+    user-select: text;
+}
+body.enpv-body #ann-format-bar .afb-annotation-id:focus {
+    border-color: #7c3aed;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.14);
+}
 body.enpv-body #ann-format-bar .afb-color-group .afb-control-row {
     display: grid;
     grid-template-columns: repeat(2, 44px);
@@ -2080,6 +2107,7 @@ body.enpv-body .enpv-guided-helper-panel pre {
 }
 
 body.enpv-body .enpv-guided-invoice-row-add,
+body.enpv-body .enpv-guided-sdr-property-row-add,
 body.enpv-body .enpv-guided-sdr-row-add {
     position: fixed;
     z-index: 46;
@@ -2101,6 +2129,8 @@ body.enpv-body .enpv-guided-sdr-row-add {
 
 body.enpv-body .enpv-guided-invoice-row-add:hover,
 body.enpv-body .enpv-guided-invoice-row-add:focus-visible,
+body.enpv-body .enpv-guided-sdr-property-row-add:hover,
+body.enpv-body .enpv-guided-sdr-property-row-add:focus-visible,
 body.enpv-body .enpv-guided-sdr-row-add:hover,
 body.enpv-body .enpv-guided-sdr-row-add:focus-visible {
     background: #1f2ab4;
@@ -2108,6 +2138,7 @@ body.enpv-body .enpv-guided-sdr-row-add:focus-visible {
 }
 
 body.enpv-body .enpv-guided-invoice-row-add[hidden],
+body.enpv-body .enpv-guided-sdr-property-row-add[hidden],
 body.enpv-body .enpv-guided-sdr-row-add[hidden] {
     display: none !important;
 }
@@ -3259,10 +3290,20 @@ body.enpv-highlight-on .textLayer,
 body.enpv-highlight-on .textLayer span,
 body.enpv-highlight-on .enpv-annotation-box-layer { cursor: text !important; }
 body.enpv-highlight-on .pdfViewer .textLayer,
-body.enpv-highlight-on .pdfViewer .textLayer span,
+body.enpv-highlight-on .pdfViewer .textLayer span:not(.markedContent),
 body.enpv-highlight-on .pdfViewer .textLayer br {
     pointer-events: auto;
     user-select: text;
+}
+body.enpv-highlight-on .pdfViewer .textLayer span.markedContent {
+    pointer-events: none;
+}
+/* Highlight mode is a painting mode. Let pointer gestures pass through
+ * editable overlay boxes to the PDF.js text layer so dragging over saved or
+ * promoted text produces inline, per-line highlight bands. Existing
+ * highlights become interactive again as soon as highlight mode is closed. */
+body.enpv-highlight-on .pdfViewer .enpv-annotation-box {
+    pointer-events: none !important;
 }
 body.enpv-highlight-on .enpv-annotation-box.enpv-highlight-box { cursor: grab !important; }
 body.enpv-note-anchor-placing #viewerContainer,

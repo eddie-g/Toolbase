@@ -73,7 +73,7 @@ async function main() {
             if (request.method() === 'POST' && request.url() === saveUrl) saveRequests.push(request);
         });
 
-        await page.click('#add-shape-btn');
+        await page.click('#ftb-add-shape');
         await page.waitForSelector('#shape-tool-panel.is-visible', { timeout: 5000 });
         await page.click('[data-shape-tool="square"]');
 
@@ -84,6 +84,16 @@ async function main() {
         await page.mouse.move(pageBox.x + 900, pageBox.y + 400, { steps: 8 });
         await page.mouse.up();
         await page.waitForSelector('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected[data-shape-type="square"] .enpv-shape-rotate-handle', { timeout: 10000 });
+
+        // Match the state of a shape restored from a prior save. New shapes
+        // may still carry transient edit flags that bypass the stable
+        // persisted-annotation path where this regression originally lived.
+        await page.evaluate(() => {
+            const box = document.querySelector('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected[data-shape-type="square"]');
+            if (!box) throw new Error('Missing selected square before persisted-state setup.');
+            delete box.dataset.pendingEdit;
+            delete box.dataset.pendingResize;
+        });
 
         const initial = await page.evaluate(() => {
             const box = document.querySelector('.pdfViewer .page[data-page-number="1"] .enpv-shape-box.is-selected[data-shape-type="square"]');
@@ -154,7 +164,7 @@ async function main() {
             throw new Error(`Shape did not rotate with the handle arc: ${JSON.stringify(rotated)}`);
         }
 
-        await page.click('#save-btn');
+        await page.evaluate(() => document.getElementById('save-btn')?.click());
         await page.waitForFunction(() => /Saved|No changes/.test(document.querySelector('#save-status')?.textContent || ''), { timeout: 30000 });
         if (!saveRequests.length) {
             throw new Error('No save request was captured after rotating shape.');
