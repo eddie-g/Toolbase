@@ -119,6 +119,7 @@ When a PDF is uploaded, `ProcessUploadedDocumentJob` queues two extraction passe
 ## Page Management
 
 - **Reorder pages** — `POST /documents/{id}/reorder-pages`
+- **Merge / Split PDFs** — the shared PDF.js editor modal uses `POST /documents/{id}/merge-pdfs` to add and reorder whole documents, and `POST /documents/{id}/split-pdf` to create a PDF containing checked pages from the current edited document in their original order. The split result can be downloaded or saved as a new document and opened in the editor.
 - **Add blank page** — `POST /documents/{id}/add-blank-page`
 - **Rotate a page** — `POST /documents/{id}/rotate-page`
 - **Flatten rotations** — `POST /documents/{id}/flatten-rotations` bakes page rotation transforms permanently into the PDF binary.

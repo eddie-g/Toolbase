@@ -62,7 +62,14 @@ def split_pdf(input_path: str, output_dir: str, mode: str, **kwargs) -> dict:
     except Exception as e:
         return {"success": False, "error": f"Failed to open PDF: {e}"}
 
+    if doc.needs_pass:
+        doc.close()
+        return {"success": False, "error": "The PDF is password protected"}
+
     total = doc.page_count
+    if total < 1:
+        doc.close()
+        return {"success": False, "error": "The PDF has no pages"}
     base_name = os.path.splitext(os.path.basename(input_path))[0]
     output_files = []
 
@@ -71,7 +78,7 @@ def split_pdf(input_path: str, output_dir: str, mode: str, **kwargs) -> dict:
             # One PDF per page
             for i in range(total):
                 out_doc = fitz.open()
-                out_doc.insert_pdf(doc, from_page=i, to_page=i)
+                out_doc.insert_pdf(doc, from_page=i, to_page=i, links=True, annots=True, widgets=True)
                 out_path = os.path.join(output_dir, f"{base_name}_page_{i + 1}.pdf")
                 out_doc.save(out_path, garbage=3, deflate=True)
                 out_doc.close()
@@ -82,7 +89,7 @@ def split_pdf(input_path: str, output_dir: str, mode: str, **kwargs) -> dict:
             if page_num < 1 or page_num > total:
                 return {"success": False, "error": f"Page {page_num} out of range (1-{total})"}
             out_doc = fitz.open()
-            out_doc.insert_pdf(doc, from_page=page_num - 1, to_page=page_num - 1)
+            out_doc.insert_pdf(doc, from_page=page_num - 1, to_page=page_num - 1, links=True, annots=True, widgets=True)
             out_path = os.path.join(output_dir, f"{base_name}_page_{page_num}.pdf")
             out_doc.save(out_path, garbage=3, deflate=True)
             out_doc.close()
@@ -94,7 +101,7 @@ def split_pdf(input_path: str, output_dir: str, mode: str, **kwargs) -> dict:
             if from_page < 1 or to_page > total or from_page > to_page:
                 return {"success": False, "error": f"Invalid range {from_page}-{to_page} (document has {total} pages)"}
             out_doc = fitz.open()
-            out_doc.insert_pdf(doc, from_page=from_page - 1, to_page=to_page - 1)
+            out_doc.insert_pdf(doc, from_page=from_page - 1, to_page=to_page - 1, links=True, annots=True, widgets=True)
             out_path = os.path.join(output_dir, f"{base_name}_pages_{from_page}-{to_page}.pdf")
             out_doc.save(out_path, garbage=3, deflate=True)
             out_doc.close()
@@ -112,7 +119,7 @@ def split_pdf(input_path: str, output_dir: str, mode: str, **kwargs) -> dict:
 
             out_doc = fitz.open()
             for idx in page_indices:
-                out_doc.insert_pdf(doc, from_page=idx, to_page=idx)
+                out_doc.insert_pdf(doc, from_page=idx, to_page=idx, links=True, annots=True, widgets=True)
 
             # Build a short label from the pages
             page_nums = [idx + 1 for idx in page_indices]
@@ -139,6 +146,18 @@ def split_pdf(input_path: str, output_dir: str, mode: str, **kwargs) -> dict:
         return {"success": False, "error": f"Split failed: {e}"}
 
     doc.close()
+
+    for output_file in output_files:
+        output_path = output_file.get("path", "")
+        expected_pages = len(output_file.get("pages", [])) or 1
+        try:
+            verification = fitz.open(output_path)
+            actual_pages = verification.page_count
+            verification.close()
+        except Exception:
+            return {"success": False, "error": "Split PDF verification failed"}
+        if actual_pages != expected_pages:
+            return {"success": False, "error": "Split PDF page-count verification failed"}
 
     return {
         "success": True,

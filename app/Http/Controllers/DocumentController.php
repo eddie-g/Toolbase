@@ -10,6 +10,8 @@ use App\Models\PdfAcroForm;
 use App\Models\PdfGroup;
 use App\Models\PdfState;
 use App\Services\PdfAnnotationAssetService;
+use App\Services\PdfDocumentMergeConflictException;
+use App\Services\PdfDocumentMergeService;
 use App\Services\PdfFitzExtractionNormalizer;
 use App\Support\PdfAnnotationSuppression;
 use App\Models\User;
@@ -20,6 +22,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -9617,6 +9620,98 @@ class DocumentController extends Controller
         ], 500);
     }
 
+    public function mergePdfs(Request $request, Document $document, PdfDocumentMergeService $mergeService)
+    {
+        if ($document->mode === 'guided') {
+            return response()->json([
+                'success' => false,
+                'message' => 'PDF merging is not available for guided documents.',
+            ], 422);
+        }
+
+        $order = json_decode((string) $request->input('order', ''), true);
+        if (!is_array($order)) {
+            $order = [];
+        }
+        $request->merge(['merge_order' => array_values($order)]);
+
+        $maxFiles = max(1, (int) config('pdf_editor.merge.max_files', 10));
+        $maxFileKb = max(1, (int) config('pdf_editor.merge.max_file_kb', 20480));
+        $validated = $request->validate([
+            'pdfs' => ['required', 'array', 'min:1', "max:{$maxFiles}"],
+            'pdfs.*' => ['required', 'file', 'mimes:pdf', "max:{$maxFileKb}"],
+            'merge_order' => ['required', 'array'],
+            'merge_order.*' => ['required', 'string', 'max:80'],
+            'session_id' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $expectedOrderIds = array_merge(['current'], array_keys($validated['pdfs']));
+        $submittedOrderIds = array_values($validated['merge_order']);
+        if (count($submittedOrderIds) !== count($expectedOrderIds)
+            || count($submittedOrderIds) !== count(array_unique($submittedOrderIds))
+            || count(array_intersect($expectedOrderIds, $submittedOrderIds)) !== count($expectedOrderIds)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'The PDF document order is invalid.',
+            ], 422);
+        }
+
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            return $response;
+        }
+
+        try {
+            $result = $mergeService->merge(
+                $document,
+                $validated['pdfs'],
+                $validated['merge_order'],
+                $this->resolveEditorEmail(),
+                $validated['session_id'] ?? $request->session()->getId(),
+            );
+
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Merge PDFs',
+                    'category' => 'pdf_merge',
+                    'details' => [
+                        'input_count' => count($validated['pdfs']) + 1,
+                        'total_pages' => $result['total_pages'] ?? null,
+                    ],
+                    'document_id' => $document->id,
+                    'status' => 'success',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+
+            return response()->json(array_merge($result, [
+                'success' => true,
+                'message' => 'PDFs merged successfully.',
+                'pdf_url' => route('documents.file', $document) . '?v=' . now()->getTimestampMs(),
+            ]));
+        } catch (PdfDocumentMergeConflictException $error) {
+            return response()->json(['success' => false, 'message' => $error->getMessage()], 409);
+        } catch (\RuntimeException $error) {
+            Log::warning('PDF merge rejected', [
+                'document_id' => $document->id,
+                'error' => $error->getMessage(),
+            ]);
+
+            return response()->json(['success' => false, 'message' => $error->getMessage()], 422);
+        } catch (\Throwable $error) {
+            Log::error('PDF merge failed', [
+                'document_id' => $document->id,
+                'error' => $error->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'The PDF files could not be merged. Please try again.',
+            ], 500);
+        }
+    }
+
     public function addBlankPage(Request $request, Document $document)
     {
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
@@ -13030,15 +13125,25 @@ class DocumentController extends Controller
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
         $validated = $request->validate([
-            'mode' => ['required', 'string', 'in:each,specific,range,custom'],
+            'mode' => ['required', 'string', 'in:each,specific,range,custom,selected'],
             'page' => ['nullable', 'integer', 'min:1'],
             'from_page' => ['nullable', 'integer', 'min:1'],
             'to_page' => ['nullable', 'integer', 'min:1'],
             'pages' => ['nullable', 'string'],
+            'page_indices' => ['required_if:mode,selected', 'array', 'min:1', 'max:1000'],
+            'page_indices.*' => ['integer', 'min:0', 'distinct'],
+            'output_name' => ['required_if:mode,selected', 'nullable', 'string', 'max:240'],
+            'output_action' => ['nullable', 'string', 'in:download,editor'],
+            'session_id' => ['nullable', 'string', 'max:255'],
+            'pdf' => ['required_if:mode,selected', 'nullable', 'file', 'mimes:pdf', 'max:51200'],
         ]);
 
         if ($response = $this->consumeMonthlyActionQuota($request)) {
             return $response;
+        }
+
+        if ($validated['mode'] === 'selected') {
+            return $this->splitSelectedPdfPages($request, $document, $validated, $pythonBinary);
         }
 
         $mode = $validated['mode'];
@@ -13212,6 +13317,240 @@ class DocumentController extends Controller
             'file_count' => 1,
             'total_pages' => $result['total_pages'],
         ]);
+    }
+
+    private function splitSelectedPdfPages(Request $request, Document $document, array $validated, string $pythonBinary)
+    {
+        $lock = Cache::lock("document:{$document->id}:structure", 180);
+        if (!$lock->get()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Another page operation is already running. Please try again.',
+            ], 409);
+        }
+
+        $outputDir = null;
+        $tokenOutputPath = null;
+
+        try {
+            $upload = $request->file('pdf');
+            if (!$upload || !$upload->isValid()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'The edited PDF could not be prepared for splitting.',
+                ], 422);
+            }
+
+            $pageIndices = array_values(array_unique(array_map(
+                static fn ($value): int => (int) $value,
+                $validated['page_indices'] ?? [],
+            )));
+            sort($pageIndices, SORT_NUMERIC);
+            if (empty($pageIndices)) {
+                return response()->json(['success' => false, 'message' => 'Select at least one page.'], 422);
+            }
+
+            $downloadName = $this->normalizeSplitDownloadName((string) ($validated['output_name'] ?? ''));
+            if ($downloadName === '') {
+                return response()->json(['success' => false, 'message' => 'Enter a valid PDF filename.'], 422);
+            }
+
+            $inputPath = $upload->getRealPath();
+            $outputDir = Storage::path('documents/split_' . Str::uuid());
+            $pythonScript = base_path('python/pdf-editor/split_pdf.py');
+            $oneBasedPages = array_map(static fn (int $index): int => $index + 1, $pageIndices);
+            $command = sprintf(
+                '%s %s %s %s --mode custom --pages %s --json 2>&1',
+                escapeshellarg($pythonBinary),
+                escapeshellarg($pythonScript),
+                escapeshellarg($inputPath),
+                escapeshellarg($outputDir),
+                escapeshellarg(implode(',', $oneBasedPages)),
+            );
+
+            $outputLines = [];
+            $returnCode = 0;
+            exec($command, $outputLines, $returnCode);
+            $result = null;
+            foreach (array_reverse($outputLines) as $line) {
+                $decoded = json_decode(trim((string) $line), true);
+                if (is_array($decoded)) {
+                    $result = $decoded;
+                    break;
+                }
+            }
+
+            if ($returnCode !== 0 || !$result || !($result['success'] ?? false)) {
+                $message = (string) ($result['error'] ?? 'The selected pages could not be split.');
+                $message = str_replace([$inputPath, (string) $outputDir], 'PDF', $message);
+                return response()->json(['success' => false, 'message' => $message], 422);
+            }
+
+            $sourcePageCount = (int) ($result['total_pages'] ?? 0);
+            if ($sourcePageCount < 1 || end($pageIndices) >= $sourcePageCount) {
+                return response()->json([
+                    'success' => false,
+                    'message' => "A selected page is outside the PDF's {$sourcePageCount}-page range.",
+                ], 422);
+            }
+
+            $file = $result['files'][0] ?? null;
+            $generatedPath = is_array($file) ? (string) ($file['path'] ?? '') : '';
+            if ($generatedPath === '' || !is_file($generatedPath)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'The split PDF output was not created.',
+                ], 500);
+            }
+
+            $storedRelativePath = 'documents/split_result_' . Str::uuid() . '.pdf';
+            $tokenOutputPath = Storage::path($storedRelativePath);
+            if (!@rename($generatedPath, $tokenOutputPath)) {
+                if (!copy($generatedPath, $tokenOutputPath)) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'The split PDF could not be saved.',
+                    ], 500);
+                }
+                @unlink($generatedPath);
+            }
+            if (is_dir($outputDir)) {
+                @rmdir($outputDir);
+            }
+            $outputDir = null;
+            $outputSize = (int) (filesize($tokenOutputPath) ?: 0);
+            $outputAction = ($validated['output_action'] ?? 'download') === 'editor' ? 'editor' : 'download';
+
+            if ($outputAction === 'editor') {
+                $splitDocument = Document::create([
+                    ...$this->documentOwnershipPayload($document),
+                    'original_name' => $downloadName,
+                    'path' => $storedRelativePath,
+                    'original_backup_path' => $this->createOriginalBackup($storedRelativePath),
+                    'mime_type' => 'application/pdf',
+                    'size_bytes' => $outputSize,
+                    'mode' => 'editor',
+                ]);
+                $tokenOutputPath = null;
+                $this->rememberSessionAccessibleDocument($request, $splitDocument);
+
+                try {
+                    ProcessUploadedDocumentJob::dispatch(
+                        $splitDocument->id,
+                        $this->resolveEditorEmail(),
+                        $request->session()->getId(),
+                    );
+                } catch (\Throwable $error) {
+                    Log::warning('Split PDF background processing could not be queued', [
+                        'document_id' => $splitDocument->id,
+                        'source_document_id' => $document->id,
+                        'error' => $error->getMessage(),
+                    ]);
+                }
+
+                if (Auth::check()) {
+                    UserActivity::create([
+                        'user_id' => Auth::id(),
+                        'action' => 'Split PDF (selected pages)',
+                        'category' => 'split_export',
+                        'details' => [
+                            'output_action' => 'editor',
+                            'split_document_id' => $splitDocument->id,
+                            'selected_page_count' => count($oneBasedPages),
+                            'selected_pages' => $oneBasedPages,
+                            'source_page_count' => $sourcePageCount,
+                            'output_size' => $outputSize,
+                        ],
+                        'document_id' => $document->id,
+                        'status' => 'success',
+                        'ip_address' => $request->ip(),
+                        'user_agent' => $request->userAgent(),
+                    ]);
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'output_action' => 'editor',
+                    'document_id' => $splitDocument->id,
+                    'edit_url' => route('documents.editPdfjs', $splitDocument),
+                    'download_name' => $downloadName,
+                    'selected_pages' => $oneBasedPages,
+                    'selected_page_count' => count($oneBasedPages),
+                    'source_page_count' => $sourcePageCount,
+                    'output_size' => $outputSize,
+                ]);
+            }
+
+            $downloadToken = Str::uuid()->toString();
+            session()->put("converted_download_{$downloadToken}", [
+                'path' => $tokenOutputPath,
+                'name' => $downloadName,
+                'content_type' => 'application/pdf',
+                'expires' => now()->addMinutes(10),
+            ]);
+            $tokenOutputPath = null;
+
+            if (Auth::check()) {
+                UserActivity::create([
+                    'user_id' => Auth::id(),
+                    'action' => 'Split PDF (selected pages)',
+                    'category' => 'split_export',
+                    'details' => [
+                        'output_action' => 'download',
+                        'selected_page_count' => count($oneBasedPages),
+                        'selected_pages' => $oneBasedPages,
+                        'source_page_count' => $sourcePageCount,
+                        'output_size' => $outputSize,
+                    ],
+                    'document_id' => $document->id,
+                    'status' => 'success',
+                    'ip_address' => $request->ip(),
+                    'user_agent' => $request->userAgent(),
+                ]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'output_action' => 'download',
+                'download_token' => $downloadToken,
+                'download_name' => $downloadName,
+                'selected_pages' => $oneBasedPages,
+                'selected_page_count' => count($oneBasedPages),
+                'source_page_count' => $sourcePageCount,
+                'output_size' => $outputSize,
+            ]);
+        } finally {
+            if (is_string($tokenOutputPath) && is_file($tokenOutputPath)) {
+                @unlink($tokenOutputPath);
+            }
+            if (is_string($outputDir) && is_dir($outputDir)) {
+                foreach (glob($outputDir . '/*') ?: [] as $path) {
+                    if (is_file($path)) {
+                        @unlink($path);
+                    }
+                }
+                @rmdir($outputDir);
+            }
+            $lock->release();
+        }
+    }
+
+    private function normalizeSplitDownloadName(string $value): string
+    {
+        $name = str_replace(['\\', '/'], ' ', trim($value));
+        $name = preg_replace('/[<>:"|?*\x00-\x1F]+/u', ' ', $name);
+        $name = trim((string) preg_replace('/\s+/u', ' ', (string) $name), ". \t\n\r\0\x0B");
+        if ($name === '') {
+            return '';
+        }
+
+        $baseName = pathinfo($name, PATHINFO_FILENAME);
+        $baseName = trim(mb_substr($baseName, 0, 236));
+        if ($baseName === '') {
+            return '';
+        }
+
+        return $baseName . '.pdf';
     }
 
     public function downloadConverted(Request $request)

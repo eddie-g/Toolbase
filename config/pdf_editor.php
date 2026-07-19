@@ -73,4 +73,21 @@ return [
     |
     */
     'editor_debug' => env('EDITOR_DEBUG', false),
+
+    /*
+    |--------------------------------------------------------------------------
+    | PDF Merge Limits
+    |--------------------------------------------------------------------------
+    |
+    | Merge inputs are inspected again by PyMuPDF on the server. These values
+    | bound both the HTTP upload and the generated document.
+    |
+    */
+    'merge' => [
+        'max_files' => (int) env('PDF_MERGE_MAX_FILES', 10),
+        'max_file_kb' => (int) env('PDF_MERGE_MAX_FILE_KB', 20480),
+        'max_total_bytes' => (int) env('PDF_MERGE_MAX_TOTAL_BYTES', 104857600),
+        'max_pages' => (int) env('PDF_MERGE_MAX_PAGES', 1000),
+        'timeout_seconds' => (int) env('PDF_MERGE_TIMEOUT_SECONDS', 120),
+    ],
 ];

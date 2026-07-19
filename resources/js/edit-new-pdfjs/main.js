@@ -101,6 +101,7 @@ const floatingDrawButton = document.getElementById('ftb-draw-erase');
 const floatingHighlightButton = document.getElementById('ftb-highlight');
 const floatingNotesButton = document.getElementById('ftb-notes');
 const floatingConvertButton = document.getElementById('ftb-convert');
+const floatingMergePdfButton = document.getElementById('ftb-merge-pdf');
 const floatingGuidedConvertButton = document.getElementById('ftb-guided-convert');
 const saveStatus = document.getElementById('save-status');
 const saveToast = document.getElementById('save-toast');
@@ -185,6 +186,32 @@ const pageManagerDeleteButton = document.getElementById('enpv-page-manager-delet
 const pageManagerCount = document.getElementById('enpv-page-manager-count');
 const pageManagerStatus = document.getElementById('enpv-page-manager-status');
 const pageManagerGrid = document.getElementById('enpv-page-manager-grid');
+const mergeModal = document.getElementById('enpv-merge-modal');
+const mergeCloseButton = document.getElementById('enpv-merge-close');
+const mergeCancelButton = document.getElementById('enpv-merge-cancel');
+const mergeSubmitButton = document.getElementById('enpv-merge-submit');
+const mergeFileInput = document.getElementById('enpv-merge-file-input');
+const mergeDropzone = document.getElementById('enpv-merge-dropzone');
+const mergeList = document.getElementById('enpv-merge-list');
+const mergeSummary = document.getElementById('enpv-merge-summary');
+const mergeStatus = document.getElementById('enpv-merge-status');
+const mergeTabButton = document.getElementById('enpv-merge-tab');
+const splitTabButton = document.getElementById('enpv-split-tab');
+const mergePanel = document.getElementById('enpv-merge-panel');
+const splitPanel = document.getElementById('enpv-split-panel');
+const splitGrid = document.getElementById('enpv-split-grid');
+const splitSummary = document.getElementById('enpv-split-summary');
+const splitStatus = document.getElementById('enpv-split-status');
+const splitSelectAllButton = document.getElementById('enpv-split-select-all');
+const splitClearButton = document.getElementById('enpv-split-clear');
+const splitCancelButton = document.getElementById('enpv-split-cancel');
+const splitSubmitButton = document.getElementById('enpv-split-submit');
+const splitNameDialog = document.getElementById('enpv-split-name-dialog');
+const splitNameInput = document.getElementById('enpv-split-name-input');
+const splitNameStatus = document.getElementById('enpv-split-name-status');
+const splitNameCancelButton = document.getElementById('enpv-split-name-cancel');
+const splitNameDownloadButton = document.getElementById('enpv-split-name-download');
+const splitNameOpenEditorButton = document.getElementById('enpv-split-name-open-editor');
 const layersOpenButton = document.getElementById('enpv-layers-open');
 const layersPanel = document.getElementById('enpv-layers-panel');
 const layersCloseButton = document.getElementById('enpv-layers-close');
@@ -225,6 +252,11 @@ const REGENERATE_INVOICE_URL = root.dataset.regenerateInvoiceUrl;
 const REGENERATE_TEMPLATE_URL = root.dataset.regenerateTemplateUrl;
 const ADD_BLANK_PAGE_URL = root.dataset.addBlankPageUrl;
 const REORDER_PAGES_URL = root.dataset.reorderPagesUrl;
+const MERGE_PDF_URL = root.dataset.mergePdfUrl;
+const SPLIT_PDF_URL = root.dataset.splitPdfUrl;
+const MERGE_MAX_FILES = Math.max(1, Number(root.dataset.mergeMaxFiles) || 10);
+const MERGE_MAX_FILE_BYTES = Math.max(1, Number(root.dataset.mergeMaxFileBytes) || (20 * 1024 * 1024));
+const MERGE_MAX_PAGES = Math.max(1, Number(root.dataset.mergeMaxPages) || 1000);
 const IS_GUIDED_MODE = root.dataset.guided === '1';
 const TEMPLATE_TYPE = String(root.dataset.templateType || '').trim();
 const TEMPLATE_SLUG = String(root.dataset.templateSlug || '').trim();
@@ -240,6 +272,7 @@ const USER_LOGOS_URL = editNewRoot?.dataset?.userLogosUrl || '/domain-search/use
 const NOTES_URL = editNewRoot?.dataset?.notesUrl || '';
 const OVERWRITE_TEXT_URL = editNewRoot?.dataset?.overwriteUrl || '/documents/overwrite-annotation-text';
 const DOWNLOAD_URL = editNewRoot?.dataset?.downloadUrl;
+const DOWNLOAD_CONVERTED_URL = editNewRoot?.dataset?.downloadConvertedUrl;
 
 function installDocumentRename() {
     const renameUrl = docNameWrap?.dataset?.renameUrl || '';
@@ -393,6 +426,7 @@ let acroFormSaveAgainAfterCurrent = false;
 let latestAcroFormEntriesSnapshot = [];
 let pendingAcroFormEntriesOverride = null;
 let suppressAutoSaveForNavigation = false;
+let structuralMutationInFlight = false;
 const AUTO_SAVE_DELAY_MS = 1800;
 let annotationBoxesLoadPromise = null;
 let viewerLoadGeneration = 0;
@@ -424,6 +458,20 @@ const NOTE_PIN_ICONS = ['note', 'flag', 'check', 'alert', 'star', 'question'];
 let selectedPageManagerIndex = 0;
 let draggedPageManagerIndex = -1;
 let pageManagerRenderGeneration = 0;
+let mergeItems = [];
+let mergeDraggedId = '';
+let mergeBusy = false;
+let splitBusy = false;
+let mergeSplitActiveTab = (() => {
+    try {
+        return window.sessionStorage.getItem('pdf-editor-merge-split-tab') === 'split' ? 'split' : 'merge';
+    } catch (_) {
+        return 'merge';
+    }
+})();
+const splitSelectedPageIndices = new Set();
+let splitRenderGeneration = 0;
+let splitThumbnailObserver = null;
 const gridlinesSettingsStorageKey = 'pdf-editor-gridlines-settings-v1';
 let gridlinesEnabled = false;
 let gridlinesSpacing = 50;
@@ -531,7 +579,7 @@ function setSaveStatus(text, isError = false) {
 installDocumentRename();
 
 function scheduleAutoSave() {
-    if (suppressAutoSaveForNavigation) return;
+    if (suppressAutoSaveForNavigation || structuralMutationInFlight) return;
     if (!SAVE_URL) return;
     if (autoSaveTimer) window.clearTimeout(autoSaveTimer);
     autoSaveTimer = window.setTimeout(() => {
@@ -1696,6 +1744,757 @@ pageManagerDeleteButton?.addEventListener('click', () => {
 });
 document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && pageManagerModal?.hidden === false) closePageManager();
+});
+
+function setMergeStatus(message = '', isError = false) {
+    if (!mergeStatus) return;
+    mergeStatus.textContent = String(message || '');
+    mergeStatus.classList.toggle('is-error', Boolean(isError));
+}
+
+function formatMergeFileSize(bytes) {
+    const size = Math.max(0, Number(bytes) || 0);
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function mergeTotalPages() {
+    return mergeItems.reduce((total, item) => total + Math.max(0, Number(item.pageCount) || 0), 0);
+}
+
+function mergeMoveItem(itemId, direction) {
+    if (mergeBusy) return;
+    const index = mergeItems.findIndex((item) => item.id === itemId);
+    const destination = index + direction;
+    if (index < 0 || destination < 0 || destination >= mergeItems.length) return;
+    const [item] = mergeItems.splice(index, 1);
+    mergeItems.splice(destination, 0, item);
+    renderMergeItems();
+}
+
+function mergeMoveItemBefore(sourceId, targetId) {
+    if (mergeBusy || !sourceId || sourceId === targetId) return;
+    const sourceIndex = mergeItems.findIndex((item) => item.id === sourceId);
+    const targetIndex = mergeItems.findIndex((item) => item.id === targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const [item] = mergeItems.splice(sourceIndex, 1);
+    const adjustedTarget = mergeItems.findIndex((entry) => entry.id === targetId);
+    mergeItems.splice(Math.max(0, adjustedTarget), 0, item);
+    renderMergeItems();
+}
+
+function removeMergeItem(itemId) {
+    if (mergeBusy || itemId === 'current') return;
+    mergeItems = mergeItems.filter((item) => item.id !== itemId);
+    renderMergeItems();
+}
+
+function mergeIconButton(label, text, disabled, onClick, danger = false) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `enpv-merge-icon-button${danger ? ' is-danger' : ''}`;
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    button.textContent = text;
+    button.disabled = Boolean(disabled || mergeBusy);
+    button.addEventListener('click', onClick);
+    return button;
+}
+
+function renderMergeItems() {
+    if (!mergeList) return;
+    mergeList.replaceChildren();
+    const totalPages = mergeTotalPages();
+    if (mergeSummary) {
+        mergeSummary.textContent = `${mergeItems.length} PDF${mergeItems.length === 1 ? '' : 's'} · ${totalPages} page${totalPages === 1 ? '' : 's'}`;
+    }
+    if (mergeSubmitButton) mergeSubmitButton.disabled = mergeBusy || mergeItems.length < 2 || totalPages > MERGE_MAX_PAGES;
+
+    mergeItems.forEach((item, index) => {
+        const row = document.createElement('div');
+        row.className = 'enpv-merge-item';
+        row.draggable = !mergeBusy;
+        row.dataset.mergeId = item.id;
+        row.setAttribute('aria-label', `${item.name}, position ${index + 1} of ${mergeItems.length}`);
+        row.addEventListener('dragstart', (event) => {
+            if (mergeBusy) return;
+            mergeDraggedId = item.id;
+            row.classList.add('is-dragging');
+            event.dataTransfer?.setData('text/plain', item.id);
+            if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+        });
+        row.addEventListener('dragover', (event) => {
+            if (mergeBusy) return;
+            event.preventDefault();
+            row.classList.add('is-drag-over');
+        });
+        row.addEventListener('dragleave', () => row.classList.remove('is-drag-over'));
+        row.addEventListener('drop', (event) => {
+            event.preventDefault();
+            row.classList.remove('is-drag-over');
+            mergeMoveItemBefore(mergeDraggedId || event.dataTransfer?.getData('text/plain'), item.id);
+        });
+        row.addEventListener('dragend', () => {
+            mergeDraggedId = '';
+            row.classList.remove('is-dragging');
+            mergeList.querySelectorAll('.is-drag-over').forEach((entry) => entry.classList.remove('is-drag-over'));
+        });
+
+        const grip = document.createElement('button');
+        grip.type = 'button';
+        grip.className = 'enpv-merge-grip';
+        grip.title = 'Drag whole PDF to reorder';
+        grip.setAttribute('aria-label', `Drag ${item.name} to reorder`);
+        grip.textContent = '⠿';
+
+        const thumb = document.createElement('div');
+        thumb.className = 'enpv-merge-thumb';
+        if (item.thumbnailUrl) {
+            const image = document.createElement('img');
+            image.src = item.thumbnailUrl;
+            image.alt = '';
+            thumb.appendChild(image);
+        } else {
+            thumb.textContent = 'PDF';
+        }
+
+        const info = document.createElement('div');
+        info.className = 'enpv-merge-info';
+        const name = document.createElement('div');
+        name.className = 'enpv-merge-name';
+        name.textContent = item.name;
+        name.title = item.name;
+        const meta = document.createElement('div');
+        meta.className = 'enpv-merge-meta';
+        const pages = document.createElement('span');
+        pages.textContent = `${item.pageCount} page${item.pageCount === 1 ? '' : 's'}`;
+        meta.appendChild(pages);
+        if (item.size) {
+            const size = document.createElement('span');
+            size.textContent = formatMergeFileSize(item.size);
+            meta.appendChild(size);
+        }
+        if (item.kind === 'current') {
+            const badge = document.createElement('span');
+            badge.className = 'enpv-merge-current-badge';
+            badge.textContent = 'Current document';
+            meta.appendChild(badge);
+        }
+        info.append(name, meta);
+
+        const actions = document.createElement('div');
+        actions.className = 'enpv-merge-actions';
+        actions.append(
+            mergeIconButton(`Move ${item.name} up`, '↑', index === 0, () => mergeMoveItem(item.id, -1)),
+            mergeIconButton(`Move ${item.name} down`, '↓', index === mergeItems.length - 1, () => mergeMoveItem(item.id, 1)),
+        );
+        if (item.kind !== 'current') {
+            actions.appendChild(mergeIconButton(`Remove ${item.name}`, '×', false, () => removeMergeItem(item.id), true));
+        }
+
+        row.append(grip, thumb, info, actions);
+        mergeList.appendChild(row);
+    });
+
+    if (totalPages > MERGE_MAX_PAGES) {
+        setMergeStatus(`The merged PDF would exceed the ${MERGE_MAX_PAGES}-page limit.`, true);
+    }
+}
+
+async function createMergeThumbnail(pdfDocument) {
+    const page = await pdfDocument.getPage(1);
+    const baseViewport = page.getViewport({ scale: 1 });
+    const scale = Math.max(0.05, Math.min(0.3, 120 / Math.max(baseViewport.width, baseViewport.height, 1)));
+    const viewport = page.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.ceil(viewport.width));
+    canvas.height = Math.max(1, Math.ceil(viewport.height));
+    const context = canvas.getContext('2d');
+    await page.render({ canvasContext: context, viewport }).promise;
+    return canvas.toDataURL('image/png');
+}
+
+async function inspectMergeFile(file) {
+    if (!(file instanceof File)) throw new Error('Invalid file selection.');
+    if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+        throw new Error(`${file.name} is not a PDF.`);
+    }
+    if (file.size > MERGE_MAX_FILE_BYTES) {
+        throw new Error(`${file.name} exceeds the ${formatMergeFileSize(MERGE_MAX_FILE_BYTES)} file limit.`);
+    }
+    const bytes = await file.arrayBuffer();
+    const loadingTask = pdfjsLib.getDocument({ data: bytes.slice(0), isEvalSupported: false });
+    let pdfDocument;
+    try {
+        pdfDocument = await loadingTask.promise;
+        if (!pdfDocument.numPages) throw new Error(`${file.name} has no pages.`);
+        return {
+            id: `upload-${generateUuidV4()}`.toLowerCase(),
+            kind: 'upload',
+            name: file.name,
+            pageCount: pdfDocument.numPages,
+            size: file.size,
+            file,
+            thumbnailUrl: await createMergeThumbnail(pdfDocument).catch(() => ''),
+        };
+    } catch (error) {
+        if (error?.name === 'PasswordException') throw new Error(`${file.name} is password protected.`);
+        throw new Error(error?.message || `${file.name} could not be opened.`);
+    } finally {
+        if (pdfDocument?.destroy) await pdfDocument.destroy().catch(() => {});
+    }
+}
+
+async function addMergeFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length || mergeBusy) return;
+    const available = MERGE_MAX_FILES - (mergeItems.length - 1);
+    if (available <= 0) {
+        setMergeStatus(`You can add up to ${MERGE_MAX_FILES} PDFs.`, true);
+        return;
+    }
+    setMergeStatus('Checking PDF files...');
+    for (const file of files.slice(0, available)) {
+        try {
+            const item = await inspectMergeFile(file);
+            mergeItems.push(item);
+            renderMergeItems();
+        } catch (error) {
+            setMergeStatus(error?.message || 'A selected PDF could not be opened.', true);
+            return;
+        }
+    }
+    if (files.length > available) {
+        setMergeStatus(`Only the first ${available} files were added. The limit is ${MERGE_MAX_FILES}.`, true);
+    } else {
+        setMergeStatus(`${files.length} PDF${files.length === 1 ? '' : 's'} added.`);
+    }
+}
+
+async function prepareCurrentMergeItem() {
+    const current = mergeItems.find((item) => item.id === 'current');
+    if (!current || !currentPdfDoc) return;
+    current.pageCount = currentPdfDoc.numPages || current.pageCount;
+    current.thumbnailUrl = await createMergeThumbnail(currentPdfDoc).catch(() => '');
+    if (mergeModal?.hidden === false) renderMergeItems();
+}
+
+function setSplitStatus(message = '', isError = false) {
+    if (!splitStatus) return;
+    splitStatus.textContent = String(message || '');
+    splitStatus.classList.toggle('is-error', Boolean(isError));
+}
+
+function updateSplitSelectionUi() {
+    const selectedCount = splitSelectedPageIndices.size;
+    const pageCount = Math.max(0, Number(currentPdfDoc?.numPages || pdfViewer?.pagesCount || 0));
+    if (splitSummary) {
+        splitSummary.textContent = `${selectedCount} page${selectedCount === 1 ? '' : 's'} selected`;
+    }
+    if (splitSubmitButton) splitSubmitButton.disabled = splitBusy || selectedCount === 0;
+    if (splitSelectAllButton) splitSelectAllButton.disabled = splitBusy || pageCount === 0 || selectedCount === pageCount;
+    if (splitClearButton) splitClearButton.disabled = splitBusy || selectedCount === 0;
+    splitGrid?.querySelectorAll('[data-split-page-index]').forEach((card) => {
+        const pageIndex = Number(card.dataset.splitPageIndex);
+        const selected = splitSelectedPageIndices.has(pageIndex);
+        card.classList.toggle('is-selected', selected);
+        card.setAttribute('aria-pressed', selected ? 'true' : 'false');
+        const checkbox = card.querySelector('input[type="checkbox"]');
+        if (checkbox) {
+            checkbox.checked = selected;
+            checkbox.disabled = splitBusy;
+        }
+        card.tabIndex = splitBusy ? -1 : 0;
+    });
+}
+
+function toggleSplitPage(pageIndex, selected = null) {
+    if (splitBusy) return;
+    const normalizedIndex = Number(pageIndex);
+    const pageCount = Math.max(0, Number(currentPdfDoc?.numPages || pdfViewer?.pagesCount || 0));
+    if (!Number.isInteger(normalizedIndex) || normalizedIndex < 0 || normalizedIndex >= pageCount) return;
+    const shouldSelect = selected === null ? !splitSelectedPageIndices.has(normalizedIndex) : Boolean(selected);
+    if (shouldSelect) splitSelectedPageIndices.add(normalizedIndex);
+    else splitSelectedPageIndices.delete(normalizedIndex);
+    setSplitStatus('');
+    updateSplitSelectionUi();
+}
+
+async function renderSplitThumbnail(pageIndex, canvas, generation) {
+    if (!currentPdfDoc || generation !== splitRenderGeneration || !canvas?.isConnected) return;
+    try {
+        const page = await currentPdfDoc.getPage(pageIndex + 1);
+        if (generation !== splitRenderGeneration || !canvas.isConnected) return;
+        const baseViewport = page.getViewport({ scale: 1 });
+        const cssScale = Math.max(0.05, Math.min(0.32, 150 / Math.max(baseViewport.width, baseViewport.height, 1)));
+        const pixelRatio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+        const viewport = page.getViewport({ scale: cssScale * pixelRatio });
+        canvas.width = Math.max(1, Math.ceil(viewport.width));
+        canvas.height = Math.max(1, Math.ceil(viewport.height));
+        canvas.style.width = `${Math.max(1, Math.ceil(viewport.width / pixelRatio))}px`;
+        canvas.style.height = `${Math.max(1, Math.ceil(viewport.height / pixelRatio))}px`;
+        const context = canvas.getContext('2d');
+        await page.render({ canvasContext: context, viewport }).promise;
+    } catch (error) {
+        console.warn(`Could not render split thumbnail for page ${pageIndex + 1}`, error);
+        canvas.closest('.enpv-split-page-thumb')?.classList.add('is-error');
+    }
+}
+
+function renderSplitGrid() {
+    if (!splitGrid) return;
+    splitRenderGeneration += 1;
+    const generation = splitRenderGeneration;
+    splitThumbnailObserver?.disconnect?.();
+    splitThumbnailObserver = null;
+    splitGrid.replaceChildren();
+
+    const pageCount = Math.max(0, Number(currentPdfDoc?.numPages || pdfViewer?.pagesCount || 0));
+    for (const selectedIndex of Array.from(splitSelectedPageIndices)) {
+        if (selectedIndex >= pageCount) splitSelectedPageIndices.delete(selectedIndex);
+    }
+
+    const pendingCanvases = [];
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+        const pageNumber = pageIndex + 1;
+        const card = document.createElement('div');
+        card.className = 'enpv-split-page';
+        card.dataset.splitPageIndex = String(pageIndex);
+        card.setAttribute('role', 'button');
+        card.setAttribute('aria-label', `Include page ${pageNumber}`);
+
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'enpv-split-page-check';
+        checkbox.setAttribute('aria-label', `Include page ${pageNumber}`);
+        checkbox.addEventListener('click', (event) => event.stopPropagation());
+        checkbox.addEventListener('change', () => toggleSplitPage(pageIndex, checkbox.checked));
+
+        const thumb = document.createElement('div');
+        thumb.className = 'enpv-split-page-thumb';
+        const canvas = document.createElement('canvas');
+        canvas.setAttribute('aria-hidden', 'true');
+        thumb.appendChild(canvas);
+
+        const label = document.createElement('span');
+        label.className = 'enpv-split-page-label';
+        label.textContent = `Page ${pageNumber}`;
+        card.append(checkbox, thumb, label);
+        card.addEventListener('click', () => toggleSplitPage(pageIndex));
+        card.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter' && event.key !== ' ') return;
+            event.preventDefault();
+            toggleSplitPage(pageIndex);
+        });
+        splitGrid.appendChild(card);
+        pendingCanvases.push({ pageIndex, canvas });
+    }
+
+    if ('IntersectionObserver' in window) {
+        splitThumbnailObserver = new IntersectionObserver((entries, observer) => {
+            for (const entry of entries) {
+                if (!entry.isIntersecting) continue;
+                observer.unobserve(entry.target);
+                const pageIndex = Number(entry.target.dataset.splitThumbnailIndex);
+                renderSplitThumbnail(pageIndex, entry.target, generation).catch(() => {});
+            }
+        }, { root: splitGrid, rootMargin: '180px' });
+        for (const { pageIndex, canvas } of pendingCanvases) {
+            canvas.dataset.splitThumbnailIndex = String(pageIndex);
+            splitThumbnailObserver.observe(canvas);
+        }
+    } else {
+        for (const { pageIndex, canvas } of pendingCanvases) {
+            renderSplitThumbnail(pageIndex, canvas, generation).catch(() => {});
+        }
+    }
+    updateSplitSelectionUi();
+}
+
+function setMergeSplitTab(tabName) {
+    if (mergeBusy || splitBusy) return;
+    mergeSplitActiveTab = tabName === 'split' ? 'split' : 'merge';
+    try {
+        window.sessionStorage.setItem('pdf-editor-merge-split-tab', mergeSplitActiveTab);
+    } catch (_) {}
+    const isMerge = mergeSplitActiveTab === 'merge';
+    if (mergePanel) mergePanel.hidden = !isMerge;
+    if (splitPanel) splitPanel.hidden = isMerge;
+    if (mergeTabButton) {
+        mergeTabButton.classList.toggle('is-active', isMerge);
+        mergeTabButton.setAttribute('aria-selected', isMerge ? 'true' : 'false');
+        mergeTabButton.tabIndex = isMerge ? 0 : -1;
+    }
+    if (splitTabButton) {
+        splitTabButton.classList.toggle('is-active', !isMerge);
+        splitTabButton.setAttribute('aria-selected', isMerge ? 'false' : 'true');
+        splitTabButton.tabIndex = isMerge ? -1 : 0;
+    }
+    if (!isMerge) {
+        renderSplitGrid();
+        window.requestAnimationFrame(() => splitGrid?.querySelector('.enpv-split-page')?.focus?.({ preventScroll: true }));
+    } else {
+        mergeDropzone?.focus?.({ preventScroll: true });
+    }
+}
+
+function normalizeSplitFilename(value) {
+    let filename = String(value || '').trim().replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_');
+    filename = filename.replace(/^\.+/, '').replace(/[. ]+$/, '').trim();
+    if (!filename) return '';
+    const baseName = filename.replace(/\.pdf$/i, '').replace(/[. ]+$/, '').trim();
+    if (!baseName) return '';
+    return `${baseName.slice(0, 236)}.pdf`;
+}
+
+function defaultSplitFilename() {
+    const currentName = docNameDisplay?.textContent?.trim() || root.dataset.documentName || 'document.pdf';
+    const baseName = currentName.replace(/\.pdf$/i, '').trim() || 'document';
+    return normalizeSplitFilename(`${baseName}_split.pdf`);
+}
+
+function setSplitNameStatus(message = '', isError = false) {
+    if (!splitNameStatus) return;
+    splitNameStatus.textContent = String(message || '');
+    splitNameStatus.classList.toggle('is-error', Boolean(isError));
+}
+
+function openSplitNameDialog() {
+    if (!splitNameDialog || splitBusy || splitSelectedPageIndices.size === 0) return;
+    splitNameInput.value = defaultSplitFilename();
+    setSplitNameStatus('');
+    splitNameDialog.hidden = false;
+    window.requestAnimationFrame(() => {
+        splitNameInput?.focus?.({ preventScroll: true });
+        splitNameInput?.select?.();
+    });
+}
+
+function closeSplitNameDialog() {
+    if (!splitNameDialog || splitBusy) return;
+    splitNameDialog.hidden = true;
+    setSplitNameStatus('');
+    splitSubmitButton?.focus?.({ preventScroll: true });
+}
+
+function openMergeModal() {
+    if (!mergeModal || mergeBusy || splitBusy) return;
+    closePageManager();
+    mergeItems = [{
+        id: 'current',
+        kind: 'current',
+        name: docNameDisplay?.textContent?.trim() || root.dataset.documentName || 'Current PDF',
+        pageCount: Math.max(1, Number(currentPdfDoc?.numPages || pdfViewer?.pagesCount || 1)),
+        size: 0,
+        file: null,
+        thumbnailUrl: '',
+    }];
+    mergeModal.hidden = false;
+    // A completed merge disables these controls while its request is in
+    // flight. Reset both the visual busy class and the actual DOM disabled
+    // properties before this modal is reused.
+    setMergeBusy(false);
+    setSplitBusy(false);
+    splitSelectedPageIndices.clear();
+    setMergeSplitTab(mergeSplitActiveTab);
+    setMergeStatus('Add at least one PDF to merge.');
+    setSplitStatus('');
+    prepareCurrentMergeItem().catch(() => {});
+}
+
+function closeMergeModal() {
+    if (!mergeModal || mergeBusy || splitBusy) return;
+    mergeModal.hidden = true;
+    if (splitNameDialog) splitNameDialog.hidden = true;
+    splitThumbnailObserver?.disconnect?.();
+    splitThumbnailObserver = null;
+    splitRenderGeneration += 1;
+    splitSelectedPageIndices.clear();
+    mergeItems = [];
+    if (mergeFileInput) mergeFileInput.value = '';
+    setMergeStatus('');
+    floatingMergePdfButton?.focus?.({ preventScroll: true });
+}
+
+function setMergeBusy(busy) {
+    mergeBusy = Boolean(busy);
+    mergeModal?.classList.toggle('is-busy', mergeBusy || splitBusy);
+    if (mergeCloseButton) mergeCloseButton.disabled = mergeBusy || splitBusy;
+    if (mergeCancelButton) mergeCancelButton.disabled = mergeBusy;
+    if (mergeDropzone) mergeDropzone.disabled = mergeBusy;
+    if (mergeTabButton) mergeTabButton.disabled = mergeBusy || splitBusy;
+    if (splitTabButton) splitTabButton.disabled = mergeBusy || splitBusy;
+    renderMergeItems();
+}
+
+function setSplitBusy(busy) {
+    splitBusy = Boolean(busy);
+    mergeModal?.classList.toggle('is-busy', mergeBusy || splitBusy);
+    if (mergeCloseButton) mergeCloseButton.disabled = mergeBusy || splitBusy;
+    if (splitCancelButton) splitCancelButton.disabled = splitBusy;
+    if (splitNameCancelButton) splitNameCancelButton.disabled = splitBusy;
+    if (splitNameDownloadButton) splitNameDownloadButton.disabled = splitBusy;
+    if (splitNameOpenEditorButton) splitNameOpenEditorButton.disabled = splitBusy;
+    if (splitNameInput) splitNameInput.disabled = splitBusy;
+    if (mergeTabButton) mergeTabButton.disabled = mergeBusy || splitBusy;
+    if (splitTabButton) splitTabButton.disabled = mergeBusy || splitBusy;
+    updateSplitSelectionUi();
+}
+
+async function waitForEditorSaveIdle() {
+    const startedAt = Date.now();
+    while (saveInFlight || acroFormSaveInFlight) {
+        if (Date.now() - startedAt > 30000) throw new Error('Timed out waiting for the current edits to save.');
+        await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+}
+
+async function submitPdfMerge() {
+    if (mergeBusy || mergeItems.length < 2 || !MERGE_PDF_URL) return;
+    if (!window.confirm('Merge these PDFs into the current working document?')) return;
+
+    let mergeCommitted = false;
+    setMergeBusy(true);
+    setMergeStatus('Saving current edits...');
+    try {
+        if (activeRun) {
+            await applyEdit();
+            if (activeRun) throw new Error('Finish or cancel the active text edit before merging.');
+        }
+        await waitForEditorSaveIdle();
+        await saveAnnotationStateToDb({ source: 'merge' });
+        await waitForEditorSaveIdle();
+
+        structuralMutationInFlight = true;
+        setMergeStatus('Merging PDFs...');
+        const formData = new FormData();
+        for (const item of mergeItems) {
+            if (item.kind === 'upload') formData.append(`pdfs[${item.id}]`, item.file, item.name);
+        }
+        formData.append('order', JSON.stringify(mergeItems.map((item) => item.id)));
+        formData.append('session_id', getSessionId());
+
+        const response = await fetch(MERGE_PDF_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json', 'X-CSRF-TOKEN': CSRF },
+            body: formData,
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || result?.success === false) {
+            throw new Error(result?.message || `PDF merge failed (${response.status}).`);
+        }
+        mergeCommitted = true;
+
+        setMergeStatus('Reloading merged PDF...');
+        annotationBoxesLoadPromise = null;
+        pendingAnnotationStateOverride = null;
+        notesLoaded = false;
+        notesLoadPromise = null;
+        documentNotes = [];
+        undoStack.length = 0;
+        redoStack.length = 0;
+        updateHistoryButtons();
+        selectedPageManagerIndex = 0;
+        await loadPdfFromUrl(result.pdf_url || `${PDF_URL}?v=${Date.now()}`);
+        closeLayersPanel();
+        setMergeBusy(false);
+        mergeModal.hidden = true;
+        if (splitNameDialog) splitNameDialog.hidden = true;
+        splitThumbnailObserver?.disconnect?.();
+        splitThumbnailObserver = null;
+        splitRenderGeneration += 1;
+        splitSelectedPageIndices.clear();
+        mergeItems = [];
+        structuralMutationInFlight = false;
+        setStatus('PDFs merged.');
+        setSaveStatus('Saved');
+        flashSaveToast('PDFs merged');
+        floatingMergePdfButton?.focus?.({ preventScroll: true });
+    } catch (error) {
+        structuralMutationInFlight = false;
+        if (mergeCommitted) {
+            setMergeBusy(false);
+            if (mergeModal) mergeModal.hidden = true;
+            setStatus('PDFs merged. Reloading the editor...', true);
+            window.location.reload();
+            return;
+        }
+        setMergeBusy(false);
+        setMergeStatus(error?.message || 'The PDF files could not be merged.', true);
+        setStatus('PDF merge failed.', true);
+    }
+}
+
+async function submitSelectedPageSplit(destination = 'download') {
+    if (splitBusy || splitSelectedPageIndices.size === 0 || !SPLIT_PDF_URL || !DOWNLOAD_CONVERTED_URL) return;
+    const outputAction = destination === 'editor' ? 'editor' : 'download';
+    const outputName = normalizeSplitFilename(splitNameInput?.value || defaultSplitFilename());
+    if (!outputName) {
+        setSplitNameStatus('Enter a valid PDF filename.', true);
+        splitNameInput?.focus?.({ preventScroll: true });
+        return;
+    }
+    if (splitNameInput) splitNameInput.value = outputName;
+
+    const popup = window.open('', '_blank');
+    if (popup) {
+        const preparingMessage = outputAction === 'editor'
+            ? 'Preparing the split PDF for the editor...'
+            : 'Preparing split PDF download...';
+        popup.document.write(`<!DOCTYPE html><title>Preparing split PDF</title><body style="font-family:system-ui,sans-serif;padding:24px;color:#111827;">${preparingMessage}</body>`);
+        popup.document.close();
+    }
+
+    setSplitBusy(true);
+    setSplitNameStatus('Saving current edits...');
+    setSplitStatus('Saving current edits...');
+    try {
+        if (activeRun) {
+            await applyEdit();
+            if (activeRun) throw new Error('Finish or cancel the active text edit before splitting.');
+        }
+        await waitForEditorSaveIdle();
+        await saveAnnotationStateToDb({ source: 'split' });
+        await waitForEditorSaveIdle();
+
+        structuralMutationInFlight = true;
+        setSplitNameStatus('Preparing selected pages...');
+        setSplitStatus('Preparing selected pages...');
+        const { blob } = await requestEditedPdfBlob();
+        const pageIndices = Array.from(splitSelectedPageIndices).sort((a, b) => a - b);
+        const formData = new FormData();
+        formData.append('mode', 'selected');
+        formData.append('output_action', outputAction);
+        for (const pageIndex of pageIndices) formData.append('page_indices[]', String(pageIndex));
+        formData.append('output_name', outputName);
+        formData.append('session_id', getSessionId());
+        formData.append('pdf', blob, 'current-edited.pdf');
+
+        const response = await fetch(SPLIT_PDF_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { Accept: 'application/json', 'X-CSRF-TOKEN': CSRF },
+            body: formData,
+        });
+        const result = await response.json().catch(() => ({}));
+        const resultUrl = outputAction === 'editor' ? result?.edit_url : result?.download_token;
+        if (!response.ok || result?.success === false || !resultUrl) {
+            const validationMessage = Object.values(result?.errors || {}).flat().find(Boolean);
+            throw new Error(validationMessage || result?.message || `PDF split failed (${response.status}).`);
+        }
+
+        const destinationUrl = outputAction === 'editor'
+            ? result.edit_url
+            : `${DOWNLOAD_CONVERTED_URL}?token=${encodeURIComponent(result.download_token)}`;
+        if (popup && !popup.closed) {
+            popup.location.replace(destinationUrl);
+        } else if (outputAction === 'editor') {
+            window.location.assign(destinationUrl);
+        } else {
+            const link = document.createElement('a');
+            link.href = destinationUrl;
+            link.target = '_blank';
+            link.rel = 'noopener';
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+        }
+
+        structuralMutationInFlight = false;
+        setSplitBusy(false);
+        if (splitNameDialog) splitNameDialog.hidden = true;
+        if (mergeModal) mergeModal.hidden = true;
+        splitThumbnailObserver?.disconnect?.();
+        splitThumbnailObserver = null;
+        splitRenderGeneration += 1;
+        splitSelectedPageIndices.clear();
+        mergeItems = [];
+        setSplitNameStatus('');
+        setSplitStatus('');
+        const resultMessage = outputAction === 'editor'
+            ? `${outputName} opened in the editor.`
+            : `${pageIndices.length} page${pageIndices.length === 1 ? '' : 's'} split into ${outputName}.`;
+        setStatus(resultMessage);
+        flashSaveToast(outputAction === 'editor' ? 'Split PDF opened' : 'Split PDF ready');
+        floatingMergePdfButton?.focus?.({ preventScroll: true });
+    } catch (error) {
+        structuralMutationInFlight = false;
+        if (popup && !popup.closed) popup.close();
+        console.error(error);
+        setSplitBusy(false);
+        const message = error?.message || 'The selected pages could not be split.';
+        setSplitNameStatus(message, true);
+        setSplitStatus(message, true);
+        setStatus('PDF split failed.', true);
+        splitNameInput?.focus?.({ preventScroll: true });
+    }
+}
+
+floatingMergePdfButton?.addEventListener('click', openMergeModal);
+mergeCloseButton?.addEventListener('click', closeMergeModal);
+mergeCancelButton?.addEventListener('click', closeMergeModal);
+mergeSubmitButton?.addEventListener('click', () => submitPdfMerge().catch(() => {}));
+mergeTabButton?.addEventListener('click', () => setMergeSplitTab('merge'));
+splitTabButton?.addEventListener('click', () => setMergeSplitTab('split'));
+splitSelectAllButton?.addEventListener('click', () => {
+    if (splitBusy) return;
+    const pageCount = Math.max(0, Number(currentPdfDoc?.numPages || pdfViewer?.pagesCount || 0));
+    splitSelectedPageIndices.clear();
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) splitSelectedPageIndices.add(pageIndex);
+    setSplitStatus('');
+    updateSplitSelectionUi();
+});
+splitClearButton?.addEventListener('click', () => {
+    if (splitBusy) return;
+    splitSelectedPageIndices.clear();
+    setSplitStatus('');
+    updateSplitSelectionUi();
+});
+splitCancelButton?.addEventListener('click', closeMergeModal);
+splitSubmitButton?.addEventListener('click', openSplitNameDialog);
+splitNameCancelButton?.addEventListener('click', closeSplitNameDialog);
+splitNameDownloadButton?.addEventListener('click', () => submitSelectedPageSplit('download').catch(() => {}));
+splitNameOpenEditorButton?.addEventListener('click', () => submitSelectedPageSplit('editor').catch(() => {}));
+splitNameInput?.addEventListener('input', () => setSplitNameStatus(''));
+splitNameInput?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || splitBusy) return;
+    event.preventDefault();
+    submitSelectedPageSplit('download').catch(() => {});
+});
+splitNameDialog?.addEventListener('click', (event) => {
+    if (event.target === splitNameDialog) closeSplitNameDialog();
+});
+mergeModal?.addEventListener('click', (event) => {
+    if (event.target !== mergeModal) return;
+    if (splitNameDialog?.hidden === false) closeSplitNameDialog();
+    else closeMergeModal();
+});
+mergeDropzone?.addEventListener('click', () => mergeFileInput?.click());
+mergeFileInput?.addEventListener('change', () => {
+    addMergeFiles(mergeFileInput.files).catch((error) => setMergeStatus(error?.message || 'Could not add PDFs.', true));
+    mergeFileInput.value = '';
+});
+for (const eventName of ['dragenter', 'dragover']) {
+    mergeDropzone?.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        if (!mergeBusy) mergeDropzone.classList.add('is-drag-over');
+    });
+}
+for (const eventName of ['dragleave', 'drop']) {
+    mergeDropzone?.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        mergeDropzone.classList.remove('is-drag-over');
+    });
+}
+mergeDropzone?.addEventListener('drop', (event) => {
+    addMergeFiles(event.dataTransfer?.files).catch((error) => setMergeStatus(error?.message || 'Could not add PDFs.', true));
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || mergeModal?.hidden !== false) return;
+    if (splitNameDialog?.hidden === false) closeSplitNameDialog();
+    else closeMergeModal();
 });
 
 function isImageBox(box, existingAnnotation = null) {
@@ -20256,6 +21055,34 @@ async function buildPdfjsDownloadPayload() {
     };
 }
 
+async function requestEditedPdfBlob() {
+    if (!DOWNLOAD_URL || !currentPdfDoc) throw new Error('PDF download endpoint is not available.');
+    const payload = await buildPdfjsDownloadPayload();
+    const response = await fetch(DOWNLOAD_URL, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/pdf, application/json',
+            'X-CSRF-TOKEN': CSRF,
+        },
+        body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+        let message = `PDF generation failed (${response.status})`;
+        const contentType = String(response.headers.get('content-type') || '');
+        if (contentType.includes('application/json')) {
+            const result = await response.json().catch(() => ({}));
+            message = result?.message || result?.error || message;
+        } else {
+            const responseText = await response.text().catch(() => '');
+            if (responseText) message = responseText.slice(0, 500);
+        }
+        throw new Error(message);
+    }
+    return { blob: await response.blob(), payload };
+}
+
 async function downloadStampedPdf() {
     if (!DOWNLOAD_URL || !currentPdfDoc) return;
     const popup = window.open('', '_blank');
@@ -20266,30 +21093,7 @@ async function downloadStampedPdf() {
     try {
         setDownloadButtonsDisabled(true, 'Preparing PDF...');
         setStatus('Preparing PDF...');
-        const payload = await buildPdfjsDownloadPayload();
-        const response = await fetch(DOWNLOAD_URL, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/pdf, application/json',
-                'X-CSRF-TOKEN': CSRF,
-            },
-            body: JSON.stringify(payload),
-        });
-        if (!response.ok) {
-            let message = `PDF generation failed (${response.status})`;
-            const contentType = String(response.headers.get('content-type') || '');
-            if (contentType.includes('application/json')) {
-                const result = await response.json().catch(() => ({}));
-                message = result?.message || result?.error || message;
-            } else {
-                const text = await response.text().catch(() => '');
-                if (text) message = text.slice(0, 500);
-            }
-            throw new Error(message);
-        }
-        const blob = await response.blob();
+        const { blob, payload } = await requestEditedPdfBlob();
         const url = URL.createObjectURL(blob);
         if (popup && !popup.closed) {
             popup.location.replace(url);
