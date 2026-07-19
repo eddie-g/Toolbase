@@ -5,6 +5,8 @@ import {
     isPdfjsSourceBackedTextAnnotation,
     pdfjsPromotedOverlayShouldRenderAsPersistedOverlay,
     pdfjsSourceOverlayShouldUseSourceBoxInEditMode,
+    reconcileRichTextRunWhitespace,
+    richTextViewportCssLength,
 } from './source-edit-contract.js';
 
 const baseSourceOverlay = {
@@ -34,6 +36,36 @@ const basePromotedOverlay = {
     pdfjsSourceText: 'Partnership',
     text: 'Partnership',
 };
+
+test('converts versioned PDF-point rich text to viewport pixels', () => {
+    assert.equal(richTextViewportCssLength('21pt', { pointScale: 10 / 3 }), '70px');
+    assert.equal(richTextViewportCssLength('25.2pt', { pointScale: 10 / 3 }), '84px');
+    assert.equal(richTextViewportCssLength('50px', { pixelRatio: 0.5 }), '25px');
+    assert.equal(richTextViewportCssLength('1.2em', { pointScale: 3 }), '1.2em');
+});
+
+test('repairs whitespace-only drift without losing mixed run styles', () => {
+    const runs = reconcileRichTextRunWhitespace([
+        { type: 'text', text: 'Sales', fontWeight: '700', fontSize: 21 },
+        { type: 'text', text: 'Invoice', fontWeight: '400', fontSize: 21 },
+        { type: 'break' },
+        { type: 'text', text: 'Total', fontWeight: '400', fontSize: 12 },
+    ], 'Sales Invoice\nTotal');
+
+    assert.deepEqual(runs.map((run) => (
+        run.type === 'break'
+            ? { type: 'break' }
+            : { type: run.type, text: run.text, fontWeight: run.fontWeight, fontSize: run.fontSize }
+    )), [
+        { type: 'text', text: 'Sales', fontWeight: '700', fontSize: 21 },
+        { type: 'text', text: ' Invoice', fontWeight: '400', fontSize: 21 },
+        { type: 'break' },
+        { type: 'text', text: 'Total', fontWeight: '400', fontSize: 12 },
+    ]);
+    assert.deepEqual(reconcileRichTextRunWhitespace([
+        { type: 'text', text: 'Different', fontWeight: '700' },
+    ], 'Content'), []);
+});
 
 test('recognizes PDF.js source-backed text annotations', () => {
     assert.equal(isPdfjsSourceBackedTextAnnotation(baseSourceOverlay), true);

@@ -2170,15 +2170,93 @@ PYTHON;
             || abs($parentFontSize - $childFontSize) <= 0.5;
     }
 
+    /**
+     * List markers are inline content, not paragraph-style authorities. A
+     * bullet/number may intentionally use a different face, weight, or color
+     * from its body, so those differences must not split the logical item.
+     * Geometry and a broadly compatible size are the safe structural signals.
+     */
+    private function promotedListMarkerCanShareParagraph(array $marker, array $body): bool
+    {
+        $markerRotation = isset($marker['rotation']) && is_numeric($marker['rotation']) ? (float) $marker['rotation'] : 0.0;
+        $bodyRotation = isset($body['rotation']) && is_numeric($body['rotation']) ? (float) $body['rotation'] : 0.0;
+        if (abs($markerRotation - $bodyRotation) > 0.5) {
+            return false;
+        }
+
+        $markerFontSize = isset($marker['fontSize']) && is_numeric($marker['fontSize']) ? (float) $marker['fontSize'] : null;
+        $bodyFontSize = isset($body['fontSize']) && is_numeric($body['fontSize']) ? (float) $body['fontSize'] : null;
+        if ($markerFontSize === null || $bodyFontSize === null) {
+            return true;
+        }
+
+        $larger = max($markerFontSize, $bodyFontSize, 1.0);
+
+        return abs($markerFontSize - $bodyFontSize) <= max(2.0, $larger * 0.35);
+    }
+
+    /**
+     * Adjacent visual lines may contain inline emphasis or color changes. For
+     * paragraph continuation, compare writing direction/size only; source-run
+     * styling is preserved separately and must not become a block boundary.
+     */
+    private function promotedAnnotationsCanContinueParagraph(array $previous, array $next): bool
+    {
+        $previousRotation = isset($previous['rotation']) && is_numeric($previous['rotation']) ? (float) $previous['rotation'] : 0.0;
+        $nextRotation = isset($next['rotation']) && is_numeric($next['rotation']) ? (float) $next['rotation'] : 0.0;
+        if (abs($previousRotation - $nextRotation) > 0.5) {
+            return false;
+        }
+
+        $previousFontSize = isset($previous['fontSize']) && is_numeric($previous['fontSize']) ? (float) $previous['fontSize'] : null;
+        $nextFontSize = isset($next['fontSize']) && is_numeric($next['fontSize']) ? (float) $next['fontSize'] : null;
+        if ($previousFontSize === null || $nextFontSize === null) {
+            return true;
+        }
+
+        $larger = max($previousFontSize, $nextFontSize, 1.0);
+
+        return abs($previousFontSize - $nextFontSize) <= max(1.5, $larger * 0.25);
+    }
+
     private function promotedAnnotationHasUnsafeMergeEdits(array $annotation): bool
     {
         if (empty($annotation['promotedFromExtraction'])) {
             return true;
         }
 
+        // A clean logical owner naturally has full-paragraph geometry while
+        // its immutable sourceBlock fields still describe the marker record.
+        // That expected mismatch is not a user move and must not prevent the
+        // owner from being reconstructed with its constituent source rows.
+        if (!empty($annotation['promotedLogicalParagraph'])
+            && !$this->promotedLogicalParagraphOwnerHasExplicitUserEdits($annotation)) {
+            return false;
+        }
+
         return !empty($annotation['promotedDirty'])
             || !empty($annotation['promotedReflowEnabled'])
             || $this->promotedAnnotationHasMaterialGeometryEdits($annotation);
+    }
+
+    private function promotedLogicalParagraphOwnerHasExplicitUserEdits(array $annotation): bool
+    {
+        if (empty($annotation['promotedFromExtraction'])) {
+            return false;
+        }
+
+        if (!empty($annotation['promotedDirty'])
+            || !empty($annotation['promotedReflowEnabled'])
+            || !empty($annotation['userAuthored'])
+            || !empty($annotation['styleDirty'])
+            || !empty($annotation['userForcedRichText'])
+            || !empty($annotation['movedTextOverlay'])
+            || !empty($annotation['pdfjsDeleted'])) {
+            return true;
+        }
+
+        return $this->normalizePromotedComparableText($annotation['text'] ?? '')
+            !== $this->normalizePromotedComparableText($annotation['originalText'] ?? '');
     }
 
     private function promotedAnnotationHorizontalOverlapRatio(array $leftRect, array $rightRect): float
@@ -2775,12 +2853,47 @@ PYTHON;
         $items = array_values($annotations);
         $removed = [];
 
+        // A clean synthesized owner can be persisted during an unrelated
+        // save. Some persistence/enrichment paths then reattach the marker's
+        // original source fields to that record. Restore the immutable merged
+        // source snapshot before attempting reconstruction so the body rows do
+        // not degrade into independent handles on the next load.
+        foreach ($items as $index => $item) {
+            if (!is_array($item)
+                || empty($item['promotedLogicalParagraph'])
+                || $this->promotedLogicalParagraphOwnerHasExplicitUserEdits($item)) {
+                continue;
+            }
+            $logicalLines = $this->sanitizeSourceTextLines($item['promotedLogicalSourceTextLines'] ?? []);
+            $logicalBoxes = $this->sanitizeSourceLineBBoxes($item['promotedLogicalSourceLineBBoxes'] ?? []);
+            if (empty($logicalLines) || count($logicalLines) !== count($logicalBoxes)) {
+                continue;
+            }
+            $item['sourceTextLines'] = $logicalLines;
+            $item['sourceLineBBoxes'] = $logicalBoxes;
+            if (is_array($item['promotedLogicalSourceSpans'] ?? null)) {
+                $item['sourceSpans'] = array_values(array_filter(
+                    $item['promotedLogicalSourceSpans'],
+                    static fn ($span): bool => is_array($span)
+                ));
+            }
+            $sourceLeft = min(array_map(static fn (array $box): float => (float) $box[0], $logicalBoxes));
+            $sourceTop = min(array_map(static fn (array $box): float => (float) $box[1], $logicalBoxes));
+            $sourceRight = max(array_map(static fn (array $box): float => (float) $box[2], $logicalBoxes));
+            $sourceBottom = max(array_map(static fn (array $box): float => (float) $box[3], $logicalBoxes));
+            $item['sourceBlockLeft'] = $sourceLeft;
+            $item['sourceBlockTop'] = $sourceTop;
+            $item['sourceBlockWidth'] = $sourceRight - $sourceLeft;
+            $item['sourceBlockHeight'] = $sourceBottom - $sourceTop;
+            $items[$index] = $this->syncAnnotationGeometryFromSourceLineBBoxes($item);
+        }
+
         // An edited logical paragraph is saved under its original marker id.
         // Keep that single edited owner and suppress the clean extraction rows
         // from which it was composed; otherwise they reappear as independent
         // source handles after reload.
         foreach ($items as $ownerIndex => $owner) {
-            if (!is_array($owner) || !$this->promotedAnnotationHasMaterialEdits($owner)) {
+            if (!is_array($owner) || !$this->promotedLogicalParagraphOwnerHasExplicitUserEdits($owner)) {
                 continue;
             }
             $memberKeys = array_values(array_filter(
@@ -2824,7 +2937,7 @@ PYTHON;
                 if ((int) ($candidate['pageIndex'] ?? -1) !== $pageIndex
                     || empty($candidate['promotedFromExtraction'])
                     || $this->promotedAnnotationHasUnsafeMergeEdits($candidate)
-                    || !$this->promotedAnnotationsShareCompatibleTypography($marker, $candidate)) {
+                    || !$this->promotedListMarkerCanShareParagraph($marker, $candidate)) {
                     continue;
                 }
                 $candidateLines = $this->sanitizeSourceTextLines($candidate['sourceTextLines'] ?? []);
@@ -2879,7 +2992,7 @@ PYTHON;
                         || empty($candidate['promotedFromExtraction'])
                         || $this->promotedAnnotationHasUnsafeMergeEdits($candidate)
                         || $this->promotedAnnotationLooksLikeListMarker($candidate)
-                        || !$this->promotedAnnotationsShareCompatibleTypography($body, $candidate)) {
+                        || !$this->promotedAnnotationsCanContinueParagraph($body, $candidate)) {
                         continue;
                     }
                     $candidateLines = $this->sanitizeSourceTextLines($candidate['sourceTextLines'] ?? []);
@@ -2982,6 +3095,17 @@ PYTHON;
             $merged['promotedMergedSourceKeys'] = array_values(array_unique($mergedSourceKeys));
             $merged['promotedMergedAnnotationIds'] = array_values(array_unique($mergedAnnotationIds));
             $merged['promotedLogicalParagraph'] = true;
+            $merged['promotedLogicalSourceTextLines'] = $merged['sourceTextLines'];
+            $merged['promotedLogicalSourceLineBBoxes'] = $merged['sourceLineBBoxes'];
+            $merged['promotedLogicalSourceSpans'] = $mergedSpans;
+            // The body supplies the paragraph's default typography. Marker
+            // styling (for example a red bullet beside black prose) remains in
+            // sourceSpans and is rendered as an inline run by the client.
+            foreach (['fontFamily', 'fontSourceName', 'fontSize', 'lineHeight', 'fontWeight', 'fontStyle', 'textColor', 'color'] as $styleKey) {
+                if (array_key_exists($styleKey, $body)) {
+                    $merged[$styleKey] = $body[$styleKey];
+                }
+            }
             $mergedLeft = min(array_map(static fn (array $entry): float => (float) $entry['bbox'][0], $visualLines));
             $mergedTop = min(array_map(static fn (array $entry): float => (float) $entry['bbox'][1], $visualLines));
             $mergedRight = max(array_map(static fn (array $entry): float => (float) $entry['bbox'][2], $visualLines));
@@ -3873,6 +3997,41 @@ PYTHON;
         ]));
     }
 
+    private function extractedAcroFormWidgetPresence(?PdfExtractionFitz $extraction): ?bool
+    {
+        if (!$extraction) {
+            return null;
+        }
+
+        $pages = PdfExtractionPage::query()
+            ->where('pdf_extraction_fitz_id', $extraction->id)
+            ->get(['page_number', 'widget_rects'])
+            ->keyBy('page_number');
+
+        if ($pages->contains(static function (PdfExtractionPage $page): bool {
+            return is_array($page->widget_rects) && count($page->widget_rects) > 0;
+        })) {
+            return true;
+        }
+
+        // An empty widget list is authoritative only for a complete normalized
+        // extraction. Older/incomplete extraction rows may not have populated
+        // widget_rects, so return unknown and let the browser retain its safe
+        // page-by-page fallback scan for those documents.
+        $totalPages = (int) ($extraction->total_pages ?? 0);
+        if ($totalPages <= 0 || $pages->count() < $totalPages) {
+            return null;
+        }
+
+        if ($pages->contains(static function (PdfExtractionPage $page): bool {
+            return !is_array($page->widget_rects);
+        })) {
+            return null;
+        }
+
+        return false;
+    }
+
     public function documentInfo(Request $request, Document $document)
     {
         $ownership = $this->resolveDocumentOwnership($document);
@@ -3958,9 +4117,13 @@ PYTHON;
 
         // Resolve the fitz extraction id for this document once (used as fallback when
         // individual pdf_state rows don't have pdf_extraction_fitz_id set).
-        $fallbackFitzId = PdfExtractionFitz::where('document_id', $document->id)
+        $fallbackFitz = PdfExtractionFitz::where('document_id', $document->id)
             ->orderByDesc('id')
-            ->value('id');
+            ->first(['id', 'total_pages']);
+        $fallbackFitzId = $fallbackFitz?->id;
+        $hasAcroFormWidgets = $skipMeta
+            ? null
+            : $this->extractedAcroFormWidgetPresence($fallbackFitz);
 
         // Deduplicate by annotation `id` field, keeping the highest db_id (most recent save)
         $annotationAssets = app(PdfAnnotationAssetService::class);
@@ -4147,6 +4310,13 @@ PYTHON;
                 return $entry;
             })
             ->values();
+
+            // Persisted form entries are also definitive positive evidence,
+            // including for legacy documents whose normalized extraction did
+            // not yet record per-page widget rectangles.
+            if ($acroFormEntries->isNotEmpty()) {
+                $hasAcroFormWidgets = true;
+            }
         }
 
         return response()->json([
@@ -4162,6 +4332,7 @@ PYTHON;
             'annotations'    => $annotations,
             'count'          => $annotations->count(),
             'acro_form_entries' => $acroFormEntries,
+            'has_acro_form_widgets' => $hasAcroFormWidgets,
             'embedded_fonts' => $embeddedFonts,
             'embedded_fonts_by_source' => $embeddedFontsBySource,
             'page_filter'    => $pageFilter,

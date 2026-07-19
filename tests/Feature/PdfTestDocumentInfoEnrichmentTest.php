@@ -16,6 +16,67 @@ class PdfTestDocumentInfoEnrichmentTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_document_info_reports_acro_form_widget_presence_only_from_complete_extraction_metadata(): void
+    {
+        $user = User::factory()->create();
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'acro-capability.pdf',
+            'path' => 'documents/acro-capability.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 100,
+        ]);
+        $fitz = PdfExtractionFitz::query()->create([
+            'document_id' => $document->id,
+            'session_id' => 'acro-capability-session',
+            'pdf_filename' => 'acro-capability.pdf',
+            'total_pages' => 2,
+            'total_words' => 0,
+            'full_text' => '',
+            'extraction_data' => [],
+        ]);
+        $firstPage = PdfExtractionPage::query()->create([
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'width' => 612,
+            'height' => 792,
+            'word_count' => 0,
+            'text' => '',
+            'drawn_box_rects' => [],
+            'widget_rects' => [],
+        ]);
+        $secondPage = PdfExtractionPage::query()->create([
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 2,
+            'width' => 612,
+            'height' => 792,
+            'word_count' => 0,
+            'text' => '',
+            'drawn_box_rects' => [],
+            'widget_rects' => [],
+        ]);
+
+        $this->actingAs($user)
+            ->getJson(route('pdfTests.documentInfo', $document))
+            ->assertOk()
+            ->assertJsonPath('has_acro_form_widgets', false);
+
+        $secondPage->update(['widget_rects' => [[72, 100, 240, 124]]]);
+        $this->actingAs($user)
+            ->getJson(route('pdfTests.documentInfo', $document))
+            ->assertOk()
+            ->assertJsonPath('has_acro_form_widgets', true);
+
+        $secondPage->delete();
+        $firstPage->refresh();
+        $this->actingAs($user)
+            ->getJson(route('pdfTests.documentInfo', $document))
+            ->assertOk()
+            ->assertJsonPath('has_acro_form_widgets', null);
+    }
+
     public function test_document_info_prefers_canonical_fitz_block_geometry_for_promoted_annotations(): void
     {
         $user = User::factory()->create([
@@ -1471,5 +1532,211 @@ class PdfTestDocumentInfoEnrichmentTest extends TestCase
         ], $paragraph['sourceTextLines'] ?? null);
         $this->assertSame(107.70, round((float) $paragraph['pdfX'], 2));
         $this->assertSame(28.02, round((float) $paragraph['pdfHeight'], 2));
+    }
+
+    public function test_document_info_generically_groups_mixed_style_list_marker_and_fragmented_body(): void
+    {
+        $user = User::factory()->create(['email' => 'generic-list-owner@example.com']);
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'generic-list-layout.pdf',
+            'path' => 'documents/generic-list-layout.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 100,
+        ]);
+        PdfExtractionFitz::query()->create([
+            'document_id' => $document->id,
+            'session_id' => 'fitz-session',
+            'pdf_filename' => 'generic-list-layout.pdf',
+            'total_pages' => 1,
+            'total_words' => 30,
+            'full_text' => 'sample',
+            'extraction_data' => [],
+        ]);
+
+        $common = [
+            'type' => 'text',
+            'pageIndex' => 0,
+            'fontSize' => 10,
+            'fontFamily' => 'Example Sans',
+            'fontSourceName' => 'Example Sans',
+            'fontWeight' => '400',
+            'fontStyle' => 'normal',
+            'lineHeight' => 10,
+            'sourcePageHeight' => 700,
+            'promotedFromExtraction' => true,
+            'promotedDirty' => false,
+        ];
+        $rows = [
+            array_merge($common, [
+                'id' => 'promoted_7_101',
+                'text' => '•',
+                'originalText' => '•',
+                'textColor' => '#d81b60',
+                'color' => '#d81b60',
+                'pdfX' => 40,
+                'pdfY' => 590,
+                'pdfWidth' => 6,
+                'pdfHeight' => 10,
+                'promotedSourceKey' => 'generic-marker-a',
+                'sourceBlockLeft' => 40,
+                'sourceBlockTop' => 100,
+                'sourceBlockWidth' => 6,
+                'sourceBlockHeight' => 10,
+                'sourceTextLines' => ['•'],
+                'sourceLineBBoxes' => [[40, 100, 46, 110]],
+                'sourceSpans' => [[
+                    'text' => '•',
+                    'bbox' => [40, 100, 46, 110],
+                    'fontSize' => 10,
+                    'font' => 'Example Sans',
+                    'hex_color' => '#d81b60',
+                ]],
+            ]),
+            array_merge($common, [
+                'id' => 'promoted_7_205',
+                'text' => "Audit every generated record before publication.\nKeep supporting evidence with the final docu-",
+                'originalText' => "Audit every generated record before publication.\nKeep supporting evidence with the final docu-",
+                'textColor' => '#111111',
+                'color' => '#111111',
+                'pdfX' => 60,
+                'pdfY' => 576,
+                'pdfWidth' => 250,
+                'pdfHeight' => 24,
+                'promotedSourceKey' => 'generic-body-b',
+                'sourceBlockLeft' => 60,
+                'sourceBlockTop' => 100,
+                'sourceBlockWidth' => 250,
+                'sourceBlockHeight' => 24,
+                'sourceTextLines' => [
+                    'Audit every generated record before publication.',
+                    'Keep supporting evidence with the final docu-',
+                ],
+                'sourceLineBBoxes' => [
+                    [60, 100, 300, 110],
+                    [60, 114, 310, 124],
+                ],
+                'sourceSpans' => [
+                    [
+                        'text' => 'Audit every generated record before publication.',
+                        'bbox' => [60, 100, 300, 110],
+                        'fontSize' => 10,
+                        'font' => 'Example Sans',
+                        'hex_color' => '#111111',
+                    ],
+                    [
+                        'text' => 'Keep supporting evidence with the final docu-',
+                        'bbox' => [60, 114, 310, 124],
+                        'fontSize' => 10,
+                        'font' => 'Example Sans',
+                        'hex_color' => '#111111',
+                    ],
+                ],
+            ]),
+            array_merge($common, [
+                'id' => 'promoted_7_309',
+                'text' => 'ment.',
+                'originalText' => 'ment.',
+                'textColor' => '#111111',
+                'color' => '#111111',
+                'pdfX' => 60,
+                'pdfY' => 562,
+                'pdfWidth' => 30,
+                'pdfHeight' => 10,
+                'promotedSourceKey' => 'generic-continuation-c',
+                'sourceBlockLeft' => 60,
+                'sourceBlockTop' => 128,
+                'sourceBlockWidth' => 30,
+                'sourceBlockHeight' => 10,
+                'sourceTextLines' => ['ment.'],
+                'sourceLineBBoxes' => [[60, 128, 90, 138]],
+                'sourceSpans' => [[
+                    'text' => 'ment.',
+                    'bbox' => [60, 128, 90, 138],
+                    'fontSize' => 10,
+                    'font' => 'Example Sans',
+                    'hex_color' => '#111111',
+                ]],
+            ]),
+            // A marker-like table cell followed by a short value must remain
+            // independent. This proves the list merge is not a blanket
+            // same-baseline concatenation rule.
+            array_merge($common, [
+                'id' => 'promoted_7_410',
+                'text' => '1.',
+                'originalText' => '1.',
+                'textColor' => '#000000',
+                'pdfX' => 360,
+                'pdfY' => 490,
+                'pdfWidth' => 8,
+                'pdfHeight' => 10,
+                'promotedSourceKey' => 'table-cell-marker',
+                'sourceBlockLeft' => 360,
+                'sourceBlockTop' => 200,
+                'sourceBlockWidth' => 8,
+                'sourceBlockHeight' => 10,
+                'sourceTextLines' => ['1.'],
+                'sourceLineBBoxes' => [[360, 200, 368, 210]],
+                'sourceSpans' => [],
+            ]),
+            array_merge($common, [
+                'id' => 'promoted_7_411',
+                'text' => 'Yes',
+                'originalText' => 'Yes',
+                'textColor' => '#000000',
+                'pdfX' => 380,
+                'pdfY' => 490,
+                'pdfWidth' => 18,
+                'pdfHeight' => 10,
+                'promotedSourceKey' => 'table-cell-value',
+                'sourceBlockLeft' => 380,
+                'sourceBlockTop' => 200,
+                'sourceBlockWidth' => 18,
+                'sourceBlockHeight' => 10,
+                'sourceTextLines' => ['Yes'],
+                'sourceLineBBoxes' => [[380, 200, 398, 210]],
+                'sourceSpans' => [],
+            ]),
+        ];
+
+        foreach ($rows as $row) {
+            PdfState::query()->create([
+                'document_id' => $document->id,
+                'pdf_extraction_fitz_id' => null,
+                'user_id' => $user->id,
+                'session_id' => 'generic-state-session',
+                'page_number' => 0,
+                'state' => 'not_saved',
+                'annotation_data' => $row,
+            ]);
+        }
+
+        $response = $this->actingAs($user)->getJson(route('pdfTests.documentInfo', $document));
+        $response->assertOk()->assertJson(['success' => true]);
+
+        $annotations = collect($response->json('annotations'));
+        $paragraph = $annotations->firstWhere('id', 'promoted_7_101');
+        $this->assertNotNull($paragraph);
+        $this->assertTrue($paragraph['promotedLogicalParagraph'] ?? false);
+        $this->assertSame(
+            ['generic-marker-a', 'generic-body-b', 'generic-continuation-c'],
+            $paragraph['promotedMergedSourceKeys'] ?? null
+        );
+        $this->assertNull($annotations->firstWhere('id', 'promoted_7_205'));
+        $this->assertNull($annotations->firstWhere('id', 'promoted_7_309'));
+        $this->assertSame('#111111', $paragraph['textColor'] ?? null);
+        $this->assertSame([
+            '• Audit every generated record before publication.',
+            'Keep supporting evidence with the final docu-',
+            'ment.',
+        ], $paragraph['sourceTextLines'] ?? null);
+        $this->assertSame(
+            ['#d81b60', '#111111', '#111111', '#111111'],
+            collect($paragraph['sourceSpans'] ?? [])->pluck('hex_color')->values()->all()
+        );
+
+        $this->assertNotNull($annotations->firstWhere('id', 'promoted_7_410'));
+        $this->assertNotNull($annotations->firstWhere('id', 'promoted_7_411'));
+        $this->assertFalse((bool) ($annotations->firstWhere('id', 'promoted_7_410')['promotedLogicalParagraph'] ?? false));
     }
 }

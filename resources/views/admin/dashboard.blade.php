@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" class="h-full bg-gray-950">
 <head>
+    <link rel="icon" type="image/svg+xml" href="{{ asset('images/netkit_logo_cube.svg') }}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard — {{ config('app.name') }}</title>

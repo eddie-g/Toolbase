@@ -2989,6 +2989,62 @@ def _strip_px_font_sizes_from_html(html_str: str) -> str:
     )
 
 
+def _rich_text_html_capture_scale(ann: Dict[str, Any]) -> float:
+    """Return the browser px-per-PDF-point scale used by legacy rich HTML."""
+    for raw_value in (
+        ann.get("pdfjsRichTextHtmlScale"),
+        ann.get("pdfjsSourceSpanRunsScale"),
+    ):
+        try:
+            value = float(raw_value or 0.0)
+        except Exception:
+            value = 0.0
+        if math.isfinite(value) and 0.1 <= value <= 20.0:
+            return value
+    try:
+        source_px = float(ann.get("pdfjsSourceFontSizePx") or 0.0)
+        font_points = float(ann.get("fontSize") or 0.0)
+        derived = source_px / font_points if source_px > 0 and font_points > 0 else 0.0
+    except Exception:
+        derived = 0.0
+    return derived if math.isfinite(derived) and 0.1 <= derived <= 20.0 else 0.0
+
+
+def _normalize_rich_text_html_units_for_pdf(ann: Dict[str, Any], html_str: str) -> str:
+    """Convert viewport px sizing to PDF points and remove editor transforms.
+
+    Version-2 HTML already stores point units and passes through unchanged.
+    Legacy HTML stores computed screen pixels plus the capture scale. When that
+    scale is available, preserving the per-run sizes requires dividing by it;
+    when it is unavailable we retain the historical safe fallback of dropping
+    ambiguous px sizing and inheriting the annotation-level point size.
+    """
+    if not html_str:
+        return html_str
+    scale = _rich_text_html_capture_scale(ann)
+    if scale <= 0:
+        return _strip_px_font_sizes_from_html(html_str)
+
+    px_size_re = re.compile(
+        r"\b(font-size|line-height|min-height)\s*:\s*(-?\d*\.?\d+)px\b\s*;?",
+        flags=re.IGNORECASE,
+    )
+
+    def replace_px_size(match: "re.Match[str]") -> str:
+        try:
+            points = float(match.group(2)) / scale
+        except Exception:
+            return ""
+        if not math.isfinite(points) or points <= 0:
+            return ""
+        return f"{match.group(1)}: {points:.6f}pt;"
+
+    converted = px_size_re.sub(replace_px_size, html_str)
+    # This now removes only editor transforms (all recognized px sizing above
+    # has become pt); it also catches malformed/unhandled px declarations.
+    return _strip_px_font_sizes_from_html(converted)
+
+
 def _rewrite_richhtml_inline_italic(html_str: str) -> str:
     """Translate inline italic markers into explicit font-family overrides.
 
@@ -3125,7 +3181,7 @@ def _rewrite_kerning_spacer_widths_to_pt(html_str: str) -> str:
 def build_annotation_htmlbox_markup(ann: Dict[str, Any], text: str) -> str:
     rich_html = sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
     if rich_html:
-        rich_html = _strip_px_font_sizes_from_html(rich_html)
+        rich_html = _normalize_rich_text_html_units_for_pdf(ann, rich_html)
         rich_html = _rewrite_kerning_spacer_widths_to_pt(rich_html)
         rich_html = _rewrite_richhtml_inline_italic(rich_html)
     inner_html = rich_html if rich_html else html.escape(sanitize_pdf_text(text))
@@ -3153,6 +3209,43 @@ def _normalize_rich_text_compare_text(value: Any) -> str:
     return normalized.strip()
 
 
+def _css_length_in_points(
+    value: Any,
+    inherited_font_size: float,
+    *,
+    line_height: bool = False,
+) -> Optional[float]:
+    raw = str(value or "").strip().lower()
+    if not raw or raw == "normal":
+        return None
+    match = re.fullmatch(r"(-?\d*\.?\d+)\s*(pt|px|em|rem|%)?", raw)
+    if not match:
+        return None
+    try:
+        number = float(match.group(1))
+    except Exception:
+        return None
+    unit = match.group(2) or ""
+    if unit == "pt":
+        points = number
+    elif unit == "px":
+        # Defensive fallback for non-editor HTML. Editor px values are first
+        # converted with their capture scale by
+        # _normalize_rich_text_html_units_for_pdf().
+        points = number * 0.75
+    elif unit in {"em", "rem"}:
+        points = inherited_font_size * number
+    elif unit == "%":
+        points = inherited_font_size * (number / 100.0)
+    elif line_height:
+        points = inherited_font_size * number
+    else:
+        return None
+    if not math.isfinite(points) or points <= 0:
+        return None
+    return max(0.5, min(1000.0, points))
+
+
 def _apply_inline_style_state(state: Dict[str, Any], style_value: str) -> Dict[str, Any]:
     next_state = dict(state)
     for declaration in str(style_value or "").split(";"):
@@ -3163,7 +3256,24 @@ def _apply_inline_style_state(state: Dict[str, Any], style_value: str) -> Dict[s
         value = raw_value.strip().lower()
         if not prop:
             continue
-        if prop == "font-style":
+        if prop == "font-size":
+            font_size = _css_length_in_points(
+                value,
+                float(next_state.get("font_size") or 12.0),
+            )
+            if font_size is not None:
+                next_state["font_size"] = font_size
+                next_state["font_size_explicit"] = True
+        elif prop == "line-height":
+            resolved_line_height = _css_length_in_points(
+                value,
+                float(next_state.get("font_size") or 12.0),
+                line_height=True,
+            )
+            if resolved_line_height is not None:
+                next_state["line_height"] = resolved_line_height
+                next_state["line_height_explicit"] = True
+        elif prop == "font-style":
             if "oblique" in value:
                 next_state["font_style"] = "oblique"
             elif "italic" in value:
@@ -3194,6 +3304,7 @@ def _apply_inline_style_state(state: Dict[str, Any], style_value: str) -> Dict[s
             if font_family:
                 next_state["font_family"] = font_family
                 next_state["font_source_name"] = font_family
+                next_state["font_family_explicit"] = True
     return next_state
 
 
@@ -3281,15 +3392,15 @@ class _RichTextLayoutParser(HTMLParser):
         })
 
 
-def parse_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
-    rich_html = sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
-    if not rich_html:
-        return []
-
-    parser = _RichTextLayoutParser({
+def _rich_text_base_style(ann: Dict[str, Any]) -> Dict[str, Any]:
+    return {
         "font_family": ann.get("fontFamily") or "Helvetica",
         "font_source_name": ann.get("fontSourceName") or ann.get("fontFamily") or "Helvetica",
         "font_size": float(ann.get("fontSize") or 12),
+        "line_height": float(ann.get("lineHeight") or 0.0),
+        "font_size_explicit": False,
+        "line_height_explicit": False,
+        "font_family_explicit": False,
         "font_weight": resolve_annotation_font_weight(ann),
         "font_style": resolve_annotation_font_style(ann),
         "color": normalize_css_color(ann.get("textColor")) or str(ann.get("textColor") or "#000000"),
@@ -3302,9 +3413,147 @@ def parse_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
         "userAuthored": ann.get("userAuthored"),
         "styleDirty": ann.get("styleDirty"),
         "richTextHtml": ann.get("richTextHtml"),
-    })
+        "richTextRuns": ann.get("richTextRuns"),
+    }
+
+
+def _structured_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
+    raw_runs = ann.get("richTextRuns")
+    if not isinstance(raw_runs, list) or not raw_runs or len(raw_runs) > 20000:
+        return []
+    base_style = _rich_text_base_style(ann)
+    sanitizer = sanitize_pdfjs_source_text if is_pdfjs_visible_overlay_text(ann) else sanitize_pdf_text
+    ops: list[Dict[str, Any]] = []
+    total_text_length = 0
+    for raw_run in raw_runs:
+        if not isinstance(raw_run, dict):
+            continue
+        run_type = str(raw_run.get("type") or ("text" if "text" in raw_run else "")).strip().lower()
+        if run_type == "break":
+            ops.append({"type": "break"})
+            continue
+        if run_type != "text":
+            continue
+        run_text = sanitizer(raw_run.get("text") or "").replace("\r\n", "\n").replace("\r", "\n")
+        if not run_text:
+            continue
+        total_text_length += len(run_text)
+        if total_text_length > 2_000_000:
+            return []
+        style = dict(base_style)
+        font_family = str(raw_run.get("fontFamily") or raw_run.get("font_family") or style["font_family"]).strip()[:300]
+        font_source_name = str(raw_run.get("fontSourceName") or raw_run.get("font_source_name") or font_family).strip()[:300]
+        if font_family:
+            style["font_family"] = font_family
+        if font_source_name:
+            style["font_source_name"] = font_source_name
+        style["font_family_explicit"] = bool(raw_run.get("fontFamily") or raw_run.get("font_family"))
+        try:
+            font_size = float(raw_run.get("fontSize") or raw_run.get("font_size") or style["font_size"])
+        except Exception:
+            font_size = float(style["font_size"] or 12.0)
+        if math.isfinite(font_size) and font_size > 0:
+            style["font_size"] = max(0.5, min(1000.0, font_size))
+        style["font_size_explicit"] = raw_run.get("fontSize") is not None or raw_run.get("font_size") is not None
+        try:
+            line_height = float(raw_run.get("lineHeight") or raw_run.get("line_height") or style.get("line_height") or 0.0)
+        except Exception:
+            line_height = 0.0
+        if math.isfinite(line_height) and line_height > 0:
+            style["line_height"] = max(0.5, min(2000.0, line_height))
+        style["line_height_explicit"] = raw_run.get("lineHeight") is not None or raw_run.get("line_height") is not None
+        weight = str(raw_run.get("fontWeight") or raw_run.get("font_weight") or style["font_weight"]).strip().lower()
+        style["font_weight"] = "700" if weight == "bold" else (weight if re.fullmatch(r"[1-9]00", weight) else "400")
+        font_style = str(raw_run.get("fontStyle") or raw_run.get("font_style") or style["font_style"]).strip().lower()
+        style["font_style"] = font_style if font_style in {"normal", "italic", "oblique"} else "normal"
+        color = normalize_css_color(raw_run.get("color") or raw_run.get("textColor"))
+        if color:
+            style["color"] = color
+        if "underline" in raw_run:
+            style["underline"] = _boolish(raw_run.get("underline"))
+        ops.append({"type": "text", "text": run_text, **style})
+    while ops and ops[-1].get("type") == "break":
+        ops.pop()
+    return ops
+
+
+def _reconcile_rich_text_ops_with_plain_text(
+    ops: list[Dict[str, Any]],
+    plain_text: Any,
+) -> list[Dict[str, Any]]:
+    """Restore hard breaks omitted between otherwise exact styled runs."""
+    if not ops:
+        return []
+    target = sanitize_pdf_text(plain_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    rendered = _rich_text_layout_ops_to_text(ops)
+    if _normalize_rich_text_compare_text(rendered) == _normalize_rich_text_compare_text(target):
+        return ops
+    flat_target = target.replace("\n", "")
+    flat_rendered = "".join(
+        sanitize_pdf_text(op.get("text") or "").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "")
+        for op in ops
+        if op.get("type") == "text"
+    )
+    if flat_rendered != flat_target:
+        return ops
+
+    breaks_by_offset: Dict[int, int] = {}
+    offset = 0
+    for character in target:
+        if character == "\n":
+            breaks_by_offset[offset] = breaks_by_offset.get(offset, 0) + 1
+        else:
+            offset += 1
+
+    rebuilt: list[Dict[str, Any]] = []
+    cursor = 0
+
+    def emit_breaks() -> None:
+        for _ in range(breaks_by_offset.get(cursor, 0)):
+            rebuilt.append({"type": "break"})
+
+    emit_breaks()
+    for op in ops:
+        if op.get("type") != "text":
+            continue
+        op_text = sanitize_pdf_text(op.get("text") or "").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "")
+        local_start = 0
+        while local_start < len(op_text):
+            next_break = min(
+                (position for position in breaks_by_offset if cursor < position <= cursor + (len(op_text) - local_start)),
+                default=None,
+            )
+            take = (next_break - cursor) if next_break is not None else (len(op_text) - local_start)
+            if take > 0:
+                rebuilt.append({**op, "text": op_text[local_start:local_start + take]})
+                cursor += take
+                local_start += take
+            emit_breaks()
+    while rebuilt and rebuilt[-1].get("type") == "break":
+        rebuilt.pop()
+    if _normalize_rich_text_compare_text(_rich_text_layout_ops_to_text(rebuilt)) != _normalize_rich_text_compare_text(target):
+        return ops
+    return rebuilt
+
+
+def parse_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
+    structured_ops = _structured_rich_text_layout_ops(ann)
+    if structured_ops:
+        # Version-2 runs are a canonical, self-contained rich-text document.
+        # normalize_annotations_for_pdf_export() already repairs a redundant
+        # plain-text copy when it differs only by hard breaks, so do not let a
+        # stale flat string erase authored break operations here.
+        if str(ann.get("richTextVersion") or "").strip() == "2":
+            return structured_ops
+        return _reconcile_rich_text_ops_with_plain_text(structured_ops, ann.get("text") or "")
+
+    rich_html = sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
+    if not rich_html:
+        return []
+
+    parser = _RichTextLayoutParser(_rich_text_base_style(ann))
     try:
-        parser.feed(_strip_px_font_sizes_from_html(rich_html))
+        parser.feed(_normalize_rich_text_html_units_for_pdf(ann, rich_html))
         parser.close()
     except Exception:
         return []
@@ -3312,7 +3561,7 @@ def parse_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
     ops = list(parser.ops)
     while ops and ops[-1].get("type") == "break":
         ops.pop()
-    return ops
+    return _reconcile_rich_text_ops_with_plain_text(ops, ann.get("text") or "")
 
 
 def _rich_text_layout_ops_to_text(ops: list[Dict[str, Any]]) -> str:
@@ -3399,6 +3648,7 @@ def wrap_rich_text_layout_ops(
             "font_family": entry.get("font_family"),
             "font_source_name": entry.get("font_source_name"),
             "font_size": float(entry.get("font_size") or 12),
+            "line_height": float(entry.get("line_height") or 0.0),
             "font_weight": entry.get("font_weight"),
             "font_style": entry.get("font_style"),
             "color": entry.get("color"),
@@ -3433,6 +3683,7 @@ def build_wrapped_rich_text_span_layout(
     line_height: float,
     align: int,
     font_ascender: float,
+    vertical_align: str = "top",
 ) -> list[Dict[str, Any]]:
     ops = parse_rich_text_layout_ops(ann)
     if not ops:
@@ -3447,17 +3698,67 @@ def build_wrapped_rich_text_span_layout(
         return []
 
     font_cache: Dict[tuple[Any, ...], fitz.Font] = {}
+    base_font_size = max(0.5, float(ann.get("fontSize") or 12.0))
+    base_line_height = max(float(line_height or 0.0), base_font_size * 1.18)
+    line_metrics: list[Dict[str, float]] = []
+    for line_runs in wrapped_lines:
+        if not line_runs:
+            base_descent = max(0.0, base_line_height - (float(font_ascender) * base_font_size))
+            line_metrics.append({
+                "height": base_line_height,
+                "baseline_offset": min(base_line_height, float(font_ascender) * base_font_size),
+                "descent": base_descent,
+            })
+            continue
+        run_metrics: list[tuple[float, float, float]] = []
+        for run in line_runs:
+            run_text = str(run.get("text") or "")
+            run_size = max(0.5, float(run.get("font_size") or base_font_size))
+            run_font = _resolve_style_run_font(run_text, run, font_cache)
+            ascender, descender = resolve_font_vertical_metrics(run_font)
+            glyph_ascent = ascender * run_size
+            glyph_descent = descender * run_size
+            glyph_height = glyph_ascent + glyph_descent
+            desired_height = max(
+                glyph_height,
+                float(run.get("line_height") or 0.0),
+                run_size * 1.18,
+            )
+            half_leading = max(0.0, desired_height - glyph_height) / 2.0
+            run_metrics.append((half_leading + glyph_ascent, half_leading + glyph_descent, desired_height))
+        baseline_offset = max(metric[0] for metric in run_metrics)
+        below_baseline = max(metric[1] for metric in run_metrics)
+        line_metrics.append({
+            "height": max(
+                max(metric[2] for metric in run_metrics),
+                baseline_offset + below_baseline,
+            ),
+            "baseline_offset": baseline_offset,
+            "descent": below_baseline,
+        })
+
+    total_height = sum(metric["height"] for metric in line_metrics)
+    block_top = text_rect.y0 + padding_top
+    spare_height = max(0.0, text_rect.y1 - block_top - total_height)
+    normalized_vertical_align = str(vertical_align or "top").strip().lower()
+    if normalized_vertical_align in {"middle", "center"}:
+        block_top += spare_height / 2.0
+    elif normalized_vertical_align == "bottom":
+        block_top += spare_height
+
     layout: list[Dict[str, Any]] = []
+    line_top = block_top
+    text_sanitizer = sanitize_pdfjs_source_text if is_pdfjs_visible_overlay_text(ann) else sanitize_pdf_text
     for line_index, line_runs in enumerate(wrapped_lines):
-        line_top = text_rect.y0 + padding_top + (line_index * line_height)
-        line_bottom = min(text_rect.y1, line_top + line_height)
+        metrics = line_metrics[line_index]
+        line_bottom = line_top + metrics["height"]
         line_rect = fitz.Rect(
             text_rect.x0 + padding_x,
             line_top,
-            text_rect.x1 - padding_x,
+            text_rect.x0 + padding_x + available_width,
             line_bottom,
         )
-        baseline_y = line_top + (float(font_ascender) * float(ann.get("fontSize") or 12))
+        baseline_y = line_top + metrics["baseline_offset"]
         total_width = sum(
             _measure_style_run_text_width(run.get("text") or "", run, font_cache)
             for run in line_runs
@@ -3471,7 +3772,7 @@ def build_wrapped_rich_text_span_layout(
         spans: list[Dict[str, Any]] = []
         cursor_x = draw_x
         for run in line_runs:
-            run_text = sanitize_pdf_text(run.get("text") or "")
+            run_text = text_sanitizer(run.get("text") or "")
             if run_text == "":
                 continue
             run_width = _measure_style_run_text_width(run_text, run, font_cache)
@@ -3490,6 +3791,7 @@ def build_wrapped_rich_text_span_layout(
             "rotation": 0.0,
             "spans": spans,
         })
+        line_top = line_bottom
 
     return layout
 
@@ -3595,6 +3897,25 @@ def resolve_uniform_rich_text_styles(ann: Dict[str, Any], text: str) -> Dict[str
 
 
 def has_single_run_rich_text(ann: Dict[str, Any], text: str) -> bool:
+    structured_runs = ann.get("richTextRuns")
+    if isinstance(structured_runs, list) and structured_runs:
+        text_runs = [
+            run for run in structured_runs
+            if isinstance(run, dict)
+            and str(run.get("type") or "text").strip().lower() == "text"
+            and str(run.get("text") or "")
+        ]
+        has_break = any(
+            isinstance(run, dict)
+            and str(run.get("type") or "").strip().lower() == "break"
+            for run in structured_runs
+        )
+        if len(text_runs) != 1 or has_break:
+            return False
+        normalized_run = sanitize_pdf_text(text_runs[0].get("text") or "").replace("\r\n", "\n").replace("\r", "\n")
+        normalized_text = sanitize_pdf_text(text).replace("\r\n", "\n").replace("\r", "\n")
+        return normalized_run == normalized_text
+
     rich_html = str(ann.get("richTextHtml") or "").strip()
     if not rich_html:
         return True
@@ -5305,6 +5626,7 @@ def _style_run_signature(style: Dict[str, Any]) -> tuple[Any, ...]:
         str(style.get("font_family") or ""),
         str(style.get("font_source_name") or ""),
         round(float(style.get("font_size") or 0.0), 4),
+        round(float(style.get("line_height") or 0.0), 4),
         str(style.get("font_weight") or ""),
         str(style.get("font_style") or ""),
         str(style.get("color") or ""),
@@ -5313,14 +5635,11 @@ def _style_run_signature(style: Dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-def _measure_style_run_text_width(
+def _resolve_style_run_font(
     text: str,
     style: Dict[str, Any],
     font_cache: Optional[Dict[tuple[Any, ...], fitz.Font]] = None,
-) -> float:
-    if not text:
-        return 0.0
-
+) -> fitz.Font:
     style_ann = {
         "fontFamily": style.get("font_family"),
         "fontSourceName": style.get("font_source_name"),
@@ -5337,10 +5656,6 @@ def _measure_style_run_text_width(
         "styleDirty": style.get("styleDirty"),
         "richTextHtml": style.get("richTextHtml"),
     }
-    font_size = float(style.get("font_size") or 0.0)
-    if font_size <= 0:
-        font_size = 12.0
-
     cache_key = _style_run_signature(style)
     font = font_cache.get(cache_key) if font_cache is not None else None
     if font is None:
@@ -5352,6 +5667,21 @@ def _measure_style_run_text_width(
             font = fitz.Font(resolve_text_fontname(style_ann))
         if font_cache is not None:
             font_cache[cache_key] = font
+    return font
+
+
+def _measure_style_run_text_width(
+    text: str,
+    style: Dict[str, Any],
+    font_cache: Optional[Dict[tuple[Any, ...], fitz.Font]] = None,
+) -> float:
+    if not text:
+        return 0.0
+
+    font_size = float(style.get("font_size") or 0.0)
+    if font_size <= 0:
+        font_size = 12.0
+    font = _resolve_style_run_font(text, style, font_cache)
 
     return float(font.text_length(text, fontsize=font_size))
 
@@ -5550,10 +5880,9 @@ def _rich_text_runs_per_line_for_dirty_promoted(
     Returns ``[]`` when there is no rich text payload, when the parser
     yields a single uniform style across the whole annotation (nothing
     per-run to preserve), or when parsing fails. Each returned run carries
-    only the fields the rich text actually specified (font_weight,
-    font_style, underline, color) plus ``text`` — callers merge these on
-    top of the line's base_style so font_family/size/document context are
-    inherited.
+    the complete effective per-run style plus ``text``. Explicitness flags
+    distinguish authored family/size overrides from inherited base values so
+    source-face repair cannot overwrite the user's choices.
     """
     ops = parse_rich_text_layout_ops(ann)
     if not ops:
@@ -5569,7 +5898,11 @@ def _rich_text_runs_per_line_for_dirty_promoted(
         if not text:
             continue
         run: Dict[str, Any] = {"text": text}
-        for key in ("font_weight", "font_style", "underline", "color"):
+        for key in (
+            "font_family", "font_source_name", "font_size", "line_height",
+            "font_family_explicit", "font_size_explicit", "line_height_explicit",
+            "font_weight", "font_style", "underline", "color",
+        ):
             value = op.get(key)
             if value is None or value == "":
                 continue
@@ -5726,6 +6059,10 @@ def apply_source_faces_to_rich_span_layout(
             )
             if matched_face is not None:
                 for face_key in ("font_family", "font_source_name", "font_size"):
+                    if face_key in {"font_family", "font_source_name"} and repaired_span.get("font_family_explicit"):
+                        continue
+                    if face_key == "font_size" and repaired_span.get("font_size_explicit"):
+                        continue
                     face_value = matched_face.get(face_key)
                     if face_value is not None and face_value != "":
                         repaired_span[face_key] = face_value
@@ -5934,6 +6271,10 @@ def build_dirty_promoted_style_mapped_span_layout(
                             "font_source_name",
                             "font_size",
                         ):
+                            if face_key in {"font_family", "font_source_name"} and merged.get("font_family_explicit"):
+                                continue
+                            if face_key == "font_size" and merged.get("font_size_explicit"):
+                                continue
                             face_value = matched_face.get(face_key)
                             if face_value is None or face_value == "":
                                 continue
@@ -6391,11 +6732,14 @@ def draw_text_using_exact_source_spans(
                 )
 
             if resolve_annotation_underline(span_ann):
-                underline_y = span_rect.y1 - max(0.5, span_font_size * 0.08)
+                # Underlines follow the run baseline, not the tallest line
+                # box. Mixed-size lines otherwise pushed a small run's rule to
+                # the bottom of a neighboring large run's leading area.
+                underline_y = baseline_y + max(0.5, span_font_size * 0.08)
                 draw_rotated_line(
                     page,
-                    fitz.Point(span_rect.x0, underline_y),
-                    fitz.Point(span_rect.x1, underline_y),
+                    fitz.Point(draw_x, underline_y),
+                    fitz.Point(draw_x + span_font.text_length(span_text, fontsize=span_font_size), underline_y),
                     color=span_color,
                     width=max(0.5, span_font_size * 0.04),
                     opacity=opacity,
@@ -6784,7 +7128,15 @@ def normalized_pdfjs_visual_lines(ann: Dict[str, Any], text: str) -> list[str]:
     raw_lines = ann.get("pdfjsVisualLines")
     if not isinstance(raw_lines, list):
         return []
-    lines = [sanitize_pdf_text(line).strip() for line in raw_lines]
+    # These rows are browser-captured render lines for a PDF.js source-backed
+    # annotation. Keep their Unicode punctuation intact, just as we do for the
+    # annotation's canonical replacement text. The generic PDF sanitizer
+    # normalizes typographic quotes to ASCII quotes; doing that only here made
+    # font coverage validation and drawing disagree. In particular, a source
+    # font subset could cover U+201C / U+201D but not U+0022, so validation
+    # passed for the canonical text and the subsequently normalized visual row
+    # rendered the ASCII quote as glyph 0 (a tofu square).
+    lines = [sanitize_pdfjs_source_text(line).strip() for line in raw_lines]
     lines = [line for line in lines if line]
     if len(lines) <= 1:
         return []
@@ -6824,6 +7176,14 @@ def should_preserve_pdfjs_moved_source_line(ann: Dict[str, Any], text: str) -> b
     # paragraph must reflow in its current box at the current font size; scaling
     # the old rows down is the exact mismatch seen in doc 4397 promoted_1_5.
     if _promoted_annotation_was_resized(ann):
+        return False
+    # Captured span rectangles describe the original glyph metrics. Once the
+    # user changes typography, fitting the new face back into those rectangles
+    # can shrink styled runs and pin following runs at their stale x offsets.
+    # Let the current rich-text renderer lay out style-dirty content exactly as
+    # the browser does. The source-span path remains available for untouched
+    # typography and legacy rich payloads that omitted this flag.
+    if _boolish(ann.get("styleDirty")):
         return False
     if (
         _boolish(ann.get("userForcedRichText"))
@@ -6907,6 +7267,107 @@ def apply_rich_style_to_pdfjs_source_run(run: Dict[str, Any], style: Dict[str, A
     return updated
 
 
+def apply_rich_styles_to_pdfjs_source_runs(
+    ann: Dict[str, Any],
+    text: str,
+    runs: list[Dict[str, Any]],
+    reconstructed_text: str,
+) -> list[Dict[str, Any]]:
+    """Overlay current rich styles on immutable PDF.js source-run geometry.
+
+    The captured runs remain authoritative for position and size, but their
+    typography describes the original PDF. When the editor's rich-text
+    character stream still matches those runs, split source runs at any rich
+    style boundary and apply the current style to each resulting segment.
+    """
+    rich_runs = rich_text_style_runs_for_exact_text(ann, text)
+    if not rich_runs:
+        return runs
+
+    rich_text = "".join(str(run.get("text") or "") for run in rich_runs)
+    if (
+        len(rich_text) != len(reconstructed_text)
+        or _normalize_rich_text_compare_text(rich_text)
+        != _normalize_rich_text_compare_text(reconstructed_text)
+    ):
+        # Normalized comparison is sufficient for deciding whether source
+        # geometry is reusable, but offsets additionally require a one-to-one
+        # character stream. Equal-length punctuation normalization is safe
+        # (for example curly quotes sanitized to ASCII by the HTML parser),
+        # while collapsed or expanded whitespace is not.
+        return runs
+
+    rich_boundaries: set[int] = set()
+    cursor = 0
+    for rich_run in rich_runs:
+        cursor += len(str(rich_run.get("text") or ""))
+        rich_boundaries.add(cursor)
+
+    styled_runs: list[Dict[str, Any]] = []
+    font_cache: Dict[tuple[Any, ...], fitz.Font] = {}
+    for run in runs:
+        run_text = str(run.get("text") or "")
+        try:
+            run_start = int(run.get("text_offset"))
+        except Exception:
+            return runs
+        run_end = run_start + len(run_text)
+        local_boundaries = [0]
+        local_boundaries.extend(
+            boundary - run_start
+            for boundary in sorted(rich_boundaries)
+            if run_start < boundary < run_end
+        )
+        local_boundaries.append(len(run_text))
+
+        source_measure_style = {
+            "font_family": run.get("font_family"),
+            "font_source_name": run.get("font_source_name"),
+            "font_size": run.get("font_size_px") or ann.get("fontSize") or 12,
+            "font_weight": run.get("font_weight"),
+            "font_style": run.get("font_style"),
+            "documentId": ann.get("documentId"),
+            "__documentId": ann.get("__documentId"),
+            "promotedFromExtraction": ann.get("promotedFromExtraction"),
+        }
+        try:
+            total_width = _measure_style_run_text_width(run_text, source_measure_style, font_cache)
+        except Exception:
+            total_width = 0.0
+
+        def boundary_fraction(index: int) -> float:
+            if index <= 0:
+                return 0.0
+            if index >= len(run_text):
+                return 1.0
+            if total_width > 0:
+                try:
+                    prefix_width = _measure_style_run_text_width(
+                        run_text[:index],
+                        source_measure_style,
+                        font_cache,
+                    )
+                    return max(0.0, min(1.0, prefix_width / total_width))
+                except Exception:
+                    pass
+            return float(index) / float(max(1, len(run_text)))
+
+        run_left = float(run["left"])
+        run_width = max(0.0, float(run["right"]) - run_left)
+        for local_start, local_end in zip(local_boundaries, local_boundaries[1:]):
+            if local_end <= local_start:
+                continue
+            segment = dict(run)
+            segment["text"] = run_text[local_start:local_end]
+            segment["text_offset"] = run_start + local_start
+            segment["left"] = run_left + (run_width * boundary_fraction(local_start))
+            segment["right"] = run_left + (run_width * boundary_fraction(local_end))
+            style = rich_text_style_at_offset(rich_runs, run_start + local_start)
+            styled_runs.append(apply_rich_style_to_pdfjs_source_run(segment, style))
+
+    return styled_runs or runs
+
+
 def normalize_pdfjs_source_span_run_layout(
     ann: Dict[str, Any],
     text: str,
@@ -6970,6 +7431,7 @@ def normalize_pdfjs_source_span_run_layout(
             space_width = max(1.0, float(previous.get("font_size_px") or run.get("font_size_px") or 8.0) * 0.25)
             if gap > max(1.0, space_width * 0.45):
                 reconstructed += " "
+        run["text_offset"] = len(reconstructed)
         reconstructed += str(run["text"])
         previous = run
     if normalize_pdfjs_compare_text(reconstructed) != normalize_pdfjs_compare_text(text):
@@ -6981,6 +7443,8 @@ def normalize_pdfjs_source_span_run_layout(
         # Fall through to the current-box renderer, which draws the complete
         # editor text and horizontally fits the line when font metrics drift.
         return []
+
+    runs = apply_rich_styles_to_pdfjs_source_runs(ann, text, runs, reconstructed)
 
     min_left = min(float(run["left"]) for run in runs)
     max_right = max(float(run["right"]) for run in runs)
@@ -8360,6 +8824,7 @@ def draw_text(
                 effective_line_height,
                 align,
                 ascender,
+                str(render_ann.get("verticalAlign") or "top"),
             )
             rich_span_layout = apply_source_faces_to_rich_span_layout(render_ann, rich_span_layout)
             if rich_span_layout and draw_text_using_exact_source_spans(

@@ -35,6 +35,10 @@ class UserPanelProvider extends PanelProvider
             ->login(Login::class)   // redirects unauthenticated users to /login (Fortify)
             ->profile(Profile::class, isSimple: false)
             ->authGuard('web')
+            ->brandLogo(asset('images/netkit_logo_cube.svg'))
+            ->darkModeBrandLogo(asset('images/netkit_logo_cube.svg'))
+            ->brandLogoHeight('3rem')
+            ->favicon(asset('images/netkit_logo_cube.svg'))
             ->colors([
                 'primary' => Color::Blue,
             ])

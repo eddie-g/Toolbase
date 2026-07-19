@@ -249,13 +249,10 @@ class GenerateLogoJob implements ShouldQueue
             }
             unset($img);
 
-            // Attach seed to each image
-            $imagesWithSeed = array_map(function ($img) use ($seed) {
-                if (is_array($img)) {
-                    $img['seed'] = $seed;
-                }
-                return $img;
-            }, $images);
+            // Attach a provider-independent generation ID to every output. Keep the
+            // provider's own ID separately because some APIs (such as Recraft's
+            // Explore Similar endpoint) require that exact ID for later iteration.
+            $imagesWithSeed = $this->identifyGeneratedImages($images, $seed);
 
             $elapsedMs = (int) ((microtime(true) - $startTime) * 1000);
 
@@ -457,6 +454,21 @@ class GenerateLogoJob implements ShouldQueue
     // ──────────────────────────────────────────────────────────────
     //  Model-specific generation methods
     // ──────────────────────────────────────────────────────────────
+
+    private function identifyGeneratedImages(array $images, mixed $seed): array
+    {
+        return array_map(function ($image) use ($seed) {
+            if (!is_array($image)) {
+                $image = ['url' => (string) $image];
+            }
+
+            $image['generation_id'] = $image['generation_id'] ?? (string) Str::uuid();
+            $image['provider_image_id'] = $image['provider_image_id'] ?? $image['image_id'] ?? null;
+            $image['seed'] = $seed;
+
+            return $image;
+        }, $images);
+    }
 
     private function recraftRequestSize(string $outputFormat, bool $isPro, string $imageSize): string
     {

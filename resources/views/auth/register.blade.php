@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" class="h-full bg-slate-50">
 <head>
+    <link rel="icon" type="image/svg+xml" href="{{ asset('images/netkit_logo_cube.svg') }}">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script>
@@ -18,8 +19,7 @@
         <div class="w-full max-w-sm">
             <div class="mb-8 text-center">
                 <a href="{{ route('home') }}" class="inline-flex items-center justify-center gap-3 text-2xl font-bold text-slate-950 dark:text-white" style="text-decoration:none;">
-                    <img src="{{ asset('images/netkit_logo_black.svg') }}" alt="NETKIT logo" class="h-14 w-14 object-contain dark:hidden">
-                    <img src="{{ asset('images/netkit_logo_white.svg') }}" alt="NETKIT logo" class="hidden h-14 w-14 object-contain dark:block">
+                    <img src="{{ asset('images/netkit_logo_cube.svg') }}" alt="NETKIT logo" class="h-14 w-14 object-contain">
                     <span>NETKIT</span>
                 </a>
                 <p class="mt-2 text-sm text-slate-500 dark:text-gray-400">Create your free account</p>

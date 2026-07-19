@@ -32,6 +32,11 @@ class PdfAnnotationContractTests(unittest.TestCase):
             "type": "text",
             "text": "Spiders\u00A0in\u00A0The\u00A0Lord\u00A0of\u00A0the\u00A0Rings",
             "richTextHtml": "<span>Spiders&nbsp;in&#160;The&#xA0;Lord</span>",
+            "richTextRuns": [
+                {"type": "text", "text": "Spiders\u00A0in", "fontSize": 15},
+                {"type": "break"},
+                {"type": "text", "text": "The\u00A0Lord", "color": "#112233"},
+            ],
             "sourceTextLines": ["Line\u00A01"],
             "sourceSpans": [
                 {"text": "Span\u00A01", "rawText": "Raw\u00A01"},
@@ -42,9 +47,27 @@ class PdfAnnotationContractTests(unittest.TestCase):
 
         self.assertEqual(normalized["text"], "Spiders in The Lord of the Rings")
         self.assertEqual(normalized["richTextHtml"], "<span>Spiders in The Lord</span>")
+        self.assertEqual(normalized["richTextRuns"][0]["text"], "Spiders in")
+        self.assertEqual(normalized["richTextRuns"][1], {"type": "break"})
+        self.assertEqual(normalized["richTextRuns"][2]["text"], "The Lord")
         self.assertEqual(normalized["sourceTextLines"], ["Line 1"])
         self.assertEqual(normalized["sourceSpans"][0]["text"], "Span 1")
         self.assertEqual(normalized["sourceSpans"][0]["rawText"], "Raw 1")
+
+    def test_version_two_runs_repair_plain_text_line_break_drift(self):
+        normalized = self.module.normalize_annotation_for_pdf_export({
+            "id": "rich-v2-breaks",
+            "type": "text",
+            "text": "Large redSmall blue",
+            "richTextVersion": 2,
+            "richTextRuns": [
+                {"type": "text", "text": "Large red", "fontSize": 18},
+                {"type": "break"},
+                {"type": "text", "text": "Small blue", "fontSize": 9},
+            ],
+        })
+
+        self.assertEqual(normalized["text"], "Large red\nSmall blue")
 
     def test_assert_text_annotations_redraw_contract_rejects_out_of_band_page(self):
         annotations = [
