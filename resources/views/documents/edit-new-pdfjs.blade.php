@@ -51,6 +51,8 @@
      data-convert-to-pdfa-url="{{ route('documents.convertToPdfA', $document) }}"
      data-convert-to-word-url="{{ route('documents.convertToWord', $document) }}"
      data-convert-to-excel-url="{{ route('documents.convertToExcel', $document) }}"
+     data-document-conversion-price="{{ config('document-conversion.price_usd_per_transaction', 0.10) }}"
+     data-document-conversion-pages-per-transaction="{{ config('document-conversion.pages_per_transaction', 50) }}"
      data-encrypt-pdf-url="{{ route('documents.encryptPdf', $document) }}"
      data-download-pdfa-url="{{ route('documents.downloadPdfA') }}"
      data-download-converted-url="{{ route('documents.downloadConverted') }}"

@@ -88,11 +88,15 @@ Additional export options are available as separate endpoints, each backed by a 
 
 | Output | Endpoint | Script |
 |---|---|---|
+| Images (JPG/PNG/TIFF) | Client-side PDF.js render | `resources/js/edit-new-pdfjs/image-export.js` |
 | PDF/A | `convert-to-pdfa` | `convert_to_pdfa.py` |
 | Word (.docx) | `convert-to-word` | `convert_to_word.py` |
 | Excel (.xlsx) | `convert-to-excel` | `convert_to_excel.py` |
 | Encrypted PDF | `encrypt-pdf` | `encrypt_pdf.py` |
 | Split PDFs | `split-pdf` | `split_pdf.py` |
+
+The staged `?pdfjs=1` conversion implementation is documented in
+[`08-pdfjs-convert-tool.md`](08-pdfjs-convert-tool.md).
 
 ---
 

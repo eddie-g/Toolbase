@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Exceptions\InsufficientCreditBalanceException;
 use Filament\Models\Contracts\FilamentUser;
 use Filament\Panel;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -31,8 +32,8 @@ class Admin extends Authenticatable implements FilamentUser
     protected function casts(): array
     {
         return [
-            'password'       => 'hashed',
-            'last_login_at'  => 'datetime',
+            'password' => 'hashed',
+            'last_login_at' => 'datetime',
             'credit_balance' => 'decimal:4',
         ];
     }
@@ -58,6 +59,22 @@ class Admin extends Authenticatable implements FilamentUser
         });
     }
 
+    public function debitBalanceIfSufficient(float $amount): void
+    {
+        DB::transaction(function () use ($amount) {
+            $fresh = Admin::lockForUpdate()->findOrFail($this->id);
+            $available = (float) $fresh->credit_balance;
+
+            if ($available + 0.000001 < $amount) {
+                throw new InsufficientCreditBalanceException($amount, $available);
+            }
+
+            $fresh->credit_balance = $available - $amount;
+            $fresh->save();
+            $this->credit_balance = $fresh->credit_balance;
+        });
+    }
+
     /**
      * Add to admin's credit balance (thread-safe).
      */
@@ -71,4 +88,3 @@ class Admin extends Authenticatable implements FilamentUser
         });
     }
 }
-

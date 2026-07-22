@@ -79,6 +79,18 @@ return [
         'base_url' => env('RECRAFT_BASE_URL', 'https://external.api.recraft.ai'),
     ],
 
+    'adobe_pdf_services' => [
+        'client_id' => env('ADOBE_PDF_SERVICES_CLIENT_ID'),
+        'client_secret' => env('ADOBE_PDF_SERVICES_CLIENT_SECRET'),
+        'region' => env('ADOBE_PDF_SERVICES_REGION', 'US'),
+        'base_url' => env('ADOBE_PDF_SERVICES_BASE_URL'),
+        'token_url' => env('ADOBE_PDF_SERVICES_TOKEN_URL', 'https://ims-na1.adobelogin.com/ims/token/v3'),
+        'scopes' => env('ADOBE_PDF_SERVICES_SCOPES', 'openid,AdobeID,DCAPI'),
+        'request_timeout' => (int) env('ADOBE_PDF_SERVICES_REQUEST_TIMEOUT', 120),
+        'poll_timeout' => (int) env('ADOBE_PDF_SERVICES_POLL_TIMEOUT', 180),
+        'poll_interval_ms' => (int) env('ADOBE_PDF_SERVICES_POLL_INTERVAL_MS', 1000),
+    ],
+
     'logo_editor_enabled' => env('LOGO_EDITOR_ENABLED', false),
     'logo_custom_prompt_enabled' => env('LOGO_CUSTOM_PROMPT_ENABLED', false),
 

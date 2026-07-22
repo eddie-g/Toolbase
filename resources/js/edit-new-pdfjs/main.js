@@ -57,6 +57,24 @@ import {
     reconcileRichTextRunWhitespace,
     richTextViewportCssLength,
 } from './source-edit-contract.js';
+import {
+    downloadImageExportFiles,
+    estimateImageExportBytes,
+    formatEstimatedFileSize,
+    normalizeImageExportBaseName,
+    parseImageExportPages,
+    renderPdfPagesToImages,
+} from './image-export.js';
+import {
+    buildPdfaDownloadUrl,
+    normalizePdfaReport,
+    readPdfaConversionResponse,
+} from './pdfa-export.js';
+import {
+    buildConvertedDownloadUrl,
+    estimateConvertedFileBytes,
+    readConvertedFileResponse,
+} from './converted-export.js';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerSrc;
 
@@ -235,8 +253,42 @@ const convertExportButton = document.getElementById('enpv-convert-export');
 const convertTitle = document.getElementById('enpv-convert-title');
 const convertSubtitle = document.getElementById('enpv-convert-subtitle');
 const convertPageCount = document.getElementById('enpv-convert-page-count');
+const convertSizeEstimate = document.getElementById('enpv-convert-size-estimate');
 const convertPageFrom = document.getElementById('enpv-convert-page-from');
 const convertPageTo = document.getElementById('enpv-convert-page-to');
+const convertPageCustom = document.getElementById('enpv-convert-page-custom');
+const convertRangeWrap = document.getElementById('enpv-convert-range');
+const convertCustomWrap = document.getElementById('enpv-convert-custom-wrap');
+const convertQuality = document.getElementById('enpv-convert-quality');
+const convertQualityValue = document.getElementById('enpv-convert-quality-value');
+const convertQualityWrap = document.getElementById('enpv-convert-quality-wrap');
+const convertSmoothing = document.getElementById('enpv-convert-smoothing');
+const convertColorModel = document.getElementById('enpv-convert-color-model');
+const convertColorHint = document.getElementById('enpv-convert-color-hint');
+const convertProgress = document.getElementById('enpv-convert-progress');
+const convertProgressLabel = document.getElementById('enpv-convert-progress-label');
+const convertProgressPct = document.getElementById('enpv-convert-progress-pct');
+const convertProgressBar = document.getElementById('enpv-convert-progress-bar');
+const convertPdfaLevel = document.getElementById('enpv-convert-pdfa-level');
+const convertPdfaEmbedFonts = document.getElementById('enpv-convert-pdfa-embed-fonts');
+const convertPdfaSrgb = document.getElementById('enpv-convert-pdfa-srgb');
+const convertWordLayout = document.getElementById('enpv-convert-word-layout');
+const convertWordImages = document.getElementById('enpv-convert-word-images');
+const convertWordOcr = document.getElementById('enpv-convert-word-ocr');
+const convertExcelMode = document.getElementById('enpv-convert-excel-mode');
+const convertExcelMergeCells = document.getElementById('enpv-convert-excel-merge-cells');
+const convertExcelSheetPerPage = document.getElementById('enpv-convert-excel-sheet-per-page');
+const pdfaReportModal = document.getElementById('enpv-pdfa-report-modal');
+const pdfaReportIcon = document.getElementById('enpv-pdfa-report-icon');
+const pdfaReportTitle = document.getElementById('enpv-pdfa-report-title');
+const pdfaReportSubtitle = document.getElementById('enpv-pdfa-report-subtitle');
+const pdfaReportPages = document.getElementById('enpv-pdfa-report-pages');
+const pdfaReportSize = document.getElementById('enpv-pdfa-report-size');
+const pdfaReportTime = document.getElementById('enpv-pdfa-report-time');
+const pdfaReportChecks = document.getElementById('enpv-pdfa-report-checks');
+const pdfaReportSummary = document.getElementById('enpv-pdfa-report-summary');
+const pdfaReportCloseButton = document.getElementById('enpv-pdfa-report-close');
+const pdfaReportDownloadButton = document.getElementById('enpv-pdfa-report-download');
 let draggedLayerAnnotationId = '';
 let renderedLayersPanelSignature = '';
 
@@ -272,7 +324,14 @@ const USER_LOGOS_URL = editNewRoot?.dataset?.userLogosUrl || '/domain-search/use
 const NOTES_URL = editNewRoot?.dataset?.notesUrl || '';
 const OVERWRITE_TEXT_URL = editNewRoot?.dataset?.overwriteUrl || '/documents/overwrite-annotation-text';
 const DOWNLOAD_URL = editNewRoot?.dataset?.downloadUrl;
+const CONVERT_TO_PDFA_URL = editNewRoot?.dataset?.convertToPdfaUrl || '';
+const CONVERT_TO_WORD_URL = editNewRoot?.dataset?.convertToWordUrl || '';
+const CONVERT_TO_EXCEL_URL = editNewRoot?.dataset?.convertToExcelUrl || '';
+const DOWNLOAD_PDFA_URL = editNewRoot?.dataset?.downloadPdfaUrl || '';
 const DOWNLOAD_CONVERTED_URL = editNewRoot?.dataset?.downloadConvertedUrl;
+const DOCUMENT_CONVERSION_PRICE = Math.max(0, Number(editNewRoot?.dataset?.documentConversionPrice) || 0.10);
+const DOCUMENT_CONVERSION_PAGES_PER_TRANSACTION = Math.max(1, Number.parseInt(editNewRoot?.dataset?.documentConversionPagesPerTransaction || '50', 10));
+const LOG_EXPORT_URL = editNewRoot?.dataset?.logExportUrl || '';
 
 function installDocumentRename() {
     const renameUrl = docNameWrap?.dataset?.renameUrl || '';
@@ -462,6 +521,15 @@ let mergeItems = [];
 let mergeDraggedId = '';
 let mergeBusy = false;
 let splitBusy = false;
+let convertExporting = false;
+let convertActiveTab = 'images';
+let convertImageFormat = 'jpg';
+let convertPageMode = 'all';
+let convertImageDpi = 150;
+let convertSizeEstimateGeneration = 0;
+let convertSizeEstimateTimer = null;
+let convertSourceByteEstimate = 0;
+let pdfaDownloadUrl = '';
 let mergeSplitActiveTab = (() => {
     try {
         return window.sessionStorage.getItem('pdf-editor-merge-split-tab') === 'split' ? 'split' : 'merge';
@@ -10421,24 +10489,201 @@ async function submitNoteForm(event) {
     }
 }
 
+function currentConvertPages() {
+    const totalPages = Number(currentPdfDoc?.numPages || pdfViewer?.pagesCount || 0);
+    return parseImageExportPages({
+        mode: convertPageMode,
+        totalPages,
+        from: convertPageFrom?.value,
+        to: convertPageTo?.value,
+        custom: convertPageCustom?.value,
+    });
+}
+
 function syncConvertPageCount() {
     if (!convertPageCount) return;
-    const total = Number(pdfViewer?.pagesCount) || 0;
-    if (convertPageFrom) {
-        convertPageFrom.max = String(Math.max(1, total));
-        convertPageFrom.value = convertPageFrom.value || '1';
+    const total = Number(currentPdfDoc?.numPages || pdfViewer?.pagesCount || 0);
+    const maximum = String(Math.max(1, total));
+    if (convertPageFrom) convertPageFrom.max = maximum;
+    if (convertPageTo) convertPageTo.max = maximum;
+    try {
+        const pages = currentConvertPages();
+        convertPageCount.textContent = pages.length === total
+            ? `All ${total} page${total === 1 ? '' : 's'} will be exported`
+            : `${pages.length} of ${total} pages will be exported`;
+        convertPageCount.classList.remove('is-error');
+    } catch (error) {
+        convertPageCount.textContent = error?.message || 'Choose valid pages to export.';
+        convertPageCount.classList.add('is-error');
     }
-    if (convertPageTo) {
-        convertPageTo.max = String(Math.max(1, total));
-        convertPageTo.value = String(Math.max(1, total));
+    scheduleConvertSizeEstimate();
+}
+
+function sampledConvertPages(pages, limit = 8) {
+    if (pages.length <= limit) return pages;
+    const samples = new Set();
+    for (let index = 0; index < limit; index += 1) {
+        samples.add(pages[Math.round((index * (pages.length - 1)) / (limit - 1))]);
     }
-    convertPageCount.textContent = total > 0
-        ? `${total} page${total === 1 ? '' : 's'} available for conversion`
-        : 'All pages will be exported';
+    return Array.from(samples);
+}
+
+async function syncConvertSizeEstimate(generation) {
+    if (!convertSizeEstimate || generation !== convertSizeEstimateGeneration) return;
+    convertSizeEstimate.hidden = false;
+
+    if (convertActiveTab !== 'images') {
+        if (!currentPdfDoc) {
+            convertSizeEstimate.innerHTML = 'Estimated download: <strong>--</strong>';
+            return;
+        }
+        convertSizeEstimate.innerHTML = 'Estimated download: <strong>Calculating...</strong>';
+        try {
+            if (!convertSourceByteEstimate) {
+                const sourceData = await currentPdfDoc.getData();
+                convertSourceByteEstimate = Number(sourceData?.byteLength || sourceData?.length || 0);
+            }
+            if (generation !== convertSizeEstimateGeneration) return;
+            const bytes = estimateConvertedFileBytes({
+                sourceBytes: convertSourceByteEstimate,
+                format: convertActiveTab,
+                pdfaEmbedFonts: convertPdfaEmbedFonts?.checked !== false,
+                wordLayout: convertWordLayout?.value || 'exact',
+                wordImages: convertWordImages?.checked !== false,
+                excelMode: convertExcelMode?.value || 'all',
+            });
+            convertSizeEstimate.innerHTML = `Estimated download: <strong>~${formatEstimatedFileSize(bytes)}</strong>`;
+        } catch (_) {
+            if (generation === convertSizeEstimateGeneration) {
+                convertSizeEstimate.innerHTML = 'Estimated download: <strong>Unavailable</strong>';
+            }
+        }
+        return;
+    }
+
+    let pages;
+    try {
+        pages = currentConvertPages();
+    } catch (_) {
+        convertSizeEstimate.innerHTML = 'Estimated download: <strong>--</strong>';
+        return;
+    }
+    if (!currentPdfDoc || pages.length < 1) {
+        convertSizeEstimate.innerHTML = 'Estimated download: <strong>--</strong>';
+        return;
+    }
+
+    convertSizeEstimate.innerHTML = 'Estimated download: <strong>Calculating...</strong>';
+    try {
+        const samples = sampledConvertPages(pages);
+        const pixelCounts = await Promise.all(samples.map(async (pageNumber) => {
+            const page = await currentPdfDoc.getPage(pageNumber);
+            const viewport = page.getViewport({ scale: convertImageDpi / 72 });
+            return Math.max(1, Math.ceil(viewport.width)) * Math.max(1, Math.ceil(viewport.height));
+        }));
+        if (generation !== convertSizeEstimateGeneration) return;
+        const averagePixels = pixelCounts.reduce((sum, pixels) => sum + pixels, 0) / pixelCounts.length;
+        const totalPixels = averagePixels * pages.length;
+        const bytes = estimateImageExportBytes({
+            totalPixels,
+            pageCount: pages.length,
+            format: convertImageFormat,
+            quality: convertQuality?.value,
+            colorModel: convertColorModel?.value,
+        });
+        const zipLabel = pages.length > 1 ? ' ZIP' : '';
+        convertSizeEstimate.innerHTML = `Estimated download: <strong>~${formatEstimatedFileSize(bytes)}${zipLabel}</strong>`;
+    } catch (_) {
+        if (generation === convertSizeEstimateGeneration) {
+            convertSizeEstimate.innerHTML = 'Estimated download: <strong>Unavailable</strong>';
+        }
+    }
+}
+
+function scheduleConvertSizeEstimate() {
+    convertSizeEstimateGeneration += 1;
+    const generation = convertSizeEstimateGeneration;
+    if (convertSizeEstimateTimer) window.clearTimeout(convertSizeEstimateTimer);
+    convertSizeEstimateTimer = window.setTimeout(() => {
+        convertSizeEstimateTimer = null;
+        syncConvertSizeEstimate(generation).catch(() => {});
+    }, 100);
+}
+
+function syncConvertFormatUi() {
+    document.querySelectorAll('[data-enpv-format]').forEach((button) => {
+        const active = button.dataset.enpvFormat === convertImageFormat;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    const supportsAlpha = convertImageFormat === 'png' || convertImageFormat === 'tiff';
+    const rgbaOption = convertColorModel?.querySelector('option[value="rgba"]');
+    if (rgbaOption) {
+        rgbaOption.disabled = !supportsAlpha;
+        rgbaOption.textContent = supportsAlpha ? 'Transparent background' : 'Transparent background — PNG/TIFF only';
+    }
+    if (!supportsAlpha && convertColorModel?.value === 'rgba') convertColorModel.value = 'rgb';
+    if (convertQualityWrap) {
+        const enabled = convertImageFormat === 'jpg';
+        convertQualityWrap.classList.toggle('is-disabled', !enabled);
+        if (convertQuality) convertQuality.disabled = !enabled || convertExporting;
+    }
+    syncConvertColorHint();
+    scheduleConvertSizeEstimate();
+}
+
+function syncConvertImageSizeUi() {
+    document.querySelectorAll('[data-enpv-image-dpi]').forEach((button) => {
+        const active = Number.parseInt(button.dataset.enpvImageDpi, 10) === convertImageDpi;
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    scheduleConvertSizeEstimate();
+}
+
+function currentConvertImageSizeLabel() {
+    return document.querySelector('[data-enpv-image-dpi].is-active strong')?.textContent?.trim() || 'Standard';
+}
+
+function syncConvertColorHint() {
+    if (!convertColorHint) return;
+    const hints = {
+        rgb: "Keeps the document's original colors",
+        rgba: 'Preserves transparent page areas in PNG and TIFF files',
+        grayscale: 'Exports the page in shades of gray',
+    };
+    convertColorHint.textContent = hints[convertColorModel?.value] || hints.rgb;
+    scheduleConvertSizeEstimate();
+}
+
+function setConvertProgress(percent, message) {
+    const normalized = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+    if (convertProgress) convertProgress.hidden = false;
+    if (convertProgressBar) convertProgressBar.style.width = `${normalized}%`;
+    if (convertProgressPct) convertProgressPct.textContent = `${normalized}%`;
+    if (convertProgressLabel) convertProgressLabel.textContent = String(message || 'Exporting...');
+}
+
+function resetConvertProgress() {
+    if (convertProgress) convertProgress.hidden = true;
+    if (convertProgressBar) convertProgressBar.style.width = '0%';
+    if (convertProgressPct) convertProgressPct.textContent = '0%';
+    if (convertProgressLabel) convertProgressLabel.textContent = 'Exporting...';
+}
+
+function setConvertBusy(busy) {
+    convertExporting = Boolean(busy);
+    if (convertCloseButton) convertCloseButton.disabled = convertExporting;
+    if (convertCancelButton) convertCancelButton.disabled = convertExporting;
+    if (convertExportButton) convertExportButton.disabled = convertExporting;
+    convertModal?.querySelectorAll('[data-enpv-convert-tab], [data-enpv-format], [data-enpv-pages], [data-enpv-image-dpi], input, select')
+        .forEach((control) => { control.disabled = convertExporting; });
+    syncConvertFormatUi();
 }
 
 function setConvertTab(tabName) {
     const tab = String(tabName || 'images');
+    convertActiveTab = ['images', 'pdfa', 'word', 'excel'].includes(tab) ? tab : 'images';
     const meta = {
         images: ['Export to Images', 'Convert PDF pages to image files'],
         pdfa: ['Convert to PDF/A', 'Create an archival PDF/A copy'],
@@ -10446,23 +10691,56 @@ function setConvertTab(tabName) {
         excel: ['Convert to Excel', 'Extract tables and structured data'],
     };
     document.querySelectorAll('[data-enpv-convert-tab]').forEach((button) => {
-        const active = button.dataset.enpvConvertTab === tab;
+        const active = button.dataset.enpvConvertTab === convertActiveTab;
         button.classList.toggle('is-active', active);
         button.setAttribute('aria-selected', active ? 'true' : 'false');
     });
     document.querySelectorAll('.enpv-convert-panel').forEach((panel) => {
-        panel.hidden = panel.id !== `enpv-convert-${tab}`;
+        panel.hidden = panel.id !== `enpv-convert-${convertActiveTab}`;
     });
-    if (convertTitle) convertTitle.textContent = meta[tab]?.[0] || meta.images[0];
-    if (convertSubtitle) convertSubtitle.textContent = meta[tab]?.[1] || meta.images[1];
-    if (convertExportButton) convertExportButton.textContent = tab === 'images' ? 'Export' : 'Convert';
+    if (convertTitle) convertTitle.textContent = meta[convertActiveTab]?.[0] || meta.images[0];
+    if (convertSubtitle) convertSubtitle.textContent = meta[convertActiveTab]?.[1] || meta.images[1];
+    const buttonLabels = {
+        images: 'Export',
+        pdfa: 'Convert to PDF/A',
+        word: 'Convert to Word',
+        excel: 'Convert to Excel',
+    };
+    if (convertExportButton) convertExportButton.textContent = buttonLabels[convertActiveTab] || 'Convert';
+    if (convertPageCount) {
+        if (convertActiveTab === 'images') syncConvertPageCount();
+        else {
+            const pageCount = Math.max(1, Number(currentPdfDoc?.numPages || pdfViewer?.pagesCount || 1));
+            if (convertActiveTab === 'word' || convertActiveTab === 'excel') {
+                const transactions = Math.ceil(pageCount / DOCUMENT_CONVERSION_PAGES_PER_TRANSACTION);
+                const charge = transactions * DOCUMENT_CONVERSION_PRICE;
+                convertPageCount.textContent = `${pageCount} page${pageCount === 1 ? '' : 's'} · Charge: $${charge.toFixed(2)}`;
+            } else {
+                convertPageCount.textContent = convertActiveTab === 'pdfa'
+                    ? 'The current edited document will be converted'
+                    : 'The current document will be converted';
+            }
+            convertPageCount.classList.remove('is-error');
+        }
+    }
+    scheduleConvertSizeEstimate();
 }
 
 function openConvertModal() {
-    if (!convertModal) return;
+    if (!convertModal || convertExporting) return;
+    if (!EDITOR_AUTHENTICATED) {
+        showPremiumFeatureMessage(floatingConvertButton?.dataset?.premiumFeature || 'Convert');
+        return;
+    }
     if (notesPanelOpen) closeNotesPanel();
     disableEditorModesForNotes();
     setConvertTab('images');
+    const total = Math.max(1, Number(currentPdfDoc?.numPages || pdfViewer?.pagesCount || 1));
+    if (convertPageFrom) convertPageFrom.value = '1';
+    if (convertPageTo) convertPageTo.value = String(total);
+    resetConvertProgress();
+    syncConvertFormatUi();
+    syncConvertImageSizeUi();
     syncConvertPageCount();
     convertModal.hidden = false;
     floatingConvertButton?.classList.add('active', 'is-active');
@@ -10470,10 +10748,448 @@ function openConvertModal() {
 }
 
 function closeConvertModal() {
-    if (!convertModal) return;
+    if (!convertModal || convertExporting) return;
     convertModal.hidden = true;
     floatingConvertButton?.classList.remove('active', 'is-active');
     floatingConvertButton?.setAttribute('aria-pressed', 'false');
+}
+
+function logImageExportActivity(status, details) {
+    if (!EDITOR_AUTHENTICATED || !LOG_EXPORT_URL) return;
+    fetch(LOG_EXPORT_URL, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+            'X-CSRF-TOKEN': CSRF,
+        },
+        body: JSON.stringify({
+            action: `Export to ${convertImageFormat.toUpperCase()}`,
+            category: 'image_export',
+            details,
+            status,
+        }),
+    }).catch(() => {});
+}
+
+async function exportPdfPagesAsImages() {
+    if (convertExporting || !currentPdfDoc) return;
+    if (!EDITOR_AUTHENTICATED) {
+        showPremiumFeatureMessage(floatingConvertButton?.dataset?.premiumFeature || 'Convert');
+        return;
+    }
+    if (convertActiveTab !== 'images') {
+        setStatus(`${convertTitle?.textContent || 'This conversion'} is not implemented in the PDF.js editor yet.`, true);
+        return;
+    }
+
+    let pages;
+    try {
+        pages = currentConvertPages();
+    } catch (error) {
+        syncConvertPageCount();
+        if (convertPageMode === 'custom') convertPageCustom?.focus?.({ preventScroll: true });
+        else if (convertPageMode === 'range') convertPageFrom?.focus?.({ preventScroll: true });
+        return;
+    }
+
+    const dpi = convertImageDpi;
+    const imageSizeLabel = currentConvertImageSizeLabel();
+    const quality = Math.min(100, Math.max(1, Number.parseInt(convertQuality?.value, 10) || 92));
+    const colorModel = String(convertColorModel?.value || 'rgb');
+    const smoothing = Boolean(convertSmoothing?.checked);
+    const baseName = normalizeImageExportBaseName(root.dataset.documentName || docNameDisplay?.textContent || 'document.pdf');
+    let exportPdfDocument = null;
+
+    setConvertBusy(true);
+    setConvertProgress(2, 'Preparing current edits...');
+    try {
+        if (activeRun) {
+            await applyEdit();
+            if (activeRun) throw new Error('Finish or cancel the active text edit before exporting images.');
+        }
+        await waitForEditorSaveIdle();
+        const { blob } = await requestEditedPdfBlob();
+        setConvertProgress(8, 'Opening edited PDF for image export...');
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        exportPdfDocument = await pdfjsLib.getDocument({ data: bytes, isEvalSupported: false }).promise;
+
+        const files = await renderPdfPagesToImages({
+            pdfDocument: exportPdfDocument,
+            pages,
+            format: convertImageFormat,
+            dpi,
+            quality,
+            colorModel,
+            smoothing,
+            baseName,
+            onProgress: ({ pageNumber, percent }) => {
+                const overall = 10 + Math.round(percent * 0.82);
+                const label = percent >= 100 ? 'Images rendered.' : `Rendering page ${pageNumber}...`;
+                setConvertProgress(overall, label);
+            },
+        });
+
+        setConvertProgress(95, files.length > 1 ? 'Creating ZIP archive...' : 'Downloading image...');
+        const download = await downloadImageExportFiles(files, { archiveName: `${baseName}_images.zip` });
+        setConvertProgress(100, 'Export complete.');
+        const destination = download.zipped ? ` in ${download.name}` : '';
+        setStatus(`Exported ${files.length} ${convertImageFormat.toUpperCase()} image${files.length === 1 ? '' : 's'} using ${imageSizeLabel} size${destination}.`);
+        flashSaveToast('Image export ready');
+        logImageExportActivity('success', {
+            format: convertImageFormat,
+            image_size: imageSizeLabel.toLowerCase(),
+            dpi,
+            quality,
+            color_model: colorModel,
+            anti_aliasing: smoothing,
+            pages: pages.length,
+            page_numbers: pages,
+        });
+        window.setTimeout(() => {
+            if (!convertExporting) closeConvertModal();
+        }, 700);
+    } catch (error) {
+        console.error('Image export failed', error);
+        const message = error?.message || 'The PDF pages could not be exported as images.';
+        setConvertProgress(100, message);
+        setStatus(`Image export failed: ${message}`, true);
+        logImageExportActivity('failed', {
+            format: convertImageFormat,
+            image_size: imageSizeLabel.toLowerCase(),
+            dpi,
+            quality,
+            color_model: colorModel,
+            anti_aliasing: smoothing,
+            error: message,
+        });
+    } finally {
+        if (exportPdfDocument?.destroy) await exportPdfDocument.destroy().catch(() => {});
+        setConvertBusy(false);
+    }
+}
+
+function pdfaStatusIcon(passed, size = 20) {
+    return passed
+        ? `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>`
+        : `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`;
+}
+
+function closePdfaReport() {
+    if (pdfaReportModal) pdfaReportModal.hidden = true;
+}
+
+function showPdfaComplianceReport(reportPayload, label, downloadName) {
+    if (!pdfaReportModal) return;
+    const report = normalizePdfaReport(reportPayload, label);
+    const timestamp = report.timestamp ? new Date(report.timestamp) : new Date();
+    const validTimestamp = Number.isNaN(timestamp.getTime()) ? new Date() : timestamp;
+
+    if (pdfaReportIcon) {
+        pdfaReportIcon.classList.toggle('is-fail', !report.compliant);
+        pdfaReportIcon.innerHTML = pdfaStatusIcon(report.compliant, 24);
+    }
+    if (pdfaReportTitle) {
+        pdfaReportTitle.classList.toggle('is-fail', !report.compliant);
+        pdfaReportTitle.textContent = report.compliant ? 'PDF/A Compliance Verified' : 'PDF/A Compliance Issues';
+    }
+    if (pdfaReportSubtitle) pdfaReportSubtitle.textContent = `${report.label} — ${report.iso}`;
+    if (pdfaReportPages) pdfaReportPages.textContent = `${report.pageCount} page${report.pageCount === 1 ? '' : 's'}`;
+    if (pdfaReportSize) pdfaReportSize.textContent = formatEstimatedFileSize(report.fileSize);
+    if (pdfaReportTime) pdfaReportTime.textContent = validTimestamp.toLocaleString();
+    if (pdfaReportSummary) pdfaReportSummary.textContent = report.summary;
+
+    if (pdfaReportChecks) {
+        const checkNodes = report.checks.map((check) => {
+            const row = document.createElement('div');
+            row.className = `enpv-pdfa-check${check.passed ? '' : ' is-fail'}`;
+
+            const icon = document.createElement('div');
+            icon.className = 'enpv-pdfa-check-icon';
+            icon.innerHTML = pdfaStatusIcon(check.passed, 18);
+            row.append(icon);
+
+            const content = document.createElement('div');
+            const title = document.createElement('div');
+            title.className = 'enpv-pdfa-check-title';
+            const item = document.createElement('span');
+            item.textContent = check.item;
+            const badge = document.createElement('span');
+            badge.className = 'enpv-pdfa-badge';
+            badge.textContent = check.passed ? 'PASS' : 'FAIL';
+            title.append(item, badge);
+            content.append(title);
+
+            if (check.description) {
+                const description = document.createElement('div');
+                description.className = 'enpv-pdfa-check-desc';
+                description.textContent = check.description;
+                content.append(description);
+            }
+            if (check.detail) {
+                const detail = document.createElement('div');
+                detail.className = 'enpv-pdfa-check-detail';
+                detail.textContent = check.detail;
+                content.append(detail);
+            }
+            if (check.fonts.length) {
+                const fonts = document.createElement('div');
+                fonts.className = 'enpv-pdfa-fonts';
+                check.fonts.slice(0, 8).forEach((font) => {
+                    const fontLine = document.createElement('div');
+                    fontLine.className = font.embedded ? 'is-pass' : 'is-fail';
+                    fontLine.textContent = `${font.embedded ? '✓' : '✕'} ${font.name} (${font.type})`;
+                    fonts.append(fontLine);
+                });
+                if (check.fonts.length > 8) {
+                    const remaining = document.createElement('div');
+                    remaining.textContent = `…and ${check.fonts.length - 8} more`;
+                    fonts.append(remaining);
+                }
+                content.append(fonts);
+            }
+            row.append(content);
+            return row;
+        });
+        pdfaReportChecks.replaceChildren(...checkNodes);
+    }
+
+    if (pdfaReportDownloadButton) {
+        pdfaReportDownloadButton.classList.toggle('is-warning', !report.compliant);
+        pdfaReportDownloadButton.disabled = !pdfaDownloadUrl;
+        pdfaReportDownloadButton.title = downloadName ? `Download ${downloadName}` : 'Download the converted PDF/A document';
+        pdfaReportDownloadButton.replaceChildren();
+        pdfaReportDownloadButton.insertAdjacentHTML('afterbegin', '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>');
+        pdfaReportDownloadButton.append(document.createTextNode('Download PDF/A'));
+    }
+    pdfaReportModal.hidden = false;
+}
+
+async function convertEditedPdfToPdfA() {
+    if (convertExporting || !currentPdfDoc) return;
+    if (!EDITOR_AUTHENTICATED) {
+        showPremiumFeatureMessage(floatingConvertButton?.dataset?.premiumFeature || 'Convert');
+        return;
+    }
+    if (!CONVERT_TO_PDFA_URL || !DOWNLOAD_PDFA_URL) {
+        setStatus('PDF/A conversion endpoints are unavailable.', true);
+        return;
+    }
+
+    const level = ['1b', '2b', '3b'].includes(convertPdfaLevel?.value) ? convertPdfaLevel.value : '2b';
+    let completed = null;
+    setConvertBusy(true);
+    setConvertProgress(5, 'Preparing current edits...');
+    try {
+        if (activeRun) {
+            await applyEdit();
+            if (activeRun) throw new Error('Finish or cancel the active text edit before converting to PDF/A.');
+        }
+        await waitForEditorSaveIdle();
+        const { blob } = await requestEditedPdfBlob();
+        setConvertProgress(30, 'Uploading the edited PDF...');
+
+        const formData = new FormData();
+        formData.append('level', level);
+        formData.append('embed_fonts', convertPdfaEmbedFonts?.checked === false ? '0' : '1');
+        formData.append('srgb_profile', convertPdfaSrgb?.checked === false ? '0' : '1');
+        const baseName = normalizeImageExportBaseName(root.dataset.documentName || docNameDisplay?.textContent || 'document.pdf');
+        formData.append('pdf', blob, `${baseName}.pdf`);
+
+        const response = await fetch(CONVERT_TO_PDFA_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': CSRF,
+            },
+            body: formData,
+        });
+        setConvertProgress(88, 'Checking PDF/A compliance...');
+        const data = await readPdfaConversionResponse(response);
+        pdfaDownloadUrl = buildPdfaDownloadUrl(DOWNLOAD_PDFA_URL, data.download_token);
+        completed = data;
+        setConvertProgress(100, 'PDF/A conversion complete.');
+        setStatus(`${data.label || `PDF/A-${level}`} is ready to download.`);
+        flashSaveToast('PDF/A conversion ready');
+    } catch (error) {
+        console.error('PDF/A conversion failed', error);
+        const message = error?.message || 'The document could not be converted to PDF/A.';
+        setConvertProgress(100, message);
+        setStatus(`PDF/A conversion failed: ${message}`, true);
+    } finally {
+        setConvertBusy(false);
+    }
+
+    if (completed) {
+        closeConvertModal();
+        resetConvertProgress();
+        showPdfaComplianceReport(completed.report, completed.label, completed.download_name);
+    }
+}
+
+function triggerConvertedFileDownload(url, filename) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = String(filename || 'converted-document');
+    link.hidden = true;
+    document.body.append(link);
+    link.click();
+    link.remove();
+}
+
+async function convertEditedPdfToWord() {
+    if (convertExporting || !currentPdfDoc) return;
+    if (!EDITOR_AUTHENTICATED) {
+        showPremiumFeatureMessage(floatingConvertButton?.dataset?.premiumFeature || 'Convert');
+        return;
+    }
+    if (!CONVERT_TO_WORD_URL || !DOWNLOAD_CONVERTED_URL) {
+        setStatus('Word conversion endpoints are unavailable.', true);
+        return;
+    }
+
+    const layout = ['flow', 'exact'].includes(convertWordLayout?.value) ? convertWordLayout.value : 'exact';
+    const includeImages = convertWordImages?.checked !== false;
+    const ocr = Boolean(convertWordOcr?.checked);
+    let completed = false;
+    setConvertBusy(true);
+    setConvertProgress(5, 'Preparing current edits...');
+    try {
+        if (activeRun) {
+            await applyEdit();
+            if (activeRun) throw new Error('Finish or cancel the active text edit before converting to Word.');
+        }
+        await waitForEditorSaveIdle();
+        const { blob } = await requestEditedPdfBlob();
+        setConvertProgress(30, 'Uploading the edited PDF...');
+
+        const formData = new FormData();
+        formData.append('layout', layout);
+        formData.append('include_images', includeImages ? '1' : '0');
+        formData.append('ocr', ocr ? '1' : '0');
+        const baseName = normalizeImageExportBaseName(root.dataset.documentName || docNameDisplay?.textContent || 'document.pdf');
+        formData.append('pdf', blob, `${baseName}.pdf`);
+
+        const response = await fetch(CONVERT_TO_WORD_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': CSRF,
+            },
+            body: formData,
+        });
+        setConvertProgress(88, 'Preparing the Word document...');
+        const data = await readConvertedFileResponse(response, 'Word');
+        const downloadUrl = buildConvertedDownloadUrl(DOWNLOAD_CONVERTED_URL, data.download_token);
+        setConvertProgress(96, 'Starting download...');
+        triggerConvertedFileDownload(downloadUrl, data.download_name || `${baseName}.docx`);
+        completed = true;
+        setConvertProgress(100, 'Word conversion complete.');
+        setStatus(`Word document exported successfully. Charged $${Number(data.charge_usd || 0).toFixed(2)}.`);
+        flashSaveToast('Word document ready');
+    } catch (error) {
+        console.error('Word conversion failed', error);
+        const message = error?.message || 'The document could not be converted to Word.';
+        setConvertProgress(100, message);
+        setStatus(`Word conversion failed: ${message}`, true);
+    } finally {
+        setConvertBusy(false);
+    }
+
+    if (completed) {
+        window.setTimeout(() => {
+            closeConvertModal();
+            resetConvertProgress();
+        }, 500);
+    }
+}
+
+async function convertEditedPdfToExcel() {
+    if (convertExporting || !currentPdfDoc) return;
+    if (!EDITOR_AUTHENTICATED) {
+        showPremiumFeatureMessage(floatingConvertButton?.dataset?.premiumFeature || 'Convert');
+        return;
+    }
+    if (!CONVERT_TO_EXCEL_URL || !DOWNLOAD_CONVERTED_URL) {
+        setStatus('Excel conversion endpoints are unavailable.', true);
+        return;
+    }
+
+    const mode = ['tables', 'all'].includes(convertExcelMode?.value) ? convertExcelMode.value : 'all';
+    const mergeCells = convertExcelMergeCells?.checked !== false;
+    const sheetPerPage = convertExcelSheetPerPage?.checked !== false;
+    let completed = false;
+    setConvertBusy(true);
+    setConvertProgress(5, 'Preparing current edits...');
+    try {
+        if (activeRun) {
+            await applyEdit();
+            if (activeRun) throw new Error('Finish or cancel the active text edit before converting to Excel.');
+        }
+        await waitForEditorSaveIdle();
+        const { blob } = await requestEditedPdfBlob();
+        setConvertProgress(30, 'Uploading the edited PDF...');
+
+        const formData = new FormData();
+        formData.append('mode', mode);
+        formData.append('merge_cells', mergeCells ? '1' : '0');
+        formData.append('sheet_per_page', sheetPerPage ? '1' : '0');
+        const baseName = normalizeImageExportBaseName(root.dataset.documentName || docNameDisplay?.textContent || 'document.pdf');
+        formData.append('pdf', blob, `${baseName}.pdf`);
+
+        const response = await fetch(CONVERT_TO_EXCEL_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': CSRF,
+            },
+            body: formData,
+        });
+        setConvertProgress(88, 'Building the spreadsheet...');
+        const data = await readConvertedFileResponse(response, 'Excel');
+        const downloadUrl = buildConvertedDownloadUrl(DOWNLOAD_CONVERTED_URL, data.download_token);
+        setConvertProgress(96, 'Starting download...');
+        triggerConvertedFileDownload(downloadUrl, data.download_name || `${baseName}.xlsx`);
+        completed = true;
+        const tableCount = Number(data.tables_found || 0);
+        setConvertProgress(100, 'Excel conversion complete.');
+        const conversionMessage = data.layout_engine === 'newsletter'
+            ? 'Excel spreadsheet exported with the document columns, images, and layout regions preserved.'
+            : data.fallback_used
+            ? 'No tables were found, so the document content was arranged into worksheet columns instead.'
+            : tableCount > 0
+            ? `Excel spreadsheet exported with ${tableCount} detected table${tableCount === 1 ? '' : 's'}.`
+            : 'Excel spreadsheet exported successfully.';
+        setStatus(`${conversionMessage} Charged $${Number(data.charge_usd || 0).toFixed(2)}.`);
+        flashSaveToast('Excel spreadsheet ready');
+    } catch (error) {
+        console.error('Excel conversion failed', error);
+        const message = error?.message || 'The document could not be converted to Excel.';
+        setConvertProgress(100, message);
+        setStatus(`Excel conversion failed: ${message}`, true);
+    } finally {
+        setConvertBusy(false);
+    }
+
+    if (completed) {
+        window.setTimeout(() => {
+            closeConvertModal();
+            resetConvertProgress();
+        }, 500);
+    }
+}
+
+function runConvertExport() {
+    if (convertActiveTab === 'images') return exportPdfPagesAsImages();
+    if (convertActiveTab === 'pdfa') return convertEditedPdfToPdfA();
+    if (convertActiveTab === 'word') return convertEditedPdfToWord();
+    if (convertActiveTab === 'excel') return convertEditedPdfToExcel();
+    setStatus(`${convertTitle?.textContent || 'This conversion'} is not implemented in the PDF.js editor yet.`, true);
+    return Promise.resolve();
 }
 
 function isPremiumLockedControl(control) {
@@ -21044,15 +21760,17 @@ async function buildPdfjsDownloadPayload() {
     const deletedPromotedSourceKeys = Array.from(pendingDeletedAnnotationIds)
         .map((value) => String(value || '').trim())
         .filter((sourceKey) => /^block-\d+-\d+(?:-.+)?$/.test(sourceKey));
-    return {
+    const payload = {
         annotations: visibleAnnotationsPayload,
         session_annotations: sessionAnnotationsPayload,
         acro_form_entries: acroPayload,
         deleted_promoted_source_keys: deletedPromotedSourceKeys,
         use_exact_download_path: true,
         use_pdfjs_visible_export: true,
+        use_conversion_safe_export: true,
         session_id: getSessionId(),
     };
+    return payload;
 }
 
 async function requestEditedPdfBlob() {
@@ -21875,42 +22593,80 @@ convertModal?.addEventListener('click', (event) => {
     if (event.target === convertModal) closeConvertModal();
 });
 document.querySelectorAll('[data-enpv-convert-tab]').forEach((button) => {
-    button.addEventListener('click', () => setConvertTab(button.dataset.enpvConvertTab));
-});
-document.querySelectorAll('[data-enpv-format], [data-enpv-pages]').forEach((button) => {
     button.addEventListener('click', () => {
-        const selector = button.dataset.enpvFormat !== undefined ? '[data-enpv-format]' : '[data-enpv-pages]';
-        document.querySelectorAll(selector).forEach((choice) => choice.classList.toggle('is-active', choice === button));
-        const pageMode = button.dataset.enpvPages || '';
-        const rangeWrap = document.getElementById('enpv-convert-range');
-        const customWrap = document.getElementById('enpv-convert-custom-wrap');
-        if (rangeWrap) rangeWrap.hidden = pageMode !== 'range';
-        if (customWrap) customWrap.hidden = pageMode !== 'custom';
+        if (!convertExporting) setConvertTab(button.dataset.enpvConvertTab);
     });
 });
-document.querySelectorAll('[data-enpv-dpi]').forEach((button) => {
+document.querySelectorAll('[data-enpv-format]').forEach((button) => {
     button.addEventListener('click', () => {
-        const dpi = String(button.dataset.enpvDpi || '');
-        const dpiInput = document.getElementById('enpv-convert-dpi');
-        const dpiValue = document.getElementById('enpv-convert-dpi-value');
-        if (dpiInput) dpiInput.value = dpi;
-        if (dpiValue) dpiValue.value = dpi;
+        if (convertExporting) return;
+        convertImageFormat = ['jpg', 'png', 'tiff'].includes(button.dataset.enpvFormat)
+            ? button.dataset.enpvFormat
+            : 'jpg';
+        syncConvertFormatUi();
     });
 });
-document.getElementById('enpv-convert-dpi')?.addEventListener('input', (event) => {
-    const dpiValue = document.getElementById('enpv-convert-dpi-value');
-    if (dpiValue) dpiValue.value = event.target.value;
+document.querySelectorAll('[data-enpv-pages]').forEach((button) => {
+    button.addEventListener('click', () => {
+        if (convertExporting) return;
+        convertPageMode = ['all', 'range', 'custom'].includes(button.dataset.enpvPages)
+            ? button.dataset.enpvPages
+            : 'all';
+        document.querySelectorAll('[data-enpv-pages]').forEach((choice) => {
+            const active = choice === button;
+            choice.classList.toggle('is-active', active);
+            choice.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        if (convertRangeWrap) convertRangeWrap.hidden = convertPageMode !== 'range';
+        if (convertCustomWrap) convertCustomWrap.hidden = convertPageMode !== 'custom';
+        syncConvertPageCount();
+    });
 });
-document.getElementById('enpv-convert-dpi-value')?.addEventListener('input', (event) => {
-    const dpiInput = document.getElementById('enpv-convert-dpi');
-    if (dpiInput) dpiInput.value = event.target.value;
+document.querySelectorAll('[data-enpv-image-dpi]').forEach((button) => {
+    button.addEventListener('click', () => {
+        if (convertExporting) return;
+        const dpi = Number.parseInt(button.dataset.enpvImageDpi, 10);
+        convertImageDpi = [96, 150, 300].includes(dpi) ? dpi : 150;
+        syncConvertImageSizeUi();
+    });
 });
-document.getElementById('enpv-convert-quality')?.addEventListener('input', (event) => {
-    const qualityValue = document.getElementById('enpv-convert-quality-value');
-    if (qualityValue) qualityValue.textContent = event.target.value;
+convertQuality?.addEventListener('input', (event) => {
+    if (convertQualityValue) convertQualityValue.textContent = event.target.value;
+    scheduleConvertSizeEstimate();
 });
-convertExportButton?.addEventListener('click', () => {
-    setStatus('Conversion export is not wired in this editor yet.', true);
+convertColorModel?.addEventListener('change', syncConvertColorHint);
+convertSmoothing?.addEventListener('change', scheduleConvertSizeEstimate);
+convertPdfaLevel?.addEventListener('change', scheduleConvertSizeEstimate);
+convertPdfaEmbedFonts?.addEventListener('change', scheduleConvertSizeEstimate);
+convertPdfaSrgb?.addEventListener('change', scheduleConvertSizeEstimate);
+convertWordLayout?.addEventListener('change', scheduleConvertSizeEstimate);
+convertWordImages?.addEventListener('change', scheduleConvertSizeEstimate);
+convertWordOcr?.addEventListener('change', scheduleConvertSizeEstimate);
+convertExcelMode?.addEventListener('change', scheduleConvertSizeEstimate);
+convertExcelMergeCells?.addEventListener('change', scheduleConvertSizeEstimate);
+convertExcelSheetPerPage?.addEventListener('change', scheduleConvertSizeEstimate);
+convertPageFrom?.addEventListener('input', syncConvertPageCount);
+convertPageTo?.addEventListener('input', syncConvertPageCount);
+convertPageCustom?.addEventListener('input', syncConvertPageCount);
+convertExportButton?.addEventListener('click', () => runConvertExport().catch(() => {}));
+pdfaReportCloseButton?.addEventListener('click', closePdfaReport);
+pdfaReportDownloadButton?.addEventListener('click', () => {
+    if (!pdfaDownloadUrl) return;
+    const downloadUrl = pdfaDownloadUrl;
+    pdfaDownloadUrl = '';
+    pdfaReportDownloadButton.disabled = true;
+    window.location.assign(downloadUrl);
+    window.setTimeout(() => {
+        closePdfaReport();
+        setStatus('PDF/A download started.');
+    }, 500);
+});
+pdfaReportModal?.addEventListener('click', (event) => {
+    if (event.target === pdfaReportModal) closePdfaReport();
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && convertModal?.hidden === false && !convertExporting) closeConvertModal();
+    if (event.key === 'Escape' && pdfaReportModal?.hidden === false) closePdfaReport();
 });
 notesCloseButton?.addEventListener('click', closeNotesPanel);
 notesCurrentPage?.addEventListener('change', syncNotesAnchorUi);

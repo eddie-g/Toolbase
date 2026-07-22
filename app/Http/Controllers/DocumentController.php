@@ -2,14 +2,20 @@
 
 namespace App\Http\Controllers;
 
+use App\Exceptions\InsufficientCreditBalanceException;
 use App\Jobs\ProcessUploadedDocumentJob;
+use App\Models\Admin;
+use App\Models\CreditTransaction;
 use App\Models\Document;
+use App\Models\DocumentConversionSetting;
 use App\Models\DocumentNote;
 use App\Models\GuidedTemplate;
 use App\Models\PdfAcroForm;
 use App\Models\PdfGroup;
 use App\Models\PdfState;
 use App\Services\PdfAnnotationAssetService;
+use App\Services\AdobePdfServices;
+use App\Services\DocumentConversionPricing;
 use App\Services\PdfDocumentMergeConflictException;
 use App\Services\PdfDocumentMergeService;
 use App\Services\PdfFitzExtractionNormalizer;
@@ -434,8 +440,12 @@ class DocumentController extends Controller
         ];
     }
 
-    private function resolvePythonBinaryForPdfEditor(?string $requiredModule = null): string
+    private function resolvePythonBinaryForPdfEditor(string|array|null $requiredModule = null): string
     {
+        $requiredModules = array_values(array_filter(
+            is_array($requiredModule) ? $requiredModule : [$requiredModule],
+            static fn ($module) => is_string($module) && $module !== ''
+        ));
         $candidates = array_values(array_unique([
             base_path('.venv/bin/python'),
             base_path('venv/bin/python'),
@@ -452,11 +462,15 @@ class DocumentController extends Controller
                 continue;
             }
 
-            if (!$requiredModule) {
+            if ($requiredModules === []) {
                 return $candidate;
             }
 
-            if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $requiredModule)) {
+            $invalidModules = array_filter(
+                $requiredModules,
+                static fn ($module) => !preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $module)
+            );
+            if ($invalidModules !== []) {
                 break;
             }
 
@@ -465,7 +479,7 @@ class DocumentController extends Controller
             $probeCommand = sprintf(
                 '%s -c %s 2>&1',
                 escapeshellarg($candidate),
-                escapeshellarg("import {$requiredModule}")
+                escapeshellarg(implode('; ', array_map(static fn ($module) => "import {$module}", $requiredModules)))
             );
             exec($probeCommand, $probeOutput, $probeExitCode);
 
@@ -12197,6 +12211,7 @@ class DocumentController extends Controller
             'use_original_pdf' => 'nullable|boolean',
             'use_exact_download_path' => 'nullable|boolean',
             'use_pdfjs_visible_export' => 'nullable|boolean',
+            'use_conversion_safe_export' => 'nullable|boolean',
             'session_id' => 'nullable|string',
         ]);
 
@@ -12264,6 +12279,11 @@ class DocumentController extends Controller
         $useOriginalPdf = $request->boolean('use_original_pdf');
         $useExactDownloadPath = $request->boolean('use_exact_download_path');
         $usePdfjsVisibleExport = $request->boolean('use_pdfjs_visible_export');
+        // Searchable source text must never survive underneath a painted
+        // replacement. Enforce destructive source-glyph removal for every
+        // PDF.js-visible export, including requests from older cached clients
+        // that do not yet send use_conversion_safe_export.
+        $useConversionSafeExport = $usePdfjsVisibleExport;
         // The browser payload is the live editor state and must remain
         // authoritative. Re-merging a prior PdfState row here used to replace
         // current style flags, font choices, and rich-text mode whenever the
@@ -12355,6 +12375,19 @@ class DocumentController extends Controller
         $annotationsFile = $tempDir . '/download_ann_' . $document->id . '_' . uniqid('', true) . '.json';
         $pythonAnnotationsPayload = $useExactCleanRebuild ? $sessionAnnotationsPayload : $annotationsPayload;
         $preparedAnnotationsForPython = $this->prepareAnnotationsForPython($pythonAnnotationsPayload);
+        if ($useConversionSafeExport) {
+            // Search, copy/paste, accessibility tools, and downstream
+            // converters inspect the content stream rather than only its final
+            // painted appearance. Mark this transient payload so source glyphs
+            // are removed before replacements are stamped; never persist it.
+            $preparedAnnotationsForPython = array_map(static function ($annotation) {
+                if (!is_array($annotation)) {
+                    return $annotation;
+                }
+                $annotation['conversionSafeSourceRedaction'] = true;
+                return $annotation;
+            }, $preparedAnnotationsForPython);
+        }
         // Stamp __documentId on every annotation so apply_annotations_direct_new.py
         // can load this document's embedded-font metadata (temp/embedded_fonts_{id}.json)
         // and resolve `ann.fontFamily` like "DejaVuSans" to the actual embedded TTF.
@@ -12577,6 +12610,7 @@ class DocumentController extends Controller
             'level' => ['required', 'string', 'in:1b,2b,3b,2u'],
             'embed_fonts' => ['boolean'],
             'srgb_profile' => ['boolean'],
+            'pdf' => ['nullable', 'file', 'mimes:pdf', 'max:51200'],
         ]);
 
         if ($response = $this->consumeMonthlyActionQuota($request)) {
@@ -12587,7 +12621,21 @@ class DocumentController extends Controller
         $embedFonts = $validated['embed_fonts'] ?? true;
         $srgbProfile = $validated['srgb_profile'] ?? true;
 
-        $inputPath = Storage::path($document->path);
+        $uploadedInputPath = null;
+        if ($request->hasFile('pdf')) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                return response()->json(['success' => false, 'message' => 'Invalid PDF upload.'], 422);
+            }
+            $uploadedInputPath = Storage::path('documents/temp_pdfa_input_' . Str::uuid() . '.pdf');
+            $upload->move(dirname($uploadedInputPath), basename($uploadedInputPath));
+            $inputPath = $uploadedInputPath;
+        } else {
+            if (!$document->path || !Storage::exists($document->path)) {
+                return response()->json(['success' => false, 'message' => 'Current PDF is missing.'], 404);
+            }
+            $inputPath = Storage::path($document->path);
+        }
         $tempOutputPath = Storage::path('documents/temp_pdfa_' . Str::uuid() . '.pdf');
         $pythonScript = base_path('python/pdf-editor/convert_to_pdfa.py');
 
@@ -12604,6 +12652,9 @@ class DocumentController extends Controller
         );
 
         $output = shell_exec($command);
+        if ($uploadedInputPath && file_exists($uploadedInputPath)) {
+            @unlink($uploadedInputPath);
+        }
 
         // Parse the JSON output from the Python script
         $result = null;
@@ -12777,54 +12828,116 @@ class DocumentController extends Controller
 
     public function convertToWord(Request $request, Document $document)
     {
-        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        if (!$this->hasEditorAuthentication()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sign in to convert PDFs to Word.',
+                'login_url' => route('login'),
+            ], 401);
+        }
 
         $validated = $request->validate([
             'layout' => ['required', 'string', 'in:flow,exact'],
             'include_images' => ['boolean'],
             'ocr' => ['boolean'],
+            'pdf' => ['nullable', 'file', 'mimes:pdf', 'max:51200'],
         ]);
-
-        if ($response = $this->consumeMonthlyActionQuota($request)) {
-            return $response;
-        }
 
         $layout = $validated['layout'];
         $includeImages = $validated['include_images'] ?? true;
         $ocr = $validated['ocr'] ?? false;
 
-        $inputPath = Storage::path($document->path);
-        $tempOutputPath = Storage::path('documents/temp_word_' . Str::uuid() . '.docx');
-        $pythonScript = base_path('python/pdf-editor/convert_to_word.py');
-
-        $command = sprintf(
-            '%s %s %s %s --layout %s %s %s --json 2>&1',
-            escapeshellarg($pythonBinary),
-            escapeshellarg($pythonScript),
-            escapeshellarg($inputPath),
-            escapeshellarg($tempOutputPath),
-            escapeshellarg($layout),
-            $includeImages ? '--images' : '--no-images',
-            $ocr ? '--ocr' : ''
-        );
-
-        $output = shell_exec($command);
-
-        $result = null;
-        if ($output) {
-            $lines = explode("\n", trim($output));
-            foreach ($lines as $line) {
-                $decoded = json_decode(trim($line), true);
-                if ($decoded !== null) {
-                    $result = $decoded;
-                    break;
-                }
+        $uploadedInputPath = null;
+        if ($request->hasFile('pdf')) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                return response()->json(['success' => false, 'message' => 'Invalid PDF upload.'], 422);
             }
+            $uploadedInputPath = Storage::path('documents/temp_word_input_' . Str::uuid() . '.pdf');
+            $upload->move(dirname($uploadedInputPath), basename($uploadedInputPath));
+            $inputPath = $uploadedInputPath;
+        } else {
+            if (!$document->path || !Storage::exists($document->path)) {
+                return response()->json(['success' => false, 'message' => 'Current PDF is missing.'], 404);
+            }
+            $inputPath = Storage::path($document->path);
+        }
+        $tempOutputPath = Storage::path('documents/temp_word_' . Str::uuid() . '.docx');
+
+        try {
+            $conversionQuote = $this->documentConversionQuote($inputPath);
+        } catch (\Throwable $e) {
+            if ($uploadedInputPath && file_exists($uploadedInputPath)) {
+                @unlink($uploadedInputPath);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to price this conversion: ' . $e->getMessage(),
+            ], 422);
         }
 
-        if (!$result || !($result['success'] ?? false)) {
+        $actor = $this->resolveEditorActor();
+        if ($balanceResponse = $this->documentConversionBalanceResponse($actor, $conversionQuote)) {
+            if ($uploadedInputPath && file_exists($uploadedInputPath)) {
+                @unlink($uploadedInputPath);
+            }
+
+            return $balanceResponse;
+        }
+
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            if ($uploadedInputPath && file_exists($uploadedInputPath)) {
+                @unlink($uploadedInputPath);
+            }
+
+            return $response;
+        }
+
+        $settings = DocumentConversionSetting::current();
+        $requestedProvider = $settings->word_provider;
+        $providerUsed = $requestedProvider;
+        $providerFallbackUsed = false;
+        $providerError = null;
+
+        try {
+            if ($requestedProvider === DocumentConversionSetting::PROVIDER_ADOBE) {
+                try {
+                    $result = app(AdobePdfServices::class)->export($inputPath, $tempOutputPath, 'docx');
+                } catch (\Throwable $e) {
+                    if (!$settings->fallback_to_local) {
+                        throw $e;
+                    }
+
+                    $providerError = $e->getMessage();
+                    $providerUsed = DocumentConversionSetting::PROVIDER_LOCAL;
+                    $providerFallbackUsed = true;
+                    @unlink($tempOutputPath);
+                    Log::warning('Adobe Word export failed; using local converter.', [
+                        'document_id' => $document->id,
+                        'error' => $providerError,
+                    ]);
+                    $result = $this->runLocalWordConversion(
+                        $inputPath,
+                        $tempOutputPath,
+                        $layout,
+                        $includeImages,
+                        $ocr
+                    );
+                }
+            } else {
+                $providerUsed = DocumentConversionSetting::PROVIDER_LOCAL;
+                $result = $this->runLocalWordConversion(
+                    $inputPath,
+                    $tempOutputPath,
+                    $layout,
+                    $includeImages,
+                    $ocr
+                );
+            }
+        } catch (\Throwable $e) {
             if (file_exists($tempOutputPath)) {
-                unlink($tempOutputPath);
+                @unlink($tempOutputPath);
             }
 
             if (Auth::check()) {
@@ -12832,7 +12945,14 @@ class DocumentController extends Controller
                     'user_id' => Auth::id(),
                     'action' => 'Convert to Word',
                     'category' => 'word_export',
-                    'details' => ['layout' => $layout, 'include_images' => $includeImages, 'ocr' => $ocr, 'error' => $result['error'] ?? 'Unknown error'],
+                    'details' => [
+                        'layout' => $layout,
+                        'include_images' => $includeImages,
+                        'ocr' => $ocr,
+                        'provider_requested' => $requestedProvider,
+                        'provider_used' => $providerUsed,
+                        'error' => $e->getMessage(),
+                    ],
                     'document_id' => $document->id,
                     'status' => 'failed',
                     'ip_address' => $request->ip(),
@@ -12842,14 +12962,43 @@ class DocumentController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => $result['error'] ?? 'Word conversion failed. Output: ' . ($output ?? 'none'),
+                'message' => 'Word conversion failed: ' . $e->getMessage(),
             ], 500);
+        } finally {
+            if ($uploadedInputPath && file_exists($uploadedInputPath)) {
+                @unlink($uploadedInputPath);
+            }
         }
 
         if (!file_exists($tempOutputPath)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Word output file was not created',
+            ], 500);
+        }
+
+        try {
+            $billing = $this->chargeDocumentConversion(
+                $actor,
+                $conversionQuote,
+                $document,
+                'word',
+                $providerUsed
+            );
+        } catch (InsufficientCreditBalanceException $e) {
+            @unlink($tempOutputPath);
+
+            return $this->insufficientDocumentConversionBalanceResponse($e->available, $conversionQuote);
+        } catch (\Throwable $e) {
+            @unlink($tempOutputPath);
+            Log::error('Unable to charge Word conversion.', [
+                'document_id' => $document->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'The Word document was created, but billing could not be completed. No download was issued.',
             ], 500);
         }
 
@@ -12874,6 +13023,14 @@ class DocumentController extends Controller
                     'include_images' => $includeImages,
                     'ocr' => $ocr,
                     'file_size' => filesize($tempOutputPath),
+                    'engine' => $result['engine'] ?? 'toolbase',
+                    'provider_requested' => $requestedProvider,
+                    'provider_used' => $providerUsed,
+                    'provider_fallback_used' => $providerFallbackUsed,
+                    'provider_error' => $providerError,
+                    'conversion_charge_usd' => $conversionQuote['charge_usd'],
+                    'conversion_transactions' => $conversionQuote['transactions'],
+                    'page_count' => $conversionQuote['page_count'],
                 ],
                 'document_id' => $document->id,
                 'status' => 'success',
@@ -12886,59 +13043,128 @@ class DocumentController extends Controller
             'success' => true,
             'download_token' => $downloadToken,
             'download_name' => $downloadName,
+            'engine' => $result['engine'] ?? 'toolbase',
+            'provider' => $providerUsed,
+            'provider_fallback_used' => $providerFallbackUsed,
+            'charge_usd' => $conversionQuote['charge_usd'],
+            'credit_balance' => $billing['credit_balance'],
+            'page_count' => $conversionQuote['page_count'],
+            'billable_transactions' => $conversionQuote['transactions'],
         ]);
     }
 
     public function convertToExcel(Request $request, Document $document)
     {
-        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        if (!$this->hasEditorAuthentication()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sign in to convert PDFs to Excel.',
+                'login_url' => route('login'),
+            ], 401);
+        }
 
         $validated = $request->validate([
             'mode' => ['required', 'string', 'in:tables,all'],
             'merge_cells' => ['boolean'],
             'sheet_per_page' => ['boolean'],
+            'pdf' => ['nullable', 'file', 'mimes:pdf', 'max:51200'],
         ]);
-
-        if ($response = $this->consumeMonthlyActionQuota($request)) {
-            return $response;
-        }
 
         $mode = $validated['mode'];
         $mergeCells = $validated['merge_cells'] ?? true;
         $sheetPerPage = $validated['sheet_per_page'] ?? true;
 
-        $inputPath = Storage::path($document->path);
-        $tempOutputPath = Storage::path('documents/temp_excel_' . Str::uuid() . '.xlsx');
-        $pythonScript = base_path('python/pdf-editor/convert_to_excel.py');
-
-        $command = sprintf(
-            '%s %s %s %s --mode %s %s %s --json 2>&1',
-            escapeshellarg($pythonBinary),
-            escapeshellarg($pythonScript),
-            escapeshellarg($inputPath),
-            escapeshellarg($tempOutputPath),
-            escapeshellarg($mode),
-            $mergeCells ? '--merge-cells' : '--no-merge-cells',
-            $sheetPerPage ? '--sheet-per-page' : '--single-sheet'
-        );
-
-        $output = shell_exec($command);
-
-        $result = null;
-        if ($output) {
-            $lines = explode("\n", trim($output));
-            foreach ($lines as $line) {
-                $decoded = json_decode(trim($line), true);
-                if ($decoded !== null) {
-                    $result = $decoded;
-                    break;
-                }
+        $uploadedInputPath = null;
+        if ($request->hasFile('pdf')) {
+            $upload = $request->file('pdf');
+            if (!$upload->isValid()) {
+                return response()->json(['success' => false, 'message' => 'Invalid PDF upload.'], 422);
             }
+            $uploadedInputPath = Storage::path('documents/temp_excel_input_' . Str::uuid() . '.pdf');
+            $upload->move(dirname($uploadedInputPath), basename($uploadedInputPath));
+            $inputPath = $uploadedInputPath;
+        } else {
+            if (!$document->path || !Storage::exists($document->path)) {
+                return response()->json(['success' => false, 'message' => 'Current PDF is missing.'], 404);
+            }
+            $inputPath = Storage::path($document->path);
+        }
+        $tempOutputPath = Storage::path('documents/temp_excel_' . Str::uuid() . '.xlsx');
+
+        try {
+            $conversionQuote = $this->documentConversionQuote($inputPath);
+        } catch (\Throwable $e) {
+            if ($uploadedInputPath && file_exists($uploadedInputPath)) {
+                @unlink($uploadedInputPath);
+            }
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to price this conversion: ' . $e->getMessage(),
+            ], 422);
         }
 
-        if (!$result || !($result['success'] ?? false)) {
+        $actor = $this->resolveEditorActor();
+        if ($balanceResponse = $this->documentConversionBalanceResponse($actor, $conversionQuote)) {
+            if ($uploadedInputPath && file_exists($uploadedInputPath)) {
+                @unlink($uploadedInputPath);
+            }
+
+            return $balanceResponse;
+        }
+
+        if ($response = $this->consumeMonthlyActionQuota($request)) {
+            if ($uploadedInputPath && file_exists($uploadedInputPath)) {
+                @unlink($uploadedInputPath);
+            }
+
+            return $response;
+        }
+
+        $settings = DocumentConversionSetting::current();
+        $requestedProvider = $settings->excel_provider;
+        $providerUsed = $requestedProvider;
+        $providerFallbackUsed = false;
+        $providerError = null;
+
+        try {
+            if ($requestedProvider === DocumentConversionSetting::PROVIDER_ADOBE) {
+                try {
+                    $result = app(AdobePdfServices::class)->export($inputPath, $tempOutputPath, 'xlsx');
+                } catch (\Throwable $e) {
+                    if (!$settings->fallback_to_local) {
+                        throw $e;
+                    }
+
+                    $providerError = $e->getMessage();
+                    $providerUsed = DocumentConversionSetting::PROVIDER_LOCAL;
+                    $providerFallbackUsed = true;
+                    @unlink($tempOutputPath);
+                    Log::warning('Adobe Excel export failed; using local converter.', [
+                        'document_id' => $document->id,
+                        'error' => $providerError,
+                    ]);
+                    $result = $this->runLocalExcelConversion(
+                        $inputPath,
+                        $tempOutputPath,
+                        $mode,
+                        $mergeCells,
+                        $sheetPerPage
+                    );
+                }
+            } else {
+                $providerUsed = DocumentConversionSetting::PROVIDER_LOCAL;
+                $result = $this->runLocalExcelConversion(
+                    $inputPath,
+                    $tempOutputPath,
+                    $mode,
+                    $mergeCells,
+                    $sheetPerPage
+                );
+            }
+        } catch (\Throwable $e) {
             if (file_exists($tempOutputPath)) {
-                unlink($tempOutputPath);
+                @unlink($tempOutputPath);
             }
 
             if (Auth::check()) {
@@ -12946,7 +13172,14 @@ class DocumentController extends Controller
                     'user_id' => Auth::id(),
                     'action' => 'Convert to Excel',
                     'category' => 'excel_export',
-                    'details' => ['mode' => $mode, 'merge_cells' => $mergeCells, 'sheet_per_page' => $sheetPerPage, 'error' => $result['error'] ?? 'Unknown error'],
+                    'details' => [
+                        'mode' => $mode,
+                        'merge_cells' => $mergeCells,
+                        'sheet_per_page' => $sheetPerPage,
+                        'provider_requested' => $requestedProvider,
+                        'provider_used' => $providerUsed,
+                        'error' => $e->getMessage(),
+                    ],
                     'document_id' => $document->id,
                     'status' => 'failed',
                     'ip_address' => $request->ip(),
@@ -12956,14 +13189,43 @@ class DocumentController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => $result['error'] ?? 'Excel conversion failed. Output: ' . ($output ?? 'none'),
+                'message' => 'Excel conversion failed: ' . $e->getMessage(),
             ], 500);
+        } finally {
+            if ($uploadedInputPath && file_exists($uploadedInputPath)) {
+                @unlink($uploadedInputPath);
+            }
         }
 
         if (!file_exists($tempOutputPath)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Excel output file was not created',
+            ], 500);
+        }
+
+        try {
+            $billing = $this->chargeDocumentConversion(
+                $actor,
+                $conversionQuote,
+                $document,
+                'excel',
+                $providerUsed
+            );
+        } catch (InsufficientCreditBalanceException $e) {
+            @unlink($tempOutputPath);
+
+            return $this->insufficientDocumentConversionBalanceResponse($e->available, $conversionQuote);
+        } catch (\Throwable $e) {
+            @unlink($tempOutputPath);
+            Log::error('Unable to charge Excel conversion.', [
+                'document_id' => $document->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'The Excel document was created, but billing could not be completed. No download was issued.',
             ], 500);
         }
 
@@ -12988,6 +13250,20 @@ class DocumentController extends Controller
                     'merge_cells' => $mergeCells,
                     'sheet_per_page' => $sheetPerPage,
                     'file_size' => filesize($tempOutputPath),
+                    'tables_found' => $result['tables_found'] ?? 0,
+                    'sheets' => $result['sheets'] ?? 0,
+                    'effective_mode' => $result['effective_mode'] ?? $mode,
+                    'fallback_used' => $result['fallback_used'] ?? false,
+                    'layout_engine' => $result['layout_engine'] ?? null,
+                    'images_embedded' => $result['images_embedded'] ?? 0,
+                    'engine' => $result['engine'] ?? 'toolbase',
+                    'provider_requested' => $requestedProvider,
+                    'provider_used' => $providerUsed,
+                    'provider_fallback_used' => $providerFallbackUsed,
+                    'provider_error' => $providerError,
+                    'conversion_charge_usd' => $conversionQuote['charge_usd'],
+                    'conversion_transactions' => $conversionQuote['transactions'],
+                    'page_count' => $conversionQuote['page_count'],
                 ],
                 'document_id' => $document->id,
                 'status' => 'success',
@@ -13000,7 +13276,200 @@ class DocumentController extends Controller
             'success' => true,
             'download_token' => $downloadToken,
             'download_name' => $downloadName,
+            'tables_found' => $result['tables_found'] ?? 0,
+            'sheets' => $result['sheets'] ?? 0,
+            'effective_mode' => $result['effective_mode'] ?? $mode,
+            'fallback_used' => $result['fallback_used'] ?? false,
+            'layout_engine' => $result['layout_engine'] ?? null,
+            'images_embedded' => $result['images_embedded'] ?? 0,
+            'engine' => $result['engine'] ?? 'toolbase',
+            'provider' => $providerUsed,
+            'provider_fallback_used' => $providerFallbackUsed,
+            'charge_usd' => $conversionQuote['charge_usd'],
+            'credit_balance' => $billing['credit_balance'],
+            'page_count' => $conversionQuote['page_count'],
+            'billable_transactions' => $conversionQuote['transactions'],
         ]);
+    }
+
+    private function documentConversionQuote(string $inputPath): array
+    {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+        $output = [];
+        $exitCode = 1;
+        exec(sprintf(
+            '%s -c %s %s 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg('import fitz,sys; doc=fitz.open(sys.argv[1]); print(doc.page_count); doc.close()'),
+            escapeshellarg($inputPath)
+        ), $output, $exitCode);
+
+        $pageCount = (int) trim((string) end($output));
+        if ($exitCode !== 0 || $pageCount < 1) {
+            throw new \RuntimeException('The PDF page count could not be determined.');
+        }
+
+        return app(DocumentConversionPricing::class)->quote($pageCount);
+    }
+
+    private function documentConversionBalanceResponse(mixed $actor, array $quote)
+    {
+        if (!$actor instanceof User && !$actor instanceof Admin) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sign in to convert PDFs to Word or Excel.',
+                'login_url' => route('login'),
+            ], 401);
+        }
+
+        $available = (float) $actor->credit_balance;
+        if ($available + 0.000001 >= (float) $quote['charge_usd']) {
+            return null;
+        }
+
+        return $this->insufficientDocumentConversionBalanceResponse($available, $quote);
+    }
+
+    private function insufficientDocumentConversionBalanceResponse(float $available, array $quote)
+    {
+        return response()->json([
+            'success' => false,
+            'message' => sprintf(
+                'Insufficient balance. This %d-page conversion costs $%.2f, but your balance is $%.4f. Please add credits.',
+                $quote['page_count'],
+                $quote['charge_usd'],
+                $available
+            ),
+            'credit_balance' => $available,
+            'required_credits' => $quote['charge_usd'],
+            'page_count' => $quote['page_count'],
+            'billable_transactions' => $quote['transactions'],
+        ], 402);
+    }
+
+    private function chargeDocumentConversion(
+        mixed $actor,
+        array $quote,
+        Document $document,
+        string $format,
+        string $provider
+    ): array {
+        $amount = (float) $quote['charge_usd'];
+        if ($amount <= 0) {
+            return ['credit_balance' => (float) $actor->credit_balance, 'transaction_id' => null];
+        }
+
+        $metadata = [
+            'document_id' => $document->id,
+            'format' => $format,
+            'provider' => $provider,
+            'page_count' => $quote['page_count'],
+            'pages_per_transaction' => $quote['pages_per_transaction'],
+            'billable_transactions' => $quote['transactions'],
+            'price_per_transaction' => $quote['price_per_transaction'],
+        ];
+        $description = sprintf(
+            '%s PDF conversion (%d page%s)',
+            ucfirst($format),
+            $quote['page_count'],
+            $quote['page_count'] === 1 ? '' : 's'
+        );
+
+        if ($actor instanceof User) {
+            $transaction = CreditTransaction::debitIfSufficient(
+                userId: $actor->id,
+                amount: $amount,
+                service: 'document_conversion',
+                modelName: $provider === DocumentConversionSetting::PROVIDER_ADOBE
+                    ? 'adobe-pdf-services-export'
+                    : 'toolbase-local-converter',
+                description: $description,
+                metadata: $metadata,
+            );
+
+            return [
+                'credit_balance' => (float) $transaction->balance_after,
+                'transaction_id' => $transaction->id,
+            ];
+        }
+
+        if ($actor instanceof Admin) {
+            $actor->debitBalanceIfSufficient($amount);
+
+            return ['credit_balance' => (float) $actor->credit_balance, 'transaction_id' => null];
+        }
+
+        throw new \RuntimeException('No authenticated conversion account was found.');
+    }
+
+    private function runLocalWordConversion(
+        string $inputPath,
+        string $outputPath,
+        string $layout,
+        bool $includeImages,
+        bool $ocr
+    ): array {
+        $requiredModules = $layout === 'exact' && $includeImages && !$ocr
+            ? ['fitz', 'docx', 'pdf2docx']
+            : ['fitz', 'docx'];
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor($requiredModules);
+        $pythonScript = base_path('python/pdf-editor/convert_to_word.py');
+        $command = sprintf(
+            '%s %s %s %s --layout %s %s %s --json 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($pythonScript),
+            escapeshellarg($inputPath),
+            escapeshellarg($outputPath),
+            escapeshellarg($layout),
+            $includeImages ? '--images' : '--no-images',
+            $ocr ? '--ocr' : ''
+        );
+
+        return $this->parseLocalConversionResult(shell_exec($command), 'Word');
+    }
+
+    private function runLocalExcelConversion(
+        string $inputPath,
+        string $outputPath,
+        string $mode,
+        bool $mergeCells,
+        bool $sheetPerPage
+    ): array {
+        $pythonBinary = $this->resolvePythonBinaryForPdfEditor(['fitz', 'openpyxl']);
+        $pythonScript = base_path('python/pdf-editor/convert_to_excel.py');
+        $command = sprintf(
+            '%s %s %s %s --mode %s %s %s --json 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg($pythonScript),
+            escapeshellarg($inputPath),
+            escapeshellarg($outputPath),
+            escapeshellarg($mode),
+            $mergeCells ? '--merge-cells' : '--no-merge-cells',
+            $sheetPerPage ? '--sheet-per-page' : '--single-sheet'
+        );
+
+        return $this->parseLocalConversionResult(shell_exec($command), 'Excel');
+    }
+
+    private function parseLocalConversionResult(?string $output, string $format): array
+    {
+        $result = null;
+        if ($output) {
+            foreach (explode("\n", trim($output)) as $line) {
+                $decoded = json_decode(trim($line), true);
+                if (is_array($decoded)) {
+                    $result = $decoded;
+                }
+            }
+        }
+
+        if (!$result || !($result['success'] ?? false)) {
+            throw new \RuntimeException(
+                $result['error'] ?? "{$format} conversion failed. Output: " . ($output ?? 'none')
+            );
+        }
+
+        return $result;
     }
 
     public function encryptPdf(Request $request, Document $document)

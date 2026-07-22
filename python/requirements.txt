@@ -8,6 +8,10 @@ PyMuPDF==1.26.7
 pikepdf==10.5.1
 weasyprint==68.1
 python-docx==1.1.2
+pdf2docx==0.5.13
+# pdf2docx needs OpenCV; pin the last release compatible with NumPy 1.x and
+# the existing scientific-language dependencies in this environment.
+opencv-python-headless==4.11.0.86
 openpyxl==3.1.5
 transformers==4.45.2
 torch==2.4.1

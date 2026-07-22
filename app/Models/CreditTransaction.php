@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Exceptions\InsufficientCreditBalanceException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\DB;
@@ -45,6 +46,41 @@ class CreditTransaction extends Model
         return DB::transaction(function () use ($userId, $amount, $service, $modelName, $description, $metadata) {
             $user = User::lockForUpdate()->findOrFail($userId);
             $user->credit_balance = max(0, (float) $user->credit_balance - $amount);
+            $user->save();
+
+            return self::create([
+                'user_id' => $userId,
+                'type' => 'debit',
+                'amount' => $amount,
+                'balance_after' => $user->credit_balance,
+                'service' => $service,
+                'model_name' => $modelName,
+                'description' => $description,
+                'metadata' => $metadata,
+            ]);
+        });
+    }
+
+    /**
+     * Atomically deduct a charge only when the user has enough credit.
+     */
+    public static function debitIfSufficient(
+        int $userId,
+        float $amount,
+        string $service,
+        ?string $modelName = null,
+        ?string $description = null,
+        ?array $metadata = null,
+    ): self {
+        return DB::transaction(function () use ($userId, $amount, $service, $modelName, $description, $metadata) {
+            $user = User::lockForUpdate()->findOrFail($userId);
+            $available = (float) $user->credit_balance;
+
+            if ($available + 0.000001 < $amount) {
+                throw new InsufficientCreditBalanceException($amount, $available);
+            }
+
+            $user->credit_balance = $available - $amount;
             $user->save();
 
             return self::create([

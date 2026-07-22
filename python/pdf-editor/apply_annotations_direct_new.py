@@ -2007,6 +2007,158 @@ def draw_pdfjs_source_mask(page: fitz.Page, ann: Dict[str, Any]) -> None:
             page.draw_rect(piece, color=None, fill=fill, width=0, overlay=True)
 
 
+def requires_search_safe_source_redaction(ann: Dict[str, Any]) -> bool:
+    """Return whether this source-backed overlay must remove source glyphs.
+
+    Painted masks are not redactions: search, copy/paste, accessibility tools,
+    and document converters can still recover the covered source text. Every
+    exported source-backed replacement therefore removes those glyphs from the
+    content stream, regardless of which frontend or export format invoked it.
+    """
+    if not is_pdfjs_visible_overlay_text(ann):
+        return False
+    # Do not depend on source text being present in the browser payload. A
+    # deletion can legitimately have empty replacement text, and a stale or
+    # malformed client must not be able to downgrade removal to a painted mask.
+    return (
+        ann.get("pdfjsSourceMaskX") is not None
+        or ann.get("pdfjsSourceX") is not None
+        or ann.get("pdfjsAnchorUid") is not None
+    )
+
+
+def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) -> bool:
+    """Remove only source words centered inside the captured source box.
+
+    Word-level redactions keep adjacent paragraphs and table cells intact while
+    ensuring semantic converters cannot recover a hidden duplicate text layer.
+    Images and vector graphics are explicitly preserved by
+    ``_apply_redactions_compat``.
+    """
+    source_rect = pdfjs_source_mask_rect(page, ann)
+    if source_rect is None or source_rect.is_empty:
+        return False
+
+    # Use MuPDF's reduced glyph boxes while choosing redaction geometry. The
+    # default font ascender / descender boxes can make a large heading fully
+    # engulf a nearby small-print row even when their painted glyphs do not
+    # touch, leaving no safe strip for the target redaction.
+    previous_small_glyph_heights = bool(fitz.TOOLS.set_small_glyph_heights())
+    try:
+        fitz.TOOLS.set_small_glyph_heights(True)
+        page_words = page.get_text("words")
+    except Exception:
+        page_words = []
+    finally:
+        fitz.TOOLS.set_small_glyph_heights(previous_small_glyph_heights)
+
+    target_rects: list[fitz.Rect] = []
+    collateral_word_rects: list[fitz.Rect] = []
+    for word in page_words:
+        try:
+            word_rect = fitz.Rect(
+                float(word[0]),
+                float(word[1]),
+                float(word[2]),
+                float(word[3]),
+            ) & page.rect
+        except Exception:
+            continue
+        if word_rect.is_empty:
+            continue
+        center = fitz.Point(
+            (word_rect.x0 + word_rect.x1) * 0.5,
+            (word_rect.y0 + word_rect.y1) * 0.5,
+        )
+        if source_rect.contains(center):
+            target_rects.append(word_rect)
+        else:
+            collateral_word_rects.append(word_rect)
+
+    # Non-searchable or unusually encoded source text still needs removal.
+    # The captured source rectangle is narrower than the neighboring paragraph
+    # boundary, so a whole-rect fallback remains scoped to this edited block.
+    if not target_rects:
+        target_rects = [fitz.Rect(source_rect)]
+
+    added = False
+    for rect in target_rects:
+        # MuPDF removes every glyph whose bounding box merely intersects a
+        # redaction rectangle. A short row can therefore delete part of a much
+        # taller neighboring heading even though the heading's center is well
+        # outside the edited source box (for example, editing "(April 2025)"
+        # beneath "4506-T"). Keep a thin portion of the target word rectangle
+        # that still intersects the target glyphs while avoiding every
+        # collateral word. Any intersection is sufficient for MuPDF to remove
+        # the intended word, so this preserves both search safety and the
+        # overlapping neighbor's ink.
+        rect = _shrink_redact_rect_to_avoid_neighbors(page, rect, page_words)
+        if rect.is_empty or rect.width <= 0.05 or rect.height <= 0.05:
+            continue
+        # If no rectangular strip can avoid a neighboring word, fail the
+        # export instead of accepting collateral text loss. The caller treats
+        # False as a hard export error, so an overlapping annotation can never
+        # be silently damaged in a downloaded PDF.
+        if any(not (rect & neighbor).is_empty for neighbor in collateral_word_rects):
+            continue
+        try:
+            page.add_redact_annot(rect, fill=None)
+            added = True
+        except Exception:
+            continue
+    if not added:
+        return False
+
+    try:
+        _apply_redactions_compat(page)
+    except Exception:
+        return False
+
+    # A successful API call is not sufficient for privacy. Verify that no
+    # original searchable words remain inside the source box before any
+    # replacement ink is stamped. If a font encoding defeated word-level
+    # removal, retry with a neighbor-safe strip of the captured source box.
+    try:
+        remaining_words = page.get_text("words")
+    except Exception:
+        remaining_words = []
+    remaining_inside = []
+    for word in remaining_words:
+        try:
+            center = fitz.Point(
+                (float(word[0]) + float(word[2])) * 0.5,
+                (float(word[1]) + float(word[3])) * 0.5,
+            )
+        except Exception:
+            continue
+        if source_rect.contains(center):
+            remaining_inside.append(word)
+    if not remaining_inside:
+        return True
+
+    fallback_rect = _shrink_redact_rect_to_avoid_neighbors(page, source_rect, page_words)
+    if (
+        fallback_rect.is_empty
+        or fallback_rect.width <= 0.05
+        or fallback_rect.height <= 0.05
+        or any(not (fallback_rect & neighbor).is_empty for neighbor in collateral_word_rects)
+    ):
+        return False
+
+    try:
+        page.add_redact_annot(fallback_rect, fill=None)
+        _apply_redactions_compat(page)
+        return not any(
+            source_rect.contains(fitz.Point(
+                (float(word[0]) + float(word[2])) * 0.5,
+                (float(word[1]) + float(word[3])) * 0.5,
+            ))
+            for word in page.get_text("words")
+        )
+    except Exception:
+        return False
+
+
 def redact_pdfjs_deleted_source_rect(page: fitz.Page, source_rect: fitz.Rect) -> bool:
     """Redact the ENTIRE captured source rect for a deleted PDF.js span.
 
@@ -8455,8 +8607,14 @@ def draw_text(
             not _boolish(render_ann.get("skipPdfjsSourceMask"))
             or source_overlay_text_was_edited(render_ann)
         )
-        if not source_masks_already_drawn and allow_source_mask:
-            if pdfjs_source_text_needs_redaction(render_ann):
+        must_redact_source = requires_search_safe_source_redaction(render_ann)
+        if not source_masks_already_drawn and (allow_source_mask or must_redact_source):
+            if must_redact_source:
+                if not redact_pdfjs_source_text_for_export(page, render_ann):
+                    raise RuntimeError(
+                        "Source text removal failed; refusing to create an export with hidden searchable text."
+                    )
+            elif pdfjs_source_text_needs_redaction(render_ann):
                 erase_pdfjs_deleted_source_text(page, render_ann)
             else:
                 draw_pdfjs_source_mask(page, render_ann)

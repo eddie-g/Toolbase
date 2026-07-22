@@ -328,6 +328,93 @@
             </div>
         </div>
 
+        {{-- ── Adobe PDF Services ── --}}
+        @php $adobe = $integrations['adobe'] ?? []; @endphp
+        <div class="relative rounded-2xl bg-white dark:bg-gray-800 shadow-sm ring-1 ring-gray-950/5 dark:ring-white/10 overflow-hidden md:col-span-2">
+            <div class="h-1 w-full" style="background: linear-gradient(90deg, #fa0f00, #b30b00);"></div>
+            <div class="p-6">
+                <div class="flex items-start justify-between mb-4">
+                    <div class="flex items-center gap-3">
+                        <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-[#fa0f00]">
+                            <span class="text-xl font-bold text-white">A</span>
+                        </div>
+                        <div>
+                            <h3 class="text-base font-semibold text-gray-900 dark:text-white">Adobe PDF Services</h3>
+                            <p class="text-xs text-gray-400 dark:text-gray-500">High-fidelity PDF export to Word and Excel</p>
+                        </div>
+                    </div>
+                    @include('filament.pages.partials.api-status-badge', ['status' => $adobe['status'] ?? 'error'])
+                </div>
+
+                @if(!empty($adobe['note']))
+                    <div class="mb-4 rounded-xl bg-red-50 dark:bg-red-900/20 p-4">
+                        <p class="text-sm text-red-700 dark:text-red-300">{{ $adobe['note'] }}</p>
+                    </div>
+                @endif
+
+                @if(!empty($adobe['extra']))
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-5">
+                        @foreach($adobe['extra'] as $key => $val)
+                            <div class="rounded-lg bg-gray-50 dark:bg-gray-700/50 px-3 py-2">
+                                <p class="text-xs text-gray-400 dark:text-gray-500">{{ $key }}</p>
+                                <p class="text-sm font-medium text-gray-800 dark:text-gray-200 mt-0.5">{{ $val }}</p>
+                            </div>
+                        @endforeach
+                    </div>
+                @endif
+
+                <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+                    <p class="text-sm font-semibold text-gray-900 dark:text-white mb-3">Export provider routing</p>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <label class="block">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1.5">Word exports</span>
+                            <select wire:model="wordConversionProvider" class="w-full rounded-lg border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white focus:border-red-500 focus:ring-red-500">
+                                <option value="local">Local converter</option>
+                                <option value="adobe">Adobe PDF Services</option>
+                            </select>
+                            @error('wordConversionProvider') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
+                        </label>
+
+                        <label class="block">
+                            <span class="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1.5">Excel exports</span>
+                            <select wire:model="excelConversionProvider" class="w-full rounded-lg border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 text-sm text-gray-900 dark:text-white focus:border-red-500 focus:ring-red-500">
+                                <option value="local">Local converter</option>
+                                <option value="adobe">Adobe PDF Services</option>
+                            </select>
+                            @error('excelConversionProvider') <p class="mt-1 text-xs text-red-500">{{ $message }}</p> @enderror
+                        </label>
+                    </div>
+
+                    <label class="mt-4 flex items-start gap-3">
+                        <input type="checkbox" wire:model="fallbackToLocal" class="mt-0.5 rounded border-gray-300 text-red-600 focus:ring-red-500">
+                        <span>
+                            <span class="block text-sm font-medium text-gray-800 dark:text-gray-200">Fall back to the local converter if Adobe fails</span>
+                            <span class="block text-xs text-gray-500 dark:text-gray-400">Keeps exports available during Adobe errors, timeouts, or quota limits.</span>
+                        </span>
+                    </label>
+
+                    <div class="mt-4 flex justify-end">
+                        <button
+                            wire:click="saveDocumentConversionSettings"
+                            wire:loading.attr="disabled"
+                            wire:target="saveDocumentConversionSettings"
+                            class="rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium px-4 py-2 transition disabled:opacity-50"
+                        >
+                            <span wire:loading.remove wire:target="saveDocumentConversionSettings">Save conversion settings</span>
+                            <span wire:loading wire:target="saveDocumentConversionSettings">Saving…</span>
+                        </button>
+                    </div>
+                </div>
+
+                @php $adobeClientId = config('services.adobe_pdf_services.client_id'); @endphp
+                @if($adobeClientId)
+                    <p class="mt-4 text-xs text-gray-300 dark:text-gray-600 font-mono">
+                        Client ID: {{ substr($adobeClientId, 0, 8) }}…{{ substr($adobeClientId, -4) }}
+                    </p>
+                @endif
+            </div>
+        </div>
+
     </div>{{-- /grid --}}
 
 </x-filament-panels::page>

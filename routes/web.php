@@ -119,8 +119,8 @@ Route::post('/documents/{document}/convert-html-to-pdf', [DocumentController::cl
 Route::post('/documents/{document}/save-guided-form', [DocumentController::class, 'saveGuidedFormData'])->name('documents.saveGuidedForm');
 Route::post('/documents/{document}/screenshot', [DocumentController::class, 'takeScreenshot'])->name('documents.takeScreenshot');
 Route::post('/documents/{document}/convert-to-pdfa', [DocumentController::class, 'convertToPdfA'])->name('documents.convertToPdfA');
-Route::post('/documents/{document}/convert-to-word', [DocumentController::class, 'convertToWord'])->name('documents.convertToWord');
-Route::post('/documents/{document}/convert-to-excel', [DocumentController::class, 'convertToExcel'])->name('documents.convertToExcel');
+Route::post('/documents/{document}/convert-to-word', [DocumentController::class, 'convertToWord'])->middleware('auth:web,admin')->name('documents.convertToWord');
+Route::post('/documents/{document}/convert-to-excel', [DocumentController::class, 'convertToExcel'])->middleware('auth:web,admin')->name('documents.convertToExcel');
 Route::post('/documents/{document}/encrypt-pdf', [DocumentController::class, 'encryptPdf'])->name('documents.encryptPdf');
 Route::post('/documents/{document}/split-pdf', [DocumentController::class, 'splitPdf'])->name('documents.splitPdf');
 Route::get('/documents/download-pdfa', [DocumentController::class, 'downloadPdfA'])->name('documents.downloadPdfA');
