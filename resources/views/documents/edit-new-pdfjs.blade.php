@@ -101,6 +101,7 @@
      data-regenerate-template-url="{{ route('documents.regenerateTemplate', $document) }}"
      data-add-blank-page-url="{{ route('documents.addBlankPage', $document) }}"
      data-reorder-pages-url="{{ route('documents.reorderPages', $document) }}"
+     data-rotate-page-url="{{ route('documents.rotatePage', $document) }}"
      data-merge-pdf-url="{{ route('documents.mergePdfs', $document) }}"
      data-split-pdf-url="{{ route('documents.splitPdf', $document) }}"
      data-document-name="{{ $document->original_name }}"
@@ -179,7 +180,7 @@
 
 @include('documents.edit-new._guided-helper')
 
-<div class="enpv-page-manager-modal" id="enpv-page-manager-modal" role="dialog" aria-modal="true" aria-labelledby="enpv-page-manager-title" aria-hidden="true" hidden>
+<div class="enpv-page-manager-modal" id="enpv-page-manager-modal" role="dialog" aria-modal="false" aria-labelledby="enpv-page-manager-title" aria-hidden="true" hidden>
      <div class="enpv-page-manager-card">
           <div class="enpv-page-manager-header">
                <div>

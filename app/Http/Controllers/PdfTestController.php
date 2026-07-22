@@ -1784,6 +1784,143 @@ PYTHON;
         return $annotation;
     }
 
+    /**
+     * Extraction rows share their parent block's source key. Older saves could
+     * therefore be re-enriched with the parent block's complete line metadata,
+     * turning a one-line row into a page-sized edit box. The row's positioned
+     * source spans are the authoritative ownership geometry in that case.
+     */
+    private function repairPromotedRowSourceMetadataFromSpans(array $annotation): array
+    {
+        if (empty($annotation['promotedFromExtraction'])
+            || preg_match('/_row_\d+$/', trim((string) ($annotation['id'] ?? ''))) !== 1) {
+            return $annotation;
+        }
+
+        $sourceSpans = array_values(array_filter(
+            is_array($annotation['sourceSpans'] ?? null) ? $annotation['sourceSpans'] : [],
+            static fn ($span): bool => is_array($span)
+        ));
+        $synthesized = $this->synthesizeVisualLinesFromSourceSpans($sourceSpans);
+        if (!$synthesized) {
+            return $annotation;
+        }
+
+        $savedBoxes = $this->sanitizeSourceLineBBoxes($annotation['sourceLineBBoxes'] ?? []);
+        $spanBoxes = $this->sanitizeSourceLineBBoxes($synthesized['boxes'] ?? []);
+        if (empty($spanBoxes)) {
+            return $annotation;
+        }
+
+        $spanLeft = min(array_map(static fn (array $bbox): float => (float) $bbox[0], $spanBoxes));
+        $spanTop = min(array_map(static fn (array $bbox): float => (float) $bbox[1], $spanBoxes));
+        $spanRight = max(array_map(static fn (array $bbox): float => (float) $bbox[2], $spanBoxes));
+        $spanBottom = max(array_map(static fn (array $bbox): float => (float) $bbox[3], $spanBoxes));
+        $spanWidth = max(0.0, $spanRight - $spanLeft);
+        $spanHeight = max(0.0, $spanBottom - $spanTop);
+        if ($spanWidth <= 0.0 || $spanHeight <= 0.0) {
+            return $annotation;
+        }
+
+        $savedLeft = !empty($savedBoxes)
+            ? min(array_map(static fn (array $bbox): float => (float) $bbox[0], $savedBoxes))
+            : null;
+        $savedTop = !empty($savedBoxes)
+            ? min(array_map(static fn (array $bbox): float => (float) $bbox[1], $savedBoxes))
+            : null;
+        $savedRight = !empty($savedBoxes)
+            ? max(array_map(static fn (array $bbox): float => (float) $bbox[2], $savedBoxes))
+            : null;
+        $savedBottom = !empty($savedBoxes)
+            ? max(array_map(static fn (array $bbox): float => (float) $bbox[3], $savedBoxes))
+            : null;
+        $savedWidth = $savedLeft !== null && $savedRight !== null ? max(0.0, $savedRight - $savedLeft) : 0.0;
+        $savedHeight = $savedTop !== null && $savedBottom !== null ? max(0.0, $savedBottom - $savedTop) : 0.0;
+        $lineCountMismatch = count($savedBoxes) !== count($spanBoxes);
+        $geometryMismatch = $savedHeight > max($spanHeight + 2.0, $spanHeight * 1.75)
+            || $savedWidth > max($spanWidth + 12.0, $spanWidth * 1.35)
+            || ($savedTop !== null && abs($savedTop - $spanTop) > max(2.0, $spanHeight));
+        if (!$lineCountMismatch && !$geometryMismatch) {
+            return $annotation;
+        }
+
+        $annotation['sourceTextLines'] = array_values($synthesized['lines']);
+        $annotation['sourceLineBBoxes'] = $spanBoxes;
+        $annotation['sourceBlockLeft'] = $spanLeft;
+        $annotation['sourceBlockTop'] = $spanTop;
+        $annotation['sourceBlockWidth'] = $spanWidth;
+        $annotation['sourceBlockHeight'] = $spanHeight;
+
+        $pageHeight = isset($annotation['sourcePageHeight']) && is_numeric($annotation['sourcePageHeight'])
+            ? (float) $annotation['sourcePageHeight']
+            : (isset($annotation['pdfjsSourcePageHeight']) && is_numeric($annotation['pdfjsSourcePageHeight'])
+                ? (float) $annotation['pdfjsSourcePageHeight']
+                : 0.0);
+        if ($pageHeight > 0.0) {
+            $sourcePdfY = $pageHeight - $spanBottom;
+            $annotation['pdfjsSourceX'] = $spanLeft;
+            $annotation['pdfjsSourceY'] = $sourcePdfY;
+            $annotation['pdfjsSourceW'] = $spanWidth;
+            $annotation['pdfjsSourceH'] = $spanHeight;
+            $annotation['pdfjsSourcePageHeight'] = $pageHeight;
+
+            $hasExplicitUserEdits = !empty($annotation['promotedDirty'])
+                || !empty($annotation['promotedReflowEnabled'])
+                || !empty($annotation['userAuthored'])
+                || !empty($annotation['styleDirty'])
+                || !empty($annotation['userForcedRichText'])
+                || !empty($annotation['movedTextOverlay'])
+                || !empty($annotation['userSizedTextBox'])
+                || $this->normalizePromotedComparableText($annotation['text'] ?? '')
+                    !== $this->normalizePromotedComparableText($annotation['originalText'] ?? '');
+            if (!$hasExplicitUserEdits) {
+                $annotation['pdfX'] = $spanLeft;
+                $annotation['pdfY'] = $sourcePdfY;
+                $annotation['pdfWidth'] = $spanWidth;
+                $annotation['pdfHeight'] = $spanHeight;
+            }
+        }
+
+        $runsJson = trim((string) ($annotation['pdfjsSourceSpanRuns'] ?? ''));
+        $runsScale = isset($annotation['pdfjsSourceSpanRunsScale']) && is_numeric($annotation['pdfjsSourceSpanRunsScale'])
+            ? (float) $annotation['pdfjsSourceSpanRunsScale']
+            : 0.0;
+        $runs = $runsJson !== '' ? json_decode($runsJson, true) : null;
+        if (is_array($runs) && $runsScale > 0.0) {
+            $keptRuns = array_values(array_filter($runs, static function ($run) use ($spanBoxes, $runsScale): bool {
+                if (!is_array($run)) {
+                    return false;
+                }
+                $left = isset($run['leftPx']) && is_numeric($run['leftPx']) ? (float) $run['leftPx'] / $runsScale : null;
+                $right = isset($run['rightPx']) && is_numeric($run['rightPx']) ? (float) $run['rightPx'] / $runsScale : null;
+                $top = isset($run['topPx']) && is_numeric($run['topPx']) ? (float) $run['topPx'] / $runsScale : null;
+                $bottom = isset($run['bottomPx']) && is_numeric($run['bottomPx']) ? (float) $run['bottomPx'] / $runsScale : null;
+                if ($left === null || $right === null || $top === null || $bottom === null) {
+                    return false;
+                }
+
+                foreach ($spanBoxes as $bbox) {
+                    $horizontalOverlap = min($right, (float) $bbox[2] + 1.0) - max($left, (float) $bbox[0] - 1.0);
+                    $verticalOverlap = min($bottom, (float) $bbox[3] + 1.0) - max($top, (float) $bbox[1] - 1.0);
+                    if ($horizontalOverlap > 0.0 && $verticalOverlap > 0.0) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }));
+            if (count($keptRuns) < count($runs)) {
+                if (!empty($keptRuns)) {
+                    $annotation['pdfjsSourceSpanRuns'] = json_encode($keptRuns, JSON_UNESCAPED_SLASHES);
+                } else {
+                    unset($annotation['pdfjsSourceSpanRuns'], $annotation['pdfjsSourceSpanRunsScale']);
+                }
+            }
+        }
+
+        return $annotation;
+    }
+
     private function syncAnnotationGeometryFromSourceLineBBoxes(array $annotation): array
     {
         $lineBBoxes = $this->sanitizeSourceLineBBoxes($annotation['sourceLineBBoxes'] ?? []);
@@ -3905,6 +4042,7 @@ PYTHON;
             ));
         }
 
+        $annotation = $this->repairPromotedRowSourceMetadataFromSpans($annotation);
         $annotation = $this->syncAnnotationGeometryFromSourceLineBBoxes(
             $this->normalizeAnnotationLineMetadata($annotation)
         );

@@ -29,6 +29,10 @@ import {
 import { generateUuidV4 } from '../edit-new/util/uuid.js';
 import { sliderValueToFontPt, fontPtToSliderValue } from '../edit-new/text/font-slider.js';
 import { computeLineBoxGeometry, constrainLineEndpointTo45, normalizeRotationDegrees } from '../edit-new/util/geometry.js';
+import {
+    correctionToKeepPaintedAxisInside,
+    dragAxisOffsetBounds,
+} from '../edit-new/interactions/drag-bounds.js';
 import { currentShapeDefaults } from '../edit-new/shapes/defaults.js';
 import { reflectShapeStateToInputs, readShapeInspectorState } from '../edit-new/shapes/inspector-ui.js';
 import { normalizeShapeAnnotation, normalizeImageAnnotation, applyShapeStateToAnnotation } from '../edit-new/annotations/normalize.js';
@@ -83,6 +87,7 @@ const PDFJS_EDGE_SNAP_TOLERANCE_PTS = 2;
 const root = document.getElementById('enpv-root');
 const editNewRoot = document.getElementById('edit-new-root');
 const container = document.getElementById('viewerContainer');
+const viewerElement = document.getElementById('viewer');
 const statusEl = document.getElementById('enpv-status');
 const loadingScreen = document.getElementById('enpv-loading-screen');
 const editBar = document.getElementById('enpv-edit-bar');
@@ -304,6 +309,7 @@ const REGENERATE_INVOICE_URL = root.dataset.regenerateInvoiceUrl;
 const REGENERATE_TEMPLATE_URL = root.dataset.regenerateTemplateUrl;
 const ADD_BLANK_PAGE_URL = root.dataset.addBlankPageUrl;
 const REORDER_PAGES_URL = root.dataset.reorderPagesUrl;
+const ROTATE_PAGE_URL = root.dataset.rotatePageUrl;
 const MERGE_PDF_URL = root.dataset.mergePdfUrl;
 const SPLIT_PDF_URL = root.dataset.splitPdfUrl;
 const MERGE_MAX_FILES = Math.max(1, Number(root.dataset.mergeMaxFiles) || 10);
@@ -517,6 +523,8 @@ const NOTE_PIN_ICONS = ['note', 'flag', 'check', 'alert', 'star', 'question'];
 let selectedPageManagerIndex = 0;
 let draggedPageManagerIndex = -1;
 let pageManagerRenderGeneration = 0;
+let rotatingPageManagerIndex = -1;
+let rotatingPageManagerDirection = 0;
 let mergeItems = [];
 let mergeDraggedId = '';
 let mergeBusy = false;
@@ -560,11 +568,15 @@ let documentHasAcroFormWidgets = null;
 // Keep the pdjs editor at the same starting zoom as the legacy editor.
 // This must be seeded into PDFViewer before its first page view is created,
 // otherwise pdf.js lays out once at 100% and then immediately re-lays out at
-// 250%, which presents as a second load.
+// the configured starting zoom, which presents as a second load.
 const ZOOM_MIN_PERCENT = 50;
 const ZOOM_MAX_PERCENT = 400;
-const ZOOM_STEP_PERCENT = 30;
-const initialZoomPercent = 250;
+const ZOOM_STEP_FACTOR = 1.25;
+const initialZoomPercent = 190;
+// Keep the budget just below the unrounded 190% viewport area. PDF.js then
+// marks the 1550 × 2006 backing store as resolution-capped and reuses it for
+// CSS-only zoom above 190% rather than allocating a larger bitmap.
+const PDFJS_MAX_CANVAS_PIXELS = 3_110_474;
 
 function nextAnimationFrame() {
     return new Promise((resolve) => {
@@ -1627,13 +1639,17 @@ async function renderPageManagerThumbnail(pageIndex, canvas, generation) {
         const page = await currentPdfDoc.getPage(pageIndex + 1);
         if (generation !== pageManagerRenderGeneration || !canvas.isConnected) return;
         const baseViewport = page.getViewport({ scale: 1 });
-        const scale = Math.max(0.05, Math.min(0.28, 150 / Math.max(baseViewport.width, baseViewport.height, 1)));
+        const thumb = canvas.closest('.enpv-page-manager-thumb');
+        const aspectRatio = Math.max(0.1, baseViewport.width / Math.max(1, baseViewport.height));
+        thumb?.style.setProperty('--enpv-thumb-aspect', String(aspectRatio));
+        const availableWidth = Math.max(150, Number(thumb?.clientWidth) || 0);
+        const scale = Math.max(0.05, Math.min(0.75, availableWidth / Math.max(baseViewport.width, 1)));
         const viewport = page.getViewport({ scale });
         const outputScale = Math.min(2, Math.max(1, Number(window.devicePixelRatio) || 1));
         canvas.width = Math.max(1, Math.ceil(viewport.width * outputScale));
         canvas.height = Math.max(1, Math.ceil(viewport.height * outputScale));
-        canvas.style.width = `${Math.max(1, Math.ceil(viewport.width))}px`;
-        canvas.style.height = `${Math.max(1, Math.ceil(viewport.height))}px`;
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
         ctx.setTransform(outputScale, 0, 0, outputScale, 0, 0);
@@ -1664,17 +1680,42 @@ function renderPageManagerGrid() {
         return;
     }
     for (let pageIndex = 0; pageIndex < total; pageIndex += 1) {
-        const item = document.createElement('button');
-        item.type = 'button';
+        const item = document.createElement('div');
         item.className = 'enpv-page-manager-item';
-        item.draggable = true;
+        item.setAttribute('role', 'button');
+        item.tabIndex = 0;
+        item.draggable = rotatingPageManagerIndex < 0;
         item.dataset.pageIndex = String(pageIndex);
         item.classList.toggle('is-selected', pageIndex === selected);
+        item.setAttribute('aria-pressed', pageIndex === selected ? 'true' : 'false');
         item.setAttribute('aria-label', `Page ${pageIndex + 1}`);
         const thumb = document.createElement('span');
         thumb.className = 'enpv-page-manager-thumb';
         const canvas = document.createElement('canvas');
-        thumb.appendChild(canvas);
+        const rotateControls = document.createElement('span');
+        rotateControls.className = 'enpv-page-manager-rotate-controls';
+        const rotateLeft = document.createElement('button');
+        rotateLeft.type = 'button';
+        rotateLeft.className = 'enpv-page-manager-rotate enpv-page-manager-rotate-left';
+        rotateLeft.disabled = rotatingPageManagerIndex >= 0;
+        rotateLeft.classList.toggle('is-rotating', rotatingPageManagerIndex === pageIndex && rotatingPageManagerDirection === -90);
+        rotateLeft.title = `Rotate page ${pageIndex + 1} left`;
+        rotateLeft.setAttribute('aria-label', rotatingPageManagerIndex === pageIndex && rotatingPageManagerDirection === -90
+            ? `Rotating page ${pageIndex + 1} left`
+            : `Rotate page ${pageIndex + 1} left`);
+        rotateLeft.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 11a8 8 0 1 0 2.34-5.66"></path><path d="M4 4v7h7"></path></svg>';
+        const rotateRight = document.createElement('button');
+        rotateRight.type = 'button';
+        rotateRight.className = 'enpv-page-manager-rotate enpv-page-manager-rotate-right';
+        rotateRight.disabled = rotatingPageManagerIndex >= 0;
+        rotateRight.classList.toggle('is-rotating', rotatingPageManagerIndex === pageIndex && rotatingPageManagerDirection === 90);
+        rotateRight.title = `Rotate page ${pageIndex + 1} right`;
+        rotateRight.setAttribute('aria-label', rotatingPageManagerIndex === pageIndex && rotatingPageManagerDirection === 90
+            ? `Rotating page ${pageIndex + 1} right`
+            : `Rotate page ${pageIndex + 1} right`);
+        rotateRight.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8 8 0 1 1-2.34-5.66"></path><path d="M20 4v7h-7"></path></svg>';
+        rotateControls.append(rotateLeft, rotateRight);
+        thumb.append(canvas, rotateControls);
         const label = document.createElement('span');
         label.className = 'enpv-page-manager-label';
         const name = document.createElement('span');
@@ -1683,10 +1724,33 @@ function renderPageManagerGrid() {
         current.textContent = pageIndex + 1 === pdfViewer.currentPageNumber ? 'Current' : '';
         label.append(name, current);
         item.append(thumb, label);
-        item.addEventListener('click', () => {
+        const selectPage = () => {
             selectedPageManagerIndex = pageIndex;
             if (Number.isFinite(pageIndex)) pdfViewer.currentPageNumber = pageIndex + 1;
             renderPageManagerGrid();
+        };
+        item.addEventListener('click', (event) => {
+            if (event.target.closest('.enpv-page-manager-rotate')) return;
+            selectPage();
+        });
+        item.addEventListener('keydown', (event) => {
+            if (event.target !== item || (event.key !== 'Enter' && event.key !== ' ')) return;
+            event.preventDefault();
+            selectPage();
+        });
+        [rotateLeft, rotateRight].forEach((rotateButton) => {
+            rotateButton.addEventListener('pointerdown', (event) => {
+                event.stopPropagation();
+            });
+            rotateButton.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                const rotation = rotateButton === rotateLeft ? -90 : 90;
+                rotatePageFromManager(pageIndex, rotation).catch((error) => {
+                    console.error(error);
+                    setPageManagerStatus(error.message || 'Could not rotate that page.', true);
+                });
+            });
         });
         item.addEventListener('dragstart', (event) => {
             draggedPageManagerIndex = pageIndex;
@@ -1745,8 +1809,19 @@ async function pageManagerJsonRequest(url, payload) {
 async function refreshPdfAfterPageManagerChange(selectPageIndex, message) {
     selectedPageManagerIndex = Math.max(0, Number(selectPageIndex) || 0);
     annotationBoxesLoadPromise = null;
-    await loadInitialPdf();
+    if (PDF_URL) {
+        const reloadUrl = new URL(PDF_URL, window.location.href);
+        reloadUrl.searchParams.set('v', String(Date.now()));
+        await loadPdfFromUrl(reloadUrl.toString());
+    } else {
+        await loadInitialPdf();
+    }
+    const loadGeneration = viewerLoadGeneration;
+    await waitForViewerPagesReady(loadGeneration);
     clampPageManagerSelection();
+    if (pdfViewer.pagesCount > 0) {
+        pdfViewer.currentPageNumber = Math.min(pdfViewer.pagesCount, selectedPageManagerIndex + 1);
+    }
     renderPageManagerGrid();
     setPageManagerStatus(message || 'Pages updated.');
 }
@@ -1769,6 +1844,29 @@ async function reorderDocumentPages(pageOrder, selectedIndexAfterMove = 0) {
         session_id: getSessionId(),
     });
     await refreshPdfAfterPageManagerChange(selectedIndexAfterMove, 'Pages reordered.');
+}
+
+async function rotatePageFromManager(pageIndex, rotation = 90) {
+    if (rotatingPageManagerIndex >= 0) return;
+    const selected = Math.max(0, Math.min(pageManagerPageCount() - 1, Number(pageIndex) || 0));
+    const normalizedRotation = Number(rotation) === -90 ? -90 : 90;
+    const direction = normalizedRotation === -90 ? 'left' : 'right';
+    rotatingPageManagerIndex = selected;
+    rotatingPageManagerDirection = normalizedRotation;
+    selectedPageManagerIndex = selected;
+    setPageManagerStatus(`Rotating page ${selected + 1} ${direction}...`);
+    renderPageManagerGrid();
+    try {
+        await pageManagerJsonRequest(ROTATE_PAGE_URL, {
+            page_number: selected + 1,
+            rotation: normalizedRotation,
+        });
+        await refreshPdfAfterPageManagerChange(selected, `Page ${selected + 1} rotated ${direction}.`);
+    } finally {
+        rotatingPageManagerIndex = -1;
+        rotatingPageManagerDirection = 0;
+        if (pageManagerModal?.hidden === false) renderPageManagerGrid();
+    }
 }
 
 async function deleteSelectedPageFromManager() {
@@ -7073,6 +7171,35 @@ function maxUserCreatedTextBoxWidthPx(box) {
     return Math.max(12, layerWidth - left - 1);
 }
 
+function paintedDragBoundsInsideLayer(box) {
+    if (!box) return null;
+    const layer = box.parentElement;
+    const layerRect = layer?.getBoundingClientRect?.();
+    if (!layerRect || layerRect.width <= 0 || layerRect.height <= 0) return null;
+
+    const isRotatableShape = box.dataset.annotationType === 'shape'
+        && normalizeShapeType(box.dataset.shapeType) !== 'line';
+    const paintedElement = isRotatableShape
+        ? box.querySelector(':scope > svg.enpv-shape-svg > *')
+        : box;
+    const paintedRect = paintedElement?.getBoundingClientRect?.();
+    if (!paintedRect || paintedRect.width <= 0 || paintedRect.height <= 0) return null;
+
+    const scale = Number.parseFloat(layer.dataset.scale || '1') || 1;
+    const strokeWidth = Number.parseFloat(box.dataset.strokeWidth || '0') || 0;
+    const strokeVisible = isRotatableShape
+        && box.dataset.strokeTransparent !== '1'
+        && (Number.parseFloat(box.dataset.strokeOpacity || '1') || 0) > 0;
+    const strokePadding = strokeVisible ? Math.max(0, strokeWidth * scale * 0.5) : 0;
+    return {
+        left: paintedRect.left - layerRect.left - strokePadding,
+        top: paintedRect.top - layerRect.top - strokePadding,
+        right: paintedRect.right - layerRect.left + strokePadding,
+        bottom: paintedRect.bottom - layerRect.top + strokePadding,
+        usesShapeGeometry: isRotatableShape,
+    };
+}
+
 function clampBoxInsidePage(box) {
     if (!box) return false;
     const layer = box.parentElement;
@@ -7085,6 +7212,23 @@ function clampBoxInsidePage(box) {
     const height = Number.parseFloat(box.style.height || '') || box.offsetHeight || 0;
     const left = Number.parseFloat(box.style.left || '') || 0;
     const top = Number.parseFloat(box.style.top || '') || 0;
+    const paintedBounds = paintedDragBoundsInsideLayer(box);
+    if (paintedBounds?.usesShapeGeometry) {
+        const correctionX = correctionToKeepPaintedAxisInside(
+            paintedBounds.left,
+            paintedBounds.right,
+            layerWidth,
+        );
+        const correctionY = correctionToKeepPaintedAxisInside(
+            paintedBounds.top,
+            paintedBounds.bottom,
+            layerHeight,
+        );
+        if (Math.abs(correctionX) <= 0.5 && Math.abs(correctionY) <= 0.5) return false;
+        box.style.left = `${left + correctionX}px`;
+        box.style.top = `${top + correctionY}px`;
+        return true;
+    }
     const nextWidth = Math.max(1, Math.min(width, layerWidth));
     const nextHeight = Math.max(1, Math.min(height, layerHeight));
     const nextLeft = Math.max(0, Math.min(left, Math.max(0, layerWidth - nextWidth)));
@@ -13612,6 +13756,7 @@ const pdfViewer = new PDFViewer({
     eventBus,
     linkService,
     findController,
+    maxCanvasPixels: PDFJS_MAX_CANVAS_PIXELS,
     annotationEditorMode: pdfjsLib.AnnotationEditorType?.NONE ?? 0,
     annotationMode: pdfjsLib.AnnotationMode?.ENABLE_FORMS ?? 2,
     textLayerMode: 2,
@@ -20567,6 +20712,7 @@ function beginMultiAnnBoxDrag(anchorBox, ev) {
             const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
             const isFreeBox = isFreePositionedAnnotationBox(box, existing);
             if (isFreeBox) settleFreePositionedBoxTransform(box, scale);
+            const paintedBounds = paintedDragBoundsInsideLayer(box);
             return {
                 box,
                 isFreeBox,
@@ -20576,14 +20722,17 @@ function beginMultiAnnBoxDrag(anchorBox, ev) {
                 startTop: Number.parseFloat(box.style.top || '0') || 0,
                 width: Number.parseFloat(box.style.width || '') || box.offsetWidth || 0,
                 height: Number.parseFloat(box.style.height || '') || box.offsetHeight || 0,
+                paintedBounds,
             };
         });
     if (items.length < 2) return false;
 
-    const minLeft = Math.min(...items.map((item) => item.startLeft));
-    const minTop = Math.min(...items.map((item) => item.startTop));
-    const maxRight = Math.max(...items.map((item) => item.startLeft + item.width));
-    const maxBottom = Math.max(...items.map((item) => item.startTop + item.height));
+    const minLeft = Math.min(...items.map((item) => item.paintedBounds?.left ?? item.startLeft));
+    const minTop = Math.min(...items.map((item) => item.paintedBounds?.top ?? item.startTop));
+    const maxRight = Math.max(...items.map((item) => item.paintedBounds?.right ?? (item.startLeft + item.width)));
+    const maxBottom = Math.max(...items.map((item) => item.paintedBounds?.bottom ?? (item.startTop + item.height)));
+    const xBounds = dragAxisOffsetBounds(0, minLeft, maxRight, pageRect.width);
+    const yBounds = dragAxisOffsetBounds(0, minTop, maxBottom, pageRect.height);
 
     multiDragState = {
         pointerId: ev.pointerId,
@@ -20591,10 +20740,10 @@ function beginMultiAnnBoxDrag(anchorBox, ev) {
         scale,
         startClientX: ev.clientX,
         startClientY: ev.clientY,
-        dxMinPx: -minLeft,
-        dxMaxPx: Math.max(0, pageRect.width - maxRight),
-        dyMinPx: -minTop,
-        dyMaxPx: Math.max(0, pageRect.height - maxBottom),
+        dxMinPx: xBounds.min,
+        dxMaxPx: xBounds.max,
+        dyMinPx: yBounds.min,
+        dyMaxPx: yBounds.max,
         items,
         pendingDxPx: 0,
         pendingDyPx: 0,
@@ -20734,19 +20883,35 @@ function beginAnnBoxDrag(box, ev) {
         && box.dataset.movedTextOverlay !== '1') {
         rememberSourceMaskRectForCurrentBox(box);
     }
-    // Note: dxPts in pointermove is the absolute offset relative to
-    // box.style.left (it is computed as `startDxPts + dxPx/scale` and
-    // clamped against [dxMin, dxMax]). So the bounds are derived from
-    // box.style.left/top alone — they do not include startDxPts.
+    // dxPts / dyPts are absolute offsets from box.style.left/top. Derive the
+    // limits from the CURRENT painted bounds and the current absolute offset.
+    // A rotated or asymmetric shape can have substantial empty space between
+    // its layout box and its visible outline; clamping the layout box would
+    // prevent that outline from ever reaching a page edge.
     const visXPts = leftPx / scale;
     const visYPts = topPx / scale; // screen y-down pts (matches dyPts)
     const visWPts = widthPx / scale;
     const visHPts = heightPx / scale;
     let dxMin = -Infinity, dxMax = Infinity, dyMin = -Infinity, dyMax = Infinity;
-    if (pageWPts && pageHPts && [visXPts, visYPts, visWPts, visHPts].every(Number.isFinite)) {
-        // Keep the visual box inside [margin, page-margin] on both axes.
-        // dx/dy are y-down screen-pt offsets relative to the box's
-        // current `style.left/top` placement.
+    const paintedBounds = paintedDragBoundsInsideLayer(box);
+    if (pageWPts && pageHPts && paintedBounds) {
+        const xBounds = dragAxisOffsetBounds(
+            startDxPts,
+            (paintedBounds.left / scale) - margin,
+            (paintedBounds.right / scale) + margin,
+            pageWPts,
+        );
+        const yBounds = dragAxisOffsetBounds(
+            startDyPts,
+            (paintedBounds.top / scale) - margin,
+            (paintedBounds.bottom / scale) + margin,
+            pageHPts,
+        );
+        dxMin = xBounds.min;
+        dxMax = xBounds.max;
+        dyMin = yBounds.min;
+        dyMax = yBounds.max;
+    } else if (pageWPts && pageHPts && [visXPts, visYPts, visWPts, visHPts].every(Number.isFinite)) {
         dxMin = margin - visXPts;
         dxMax = (pageWPts - margin) - (visXPts + visWPts);
         dyMin = margin - visYPts;
@@ -22123,17 +22288,17 @@ function installGridlinesSettingsControls() {
 installGridlinesSettingsControls();
 
 eventBus.on('pagesinit', () => {
-    applyZoom(currentZoomPercent);
+    applyZoom(currentZoomPercent, { preserveAnchor: false });
     scheduleRenderGridlines();
 });
 
 // ---- Zoom bar (legacy /edit-new chrome) ---------------------------------
 //
-// Mirrors the constants from resources/js/edit-new/main.js: 50% min,
-// 400% max, 30% step. The pdf.js route starts zoomed in for text-box
-// editing and controls PDFViewer.currentScale via a percent number.
+// Uses a 50%–400% range with proportional 1.25× steps, matching the
+// focal-point zoom behavior of modern PDF viewers.
 let currentZoomPercent = initialZoomPercent;
 let suppressNextScaleEvent = false;
+let zoomAnchorGeneration = 0;
 
 const zoomLabel = document.getElementById('zoom-label');
 const zoomInBtn = document.getElementById('zoom-in');
@@ -22147,8 +22312,67 @@ function clampZoom(p) {
     return Math.max(ZOOM_MIN_PERCENT, Math.min(ZOOM_MAX_PERCENT, Math.round(p)));
 }
 
+function captureZoomAnchor(clientX = null, clientY = null) {
+    if (!container || !viewerElement) return null;
+    const containerRect = container.getBoundingClientRect();
+    const anchorX = Number.isFinite(clientX)
+        ? Math.max(containerRect.left, Math.min(containerRect.right, clientX))
+        : containerRect.left + (container.clientWidth / 2);
+    const anchorY = Number.isFinite(clientY)
+        ? Math.max(containerRect.top, Math.min(containerRect.bottom, clientY))
+        : containerRect.top + (container.clientHeight / 2);
+    const pageDivs = Array.from(viewerElement.querySelectorAll('.page[data-page-number]'));
+    let best = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    pageDivs.forEach((pageDiv) => {
+        const rect = pageDiv.getBoundingClientRect();
+        if (!(rect.width > 0) || !(rect.height > 0)) return;
+        const dx = anchorX < rect.left ? rect.left - anchorX : (anchorX > rect.right ? anchorX - rect.right : 0);
+        const dy = anchorY < rect.top ? rect.top - anchorY : (anchorY > rect.bottom ? anchorY - rect.bottom : 0);
+        const distance = (dx * dx) + (dy * dy);
+        if (distance >= bestDistance) return;
+        bestDistance = distance;
+        best = { pageDiv, rect };
+    });
+    if (!best) return null;
+    const pageNumber = Number.parseInt(best.pageDiv.dataset.pageNumber || '', 10);
+    if (!Number.isFinite(pageNumber)) return null;
+    return {
+        pageNumber,
+        relativeX: Math.max(0, Math.min(1, (anchorX - best.rect.left) / best.rect.width)),
+        relativeY: Math.max(0, Math.min(1, (anchorY - best.rect.top) / best.rect.height)),
+        clientX: anchorX,
+        clientY: anchorY,
+    };
+}
+
+function scheduleZoomAnchorRestore(anchor) {
+    if (!anchor) return;
+    const generation = ++zoomAnchorGeneration;
+    let attempts = 0;
+    const restore = () => {
+        if (generation !== zoomAnchorGeneration) return;
+        const pageView = pdfViewer?.getPageView?.(anchor.pageNumber - 1) || null;
+        const pageDiv = pageView?.div || viewerElement?.querySelector?.(`.page[data-page-number="${anchor.pageNumber}"]`);
+        if (!(pageDiv instanceof HTMLElement)) return;
+        const rect = pageDiv.getBoundingClientRect();
+        if (!(rect.width > 0) || !(rect.height > 0)) return;
+        const pointX = rect.left + (rect.width * anchor.relativeX);
+        const pointY = rect.top + (rect.height * anchor.relativeY);
+        container.scrollLeft += pointX - anchor.clientX;
+        container.scrollTop += pointY - anchor.clientY;
+        attempts += 1;
+        if (attempts < 3) window.requestAnimationFrame(restore);
+    };
+    window.requestAnimationFrame(restore);
+}
+
 function applyZoom(percent, opts = {}) {
-    currentZoomPercent = clampZoom(percent);
+    const zoomAnchor = !opts.skipViewer && opts.preserveAnchor !== false
+        ? captureZoomAnchor(opts.anchorClientX, opts.anchorClientY)
+        : null;
+    const nextZoom = clampZoom(percent);
+    currentZoomPercent = nextZoom;
     if (zoomLabel) zoomLabel.textContent = `${currentZoomPercent}%`;
     if (zoomInBtn) zoomInBtn.disabled = currentZoomPercent >= ZOOM_MAX_PERCENT;
     if (zoomOutBtn) zoomOutBtn.disabled = currentZoomPercent <= ZOOM_MIN_PERCENT;
@@ -22156,14 +22380,15 @@ function applyZoom(percent, opts = {}) {
         suppressNextScaleEvent = true;
         // pdf.js uses a multiplier (1.0 = 100%).
         pdfViewer.currentScale = currentZoomPercent / 100;
+        scheduleZoomAnchorRestore(zoomAnchor);
     }
 }
 
 if (zoomInBtn) {
-    zoomInBtn.addEventListener('click', () => applyZoom(currentZoomPercent + ZOOM_STEP_PERCENT));
+    zoomInBtn.addEventListener('click', () => applyZoom(currentZoomPercent * ZOOM_STEP_FACTOR));
 }
 if (zoomOutBtn) {
-    zoomOutBtn.addEventListener('click', () => applyZoom(currentZoomPercent - ZOOM_STEP_PERCENT));
+    zoomOutBtn.addEventListener('click', () => applyZoom(currentZoomPercent / ZOOM_STEP_FACTOR));
 }
 
 // React to viewer-side scale changes (e.g. page-width fit, ctrl+wheel) so
@@ -22189,8 +22414,13 @@ eventBus.on('scalechanging', (evt) => {
 container.addEventListener('wheel', (ev) => {
     if (!ev.ctrlKey && !ev.metaKey) return;
     ev.preventDefault();
-    const delta = ev.deltaY < 0 ? ZOOM_STEP_PERCENT : -ZOOM_STEP_PERCENT;
-    applyZoom(currentZoomPercent + delta);
+    const nextZoom = ev.deltaY < 0
+        ? currentZoomPercent * ZOOM_STEP_FACTOR
+        : currentZoomPercent / ZOOM_STEP_FACTOR;
+    applyZoom(nextZoom, {
+        anchorClientX: ev.clientX,
+        anchorClientY: ev.clientY,
+    });
 }, { passive: false });
 
 // ---- Page nav (prev / next / jump-to) -----------------------------------
@@ -22353,7 +22583,9 @@ function syncPagesTop() {
     wrap.style.top = `${Math.ceil(chromeBottom + 28)}px`;
 }
 window.addEventListener('load', syncPagesTop);
-window.addEventListener('resize', syncPagesTop);
+window.addEventListener('resize', () => {
+    syncPagesTop();
+});
 syncPagesTop();
 
 const topChromeElements = [
@@ -22374,6 +22606,7 @@ if (typeof MutationObserver !== 'undefined') {
             attributeFilter: ['class', 'style', 'hidden'],
         });
     });
+
 }
 
 // ---- Edit-mode toggle (legacy topbar + floating toolbar controls) --------

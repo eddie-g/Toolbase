@@ -203,6 +203,145 @@ class PdfTestDocumentInfoEnrichmentTest extends TestCase
         ));
     }
 
+    public function test_document_info_repairs_promoted_row_that_inherited_its_parent_block_geometry(): void
+    {
+        $user = User::factory()->create(['email' => 'promoted-row-owner@example.com']);
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'promoted-row.pdf',
+            'path' => 'documents/promoted-row.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 100,
+        ]);
+        $fitz = PdfExtractionFitz::query()->create([
+            'document_id' => $document->id,
+            'session_id' => 'fitz-session',
+            'pdf_filename' => 'promoted-row.pdf',
+            'total_pages' => 1,
+            'total_words' => 30,
+            'full_text' => 'sample',
+            'extraction_data' => [],
+        ]);
+        $page = PdfExtractionPage::query()->create([
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'width' => 612,
+            'height' => 792,
+            'word_count' => 30,
+            'text' => 'sample',
+            'drawn_box_rects' => [],
+            'widget_rects' => [],
+        ]);
+        $parentLines = [
+            'Account Transcript heading',
+            'and estimated tax payments. Account transcripts are available for most returns.',
+            'Record of Account heading',
+        ];
+        $parentBoxes = [
+            [50.4, 406.37, 556.55, 414.37],
+            [64.78, 425.77, 554.14, 433.54],
+            [50.4, 442.37, 556.62, 450.38],
+        ];
+        PdfExtractionBlock::query()->create([
+            'page_id' => $page->id,
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'block_num' => 11,
+            'source_key' => 'block-1-11',
+            'root_source_key' => 'block-1-11',
+            'text' => implode("\n", $parentLines),
+            'text_single_line' => implode(' ', $parentLines),
+            'text_lines' => $parentLines,
+            'line_bboxes' => $parentBoxes,
+            'left' => 50.4,
+            'top' => 406.37,
+            'width' => 506.22,
+            'height' => 44.01,
+            'line_count' => 3,
+            'font' => 'HelveticaNeueLTStd-Roman',
+            'font_size' => 8,
+            'font_weight' => '400',
+            'italic' => false,
+            'underline' => false,
+            'hex_color' => '#000000',
+            'line_height' => 8,
+            'avg_line_height' => 8,
+            'has_mixed_styles' => false,
+            'block_data' => [],
+        ]);
+
+        $rowText = 'and estimated tax payments. Account transcripts are available for most returns.';
+        PdfState::query()->create([
+            'document_id' => $document->id,
+            'pdf_extraction_fitz_id' => null,
+            'user_id' => $user->id,
+            'session_id' => 'state-session',
+            'page_number' => 0,
+            'state' => 'not_saved',
+            'annotation_data' => [
+                'id' => 'promoted_1_11_row_33',
+                'type' => 'text',
+                'text' => $rowText,
+                'originalText' => $rowText,
+                'pageIndex' => 0,
+                'pdfX' => 50.4,
+                'pdfY' => 341.62,
+                'pdfWidth' => 506.22,
+                'pdfHeight' => 8,
+                'fontSize' => 8,
+                'promotedFromExtraction' => true,
+                'promotedDirty' => false,
+                'promotedSourceKey' => 'block-1-11',
+                'promotedSourceBlockNum' => 11,
+                'sourcePageHeight' => 792,
+                'sourceBlockLeft' => 50.4,
+                'sourceBlockTop' => 406.37,
+                'sourceBlockWidth' => 506.22,
+                'sourceBlockHeight' => 44.01,
+                'sourceTextLines' => $parentLines,
+                'sourceLineBBoxes' => $parentBoxes,
+                'sourceSpans' => [[
+                    'text' => $rowText,
+                    'render_text' => $rowText,
+                    'bbox' => [64.78, 425.77, 554.14, 433.54],
+                    'origin' => [64.78, 432.11],
+                    'font_size' => 8,
+                ]],
+                'pdfjsSourceX' => 50.4,
+                'pdfjsSourceY' => 341.62,
+                'pdfjsSourceW' => 506.22,
+                'pdfjsSourceH' => 44.01,
+                'pdfjsSourcePageHeight' => 792,
+                'pdfjsSourceSpanRunsScale' => 2,
+                'pdfjsSourceSpanRuns' => json_encode([
+                    ['text' => 'b', 'leftPx' => 100.8, 'rightPx' => 114, 'topPx' => 812.7, 'bottomPx' => 828.7],
+                    ['text' => $rowText, 'leftPx' => 129.56, 'rightPx' => 1108.28, 'topPx' => 851.54, 'bottomPx' => 867.08],
+                    ['text' => 'c', 'leftPx' => 100.8, 'rightPx' => 114, 'topPx' => 884.7, 'bottomPx' => 900.7],
+                ]),
+            ],
+        ]);
+
+        $response = $this->actingAs($user)->getJson(route('pdfTests.documentInfo', $document));
+        $response->assertOk()->assertJson(['success' => true]);
+        $annotation = collect($response->json('annotations'))->firstWhere('id', 'promoted_1_11_row_33');
+
+        $this->assertNotNull($annotation);
+        $this->assertCount(1, $annotation['sourceTextLines']);
+        $this->assertCount(1, $annotation['sourceLineBBoxes']);
+        $this->assertSame([64.78, 425.77, 554.14, 433.54], array_map(
+            static fn ($value) => round((float) $value, 2),
+            $annotation['sourceLineBBoxes'][0]
+        ));
+        $this->assertSame(64.78, round((float) $annotation['pdfX'], 2));
+        $this->assertSame(358.46, round((float) $annotation['pdfY'], 2));
+        $this->assertSame(489.36, round((float) $annotation['pdfWidth'], 2));
+        $this->assertSame(7.77, round((float) $annotation['pdfHeight'], 2));
+        $this->assertSame(7.77, round((float) $annotation['pdfjsSourceH'], 2));
+        $this->assertSame([$rowText], array_column(json_decode($annotation['pdfjsSourceSpanRuns'], true), 'text'));
+    }
+
     public function test_document_info_synthesizes_visual_lines_from_spans_when_saved_line_metadata_is_flattened(): void
     {
         $user = User::factory()->create([

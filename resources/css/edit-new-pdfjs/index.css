@@ -23,6 +23,8 @@
     --enpv-bg: #404040;
     --enpv-page-top-gutter: 96px;
     --enpv-page-bottom-gap: 16px;
+    --enpv-side-panel-width: min(400px, calc(100vw - 104px));
+    --enpv-wide-side-panel-width: min(420px, calc(100vw - 104px));
 }
 
 /* ----------------------------------------------------------------------
@@ -3161,13 +3163,14 @@ body.enpv-body .enpv-page-manager-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-content: start;
-    gap: 14px;
-    padding: 16px 18px 22px;
+    gap: 12px;
+    padding: 14px 16px 22px;
     overflow: auto;
     background: #f1f5f9;
 }
 
 body.enpv-body .enpv-page-manager-item {
+    position: relative;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -3201,6 +3204,7 @@ body.enpv-body .enpv-page-manager-item.is-drag-over {
 }
 
 body.enpv-body .enpv-page-manager-thumb {
+    position: relative;
     width: 100%;
     aspect-ratio: var(--enpv-thumb-aspect, 0.77);
     display: flex;
@@ -3216,6 +3220,86 @@ body.enpv-body .enpv-page-manager-thumb canvas {
     width: 100%;
     height: 100%;
     display: block;
+}
+
+body.enpv-body .enpv-page-manager-rotate-controls {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 140ms ease, transform 140ms ease;
+}
+
+body.enpv-body .enpv-page-manager-rotate {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid rgba(148, 163, 184, 0.7);
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.9);
+    color: #ffffff;
+    box-shadow: 0 5px 16px rgba(15, 23, 42, 0.28);
+    cursor: pointer;
+    transition: background-color 140ms ease, transform 140ms ease;
+}
+
+body.enpv-body .enpv-page-manager-rotate svg {
+    width: 19px;
+    height: 19px;
+}
+
+body.enpv-body .enpv-page-manager-item:hover .enpv-page-manager-rotate-controls,
+body.enpv-body .enpv-page-manager-item:focus-within .enpv-page-manager-rotate-controls {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+body.enpv-body .enpv-page-manager-rotate:hover:not(:disabled),
+body.enpv-body .enpv-page-manager-rotate:focus-visible:not(:disabled) {
+    background: #2563eb;
+    outline: 3px solid rgba(147, 197, 253, 0.7);
+    outline-offset: 2px;
+}
+
+body.enpv-body .enpv-page-manager-rotate:disabled {
+    cursor: wait;
+}
+
+body.enpv-body .enpv-page-manager-rotate.is-rotating {
+    background: #2563eb;
+}
+
+body.enpv-body .enpv-page-manager-rotate.is-rotating,
+body.enpv-body .enpv-page-manager-rotate:hover:not(:disabled) {
+    transform: scale(1.06);
+}
+
+body.enpv-body .enpv-page-manager-item:has(.enpv-page-manager-rotate.is-rotating) .enpv-page-manager-rotate-controls {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+body.enpv-body .enpv-page-manager-rotate.is-rotating svg {
+    animation: enpv-page-manager-rotate-spin 800ms linear infinite;
+}
+
+@keyframes enpv-page-manager-rotate-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (hover: none) {
+    body.enpv-body .enpv-page-manager-rotate-controls {
+        opacity: 0.94;
+        transform: translateY(0);
+    }
 }
 
 body.enpv-body .enpv-page-manager-label {
@@ -3285,21 +3369,55 @@ body.enpv-body .top-bar {
     z-index: 2147482000;
 }
 
-/* The legacy #pages-wrap is a flex column that auto-centers page boxes.
-   We repurpose it as the absolutely-positioned host for #viewerContainer.
-   Strip its padding/flex so the viewer fills the available area. */
+/* Keep the legacy #pages-wrap inert on this route. The actual PDF.js viewer
+   is mounted separately in #viewerContainer below. */
 body.enpv-body #pages-wrap {
     padding: 0;
     margin: 0;
     max-width: none;
     display: block;
     position: absolute;
-    left: 0; right: 0;
+    left: 0;
+    right: 0;
     /* leave room for the legacy top-bar (~60px). Adjusted at runtime if
        the toolbar reports a different height. */
     top: 60px;
     bottom: 0;
     background: var(--enpv-bg);
+}
+
+/* Side panels overlay the fixed viewer. Their visibility must never resize,
+   rescale, or otherwise invalidate the PDF.js canvas. */
+body.enpv-body #ann-format-bar,
+body.enpv-body #shape-tool-panel,
+body.enpv-body .draw-tool-panel,
+body.enpv-body .enpv-layers-panel,
+body.enpv-body .enpv-notes-panel {
+    width: var(--enpv-side-panel-width);
+    max-width: var(--enpv-side-panel-width);
+    box-shadow: -12px 0 28px rgba(15, 23, 42, 0.18);
+}
+
+body.enpv-body .enpv-guided-helper-panel,
+body.enpv-body .enpv-page-manager-card {
+    width: var(--enpv-wide-side-panel-width);
+    max-width: var(--enpv-wide-side-panel-width);
+}
+
+body.enpv-body .enpv-guided-helper-panel {
+    box-shadow: -12px 0 28px rgba(15, 23, 42, 0.18);
+}
+
+body.enpv-body .enpv-page-manager-card {
+    box-shadow: 12px 0 28px rgba(15, 23, 42, 0.2);
+    pointer-events: auto;
+}
+
+/* The page manager behaves as a left drawer on this route, not a modal
+   scrim over the document. Only the drawer itself captures input. */
+body.enpv-body .enpv-page-manager-modal {
+    background: transparent;
+    pointer-events: none;
 }
 
 /* The new viewer mounts here. PDFViewer requires its container to be
