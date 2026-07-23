@@ -440,7 +440,7 @@ class DocumentController extends Controller
         ];
     }
 
-    private function resolvePythonBinaryForPdfEditor(string|array|null $requiredModule = null): string
+    protected function resolvePythonBinaryForPdfEditor(string|array|null $requiredModule = null): string
     {
         $requiredModules = array_values(array_filter(
             is_array($requiredModule) ? $requiredModule : [$requiredModule],
@@ -9324,8 +9324,6 @@ class DocumentController extends Controller
 
     public function getFonts(Document $document)
     {
-        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
-
         $pdfPath = Storage::path($document->path);
         if (!file_exists($pdfPath)) {
             return response()->json(['error' => 'PDF not found'], 404);
@@ -9333,12 +9331,20 @@ class DocumentController extends Controller
 
         $embeddedFontsPath = storage_path("app/temp/embedded_fonts_{$document->id}.json");
         $embeddedFonts = [];
+        $hasValidEmbeddedFontsCache = false;
         if (file_exists($embeddedFontsPath)) {
             $decoded = json_decode((string) file_get_contents($embeddedFontsPath), true);
-            $embeddedFonts = is_array($decoded) ? $decoded : [];
+            if (is_array($decoded)) {
+                $embeddedFonts = $decoded;
+                // An empty array is a valid result for a PDF with no embedded
+                // fonts. Treating it as a miss launched Python on every open.
+                $hasValidEmbeddedFontsCache = true;
+            }
         }
 
-        if (empty($embeddedFonts)) {
+        if (!$hasValidEmbeddedFontsCache) {
+            $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+
             if (!is_dir(dirname($embeddedFontsPath))) {
                 mkdir(dirname($embeddedFontsPath), 0755, true);
             }

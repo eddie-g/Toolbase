@@ -3837,10 +3837,175 @@ PYTHON;
             || str_starts_with(trim((string) ($annotation['id'] ?? '')), 'deleted_promoted:');
     }
 
-    private function enrichAnnotationFromDb(array $annotation, int $fitzId): array
+    private function extractionPageLookupKey(int $fitzId, int $pageNumber): string
+    {
+        return $fitzId . ':' . $pageNumber;
+    }
+
+    /**
+     * Load the extraction rows needed by a document-info response in three
+     * bounded queries. Without this lookup, every annotation independently
+     * fetches its block, spans, and page geometry.
+     */
+    private function buildAnnotationEnrichmentContext($states, ?int $fallbackFitzId): array
+    {
+        $pageNumbersByFitz = [];
+        $blockRequirements = [];
+        $spanRequirements = [];
+
+        foreach ($states as $state) {
+            $annotation = is_array($state->annotation_data) ? $state->annotation_data : [];
+            $fitzId = (int) ($state->pdf_extraction_fitz_id ?: $fallbackFitzId);
+            if (empty($annotation) || $fitzId <= 0) {
+                continue;
+            }
+
+            $pageNumber = (int) ($annotation['pageIndex'] ?? 0) + 1;
+            $pageNumbersByFitz[$fitzId][$pageNumber] = true;
+            $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+            $blockNum = (int) ($annotation['promotedSourceBlockNum'] ?? 0);
+
+            if ($sourceKey !== '' || $blockNum > 0) {
+                $blockRequirements[$fitzId][$pageNumber] ??= [
+                    'source_keys' => [],
+                    'block_nums' => [],
+                ];
+                if ($sourceKey !== '') {
+                    $blockRequirements[$fitzId][$pageNumber]['source_keys'][$sourceKey] = true;
+                }
+                if ($blockNum > 0) {
+                    $blockRequirements[$fitzId][$pageNumber]['block_nums'][$blockNum] = true;
+                }
+            }
+
+            if (!empty($annotation['sourceSpans'])) {
+                $spanRequirements[$fitzId][$pageNumber] ??= [
+                    'all' => false,
+                    'block_nums' => [],
+                ];
+                if ($blockNum > 0) {
+                    $spanRequirements[$fitzId][$pageNumber]['block_nums'][$blockNum] = true;
+                } else {
+                    $spanRequirements[$fitzId][$pageNumber]['all'] = true;
+                }
+            }
+        }
+
+        if (empty($pageNumbersByFitz)) {
+            return [
+                'blocks_by_page' => [],
+                'spans_by_page' => [],
+                'pages_by_page' => [],
+            ];
+        }
+
+        $applyPageScope = static function ($query) use ($pageNumbersByFitz) {
+            return $query->where(function ($scope) use ($pageNumbersByFitz) {
+                foreach ($pageNumbersByFitz as $fitzId => $pageNumbers) {
+                    $scope->orWhere(function ($pairScope) use ($fitzId, $pageNumbers) {
+                        $pairScope
+                            ->where('pdf_extraction_fitz_id', (int) $fitzId)
+                            ->whereIn('page_number', array_map('intval', array_keys($pageNumbers)));
+                    });
+                }
+            });
+        };
+
+        $blocksByPage = [];
+        if (!empty($blockRequirements)) {
+            $blocks = PdfExtractionBlock::query()
+                ->where(function ($scope) use ($blockRequirements) {
+                    foreach ($blockRequirements as $fitzId => $pageRequirements) {
+                        foreach ($pageRequirements as $pageNumber => $requirements) {
+                            $sourceKeys = array_keys($requirements['source_keys']);
+                            $blockNums = array_map('intval', array_keys($requirements['block_nums']));
+                            $scope->orWhere(function ($pairScope) use ($fitzId, $pageNumber, $sourceKeys, $blockNums) {
+                                $pairScope
+                                    ->where('pdf_extraction_fitz_id', (int) $fitzId)
+                                    ->where('page_number', (int) $pageNumber)
+                                    ->where(function ($matchScope) use ($sourceKeys, $blockNums) {
+                                        if (!empty($sourceKeys)) {
+                                            $matchScope
+                                                ->whereIn('source_key', $sourceKeys)
+                                                ->orWhereIn('root_source_key', $sourceKeys);
+                                        }
+                                        if (!empty($blockNums)) {
+                                            $method = empty($sourceKeys) ? 'whereIn' : 'orWhereIn';
+                                            $matchScope->{$method}('block_num', $blockNums);
+                                        }
+                                    });
+                            });
+                        }
+                    }
+                })
+                ->get();
+            foreach ($blocks as $block) {
+                $key = $this->extractionPageLookupKey(
+                    (int) $block->pdf_extraction_fitz_id,
+                    (int) $block->page_number
+                );
+                $blocksByPage[$key] ??= collect();
+                $blocksByPage[$key]->push($block);
+            }
+        }
+
+        $spansByPage = [];
+        if (!empty($spanRequirements)) {
+            $spans = PdfExtractionSpan::query()
+                ->where(function ($scope) use ($spanRequirements) {
+                    foreach ($spanRequirements as $fitzId => $pageRequirements) {
+                        foreach ($pageRequirements as $pageNumber => $requirements) {
+                            $blockNums = array_map('intval', array_keys($requirements['block_nums']));
+                            $scope->orWhere(function ($pairScope) use ($fitzId, $pageNumber, $requirements, $blockNums) {
+                                $pairScope
+                                    ->where('pdf_extraction_fitz_id', (int) $fitzId)
+                                    ->where('page_number', (int) $pageNumber);
+                                if (!$requirements['all']) {
+                                    $pairScope->whereIn('block_num', $blockNums);
+                                }
+                            });
+                        }
+                    }
+                })
+                ->get();
+            foreach ($spans as $span) {
+                $key = $this->extractionPageLookupKey(
+                    (int) $span->pdf_extraction_fitz_id,
+                    (int) $span->page_number
+                );
+                $spansByPage[$key] ??= collect();
+                $spansByPage[$key]->push($span);
+            }
+        }
+
+        $pagesByPage = [];
+        $pages = $applyPageScope(PdfExtractionPage::query())->get();
+        foreach ($pages as $page) {
+            $key = $this->extractionPageLookupKey(
+                (int) $page->pdf_extraction_fitz_id,
+                (int) $page->page_number
+            );
+            $pagesByPage[$key] ??= $page;
+        }
+
+        return [
+            'blocks_by_page' => $blocksByPage,
+            'spans_by_page' => $spansByPage,
+            'pages_by_page' => $pagesByPage,
+        ];
+    }
+
+    private function enrichAnnotationFromDb(array $annotation, int $fitzId, ?array $enrichmentContext = null): array
     {
         $pageIndex = (int) ($annotation['pageIndex'] ?? 0);
         $dbPageNum = $pageIndex + 1;
+        $lookupKey = $this->extractionPageLookupKey($fitzId, $dbPageNum);
+        $blocksForPage = $enrichmentContext === null
+            ? null
+            : ($enrichmentContext['blocks_by_page'][$lookupKey] ?? collect());
+        $spansForPage = $enrichmentContext === null
+            ? null
+            : ($enrichmentContext['spans_by_page'][$lookupKey] ?? collect());
 
         $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
         $blockNum = (int) ($annotation['promotedSourceBlockNum'] ?? 0);
@@ -3858,34 +4023,56 @@ PYTHON;
         $canonicalBlock = null;
 
         if ($sourceKey !== '') {
-            $canonicalBlock = PdfExtractionBlock::where('pdf_extraction_fitz_id', $fitzId)
-                ->where('page_number', $dbPageNum)
-                ->where(function ($query) use ($sourceKey) {
-                    $query->where('source_key', $sourceKey)
-                        ->orWhere('root_source_key', $sourceKey);
-                })
-                ->orderByRaw('CASE WHEN source_key = ? THEN 0 ELSE 1 END', [$sourceKey])
-                ->first();
+            if ($blocksForPage !== null) {
+                $matchingBlocks = $blocksForPage->filter(static function (PdfExtractionBlock $block) use ($sourceKey): bool {
+                    return (string) $block->source_key === $sourceKey
+                        || (string) $block->root_source_key === $sourceKey;
+                });
+                $canonicalBlock = $matchingBlocks->first(
+                    static fn (PdfExtractionBlock $block): bool => (string) $block->source_key === $sourceKey
+                ) ?: $matchingBlocks->first();
+            } else {
+                $canonicalBlock = PdfExtractionBlock::where('pdf_extraction_fitz_id', $fitzId)
+                    ->where('page_number', $dbPageNum)
+                    ->where(function ($query) use ($sourceKey) {
+                        $query->where('source_key', $sourceKey)
+                            ->orWhere('root_source_key', $sourceKey);
+                    })
+                    ->orderByRaw('CASE WHEN source_key = ? THEN 0 ELSE 1 END', [$sourceKey])
+                    ->first();
+            }
         }
 
         if (!$canonicalBlock && $blockNum > 0) {
-            $canonicalBlock = PdfExtractionBlock::where('pdf_extraction_fitz_id', $fitzId)
-                ->where('page_number', $dbPageNum)
-                ->where('block_num', $blockNum)
-                ->first();
+            $canonicalBlock = $blocksForPage !== null
+                ? $blocksForPage->first(
+                    static fn (PdfExtractionBlock $block): bool => (int) $block->block_num === $blockNum
+                )
+                : PdfExtractionBlock::where('pdf_extraction_fitz_id', $fitzId)
+                    ->where('page_number', $dbPageNum)
+                    ->where('block_num', $blockNum)
+                    ->first();
         }
 
         // Refresh sourceSpans with canonical span data from the live extraction table.
         $sourceSpans = $annotation['sourceSpans'] ?? [];
         if (is_array($sourceSpans) && !empty($sourceSpans)) {
-            $spanQuery = PdfExtractionSpan::where('pdf_extraction_fitz_id', $fitzId)
-                ->where('page_number', $dbPageNum);
+            if ($spansForPage !== null) {
+                $candidateSpans = $blockNum > 0
+                    ? $spansForPage->filter(
+                        static fn (PdfExtractionSpan $span): bool => (int) $span->block_num === $blockNum
+                    )->values()
+                    : $spansForPage;
+            } else {
+                $spanQuery = PdfExtractionSpan::where('pdf_extraction_fitz_id', $fitzId)
+                    ->where('page_number', $dbPageNum);
 
-            if ($blockNum > 0) {
-                $spanQuery->where('block_num', $blockNum);
+                if ($blockNum > 0) {
+                    $spanQuery->where('block_num', $blockNum);
+                }
+
+                $candidateSpans = $spanQuery->get();
             }
-
-            $candidateSpans = $spanQuery->get();
             $spanLookup = [];
             foreach ($candidateSpans as $span) {
                 $origin = is_array($span->origin) ? $span->origin : null;
@@ -3986,9 +4173,11 @@ PYTHON;
         }
 
         // Add page geometry from the live page table (width, height, drawn boxes, widgets).
-        $page = PdfExtractionPage::where('pdf_extraction_fitz_id', $fitzId)
-            ->where('page_number', $dbPageNum)
-            ->first();
+        $page = $enrichmentContext === null
+            ? PdfExtractionPage::where('pdf_extraction_fitz_id', $fitzId)
+                ->where('page_number', $dbPageNum)
+                ->first()
+            : ($enrichmentContext['pages_by_page'][$lookupKey] ?? null);
 
         if ($page) {
             $pageHeight = (float) $page->height;
@@ -4184,7 +4373,9 @@ PYTHON;
         // loaded so the backfill request only ships what's missing.
         // `skip_meta=1` suppresses heavy per-document metadata (embedded
         // fonts, acro form entries) during backfill since the first request
-        // already supplied them.
+        // already supplied them. `skip_embedded_fonts=1` skips only the
+        // synchronous font extraction, allowing the PDF.js path to load the
+        // remaining metadata without duplicating work it does in-browser.
         $pageFilter = null;
         $pageRaw = $request->query('page', null);
         if ($pageRaw !== null && $pageRaw !== '' && is_numeric($pageRaw)) {
@@ -4205,6 +4396,8 @@ PYTHON;
             $pagesExclude = array_keys($pagesExclude);
         }
         $skipMeta = (string) $request->query('skip_meta', '') === '1';
+        $skipEmbeddedFonts = $skipMeta
+            || (string) $request->query('skip_embedded_fonts', '') === '1';
         $includeAnnotationDebug = filter_var($request->query('include_annotation_debug', false), FILTER_VALIDATE_BOOLEAN);
 
         // Build the scope query: rows owned by the current viewer (by user/admin/session)
@@ -4262,15 +4455,16 @@ PYTHON;
         $hasAcroFormWidgets = $skipMeta
             ? null
             : $this->extractedAcroFormWidgetPresence($fallbackFitz);
+        $enrichmentContext = $this->buildAnnotationEnrichmentContext($states, $fallbackFitzId);
 
         // Deduplicate by annotation `id` field, keeping the highest db_id (most recent save)
         $annotationAssets = app(PdfAnnotationAssetService::class);
         $seen = [];
-        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId, $annotationAssets, $includeAnnotationDebug) {
+        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId, $annotationAssets, $includeAnnotationDebug, $enrichmentContext) {
             $data = is_array($state->annotation_data) ? $state->annotation_data : [];
             $fitzId = $state->pdf_extraction_fitz_id ?: $fallbackFitzId;
             if (!empty($data) && $fitzId) {
-                $data = $this->enrichAnnotationFromDb($data, $fitzId);
+                $data = $this->enrichAnnotationFromDb($data, $fitzId, $enrichmentContext);
             }
             // Resolve persisted image assets (signatures, uploaded images, and
             // direct-draw marker/pen strokes) back into a loadable `src` URL so
@@ -4403,8 +4597,9 @@ PYTHON;
         // Load embedded font metadata per source. Reconstruction can render either the
         // current file PDF or the clean/original-backed PDF, and each source may carry
         // different font programs even when the extracted annotations are the same.
-        // Skip during backfill (skip_meta) — the first request already shipped them.
-        $embeddedFontsBySource = $skipMeta ? ['file' => [], 'clean' => []] : [
+        // Skip during backfill (skip_meta), or when the PDF.js client explicitly
+        // handles fonts itself. In both cases keep the response shape stable.
+        $embeddedFontsBySource = $skipEmbeddedFonts ? ['file' => [], 'clean' => []] : [
             'file' => $this->extractEmbeddedFontsForSource($document, 'file'),
             'clean' => $this->extractEmbeddedFontsForSource($document, 'clean'),
         ];

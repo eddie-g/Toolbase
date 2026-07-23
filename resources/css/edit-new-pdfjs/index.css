@@ -3431,7 +3431,7 @@ body.enpv-body .enpv-page-manager-modal {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transition: opacity 180ms ease;
+    transition: opacity 80ms ease-out;
 }
 body.enpv-body.enpv-viewer-ready #viewerContainer {
     opacity: 1;
@@ -3453,7 +3453,7 @@ body.enpv-body.enpv-viewer-ready .pdfViewer .page.enpv-overlays-pending > .annot
     color: #f2f4f5;
     opacity: 1;
     visibility: visible;
-    transition: opacity 180ms ease, visibility 180ms ease;
+    transition: opacity 80ms ease-out, visibility 80ms ease-out;
 }
 body.enpv-body.enpv-viewer-ready .enpv-loading-screen {
     opacity: 0;
@@ -3673,6 +3673,28 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
     display: block;
     user-select: text;
 }
+/*
+ * Clean promoted paragraphs are painted by the PDF canvas before editing.
+ * Keep those authoritative pixels visible on edit entry and use the aligned
+ * contenteditable only for hit-testing, selection, and its caret. The first
+ * real mutation installs a source mask and removes this class atomically.
+ */
+.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content,
+.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content * {
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+    -webkit-text-stroke-color: transparent !important;
+    text-decoration-color: transparent !important;
+    text-shadow: none !important;
+}
+.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content {
+    caret-color: var(--enpv-text-color, #000) !important;
+}
+.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content::selection,
+.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content *::selection {
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+}
 .enpv-annotation-box.is-user-sized-text .enpv-text-content {
     overflow: hidden;
     /* Resizing changes the container, never the glyph aspect ratio. */
@@ -3689,6 +3711,16 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
     line-height: var(--enpv-line-height, var(--enpv-font-size, 12px));
     transform-origin: 0 0;
     overflow: visible;
+}
+.enpv-edit-source-line[data-source-span-line="1"] {
+    display: inline-block;
+    vertical-align: top;
+    white-space: pre;
+}
+.enpv-edit-gap[data-source-span-gap="1"][style*="--enpv-source-gap-width"] {
+    display: inline-block;
+    width: var(--enpv-source-gap-width);
+    white-space: pre;
 }
 .enpv-annotation-box:hover {
     background: rgba(147, 197, 253, 0.18);

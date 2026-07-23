@@ -2027,6 +2027,65 @@ def requires_search_safe_source_redaction(ann: Dict[str, Any]) -> bool:
     )
 
 
+def _page_words_with_default_glyph_heights(page: fitz.Page) -> list:
+    """Read words using the same full glyph boxes MuPDF redaction evaluates."""
+    previous_small_glyph_heights = bool(fitz.TOOLS.set_small_glyph_heights())
+    try:
+        fitz.TOOLS.set_small_glyph_heights(False)
+        return page.get_text("words")
+    except Exception:
+        return []
+    finally:
+        fitz.TOOLS.set_small_glyph_heights(previous_small_glyph_heights)
+
+
+def _page_words_with_small_glyph_heights(page: fitz.Page) -> list:
+    """Read reduced glyph boxes without using them to decide source ownership."""
+    previous_small_glyph_heights = bool(fitz.TOOLS.set_small_glyph_heights())
+    try:
+        fitz.TOOLS.set_small_glyph_heights(True)
+        return page.get_text("words")
+    except Exception:
+        return []
+    finally:
+        fitz.TOOLS.set_small_glyph_heights(previous_small_glyph_heights)
+
+
+def _pdf_word_identity(word: Any) -> Optional[tuple[int, int, int]]:
+    """Return PyMuPDF's stable block / line / word identity."""
+    try:
+        return (int(word[5]), int(word[6]), int(word[7]))
+    except Exception:
+        return None
+
+
+def _nearby_collateral_words_survive(
+    snapshots: list[tuple[str, float, float]],
+    page_words: list,
+    center_tolerance: float = 1.0,
+) -> bool:
+    """Verify that redaction did not consume a neighboring source word."""
+    remaining: list[tuple[str, float, float]] = []
+    for word in page_words:
+        try:
+            text = normalize_pdfjs_compare_text(word[4])
+            center_x = (float(word[0]) + float(word[2])) * 0.5
+            center_y = (float(word[1]) + float(word[3])) * 0.5
+        except Exception:
+            continue
+        remaining.append((text, center_x, center_y))
+
+    for expected_text, expected_x, expected_y in snapshots:
+        if not any(
+            text == expected_text
+            and abs(center_x - expected_x) <= center_tolerance
+            and abs(center_y - expected_y) <= center_tolerance
+            for text, center_x, center_y in remaining
+        ):
+            return False
+    return True
+
+
 def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) -> bool:
     """Remove only source words centered inside the captured source box.
 
@@ -2035,25 +2094,31 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
     Images and vector graphics are explicitly preserved by
     ``_apply_redactions_compat``.
     """
-    source_rect = pdfjs_source_mask_rect(page, ann)
+    # Keep ownership separate from the neighbor-clamped paint mask. The latter
+    # may collapse to a thin strip between tightly-spaced rows; using that
+    # strip to classify words makes target ownership depend on line leading
+    # rather than the immutable browser-captured source box.
+    source_rect = _pdfjs_explicit_source_mask_rect(page, ann)
+    if source_rect is None or source_rect.is_empty:
+        source_rect = _pdfjs_source_base_rect(page, ann)
     if source_rect is None or source_rect.is_empty:
         return False
 
-    # Use MuPDF's reduced glyph boxes while choosing redaction geometry. The
-    # default font ascender / descender boxes can make a large heading fully
-    # engulf a nearby small-print row even when their painted glyphs do not
-    # touch, leaving no safe strip for the target redaction.
-    previous_small_glyph_heights = bool(fitz.TOOLS.set_small_glyph_heights())
-    try:
-        fitz.TOOLS.set_small_glyph_heights(True)
-        page_words = page.get_text("words")
-    except Exception:
-        page_words = []
-    finally:
-        fitz.TOOLS.set_small_glyph_heights(previous_small_glyph_heights)
+    # MuPDF decides which glyphs to remove using its full word / glyph boxes.
+    # Collision geometry must therefore use those same default boxes. Reduced
+    # "small glyph" boxes can leave a strip that appears clear during planning
+    # but still intersects (and deletes) the full box of the row above or below.
+    page_words = _page_words_with_default_glyph_heights(page)
 
-    target_rects: list[fitz.Rect] = []
-    collateral_word_rects: list[fitz.Rect] = []
+    target_entries: list[tuple[fitz.Rect, Optional[tuple[int, int, int]]]] = []
+    collateral_entries: list[tuple[fitz.Rect, Optional[tuple[int, int, int]]]] = []
+    collateral_word_snapshots: list[tuple[str, float, float]] = []
+    collateral_watch_rect = fitz.Rect(
+        source_rect.x0 - 1.0,
+        source_rect.y0 - 1.0,
+        source_rect.x1 + 1.0,
+        source_rect.y1 + 1.0,
+    ) & page.rect
     for word in page_words:
         try:
             word_rect = fitz.Rect(
@@ -2071,18 +2136,77 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
             (word_rect.y0 + word_rect.y1) * 0.5,
         )
         if source_rect.contains(center):
-            target_rects.append(word_rect)
+            target_entries.append((word_rect, _pdf_word_identity(word)))
         else:
-            collateral_word_rects.append(word_rect)
+            collateral_entries.append((word_rect, _pdf_word_identity(word)))
+            if not (word_rect & collateral_watch_rect).is_empty:
+                collateral_word_snapshots.append((
+                    normalize_pdfjs_compare_text(word[4]),
+                    float(center.x),
+                    float(center.y),
+                ))
 
     # Non-searchable or unusually encoded source text still needs removal.
     # The captured source rectangle is narrower than the neighboring paragraph
     # boundary, so a whole-rect fallback remains scoped to this edited block.
-    if not target_rects:
-        target_rects = [fitz.Rect(source_rect)]
+    if not target_entries:
+        target_entries = [(fitz.Rect(source_rect), None)]
+
+    # A large heading can fully engulf a small target's default glyph box,
+    # leaving no default-box strip to redact. In that one geometry, map the
+    # already-owned target to its reduced box by stable word identity and plan
+    # against reduced collision boxes. Ownership always came from the immutable
+    # source rect and default words above; reduced boxes never select targets.
+    small_page_words: Optional[list] = None
+    small_rects_by_identity: Dict[tuple[int, int, int], fitz.Rect] = {}
+
+    def ensure_small_word_geometry() -> None:
+        nonlocal small_page_words
+        if small_page_words is not None:
+            return
+        small_page_words = _page_words_with_small_glyph_heights(page)
+        for small_word in small_page_words:
+            identity = _pdf_word_identity(small_word)
+            if identity is None:
+                continue
+            try:
+                small_rect = fitz.Rect(
+                    float(small_word[0]),
+                    float(small_word[1]),
+                    float(small_word[2]),
+                    float(small_word[3]),
+                ) & page.rect
+            except Exception:
+                continue
+            if not small_rect.is_empty:
+                small_rects_by_identity[identity] = small_rect
 
     added = False
-    for rect in target_rects:
+    for default_rect, target_identity in target_entries:
+        rect = fitz.Rect(default_rect)
+        planning_words = page_words
+        collision_rects = [entry[0] for entry in collateral_entries]
+        engulfed_by_tall_collateral = any(
+            neighbor.x0 <= default_rect.x0
+            and neighbor.y0 <= default_rect.y0
+            and neighbor.x1 >= default_rect.x1
+            and neighbor.y1 >= default_rect.y1
+            and neighbor.height >= (default_rect.height * 1.75)
+            for neighbor, _ in collateral_entries
+        )
+        if engulfed_by_tall_collateral and target_identity is not None:
+            ensure_small_word_geometry()
+            small_target_rect = small_rects_by_identity.get(target_identity)
+            if small_target_rect is not None and small_page_words is not None:
+                rect = fitz.Rect(small_target_rect)
+                planning_words = small_page_words
+                collision_rects = [
+                    small_rects_by_identity.get(identity, neighbor)
+                    if identity is not None
+                    else neighbor
+                    for neighbor, identity in collateral_entries
+                ]
+
         # MuPDF removes every glyph whose bounding box merely intersects a
         # redaction rectangle. A short row can therefore delete part of a much
         # taller neighboring heading even though the heading's center is well
@@ -2092,14 +2216,19 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
         # collateral word. Any intersection is sufficient for MuPDF to remove
         # the intended word, so this preserves both search safety and the
         # overlapping neighbor's ink.
-        rect = _shrink_redact_rect_to_avoid_neighbors(page, rect, page_words)
+        rect = _shrink_redact_rect_to_avoid_neighbors(
+            page,
+            rect,
+            planning_words,
+            clearance=0.5,
+        )
         if rect.is_empty or rect.width <= 0.05 or rect.height <= 0.05:
             continue
         # If no rectangular strip can avoid a neighboring word, fail the
         # export instead of accepting collateral text loss. The caller treats
         # False as a hard export error, so an overlapping annotation can never
         # be silently damaged in a downloaded PDF.
-        if any(not (rect & neighbor).is_empty for neighbor in collateral_word_rects):
+        if any(not (rect & neighbor).is_empty for neighbor in collision_rects):
             continue
         try:
             page.add_redact_annot(rect, fill=None)
@@ -2118,10 +2247,9 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
     # original searchable words remain inside the source box before any
     # replacement ink is stamped. If a font encoding defeated word-level
     # removal, retry with a neighbor-safe strip of the captured source box.
-    try:
-        remaining_words = page.get_text("words")
-    except Exception:
-        remaining_words = []
+    remaining_words = _page_words_with_default_glyph_heights(page)
+    if not _nearby_collateral_words_survive(collateral_word_snapshots, remaining_words):
+        return False
     remaining_inside = []
     for word in remaining_words:
         try:
@@ -2136,24 +2264,33 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
     if not remaining_inside:
         return True
 
-    fallback_rect = _shrink_redact_rect_to_avoid_neighbors(page, source_rect, page_words)
+    fallback_rect = _shrink_redact_rect_to_avoid_neighbors(
+        page,
+        source_rect,
+        page_words,
+        clearance=0.5,
+    )
     if (
         fallback_rect.is_empty
         or fallback_rect.width <= 0.05
         or fallback_rect.height <= 0.05
-        or any(not (fallback_rect & neighbor).is_empty for neighbor in collateral_word_rects)
+        or any(not (fallback_rect & neighbor).is_empty for neighbor, _ in collateral_entries)
     ):
         return False
 
     try:
         page.add_redact_annot(fallback_rect, fill=None)
         _apply_redactions_compat(page)
-        return not any(
-            source_rect.contains(fitz.Point(
-                (float(word[0]) + float(word[2])) * 0.5,
-                (float(word[1]) + float(word[3])) * 0.5,
-            ))
-            for word in page.get_text("words")
+        remaining_words = _page_words_with_default_glyph_heights(page)
+        return (
+            _nearby_collateral_words_survive(collateral_word_snapshots, remaining_words)
+            and not any(
+                source_rect.contains(fitz.Point(
+                    (float(word[0]) + float(word[2])) * 0.5,
+                    (float(word[1]) + float(word[3])) * 0.5,
+                ))
+                for word in remaining_words
+            )
         )
     except Exception:
         return False
@@ -2243,6 +2380,36 @@ def _fitz_rect_from_bbox(value: Any) -> Optional[fitz.Rect]:
     return rect if not rect.is_empty else None
 
 
+def _pdfjs_overlay_has_multiple_visual_lines(ann: Dict[str, Any], text: Any = None) -> bool:
+    """Return whether a source-backed overlay represents more than one line.
+
+    ``pdfjsSourceBaselineOffsetY`` is a single source-line anchor. Applying it
+    to a paragraph starts every reflowed line at whichever source row happened
+    to be nearest the anchor and clips the remainder at the bottom of the box.
+    Check both current text and immutable extraction metadata because older
+    payloads do not consistently include ``pdfjsVisualLines``.
+    """
+    raw_text = ann.get("text") if text is None else text
+    normalized_text = str(raw_text or "")
+    normalized_text = normalized_text.replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" in normalized_text:
+        return True
+
+    for field_name in ("pdfjsVisualLines", "sourceTextLines", "sourceLineBBoxes"):
+        value = ann.get(field_name)
+        if isinstance(value, list) and len(value) > 1:
+            return True
+
+    rich_runs = ann.get("richTextRuns")
+    if isinstance(rich_runs, list):
+        return any(
+            isinstance(run, dict)
+            and str(run.get("type") or "").strip().lower() == "break"
+            for run in rich_runs
+        )
+    return False
+
+
 def _pdfjs_moved_target_line_baseline_y(
     page: fitz.Page,
     ann: Dict[str, Any],
@@ -2251,6 +2418,8 @@ def _pdfjs_moved_target_line_baseline_y(
     source_size: float,
 ) -> Optional[float]:
     if not _boolish(ann.get("movedTextOverlay")) or current_rect is None or current_rect.is_empty:
+        return None
+    if _pdfjs_overlay_has_multiple_visual_lines(ann):
         return None
     source_family = normalize_font_family(source_font or ann.get("fontFamily"))
     expected_baseline = current_rect.y0 + (current_rect.height * 0.75)
@@ -3633,56 +3802,78 @@ def _reconcile_rich_text_ops_with_plain_text(
     ops: list[Dict[str, Any]],
     plain_text: Any,
 ) -> list[Dict[str, Any]]:
-    """Restore hard breaks omitted between otherwise exact styled runs."""
+    """Restore whitespace omitted between otherwise exact styled runs.
+
+    Contenteditable can drop a boundary space when a styled selection begins
+    at that space. The redundant plain-text value remains correct, but a single
+    missing space makes the rich-run text fail the strict layout match and the
+    exporter then falls back to one plain font/color. Rebuild whitespace only
+    when every non-whitespace character still matches, retaining each
+    character's originating run style.
+    """
     if not ops:
         return []
     target = sanitize_pdf_text(plain_text or "").replace("\r\n", "\n").replace("\r", "\n")
     rendered = _rich_text_layout_ops_to_text(ops)
     if _normalize_rich_text_compare_text(rendered) == _normalize_rich_text_compare_text(target):
         return ops
-    flat_target = target.replace("\n", "")
-    flat_rendered = "".join(
-        sanitize_pdf_text(op.get("text") or "").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "")
-        for op in ops
-        if op.get("type") == "text"
-    )
-    if flat_rendered != flat_target:
-        return ops
 
-    breaks_by_offset: Dict[int, int] = {}
-    offset = 0
-    for character in target:
-        if character == "\n":
-            breaks_by_offset[offset] = breaks_by_offset.get(offset, 0) + 1
-        else:
-            offset += 1
-
-    rebuilt: list[Dict[str, Any]] = []
-    cursor = 0
-
-    def emit_breaks() -> None:
-        for _ in range(breaks_by_offset.get(cursor, 0)):
-            rebuilt.append({"type": "break"})
-
-    emit_breaks()
-    for op in ops:
+    target_non_whitespace = "".join(character for character in target if not character.isspace())
+    styled_characters: list[tuple[str, Dict[str, Any], int]] = []
+    for op_index, op in enumerate(ops):
         if op.get("type") != "text":
             continue
-        op_text = sanitize_pdf_text(op.get("text") or "").replace("\r\n", "\n").replace("\r", "\n").replace("\n", "")
-        local_start = 0
-        while local_start < len(op_text):
-            next_break = min(
-                (position for position in breaks_by_offset if cursor < position <= cursor + (len(op_text) - local_start)),
-                default=None,
-            )
-            take = (next_break - cursor) if next_break is not None else (len(op_text) - local_start)
-            if take > 0:
-                rebuilt.append({**op, "text": op_text[local_start:local_start + take]})
-                cursor += take
-                local_start += take
-            emit_breaks()
+        op_text = sanitize_pdf_text(op.get("text") or "").replace("\r\n", "\n").replace("\r", "\n")
+        styled_characters.extend(
+            (character, op, op_index)
+            for character in op_text
+            if not character.isspace()
+        )
+    if "".join(character for character, _, _ in styled_characters) != target_non_whitespace:
+        return ops
+
+    rebuilt: list[Dict[str, Any]] = []
+    character_index = 0
+    pending_whitespace = ""
+
+    def append_text(value: str, source_op: Dict[str, Any], source_index: int) -> None:
+        if not value:
+            return
+        if (
+            rebuilt
+            and rebuilt[-1].get("type") == "text"
+            and rebuilt[-1].get("_source_op_index") == source_index
+        ):
+            rebuilt[-1]["text"] = str(rebuilt[-1].get("text") or "") + value
+            return
+        rebuilt.append({**source_op, "type": "text", "text": value, "_source_op_index": source_index})
+
+    for character in target:
+        if character == "\n":
+            if pending_whitespace and rebuilt and rebuilt[-1].get("type") == "text":
+                rebuilt[-1]["text"] = str(rebuilt[-1].get("text") or "") + pending_whitespace
+            pending_whitespace = ""
+            if rebuilt:
+                rebuilt.append({"type": "break"})
+            continue
+        if character.isspace():
+            pending_whitespace += character
+            continue
+        if character_index >= len(styled_characters):
+            return ops
+        styled_character, source_op, source_index = styled_characters[character_index]
+        character_index += 1
+        if styled_character != character:
+            return ops
+        append_text(f"{pending_whitespace}{character}", source_op, source_index)
+        pending_whitespace = ""
+
+    if pending_whitespace and rebuilt and rebuilt[-1].get("type") == "text":
+        rebuilt[-1]["text"] = str(rebuilt[-1].get("text") or "") + pending_whitespace
     while rebuilt and rebuilt[-1].get("type") == "break":
         rebuilt.pop()
+    for op in rebuilt:
+        op.pop("_source_op_index", None)
     if _normalize_rich_text_compare_text(_rich_text_layout_ops_to_text(rebuilt)) != _normalize_rich_text_compare_text(target):
         return ops
     return rebuilt
@@ -3691,12 +3882,11 @@ def _reconcile_rich_text_ops_with_plain_text(
 def parse_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
     structured_ops = _structured_rich_text_layout_ops(ann)
     if structured_ops:
-        # Version-2 runs are a canonical, self-contained rich-text document.
-        # normalize_annotations_for_pdf_export() already repairs a redundant
-        # plain-text copy when it differs only by hard breaks, so do not let a
-        # stale flat string erase authored break operations here.
-        if str(ann.get("richTextVersion") or "").strip() == "2":
-            return structured_ops
+        # Structured runs are the canonical, self-contained rich-text document.
+        # Reconcile only whitespace-only drift against the redundant plain-text
+        # copy. Different non-whitespace content leaves the canonical runs
+        # untouched, while a dropped boundary space no longer disables every
+        # authored run style at render time.
         return _reconcile_rich_text_ops_with_plain_text(structured_ops, ann.get("text") or "")
 
     rich_html = sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
@@ -7758,6 +7948,7 @@ def _shrink_redact_rect_to_avoid_neighbors(
     page: fitz.Page,
     rect: fitz.Rect,
     page_words: list,
+    clearance: float = 0.05,
 ) -> fitz.Rect:
     """Shrink a redact rect so it no longer intersects any neighboring word
     whose centroid lies outside the ORIGINAL rect.
@@ -7773,11 +7964,15 @@ def _shrink_redact_rect_to_avoid_neighbors(
 
     If a collateral word's bbox engulfs the rect on all four sides we have
     no edge to shrink to (Bug 2: empty candidates → ValueError). In that
-    degenerate case we leave the rect alone for this neighbor; the caller
-    accepts that some collateral damage is unavoidable rather than crashing.
+    degenerate case we leave the rect alone for this neighbor so the caller
+    can choose a different geometry or reject the operation safely.
     """
     if rect is None or rect.is_empty or not page_words:
         return rect
+    try:
+        clearance = max(0.0, float(clearance))
+    except Exception:
+        clearance = 0.05
     original = fitz.Rect(rect)
     shrunk = fitz.Rect(rect)
     for w in page_words:
@@ -7798,13 +7993,13 @@ def _shrink_redact_rect_to_avoid_neighbors(
         x_candidates = []
         y_candidates = []
         if y0 >= shrunk.y0:
-            y_candidates.append(("y1", y0 - 0.05, shrunk.y1 - y0))
+            y_candidates.append(("y1", y0 - clearance, shrunk.y1 - y0))
         if y1 <= shrunk.y1:
-            y_candidates.append(("y0", y1 + 0.05, y1 - shrunk.y0))
+            y_candidates.append(("y0", y1 + clearance, y1 - shrunk.y0))
         if x0 >= shrunk.x0:
-            x_candidates.append(("x1", x0 - 0.05, shrunk.x1 - x0))
+            x_candidates.append(("x1", x0 - clearance, shrunk.x1 - x0))
         if x1 <= shrunk.x1:
-            x_candidates.append(("x0", x1 + 0.05, x1 - shrunk.x0))
+            x_candidates.append(("x0", x1 + clearance, x1 - shrunk.x0))
         # Choose the shrink axis from the neighbor's line relationship rather
         # than raw area cost. A neighbor that shares the target's baseline
         # (same y-extent) is an adjacent word on the SAME line: pull the rect
@@ -8715,6 +8910,11 @@ def draw_text(
             pdfjs_visible_overlay
             and should_preserve_pdfjs_source_inline_flow(render_ann, text)
         )
+        use_pdfjs_single_line_source_baseline = (
+            pdfjs_visible_overlay
+            and _boolish(render_ann.get("pdfjsUseSourceTypography"))
+            and not _pdfjs_overlay_has_multiple_visual_lines(render_ann, text)
+        )
         pdfjs_source_span_run_layout = normalize_pdfjs_source_span_run_layout(
             render_ann,
             text,
@@ -8722,8 +8922,7 @@ def draw_text(
             size,
         ) if preserve_pdfjs_moved_source_line else []
         if (
-            pdfjs_visible_overlay
-            and _boolish(render_ann.get("pdfjsUseSourceTypography"))
+            use_pdfjs_single_line_source_baseline
             and not _boolish(render_ann.get("movedTextOverlay"))
             and not pdfjs_visual_lines
             and not preserve_pdfjs_visual_spacing
@@ -9109,8 +9308,7 @@ def draw_text(
             - guided_lease_field_baseline_lift(render_ann, size)
         )
         if (
-            pdfjs_visible_overlay
-            and _boolish(render_ann.get("pdfjsUseSourceTypography"))
+            use_pdfjs_single_line_source_baseline
             and not preserve_pdfjs_moved_source_line
         ):
             try:
@@ -9153,8 +9351,7 @@ def draw_text(
             text_width = draw_font.text_length(line, fontsize=size) if line else 0.0
             draw_x = text_rect.x0 + padding_x
             if (
-                pdfjs_visible_overlay
-                and _boolish(render_ann.get("pdfjsUseSourceTypography"))
+                use_pdfjs_single_line_source_baseline
                 and not preserve_pdfjs_moved_source_line
             ):
                 try:

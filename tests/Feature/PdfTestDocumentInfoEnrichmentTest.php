@@ -10,11 +10,131 @@ use App\Models\PdfExtractionSpan;
 use App\Models\PdfState;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class PdfTestDocumentInfoEnrichmentTest extends TestCase
 {
     use RefreshDatabase;
+
+    public function test_document_info_batches_extraction_enrichment_and_can_skip_embedded_fonts(): void
+    {
+        $user = User::factory()->create();
+        $document = Document::query()->create([
+            'user_id' => $user->id,
+            'original_name' => 'batched-enrichment.pdf',
+            'path' => 'documents/batched-enrichment.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => 100,
+        ]);
+        $fitz = PdfExtractionFitz::query()->create([
+            'document_id' => $document->id,
+            'session_id' => 'batched-enrichment-extraction',
+            'pdf_filename' => 'batched-enrichment.pdf',
+            'total_pages' => 1,
+            'total_words' => 1,
+            'full_text' => 'Batch me',
+            'extraction_data' => [],
+        ]);
+        $page = PdfExtractionPage::query()->create([
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'width' => 612,
+            'height' => 792,
+            'word_count' => 1,
+            'text' => 'Batch me',
+            'drawn_box_rects' => [],
+            'widget_rects' => [],
+        ]);
+        $block = PdfExtractionBlock::query()->create([
+            'page_id' => $page->id,
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'block_num' => 1,
+            'source_key' => 'block-1-1',
+            'root_source_key' => 'block-1-1',
+            'text' => 'Batch me',
+            'text_single_line' => 'Batch me',
+            'text_lines' => ['Batch me'],
+            'line_bboxes' => [[20, 30, 80, 42]],
+            'left' => 20,
+            'top' => 30,
+            'width' => 60,
+            'height' => 12,
+            'line_count' => 1,
+            'line_height' => 12,
+            'avg_line_height' => 12,
+        ]);
+        PdfExtractionSpan::query()->create([
+            'page_id' => $page->id,
+            'block_id' => $block->id,
+            'pdf_extraction_fitz_id' => $fitz->id,
+            'document_id' => $document->id,
+            'page_number' => 1,
+            'block_num' => 1,
+            'line_num' => 0,
+            'span_index' => 0,
+            'text' => 'Batch me',
+            'render_text' => 'Batch me',
+            'left' => 20,
+            'top' => 30,
+            'width' => 60,
+            'height' => 12,
+            'bbox' => [20, 30, 80, 42],
+            'origin' => [20, 40],
+        ]);
+
+        for ($index = 1; $index <= 6; $index++) {
+            PdfState::query()->create([
+                'document_id' => $document->id,
+                'pdf_extraction_fitz_id' => $fitz->id,
+                'user_id' => $user->id,
+                'session_id' => 'batched-enrichment-state',
+                'page_number' => 0,
+                'state' => 'not_saved',
+                'annotation_data' => [
+                    'id' => 'batched_' . $index,
+                    'type' => 'text',
+                    'text' => 'Batch me',
+                    'pageIndex' => 0,
+                    'promotedFromExtraction' => true,
+                    'promotedSourceKey' => 'block-1-1',
+                    'promotedSourceBlockNum' => 1,
+                    'sourceSpans' => [[
+                        'text' => 'Batch me',
+                        'bbox' => [20, 30, 80, 42],
+                        'origin' => [20, 40],
+                    ]],
+                ],
+            ]);
+        }
+
+        DB::flushQueryLog();
+        DB::enableQueryLog();
+        try {
+            $response = $this->actingAs($user)->getJson(route('pdfTests.documentInfo', [
+                'document' => $document,
+                'skip_embedded_fonts' => 1,
+            ]));
+            $queries = collect(DB::getQueryLog())->pluck('query');
+        } finally {
+            DB::disableQueryLog();
+        }
+
+        $response->assertOk()
+            ->assertJsonPath('embedded_fonts', [])
+            ->assertJsonPath('embedded_fonts_by_source.file', [])
+            ->assertJsonPath('embedded_fonts_by_source.clean', []);
+
+        $countQueriesFor = static fn (string $table): int => $queries
+            ->filter(static fn (string $query): bool => str_contains($query, $table))
+            ->count();
+        $this->assertSame(1, $countQueriesFor('pdf_extraction_blocks'));
+        $this->assertSame(1, $countQueriesFor('pdf_extraction_spans'));
+        $this->assertLessThanOrEqual(2, $countQueriesFor('pdf_extraction_pages'));
+    }
 
     public function test_document_info_reports_acro_form_widget_presence_only_from_complete_extraction_metadata(): void
     {

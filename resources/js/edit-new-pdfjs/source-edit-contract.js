@@ -7,6 +7,223 @@ function normalizeComparableText(value) {
     return String(value ?? '').replace(/\r\n?/g, '\n').replace(/\s+/g, ' ').trim();
 }
 
+function textWithoutWhitespace(value) {
+    return Array.from(String(value ?? ''))
+        .filter((character) => !/\s/u.test(character))
+        .join('');
+}
+
+// PDF.js can represent a real word space as its own whitespace-only span.
+// Source grouping deliberately ignores that span's empty ink box, so use the
+// containing marked-content text as a whitespace authority only when its
+// non-whitespace characters are an exact match. Existing visual multi-space
+// gaps are retained; this only repairs a boundary whose space disappeared.
+export function restoreExplicitSourceWhitespace(constructedText, markedContentText) {
+    const constructed = String(constructedText ?? '');
+    const authoritative = String(markedContentText ?? '').replace(/\s+/g, ' ').trim();
+    if (!constructed.trim() || !authoritative) return constructed;
+    if (normalizeComparableText(constructed) === authoritative) return constructed;
+    if (textWithoutWhitespace(constructed) !== textWithoutWhitespace(authoritative)) return constructed;
+    return authoritative;
+}
+
+function medianFinite(values, fallback = 0) {
+    const sorted = Array.from(values || [])
+        .map(Number)
+        .filter(Number.isFinite)
+        .sort((left, right) => left - right);
+    if (!sorted.length) return fallback;
+    const middle = Math.floor(sorted.length / 2);
+    return sorted.length % 2
+        ? sorted[middle]
+        : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function sourceCellRectEdges(value) {
+    if (!value) return null;
+    const left = Number(value.left);
+    const top = Number(value.top);
+    const right = Number(value.right ?? (left + Number(value.width)));
+    const bottom = Number(value.bottom ?? (top + Number(value.height)));
+    if (![left, top, right, bottom].every(Number.isFinite)
+        || right <= left
+        || bottom <= top) {
+        return null;
+    }
+    return {
+        left,
+        top,
+        right,
+        bottom,
+        width: right - left,
+        height: bottom - top,
+        centerX: (left + right) / 2,
+        centerY: (top + bottom) / 2,
+    };
+}
+
+function sourceCellIntervalOverlap(firstStart, firstEnd, secondStart, secondEnd) {
+    return Math.max(0, Math.min(firstEnd, secondEnd) - Math.max(firstStart, secondStart));
+}
+
+// PDF.js line boxes commonly overlap even when their painted glyph rows do
+// not. A source mask based on the full line box can therefore erase the row
+// above/below, while subtracting those overlapping neighbour boxes from a
+// moved-source mask can uncover the target glyphs. Assign the mask to the
+// target group's row/column cell instead: adjacent group centres define the
+// halfway boundaries, so every overlapping pixel has exactly one owner.
+export function clampSourceMaskRectToCell(maskRect, targetRect, neighbourRects = []) {
+    const mask = sourceCellRectEdges(maskRect);
+    const target = sourceCellRectEdges(targetRect);
+    if (!mask || !target) return maskRect;
+
+    let cellLeft = Number.NEGATIVE_INFINITY;
+    let cellTop = Number.NEGATIVE_INFINITY;
+    let cellRight = Number.POSITIVE_INFINITY;
+    let cellBottom = Number.POSITIVE_INFINITY;
+
+    for (const value of neighbourRects || []) {
+        const neighbour = sourceCellRectEdges(value);
+        if (!neighbour) continue;
+        const sameRect = Math.abs(neighbour.centerX - target.centerX) <= 0.01
+            && Math.abs(neighbour.centerY - target.centerY) <= 0.01
+            && Math.abs(neighbour.width - target.width) <= 0.01
+            && Math.abs(neighbour.height - target.height) <= 0.01;
+        if (sameRect) continue;
+
+        const horizontalOverlap = sourceCellIntervalOverlap(
+            target.left,
+            target.right,
+            neighbour.left,
+            neighbour.right,
+        );
+        const minWidth = Math.max(0.01, Math.min(target.width, neighbour.width));
+        const sharesColumn = horizontalOverlap > Math.min(4, minWidth * 0.1);
+        const minHeight = Math.max(0.01, Math.min(target.height, neighbour.height));
+        const sameRow = Math.abs(neighbour.centerY - target.centerY)
+            <= Math.max(1, minHeight * 0.35);
+
+        if (sharesColumn && !sameRow) {
+            const midpointY = (target.centerY + neighbour.centerY) / 2;
+            if (neighbour.centerY < target.centerY && midpointY > mask.top && midpointY < target.centerY) {
+                cellTop = Math.max(cellTop, midpointY);
+            } else if (neighbour.centerY > target.centerY && midpointY < mask.bottom && midpointY > target.centerY) {
+                cellBottom = Math.min(cellBottom, midpointY);
+            }
+        }
+
+        // Only introduce a column boundary when the mask actually reaches the
+        // neighbouring group. This avoids shortening a long source run merely
+        // because a much shorter run exists later on the same visual row.
+        if (!sameRow) continue;
+        const maskTouchesNeighbour = sourceCellIntervalOverlap(
+            mask.left,
+            mask.right,
+            neighbour.left,
+            neighbour.right,
+        ) > 0.25;
+        if (!maskTouchesNeighbour) continue;
+        const midpointX = (target.centerX + neighbour.centerX) / 2;
+        if (neighbour.centerX < target.centerX && midpointX > mask.left && midpointX < target.centerX) {
+            cellLeft = Math.max(cellLeft, midpointX);
+        } else if (neighbour.centerX > target.centerX && midpointX < mask.right && midpointX > target.centerX) {
+            cellRight = Math.min(cellRight, midpointX);
+        }
+    }
+
+    const left = Math.max(mask.left, cellLeft);
+    const top = Math.max(mask.top, cellTop);
+    const right = Math.min(mask.right, cellRight);
+    const bottom = Math.min(mask.bottom, cellBottom);
+    if (right - left <= 0.25 || bottom - top <= 0.25) return maskRect;
+    return {
+        left,
+        top,
+        right,
+        bottom,
+        width: right - left,
+        height: bottom - top,
+    };
+}
+
+// Convert captured visual line tops into edit-entry slots. The exact slot
+// height preserves non-uniform PDF spacing; breakCount identifies
+// paragraph-like gaps for diagnostics and future flow policies.
+export function sourceVisualLineSlots(lineTops, scaleRatio = 1) {
+    const tops = Array.from(lineTops || []).map(Number);
+    if (!tops.length || tops.some((top) => !Number.isFinite(top))) return [];
+    const scale = Number(scaleRatio);
+    const resolvedScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+    const deltas = [];
+    for (let index = 0; index < tops.length - 1; index += 1) {
+        const delta = tops[index + 1] - tops[index];
+        if (delta > 0.5) deltas.push(delta);
+    }
+    const typicalStep = medianFinite(deltas, 0);
+    return tops.map((top, index) => {
+        if (index >= tops.length - 1) {
+            return { topPx: top, slotHeightPx: 0, breakCount: 0 };
+        }
+        const delta = Math.max(0, tops[index + 1] - top);
+        const ratio = typicalStep > 0 ? delta / typicalStep : 1;
+        const breakCount = ratio >= 1.5
+            ? Math.max(1, Math.min(12, Math.round(ratio)))
+            : 1;
+        return {
+            topPx: top,
+            slotHeightPx: delta * resolvedScale,
+            breakCount,
+        };
+    });
+}
+
+// PDF extraction frequently gives a list marker (for example, a bullet) a
+// larger glyph box than the paragraph that follows it. The marker must not
+// become the paragraph's root font size: doing so turns every ordinary run
+// into a fractional `em`, which compounds when the edit DOM is serialized
+// and reconstructed. Weight by visible characters so the body typography is
+// the stable reference while still handling genuinely uniform symbol runs.
+export function dominantSourceRunFontSize(items, fallback = 0) {
+    const buckets = new Map();
+    Array.from(items || []).forEach((item) => {
+        const size = Number(item?.fontSizePx);
+        if (!Number.isFinite(size) || size <= 0) return;
+        const key = Math.round(size * 100) / 100;
+        const visibleCharacters = Array.from(String(item?.text || ''))
+            .filter((character) => !/\s/u.test(character)).length;
+        const weight = Math.max(1, visibleCharacters);
+        const bucket = buckets.get(key) || { size, weight: 0, runs: 0 };
+        bucket.weight += weight;
+        bucket.runs += 1;
+        buckets.set(key, bucket);
+    });
+    const winner = Array.from(buckets.values()).sort((left, right) => (
+        right.weight - left.weight
+        || right.runs - left.runs
+        || left.size - right.size
+    ))[0];
+    if (winner) return winner.size;
+    const resolvedFallback = Number(fallback);
+    return Number.isFinite(resolvedFallback) && resolvedFallback > 0 ? resolvedFallback : 0;
+}
+
+const SOURCE_LIST_MARKER_RE = /^\s*(?:[\u2022\u2023\u2043\u204c\u204d\u2219\u25aa\u25ab\u25cf\u25e6]|(?:\d+|[A-Za-z])[.)])(?:\s|$)/u;
+
+// Captured PDF rows are visual wraps, not authored hard returns. When an edit
+// switches to natural flow, join ordinary rows with a space but retain real
+// paragraph gaps and list-item boundaries.
+export function naturalSourceLineSeparator(previousText, nextText, breakCount = 1) {
+    const previous = String(previousText || '').trimEnd();
+    const next = String(nextText || '').trimStart();
+    const count = Number.parseInt(breakCount, 10) || 1;
+    if (count >= 2) return '\n\n';
+    if (SOURCE_LIST_MARKER_RE.test(next)) return '\n';
+    if (!previous || !next) return '\n';
+    if (/[-\u00ad]$/u.test(previous) && /^\p{Ll}/u.test(next)) return '';
+    if (/^[,.;:!?%)\]}]/u.test(next)) return '';
+    return ' ';
+}
+
 function normalizeRichPlainText(value) {
     return String(value || '')
         .replace(/\r\n?/g, '\n')

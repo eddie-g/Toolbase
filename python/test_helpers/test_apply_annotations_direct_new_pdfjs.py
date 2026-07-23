@@ -125,6 +125,121 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
         self.assertEqual(second["font_size"], 9)
         self.assertEqual(second["color"], "#2244cc")
 
+    def test_structured_rich_text_runs_repair_boundary_space_without_losing_styles(self):
+        annotation = {
+            "type": "text",
+            "text": (
+                "business income deduction (QBID) permanent. In\n"
+                "addition, beginning in 2026"
+            ),
+            "fontFamily": "Helvetica",
+            "fontSize": 7,
+            "lineHeight": 11.053,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#231f20",
+            "richTextVersion": 2,
+            "richTextRuns": [
+                {
+                    "type": "text",
+                    "text": "business income deduction (QBID)",
+                    "fontWeight": "400",
+                    "color": "#231f20",
+                },
+                {
+                    # Contenteditable dropped this styled run's leading space,
+                    # while the annotation's plain text remained authoritative.
+                    "type": "text",
+                    "text": "permanent",
+                    "fontWeight": "700",
+                    "color": "#231f20",
+                },
+                {
+                    "type": "text",
+                    "text": ". In",
+                    "fontWeight": "400",
+                    "color": "#231f20",
+                },
+                {"type": "break"},
+                {
+                    "type": "text",
+                    "text": "addition, beginning in 2026",
+                    "fontWeight": "400",
+                    "color": "#b23857",
+                },
+            ],
+        }
+
+        ops = self.module.parse_rich_text_layout_ops(annotation)
+
+        self.assertEqual(self.module._rich_text_layout_ops_to_text(ops), annotation["text"])
+        text_ops = [op for op in ops if op.get("type") == "text"]
+        permanent = next(op for op in text_ops if "permanent" in op.get("text", ""))
+        addition = next(op for op in text_ops if "addition" in op.get("text", ""))
+        self.assertEqual(permanent["text"], " permanent")
+        self.assertEqual(permanent["font_weight"], "700")
+        self.assertEqual(addition["color"], "#b23857")
+
+    def test_multiline_moved_overlay_ignores_single_line_source_baseline_offset(self):
+        lines = [f"Paragraph line {index}" for index in range(1, 10)]
+        text = "\n".join(lines)
+        annotation = {
+            "id": "promoted_multiline_baseline_regression",
+            "type": "text",
+            "pageIndex": 0,
+            "text": text,
+            "originalText": text,
+            "pdfX": 40,
+            "pdfY": 100,
+            "pdfWidth": 260,
+            "pdfHeight": 116,
+            "fontFamily": "Helvetica",
+            "fontSourceName": "Helvetica",
+            "fontSize": 10,
+            "lineHeight": 12,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "opacity": 1,
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsUseSourceTypography": True,
+            "pdfjsSourceBaselineOffsetX": 0,
+            # This is a valid source-row anchor for one line, but applying it
+            # to all nine lines starts the paragraph 68pt down and clips five.
+            "pdfjsSourceBaselineOffsetY": 68,
+            "pdfjsSourceX": 40,
+            "pdfjsSourceY": 110,
+            "pdfjsSourceW": 260,
+            "pdfjsSourceH": 96,
+            "pdfjsSourcePageHeight": 300,
+            "pdfjsSourceText": text,
+            "pdfjsVisualLines": lines,
+            "sourceBlockWidth": 260,
+            "sourceBlockHeight": 96,
+        }
+
+        document = fitz.open()
+        try:
+            page = document.new_page(width=340, height=300)
+            self.module.draw_text(page, annotation, source_masks_already_drawn=True)
+            rendered_text = page.get_text()
+            rendered_lines = [
+                line
+                for block in page.get_text("dict").get("blocks", [])
+                for line in block.get("lines", [])
+            ]
+        finally:
+            document.close()
+
+        for line in lines:
+            self.assertIn(line, rendered_text)
+        self.assertEqual(len(rendered_lines), len(lines))
+        self.assertLess(rendered_lines[0]["bbox"][1], 100)
+
     def test_structured_mixed_paragraph_writes_distinct_pdf_span_styles(self):
         annotation = {
             "id": "pdfjs_rich_mixed_regression",
