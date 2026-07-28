@@ -109,6 +109,7 @@ Route::post('/documents/{document}/discard-working-copy-snapshot', [DocumentCont
 Route::post('/documents/{document}/save-image', [DocumentController::class, 'saveImage'])->name('documents.saveImage');
 Route::post('/documents/{document}/match-fonts', [DocumentController::class, 'matchFonts'])->name('documents.matchFonts');
 Route::post('/documents/{document}/reorder-pages', [DocumentController::class, 'reorderPages'])->name('documents.reorderPages');
+Route::post('/documents/{document}/merge-pdfs', [DocumentController::class, 'mergePdfs'])->name('documents.mergePdfs');
 Route::post('/documents/{document}/add-blank-page', [DocumentController::class, 'addBlankPage'])->name('documents.addBlankPage');
 Route::post('/documents/{document}/rotate-page', [DocumentController::class, 'rotatePage'])->name('documents.rotatePage');
 Route::post('/documents/{document}/regenerate-invoice', [DocumentController::class, 'regenerateInvoice'])->name('documents.regenerateInvoice');

@@ -73,6 +73,7 @@
 @include('documents.edit-new._zoom-bar')
 @include('documents.edit-new._format-bar')
 @include('documents.edit-new._convert-modal-pdfjs')
+@include('documents.edit-new._merge-modal-pdfjs')
 @include('documents.edit-new._encrypt-modal-pdfjs')
 
 {{-- New PDF.js viewer mount + new viewer's data hooks. The blade's #pages-wrap
@@ -97,7 +98,13 @@
      data-regenerate-invoice-url="{{ route('documents.regenerateInvoice', $document) }}"
      data-regenerate-template-url="{{ route('documents.regenerateTemplate', $document) }}"
      data-add-blank-page-url="{{ route('documents.addBlankPage', $document) }}"
-     data-reorder-pages-url="{{ route('documents.reorderPages', $document) }}">
+     data-reorder-pages-url="{{ route('documents.reorderPages', $document) }}"
+     data-merge-pdf-url="{{ route('documents.mergePdfs', $document) }}"
+     data-split-pdf-url="{{ route('documents.splitPdf', $document) }}"
+     data-document-name="{{ $document->original_name }}"
+     data-merge-max-files="{{ config('pdf_editor.merge.max_files', 10) }}"
+     data-merge-max-file-bytes="{{ (int) config('pdf_editor.merge.max_file_kb', 20480) * 1024 }}"
+     data-merge-max-pages="{{ config('pdf_editor.merge.max_pages', 1000) }}">
     <div id="viewerContainer">
         <div id="viewer" class="pdfViewer"></div>
     </div>
