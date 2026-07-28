@@ -11,9 +11,17 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('pdf_extractions_fitz', function (Blueprint $table) {
-            //
-        });
+        if (!Schema::hasColumn('pdf_extractions_fitz', 'user_email')) {
+            Schema::table('pdf_extractions_fitz', function (Blueprint $table) {
+                $table->string('user_email')->nullable()->after('document_id')->index();
+            });
+        }
+
+        if (!Schema::hasColumn('pdf_extractions_fitz', 'session_id')) {
+            Schema::table('pdf_extractions_fitz', function (Blueprint $table) {
+                $table->string('session_id')->nullable()->after('user_email')->index();
+            });
+        }
     }
 
     /**
@@ -21,8 +29,15 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('pdf_extractions_fitz', function (Blueprint $table) {
-            //
-        });
+        $columns = array_values(array_filter(
+            ['user_email', 'session_id'],
+            static fn (string $column): bool => Schema::hasColumn('pdf_extractions_fitz', $column),
+        ));
+
+        if ($columns !== []) {
+            Schema::table('pdf_extractions_fitz', function (Blueprint $table) use ($columns) {
+                $table->dropColumn($columns);
+            });
+        }
     }
 };

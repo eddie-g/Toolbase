@@ -8,47 +8,78 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('dictionary', function (Blueprint $table) {
-            // Rename existing columns with category_ prefix
-            $table->renameColumn('space', 'category_space');
-            $table->renameColumn('fantasy', 'category_fantasy');
-            $table->renameColumn('tech', 'category_tech');
-            $table->renameColumn('romance', 'category_romance');
-            $table->renameColumn('scifi', 'category_scifi');
-        });
+        $legacyCategories = [
+            'space' => 'category_space',
+            'fantasy' => 'category_fantasy',
+            'tech' => 'category_tech',
+            'romance' => 'category_romance',
+            'scifi' => 'category_scifi',
+        ];
+        $previousColumn = 'popularity';
 
-        Schema::table('dictionary', function (Blueprint $table) {
-            // Add new category columns
-            $table->decimal('category_mystery', 5, 3)->default(0)->index()->after('category_scifi');
-            $table->decimal('category_thriller', 5, 3)->default(0)->index()->after('category_mystery');
-            $table->decimal('category_horror', 5, 3)->default(0)->index()->after('category_thriller');
-            $table->decimal('category_adventure', 5, 3)->default(0)->index()->after('category_horror');
-            $table->decimal('category_historical', 5, 3)->default(0)->index()->after('category_adventure');
-            $table->decimal('category_drama', 5, 3)->default(0)->index()->after('category_historical');
-            $table->decimal('category_action', 5, 3)->default(0)->index()->after('category_drama');
-        });
+        foreach ($legacyCategories as $legacy => $category) {
+            if (Schema::hasColumn('dictionary', $legacy)
+                && !Schema::hasColumn('dictionary', $category)) {
+                Schema::table('dictionary', function (Blueprint $table) use ($legacy, $category) {
+                    $table->renameColumn($legacy, $category);
+                });
+            } elseif (!Schema::hasColumn('dictionary', $category)) {
+                Schema::table('dictionary', function (Blueprint $table) use ($category, $previousColumn) {
+                    $table->decimal($category, 5, 3)->default(0)->index()->after($previousColumn);
+                });
+            }
+            $previousColumn = $category;
+        }
+
+        foreach ([
+            'category_mystery',
+            'category_thriller',
+            'category_horror',
+            'category_adventure',
+            'category_historical',
+            'category_drama',
+            'category_action',
+        ] as $category) {
+            if (!Schema::hasColumn('dictionary', $category)) {
+                Schema::table('dictionary', function (Blueprint $table) use ($category, $previousColumn) {
+                    $table->decimal($category, 5, 3)->default(0)->index()->after($previousColumn);
+                });
+            }
+            $previousColumn = $category;
+        }
     }
 
     public function down(): void
     {
-        Schema::table('dictionary', function (Blueprint $table) {
-            $table->dropColumn([
-                'category_mystery',
-                'category_thriller',
-                'category_horror',
-                'category_adventure',
-                'category_historical',
-                'category_drama',
-                'category_action',
-            ]);
-        });
+        $addedCategories = array_values(array_filter([
+            'category_mystery',
+            'category_thriller',
+            'category_horror',
+            'category_adventure',
+            'category_historical',
+            'category_drama',
+            'category_action',
+        ], static fn (string $column): bool => Schema::hasColumn('dictionary', $column)));
 
-        Schema::table('dictionary', function (Blueprint $table) {
-            $table->renameColumn('category_space', 'space');
-            $table->renameColumn('category_fantasy', 'fantasy');
-            $table->renameColumn('category_tech', 'tech');
-            $table->renameColumn('category_romance', 'romance');
-            $table->renameColumn('category_scifi', 'scifi');
-        });
+        if ($addedCategories !== []) {
+            Schema::table('dictionary', function (Blueprint $table) use ($addedCategories) {
+                $table->dropColumn($addedCategories);
+            });
+        }
+
+        foreach ([
+            'category_space' => 'space',
+            'category_fantasy' => 'fantasy',
+            'category_tech' => 'tech',
+            'category_romance' => 'romance',
+            'category_scifi' => 'scifi',
+        ] as $category => $legacy) {
+            if (Schema::hasColumn('dictionary', $category)
+                && !Schema::hasColumn('dictionary', $legacy)) {
+                Schema::table('dictionary', function (Blueprint $table) use ($category, $legacy) {
+                    $table->renameColumn($category, $legacy);
+                });
+            }
+        }
     }
 };

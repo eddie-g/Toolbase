@@ -5,6 +5,10 @@
     "scripts": {
         "build": "vite build --emptyOutDir false",
         "dev": "vite",
+        "test:pdf-image-export": "node --test resources/js/edit-new-pdfjs/image-export.test.mjs",
+        "test:pdfa-export": "node --test resources/js/edit-new-pdfjs/pdfa-export.test.mjs",
+        "test:word-export": "node --test resources/js/edit-new-pdfjs/converted-export.test.mjs",
+        "test:excel-export": "node --test resources/js/edit-new-pdfjs/converted-export.test.mjs",
         "test:pdf-source-regressions": "node --test resources/js/edit-new-pdfjs/source-edit-contract.test.mjs && node tests/OverlayEditor/run_promoted_single_span_title_regression.cjs && node tests/OverlayEditor/run_pdfjs_moved_source_title_regression.cjs"
     },
     "devDependencies": {

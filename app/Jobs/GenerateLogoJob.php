@@ -477,7 +477,9 @@ class GenerateLogoJob implements ShouldQueue
         }
 
         return match (true) {
-            $isPro => '1024x1024',
+            $isPro && $imageSize === '16:9' => '2688x1536',
+            $isPro && $imageSize === '9:16' => '1536x2688',
+            $isPro => '2048x2048',
             $imageSize === '16:9' => '1344x768',
             $imageSize === '9:16' => '768x1344',
             default => '1024x1024',

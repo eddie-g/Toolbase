@@ -1,4 +1,9 @@
 @php($editorCanUsePremiumFeatures = auth()->check() || auth('admin')->check())
+@php($isUploadTestReview = ($uploadTestReview ?? false) && isset($pdfUploadTest))
+@php($reviewPdfUrl = $isUploadTestReview
+    ? route('pdfTests.uploadTests.original', $pdfUploadTest)
+    : route('documents.file', $document))
+@php($selectedUploadTestCase = $selectedPdfUploadTestCase ?? null)
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,20 +11,11 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{{ $document->original_name }} — Edit New (PDF.js viewer)</title>
+    <title>{{ $document->original_name }} — {{ $isUploadTestReview ? 'PDF Test Review' : 'Edit New (PDF.js viewer)' }}</title>
 
-     {{-- Pre-load pdf.js v4 as a global, mirroring edit-new.blade so any of
-           the legacy partials' inline scripts that touch window.pdfjsLib stay
-           no-op-safe. --}}
-     <script type="module">
-          import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.min.mjs';
-          pdfjsLib.GlobalWorkerOptions.workerSrc =
-               'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/legacy/build/pdf.worker.min.mjs';
-          window.pdfjsLib = pdfjsLib;
-          window.dispatchEvent(new Event('pdfjsLibReady'));
-     </script>
-
-    @vite(['resources/css/app.css', 'resources/js/app.js'])
+    {{-- The PDF.js editor bundles PDF.js itself. Loading a second copy from a
+         CDN delayed the editor entry module and downloaded a duplicate worker. --}}
+    @vite(['resources/css/app.css'])
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,400;0,700;1,400;1,700&family=Bebas+Neue&family=Cabin:ital,wght@0,400;0,700;1,400;1,700&family=Crimson+Text:ital,wght@0,400;0,700;1,400;1,700&family=DM+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Dosis:wght@400;700&family=Fira+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Heebo:wght@400;700&family=Hind:wght@400;700&family=Inter:ital,wght@0,400;0,700;1,400;1,700&family=Josefin+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Kanit:ital,wght@0,400;0,700;1,400;1,700&family=Karla:ital,wght@0,400;0,700;1,400;1,700&family=Lato:ital,wght@0,400;0,700;1,400;1,700&family=Lora:ital,wght@0,400;0,700;1,400;1,700&family=Manrope:wght@400;700&family=Merriweather:ital,wght@0,400;0,700;1,400;1,700&family=Montserrat:ital,wght@0,400;0,700;1,400;1,700&family=Mukta:wght@400;700&family=Mulish:ital,wght@0,400;0,700;1,400;1,700&family=Noto+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Noto+Serif:ital,wght@0,400;0,700;1,400;1,700&family=Nunito:ital,wght@0,400;0,700;1,400;1,700&family=Open+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Oswald:wght@400;700&family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Poppins:ital,wght@0,400;0,700;1,400;1,700&family=Quicksand:wght@400;700&family=Raleway:ital,wght@0,400;0,700;1,400;1,700&family=Roboto+Condensed:ital,wght@0,400;0,700;1,400;1,700&family=Roboto+Mono:ital,wght@0,400;0,700;1,400;1,700&family=Roboto+Slab:wght@400;700&family=Roboto:ital,wght@0,400;0,700;1,400;1,700&family=Rubik:ital,wght@0,400;0,700;1,400;1,700&family=Source+Sans+3:ital,wght@0,400;0,700;1,400;1,700&family=Ubuntu:ital,wght@0,400;0,700;1,400;1,700&family=Work+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap">
@@ -31,7 +27,86 @@
          can host the absolutely-positioned PDFViewer container. --}}
     @vite(['resources/css/edit-new-pdfjs/index.css'])
 </head>
-<body class="enpv-body{{ ($guided ?? false) ? ' enpv-guided' : '' }}">
+<body class="enpv-body{{ ($guided ?? false) ? ' enpv-guided' : '' }}{{ $isUploadTestReview ? ' enpv-upload-test-review' : '' }}">
+
+@if($isUploadTestReview)
+<header class="putr-header">
+    <a class="putr-back" href="{{ route('filament.admin.pages.run-pdf-tests', ['editor' => 'upload-tests']) }}">
+        <span aria-hidden="true">←</span>
+        <span>Uploaded PDFs</span>
+    </a>
+    <div class="putr-document">
+        <strong>{{ $document->original_name }}</strong>
+        <span>Read-only annotation review</span>
+    </div>
+</header>
+
+<aside class="putr-panel" aria-labelledby="putr-title">
+    <div>
+        <p class="putr-eyebrow">Annotation test</p>
+        <h1 id="putr-title">Select a blue box</h1>
+        <p class="putr-help">Click any blue PDF.js box to capture its annotation ID.</p>
+    </div>
+
+    <form id="putr-form">
+        <label class="putr-field">
+            <span>Annotation ID</span>
+            <input id="putr-annotation-id"
+                   name="annotation_id"
+                   type="text"
+                   value="{{ $selectedUploadTestCase?->annotation_id }}"
+                   placeholder="Click an overlay box"
+                   readonly>
+        </label>
+        <input id="putr-runtime-annotation-id"
+               name="runtime_annotation_id"
+               type="hidden"
+               value="{{ $selectedUploadTestCase?->runtime_annotation_id }}">
+        <input id="putr-page-index"
+               name="page_index"
+               type="hidden"
+               value="{{ $selectedUploadTestCase?->page_index }}">
+        <input id="putr-target-text"
+               name="target_text"
+               type="hidden"
+               value="{{ $selectedUploadTestCase?->target_text }}">
+
+        <div class="putr-target-meta">
+            <span id="putr-page-label">
+                {{ $selectedUploadTestCase?->page_index !== null ? 'Page '.($selectedUploadTestCase->page_index + 1) : 'No element selected' }}
+            </span>
+            <p id="putr-target-label">{{ $selectedUploadTestCase?->target_text ?: 'Click a blue box in the PDF.' }}</p>
+            <p id="putr-runtime-label"
+               hidden>
+            </p>
+        </div>
+
+        <label class="putr-field putr-comment-field">
+            <span>Test comment</span>
+            <textarea id="putr-test-comment"
+                      name="test_comment"
+                      rows="8"
+                      maxlength="5000"
+                      placeholder="For example: Delete this item, move it below the heading, rotate it 90°, or change it to red.">{{ $selectedUploadTestCase?->test_comment }}</textarea>
+        </label>
+
+        <div id="putr-status"
+             class="putr-status"
+             role="status"
+             aria-live="polite"
+             data-saved-at="{{ $selectedUploadTestCase?->test_saved_at?->toIso8601String() }}">
+            @if($selectedUploadTestCase?->test_saved_at)
+                Saved {{ $selectedUploadTestCase->test_saved_at->diffForHumans() }}
+            @else
+                Select an element and describe the test.
+            @endif
+        </div>
+
+        <button id="putr-save" class="putr-save" type="submit">Save test</button>
+    </form>
+</aside>
+<script id="putr-saved-cases" type="application/json">@json(($pdfUploadTestCases ?? collect())->values())</script>
+@endif
 
 {{-- Same root + data attrs as edit-new (kept so legacy partials read the
      same dataset shape). The new viewer JS reads the *-url attrs. --}}
@@ -51,6 +126,8 @@
      data-convert-to-pdfa-url="{{ route('documents.convertToPdfA', $document) }}"
      data-convert-to-word-url="{{ route('documents.convertToWord', $document) }}"
      data-convert-to-excel-url="{{ route('documents.convertToExcel', $document) }}"
+     data-document-conversion-price="{{ config('document-conversion.price_usd_per_transaction', 0.10) }}"
+     data-document-conversion-pages-per-transaction="{{ config('document-conversion.pages_per_transaction', 50) }}"
      data-encrypt-pdf-url="{{ route('documents.encryptPdf', $document) }}"
      data-download-pdfa-url="{{ route('documents.downloadPdfA') }}"
      data-download-converted-url="{{ route('documents.downloadConverted') }}"
@@ -81,12 +158,16 @@
      so the absolute child fills the available space). --}}
 <div id="enpv-root"
      data-doc-id="{{ $document->id }}"
+     data-password-protected="{{ !$isUploadTestReview && filled($document->pdf_password_hash) ? '1' : '0' }}"
+     data-password-unlock-url="{{ route('documents.unlockPdfPassword', $document) }}"
+     data-upload-test-review="{{ $isUploadTestReview ? '1' : '0' }}"
+     data-upload-test-save-url="{{ $isUploadTestReview ? route('pdfTests.uploadTests.update', $pdfUploadTest) : '' }}"
      data-guided="{{ ($guided ?? false) ? '1' : '0' }}"
      data-template-type="{{ $document->template_type ?? '' }}"
      data-template-slug="{{ $document->template_slug ?? '' }}"
      data-csrf="{{ csrf_token() }}"
-     data-pdf-url="{{ route('documents.file', $document) }}"
-     data-current-pdf-url="{{ route('documents.file', $document) }}"
+     data-pdf-url="{{ $reviewPdfUrl }}"
+     data-current-pdf-url="{{ $reviewPdfUrl }}"
      data-baked-url="{{ route('documents.bakedPdf', $document) }}"
      data-clean-url="{{ route('documents.cleanPdf', $document) }}"
      data-rewrite-url="{{ route('documents.editPdfjsRewriteTj', $document) }}"
@@ -99,6 +180,7 @@
      data-regenerate-template-url="{{ route('documents.regenerateTemplate', $document) }}"
      data-add-blank-page-url="{{ route('documents.addBlankPage', $document) }}"
      data-reorder-pages-url="{{ route('documents.reorderPages', $document) }}"
+     data-rotate-page-url="{{ route('documents.rotatePage', $document) }}"
      data-merge-pdf-url="{{ route('documents.mergePdfs', $document) }}"
      data-split-pdf-url="{{ route('documents.splitPdf', $document) }}"
      data-document-name="{{ $document->original_name }}"
@@ -111,7 +193,7 @@
      <div id="enpv-loading-screen" class="enpv-loading-screen" role="status" aria-live="polite">
           <div class="enpv-loading-card">
                <div class="enpv-loading-spinner" aria-hidden="true"></div>
-               <div class="enpv-loading-title">Loading editor...</div>
+               <div class="enpv-loading-title">{{ $isUploadTestReview ? 'Loading PDF review...' : 'Loading editor...' }}</div>
           </div>
      </div>
 
@@ -177,7 +259,7 @@
 
 @include('documents.edit-new._guided-helper')
 
-<div class="enpv-page-manager-modal" id="enpv-page-manager-modal" role="dialog" aria-modal="true" aria-labelledby="enpv-page-manager-title" aria-hidden="true" hidden>
+<div class="enpv-page-manager-modal" id="enpv-page-manager-modal" role="dialog" aria-modal="false" aria-labelledby="enpv-page-manager-title" aria-hidden="true" hidden>
      <div class="enpv-page-manager-card">
           <div class="enpv-page-manager-header">
                <div>

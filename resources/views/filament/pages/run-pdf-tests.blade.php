@@ -22,6 +22,7 @@
                         <x-filament::button color="gray" size="sm" icon="heroicon-o-bug-ant">Debug PDF</x-filament::button>
                     </a>
                     <x-filament::button
+                        x-show="activeTab !== 'upload-tests'"
                         x-on:click="startAllTests()"
                         x-bind:disabled="loading || globalRunning"
                         icon="heroicon-o-play"
@@ -35,7 +36,7 @@
             </div>
 
             {{-- Global progress bar (run-all mode) --}}
-            <template x-if="globalRunning || (globalFinished && allRunResults.length > 0)">
+            <template x-if="activeTab !== 'upload-tests' && (globalRunning || (globalFinished && allRunResults.length > 0))">
                 <div class="space-y-2">
                     <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                         <span x-text="globalRunning ? 'Running ' + allRunResults.length + ' of ' + visibleFiles.length + ' tests…' : 'Run complete'"></span>
@@ -54,6 +55,16 @@
             <div x-show="!loading" class="border-b border-gray-200 dark:border-gray-700">
                 <nav class="-mb-px flex gap-6" aria-label="Editor tabs">
                     <button type="button"
+                            x-on:click="setActiveTab('upload-tests')"
+                            x-bind:class="activeTab === 'upload-tests'
+                                ? 'border-danger-500 text-danger-600 dark:text-danger-400'
+                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'"
+                            class="whitespace-nowrap py-3 px-1 border-b-2 text-sm font-medium transition-colors">
+                        PDF upload tests
+                        <span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
+                              x-text="uploadTests.length"></span>
+                    </button>
+                    <button type="button"
                             x-on:click="setActiveTab('edit-new')"
                             x-bind:class="activeTab === 'edit-new'
                                 ? 'border-danger-500 text-danger-600 dark:text-danger-400'
@@ -63,21 +74,249 @@
                         <span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
                               x-text="editorCount('edit-new')"></span>
                     </button>
-                    <button type="button"
-                            x-on:click="setActiveTab('edit')"
-                            x-bind:class="activeTab === 'edit'
-                                ? 'border-danger-500 text-danger-600 dark:text-danger-400'
-                                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-200'"
-                            class="whitespace-nowrap py-3 px-1 border-b-2 text-sm font-medium transition-colors">
-                        Old editor <span class="text-xs text-gray-400">/edit</span>
-                        <span class="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300"
-                              x-text="editorCount('edit')"></span>
-                    </button>
                 </nav>
             </div>
 
+            <style>
+                .pdf-upload-workspace { display: grid; min-width: 0; max-width: 100%; gap: 20px; }
+                .pdf-upload-card { padding: 22px; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .04); }
+                .pdf-upload-card h3, .pdf-upload-list-head h3 { margin: 0; color: #0f172a; font-size: 17px; font-weight: 750; }
+                .pdf-upload-card p, .pdf-upload-list-head p { margin: 5px 0 0; color: #64748b; font-size: 13px; line-height: 1.5; }
+                .pdf-upload-form { display: grid; grid-template-columns: minmax(240px, 1fr) auto; gap: 12px; align-items: end; margin-top: 18px; }
+                .pdf-upload-input-stack { display: grid; gap: 11px; }
+                .pdf-upload-file-label { display: grid; gap: 6px; color: #475569; font-size: 12px; font-weight: 700; }
+                .pdf-upload-file { box-sizing: border-box; width: 100%; min-height: 42px; padding: 7px; border: 1px solid #cbd5e1; border-radius: 9px; color: #334155; background: #fff; }
+                .pdf-upload-primary, .pdf-upload-secondary, .pdf-upload-danger, .pdf-upload-refresh, .pdf-upload-test { display: inline-flex; min-height: 40px; align-items: center; justify-content: center; box-sizing: border-box; border-radius: 9px; padding: 0 15px; font-size: 13px; font-weight: 750; text-decoration: none !important; cursor: pointer; }
+                .pdf-upload-primary { border: 1px solid #2563eb; color: #fff !important; background: #2563eb !important; }
+                .pdf-upload-primary:hover { border-color: #1d4ed8; background: #1d4ed8 !important; }
+                .pdf-upload-test { border: 1px solid #7c3aed; color: #fff !important; background: #7c3aed !important; }
+                .pdf-upload-test:hover { border-color: #6d28d9; background: #6d28d9 !important; }
+                .pdf-upload-danger { border: 1px solid #fecaca; color: #b91c1c !important; background: #fff !important; }
+                .pdf-upload-danger:hover { border-color: #ef4444; background: #fef2f2 !important; }
+                .pdf-upload-primary:disabled, .pdf-upload-danger:disabled, .pdf-upload-test:disabled { cursor: wait; opacity: .65; }
+                .pdf-upload-secondary, .pdf-upload-refresh { border: 1px solid #cbd5e1; color: #334155 !important; background: #fff !important; }
+                .pdf-upload-secondary:hover, .pdf-upload-refresh:hover { border-color: #94a3b8; background: #f8fafc !important; }
+                .pdf-upload-message { margin-top: 12px; padding: 9px 11px; border-radius: 8px; font-size: 13px; }
+                .pdf-upload-message.is-error { color: #991b1b; background: #fef2f2; }
+                .pdf-upload-message.is-success { color: #166534; background: #f0fdf4; }
+                .pdf-upload-list-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+                .pdf-upload-list-head-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+                .pdf-upload-loading, .pdf-upload-empty { padding: 32px; border: 1px dashed #cbd5e1; border-radius: 12px; color: #64748b; background: rgba(255,255,255,.6); text-align: center; font-size: 13px; }
+                .pdf-upload-list { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; max-width: 100%; gap: 10px; }
+                .pdf-upload-row { display: flex; width: 100%; max-width: 100%; align-items: flex-start; justify-content: space-between; gap: 18px; box-sizing: border-box; overflow: hidden; padding: 16px 18px; border: 1px solid #e2e8f0; border-radius: 12px; background: #fff; }
+                .pdf-upload-file-info { flex: 1 1 0%; width: 0; min-width: 0; max-width: 100%; }
+                .pdf-upload-file-name { overflow: hidden; color: #0f172a; font-size: 15px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
+                .pdf-upload-file-meta { display: flex; flex-wrap: wrap; gap: 7px 14px; margin-top: 4px; color: #64748b; font-size: 12px; }
+                .pdf-upload-cases { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; max-width: 100%; gap: 8px; margin-top: 12px; }
+                .pdf-upload-case { min-width: 0; max-width: 100%; box-sizing: border-box; padding: 10px 12px; border: 1px solid #dbeafe; border-radius: 9px; background: #f8fbff; }
+                .pdf-upload-case-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+                .pdf-upload-case-head > div { min-width: 0; }
+                .pdf-upload-case-test-id { display: block; margin-bottom: 4px; color: #64748b; font-size: 10px; line-height: 1.35; overflow-wrap: anywhere; word-break: break-word; }
+                .pdf-upload-case-test-id strong { color: #475569; font-weight: 800; }
+                .pdf-upload-case-id { display: inline; color: #1d4ed8; font-size: 11px; overflow-wrap: anywhere; word-break: break-word; }
+                .pdf-upload-case-page { margin-left: 7px; color: #64748b; font-size: 11px; }
+                .pdf-upload-case-target { margin-top: 5px; color: #64748b; font-size: 11px; line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+                .pdf-upload-case-comment { margin-top: 5px; color: #334155; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; word-break: break-word; white-space: pre-wrap; }
+                .pdf-upload-no-cases { margin-top: 10px; color: #64748b; font-size: 12px; }
+                .pdf-upload-grouping { display: inline-flex; width: fit-content; max-width: 100%; align-items: center; gap: 9px; margin-top: 11px; color: #475569; font-size: 12px; font-weight: 750; cursor: pointer; }
+                .pdf-upload-grouping input { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; }
+                .pdf-upload-grouping-track { position: relative; width: 34px; height: 19px; flex: 0 0 34px; border-radius: 999px; background: #cbd5e1; transition: background .15s ease; }
+                .pdf-upload-grouping-track::after { position: absolute; top: 3px; left: 3px; width: 13px; height: 13px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(15, 23, 42, .3); content: ''; transition: transform .15s ease; }
+                .pdf-upload-grouping input:checked + .pdf-upload-grouping-track { background: #2563eb; }
+                .pdf-upload-grouping input:checked + .pdf-upload-grouping-track::after { transform: translateX(15px); }
+                .pdf-upload-grouping input:focus-visible + .pdf-upload-grouping-track { outline: 3px solid rgba(37, 99, 235, .22); outline-offset: 2px; }
+                .pdf-upload-grouping input:disabled + .pdf-upload-grouping-track { opacity: .55; }
+                .pdf-upload-grouping-help { color: #94a3b8; font-weight: 500; }
+                .pdf-upload-batch-status { padding: 12px 14px; border: 1px solid #ddd6fe; border-radius: 10px; color: #5b21b6; background: #f5f3ff; font-size: 12px; }
+                .pdf-upload-batch-status strong { font-weight: 800; }
+                .pdf-upload-test-result { display: flex; flex-wrap: wrap; gap: 5px 10px; align-items: center; margin-top: 10px; padding: 8px 10px; border-radius: 8px; color: #334155; background: #f8fafc; font-size: 12px; }
+                .pdf-upload-test-result.is-pass { color: #166534; background: #f0fdf4; }
+                .pdf-upload-test-result.is-fail { color: #991b1b; background: #fef2f2; }
+                .pdf-upload-test-result.is-error { color: #92400e; background: #fffbeb; }
+                .pdf-upload-test-result strong { font-weight: 800; }
+                .pdf-upload-test-result a { color: inherit; font-weight: 750; text-decoration: underline; }
+                .pdf-upload-actions { display: flex; flex: 0 0 auto; max-width: 100%; flex-wrap: wrap; gap: 8px; }
+                html.dark .pdf-upload-card, html.dark .pdf-upload-row { border-color: #374151; background: #1f2937; }
+                html.dark .pdf-upload-case { border-color: #374151; background: #111827; }
+                html.dark .pdf-upload-card h3, html.dark .pdf-upload-list-head h3, html.dark .pdf-upload-file-name { color: #f8fafc; }
+                html.dark .pdf-upload-file { border-color: #4b5563; color: #e5e7eb; background: #111827; }
+                html.dark .pdf-upload-secondary, html.dark .pdf-upload-refresh { border-color: #4b5563; color: #e5e7eb !important; background: #1f2937 !important; }
+                html.dark .pdf-upload-danger { border-color: #7f1d1d; color: #fca5a5 !important; background: #1f2937 !important; }
+                html.dark .pdf-upload-grouping { color: #d1d5db; }
+                html.dark .pdf-upload-batch-status { border-color: #5b21b6; color: #ddd6fe; background: rgba(76, 29, 149, .28); }
+                @media (max-width: 700px) {
+                    .pdf-upload-form { grid-template-columns: 1fr; }
+                    .pdf-upload-list-head { align-items: stretch; flex-direction: column; }
+                    .pdf-upload-list-head-actions { justify-content: stretch; }
+                    .pdf-upload-list-head-actions > * { flex: 1 1 auto; }
+                    .pdf-upload-row { align-items: stretch; flex-direction: column; }
+                    .pdf-upload-file-info { width: 100%; }
+                    .pdf-upload-actions { width: 100%; }
+                    .pdf-upload-actions > * { flex: 1 1 auto; }
+                }
+            </style>
+
+            <div x-show="activeTab === 'upload-tests'" x-cloak class="pdf-upload-workspace">
+                <section class="pdf-upload-card">
+                    <h3>Upload a PDF</h3>
+                    <p>The PDF opens in a read-only review screen with the same blue boxes as <code>?pdfjs=1</code>. Click a box, add the test instruction, and save.</p>
+
+                    <form x-on:submit.prevent="submitPdfUpload()" class="pdf-upload-form">
+                        <div class="pdf-upload-input-stack">
+                            <label class="pdf-upload-file-label">
+                                <span>PDF file</span>
+                                <input x-ref="uploadTestPdf"
+                                       class="pdf-upload-file"
+                                       type="file"
+                                       name="pdf"
+                                       accept="application/pdf,.pdf"
+                                       x-bind:disabled="uploading || uploadTestsBusy"
+                                       x-on:change="uploadError = ''; uploadSuccess = ''">
+                            </label>
+                            <label class="pdf-upload-grouping">
+                                <input type="checkbox"
+                                       x-model="uploadParagraphGrouping"
+                                       x-bind:disabled="uploading || uploadTestsBusy">
+                                <span class="pdf-upload-grouping-track" aria-hidden="true"></span>
+                                <span>
+                                    Apply paragraph grouping
+                                    <span class="pdf-upload-grouping-help">Match the original document editor</span>
+                                </span>
+                            </label>
+                        </div>
+                        <button class="pdf-upload-primary" type="submit" x-bind:disabled="uploading || uploadTestsBusy">
+                            <span x-text="uploading ? 'Uploading…' : 'Upload and review'"></span>
+                        </button>
+                    </form>
+
+                    <div x-show="uploadError" x-cloak class="pdf-upload-message is-error" x-text="uploadError"></div>
+                    <div x-show="uploadSuccess" x-cloak class="pdf-upload-message is-success" x-text="uploadSuccess"></div>
+                </section>
+
+                <div class="pdf-upload-list-head">
+                    <div>
+                        <h3>Uploaded PDFs</h3>
+                        <p>Open any PDF to select an annotation and write or update its test comment.</p>
+                    </div>
+                    <div class="pdf-upload-list-head-actions">
+                        <button class="pdf-upload-test"
+                                type="button"
+                                x-on:click="runAllUploadedPdfTests()"
+                                x-bind:disabled="uploadTestsBusy || allUploadTestCasesCount === 0">
+                            <span x-text="uploadBatchRunning && uploadBatchScope === 'all'
+                                ? 'Running ' + uploadBatchCompleted + '/' + uploadBatchTotal + '…'
+                                : 'Run ALL uploaded PDF tests'"></span>
+                        </button>
+                        <button class="pdf-upload-refresh"
+                                type="button"
+                                x-on:click="loadUploadTests()"
+                                x-bind:disabled="uploadTestsLoading || uploadTestsBusy">
+                            <span x-text="uploadTestsLoading ? 'Refreshing…' : 'Refresh'"></span>
+                        </button>
+                    </div>
+                </div>
+
+                <div x-show="uploadBatchRunning || uploadBatchFinished"
+                     x-cloak
+                     class="pdf-upload-batch-status">
+                    <strong x-text="uploadBatchRunning ? 'Test run in progress' : 'Test run complete'"></strong>
+                    <span x-text="' · ' + uploadBatchCompleted + '/' + uploadBatchTotal + ' finished · ' + uploadBatchPassed + ' passed · ' + uploadBatchFailed + ' failed · ' + uploadBatchErrors + ' errors'"></span>
+                </div>
+
+                <div x-show="uploadTestsLoading" class="pdf-upload-loading">Loading uploaded PDFs…</div>
+                <div x-show="!uploadTestsLoading && uploadTests.length === 0" class="pdf-upload-empty">No uploaded PDFs yet.</div>
+
+                <div x-show="!uploadTestsLoading && uploadTests.length > 0" class="pdf-upload-list">
+                    <template x-for="test in uploadTests" :key="test.id">
+                        <article class="pdf-upload-row">
+                            <div class="pdf-upload-file-info">
+                                <div class="pdf-upload-file-name" x-text="test.original_name"></div>
+                                <div class="pdf-upload-file-meta">
+                                    <span x-text="formatBytes(test.size_bytes)"></span>
+                                    <span x-text="'Uploaded ' + formatTimestamp(test.created_at)"></span>
+                                    <span x-text="(test.case_count || 0) + ((test.case_count || 0) === 1 ? ' saved annotation test' : ' saved annotation tests')"></span>
+                                </div>
+                                <label class="pdf-upload-grouping">
+                                    <input type="checkbox"
+                                           x-bind:checked="Boolean(test.paragraph_grouping_enabled)"
+                                           x-on:change="updateUploadParagraphGrouping(test, $event.target.checked)"
+                                           x-bind:disabled="uploadTestsBusy || updatingParagraphGroupingId !== null">
+                                    <span class="pdf-upload-grouping-track" aria-hidden="true"></span>
+                                    <span x-text="updatingParagraphGroupingId === test.id
+                                        ? 'Updating paragraph grouping…'
+                                        : 'Apply paragraph grouping'"></span>
+                                </label>
+                                <div x-show="!Array.isArray(test.cases) || test.cases.length === 0"
+                                     x-cloak
+                                     class="pdf-upload-no-cases">
+                                    No annotation tests saved yet. Select an annotation to add one.
+                                </div>
+                                <div x-show="Array.isArray(test.cases) && test.cases.length > 0"
+                                     x-cloak
+                                     class="pdf-upload-cases">
+                                    <template x-for="testCase in (test.cases || [])" :key="testCase.id">
+                                        <div class="pdf-upload-case">
+                                            <div class="pdf-upload-case-head">
+                                                <div>
+                                                    <span class="pdf-upload-case-test-id">
+                                                        <strong>Test ID</strong>
+                                                        <span x-text="testCase.test_id"></span>
+                                                    </span>
+                                                    <code class="pdf-upload-case-id" x-text="testCase.annotation_id"></code>
+                                                    <span class="pdf-upload-case-page"
+                                                          x-text="'Page ' + (Number(testCase.page_index) + 1)"></span>
+                                                </div>
+                                                <button class="pdf-upload-test"
+                                                        type="button"
+                                                        x-on:click="runUploadTest(test, testCase)"
+                                                        x-bind:disabled="uploadTestsBusy"
+                                                        x-text="runningUploadTestCaseId === testCase.id ? 'Testing…' : 'Test'"></button>
+                                            </div>
+                                            <div class="pdf-upload-case-target"
+                                                 x-show="testCase.target_text"
+                                                 x-text="testCase.target_text"></div>
+                                            <div class="pdf-upload-case-comment" x-text="testCase.test_comment"></div>
+                                            <div x-show="uploadTestResults[testCase.id]"
+                                                 x-cloak
+                                                 class="pdf-upload-test-result"
+                                                 x-bind:class="'is-' + (uploadTestResults[testCase.id]?.status || 'error')">
+                                                <strong x-text="String(uploadTestResults[testCase.id]?.status || 'error').toUpperCase()"></strong>
+                                                <span x-text="(uploadTestResults[testCase.id]?.checks_passed || 0) + '/' + (uploadTestResults[testCase.id]?.checks_total || 0) + ' checks passed'"></span>
+                                                <span x-show="uploadTestResults[testCase.id]?.error"
+                                                      x-text="uploadTestResults[testCase.id]?.error"></span>
+                                                <a x-show="uploadTestResults[testCase.id]?.id"
+                                                   x-bind:href="uploadResultDetailsUrl(uploadTestResults[testCase.id])">View details</a>
+                                                <template x-for="artifact in (uploadTestResults[testCase.id]?.artifacts || []).filter((item) => item.kind === 'pdf')" :key="artifact.filename">
+                                                    <a x-bind:href="artifact.url" target="_blank" rel="noopener" x-text="artifact.label || 'Resulting PDF'"></a>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </div>
+                            <div class="pdf-upload-actions">
+                                <button class="pdf-upload-test"
+                                        type="button"
+                                        x-on:click="runAllUploadTestsForPdf(test)"
+                                        x-bind:disabled="uploadTestsBusy || !Array.isArray(test.cases) || test.cases.length === 0"
+                                        x-text="uploadBatchRunning && uploadBatchScope === 'pdf:' + test.id
+                                            ? 'Running ' + uploadBatchCompleted + '/' + uploadBatchTotal + '…'
+                                            : 'Run all tests for PDF'"></button>
+                                <a class="pdf-upload-secondary" x-bind:href="test.original_pdf_url" target="_blank" rel="noopener">Open PDF</a>
+                                <a class="pdf-upload-primary" x-bind:href="test.review_url">Select annotation</a>
+                                <button class="pdf-upload-danger"
+                                        type="button"
+                                        x-on:click="deleteUploadTest(test)"
+                                        x-bind:disabled="deletingUploadTestId === test.id || uploadTestsBusy"
+                                        x-text="deletingUploadTestId === test.id ? 'Deleting…' : 'Delete'"></button>
+                            </div>
+                        </article>
+                    </template>
+                </div>
+            </div>
+
             {{-- Category filters --}}
-            <div x-show="!loading && visibleCategories.length" class="flex flex-wrap items-center gap-2">
+            <div x-show="activeTab !== 'upload-tests' && !loading && visibleCategories.length" class="flex flex-wrap items-center gap-2">
                 <button type="button"
                         x-on:click="setActiveCategory('all')"
                         x-bind:class="activeCategory === 'all'
@@ -101,7 +340,7 @@
             </div>
 
             {{-- Loading state --}}
-            <template x-if="loading">
+            <template x-if="activeTab !== 'upload-tests' && loading">
                 <div class="flex items-center gap-3 py-12 justify-center">
                     <svg class="animate-spin h-5 w-5 text-danger-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -112,7 +351,7 @@
             </template>
 
             {{-- Test cards grid --}}
-            <div x-show="!loading && visibleFiles.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div x-show="activeTab !== 'upload-tests' && !loading && visibleFiles.length > 0" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <template x-for="file in visibleFiles" :key="file.path">
                     <div class="group relative bg-white dark:bg-gray-800 rounded-2xl ring-1 ring-gray-950/5 dark:ring-white/10 overflow-hidden flex flex-col cursor-pointer transition-shadow hover:shadow-md"
                          x-on:click="openTest(file)">
@@ -199,7 +438,7 @@
             </div>
 
             {{-- Empty state when the active editor tab has no tests --}}
-            <div x-show="!loading && visibleFiles.length === 0" class="text-center py-12 text-sm text-gray-500 dark:text-gray-400">
+            <div x-show="activeTab !== 'upload-tests' && !loading && visibleFiles.length === 0" class="text-center py-12 text-sm text-gray-500 dark:text-gray-400">
                 No tests registered for this editor yet.
             </div>
         </div>
@@ -568,8 +807,39 @@
                 files: [],
                 latestRunCreatedAt: null,
                 activeArtifact: null,
-                activeTab: 'edit-new',
+                activeTab: 'upload-tests',
                 activeCategory: 'all',
+                uploadTests: [],
+                uploadTestsLoading: false,
+                uploading: false,
+                uploadParagraphGrouping: false,
+                deletingUploadTestId: null,
+                updatingParagraphGroupingId: null,
+                runningUploadTestCaseId: null,
+                uploadBatchRunning: false,
+                uploadBatchFinished: false,
+                uploadBatchScope: null,
+                uploadBatchTotal: 0,
+                uploadBatchCompleted: 0,
+                uploadBatchPassed: 0,
+                uploadBatchFailed: 0,
+                uploadBatchErrors: 0,
+                uploadTestResults: {},
+                uploadError: '',
+                uploadSuccess: '',
+                get uploadTestsBusy() {
+                    return this.uploading
+                        || this.uploadBatchRunning
+                        || this.runningUploadTestCaseId !== null
+                        || this.deletingUploadTestId !== null
+                        || this.updatingParagraphGroupingId !== null;
+                },
+                get allUploadTestCasesCount() {
+                    return (this.uploadTests || []).reduce(
+                        (total, test) => total + (Array.isArray(test?.cases) ? test.cases.length : 0),
+                        0
+                    );
+                },
                 categoryName(file) {
                     return (file && file.test_category) ? file.test_category : 'PDF Tests';
                 },
@@ -597,10 +867,11 @@
                     try {
                         const url = new URL(window.location.href);
                         url.searchParams.set('editor', tab);
-                        if (this.activeCategory === 'all') url.searchParams.delete('category');
+                        if (tab === 'upload-tests' || this.activeCategory === 'all') url.searchParams.delete('category');
                         else url.searchParams.set('category', this.activeCategory);
                         history.replaceState(history.state || {}, '', url.toString());
                     } catch (_e) { /* ignore */ }
+                    if (tab === 'upload-tests') this.loadUploadTests();
                 },
                 setActiveCategory(category) {
                     if (this.globalRunning) return;
@@ -639,7 +910,14 @@
                 },
 
                 async init() {
+                    const params = new URLSearchParams(window.location.search);
+                    const editorParam = params.get('editor');
+                    if (editorParam === 'edit-new' || editorParam === 'upload-tests') {
+                        this.activeTab = editorParam;
+                    }
+
                     this.loading = true;
+                    const uploadTestsPromise = this.loadUploadTests();
                     try {
                         const response = await fetch('{{ route('pdfTests.testFiles') }}', {
                             headers: { Accept: 'application/json' },
@@ -647,7 +925,9 @@
                         });
                         const data = await response.json();
                         if (!response.ok || !data.success) throw new Error(data.message || 'Failed to load tests');
-                        this.files = data.files || [];
+                        this.files = (data.files || []).filter(
+                            (file) => (file?.editor || 'edit-new') !== 'edit'
+                        );
 
                         if (data.latest_run?.results?.length) {
                             this.allRunResults = data.latest_run.results.map((r) => this.normalizeResult(r));
@@ -658,13 +938,9 @@
                     } finally {
                         this.loading = false;
                     }
+                    await uploadTestsPromise;
 
                     // Check if URL has a test param — open that test's detail screen
-                    const params = new URLSearchParams(window.location.search);
-                    const editorParam = params.get('editor');
-                    if (editorParam === 'edit' || editorParam === 'edit-new') {
-                        this.activeTab = editorParam;
-                    }
                     const categoryParam = params.get('category');
                     if (categoryParam && this.visibleCategories.includes(categoryParam)) {
                         this.activeCategory = categoryParam;
@@ -697,6 +973,253 @@
                         this.screen = 'list';
                         this.activeFile = null;
                     });
+                },
+
+                /* ── persistent PDF upload test harness ── */
+                async loadUploadTests() {
+                    if (this.uploadTestsLoading) return;
+                    this.uploadTestsLoading = true;
+                    try {
+                        const response = await fetch('{{ route('pdfTests.uploadTests.index') }}', {
+                            headers: { Accept: 'application/json' },
+                            credentials: 'same-origin',
+                        });
+                        const data = await response.json();
+                        if (!response.ok || !data.success) {
+                            throw new Error(data.message || 'Failed to load PDF upload tests');
+                        }
+                        this.uploadTests = Array.isArray(data.tests) ? data.tests : [];
+                    } catch (error) {
+                        this.uploadError = error?.message || String(error);
+                    } finally {
+                        this.uploadTestsLoading = false;
+                    }
+                },
+
+                async submitPdfUpload() {
+                    if (this.uploading) return;
+                    const file = this.$refs.uploadTestPdf?.files?.[0];
+                    if (!file) {
+                        this.uploadError = 'Choose a PDF file first.';
+                        return;
+                    }
+
+                    this.uploading = true;
+                    this.uploadError = '';
+                    this.uploadSuccess = '';
+                    const body = new FormData();
+                    body.append('pdf', file);
+                    body.append('paragraph_grouping_enabled', this.uploadParagraphGrouping ? '1' : '0');
+
+                    try {
+                        const response = await fetch('{{ route('pdfTests.uploadTests.store') }}', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                                'Accept': 'application/json',
+                            },
+                            body,
+                        });
+                        const data = await response.json();
+                        if (!response.ok || !data.success) {
+                            const validationMessage = data.errors?.pdf?.[0];
+                            throw new Error(validationMessage || data.message || 'PDF upload failed');
+                        }
+
+                        this.uploadSuccess = data.message || 'PDF upload test created.';
+                        if (this.$refs.uploadTestPdf) this.$refs.uploadTestPdf.value = '';
+                        if (data.test?.review_url) {
+                            window.location.assign(data.test.review_url);
+                            return;
+                        }
+                        await this.loadUploadTests();
+                    } catch (error) {
+                        this.uploadError = error?.message || String(error);
+                    } finally {
+                        this.uploading = false;
+                    }
+                },
+
+                async deleteUploadTest(test) {
+                    if (!test?.id || !test?.delete_url || this.uploadTestsBusy) return;
+                    const name = String(test.original_name || 'this PDF');
+                    if (!window.confirm(`Delete “${name}”? This permanently removes the uploaded PDF and all of its saved annotation tests.`)) {
+                        return;
+                    }
+
+                    this.deletingUploadTestId = test.id;
+                    this.uploadError = '';
+                    this.uploadSuccess = '';
+                    try {
+                        const response = await fetch(test.delete_url, {
+                            method: 'DELETE',
+                            credentials: 'same-origin',
+                            headers: {
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                                'Accept': 'application/json',
+                            },
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok || !data.success) {
+                            throw new Error(data.message || 'The uploaded PDF could not be deleted.');
+                        }
+
+                        this.uploadTests = this.uploadTests.filter((item) => item.id !== test.id);
+                        for (const testCase of (test.cases || [])) {
+                            delete this.uploadTestResults[testCase.id];
+                        }
+                        this.uploadSuccess = data.message || 'Uploaded PDF deleted.';
+                    } catch (error) {
+                        this.uploadError = error?.message || String(error);
+                    } finally {
+                        this.deletingUploadTestId = null;
+                    }
+                },
+
+                async updateUploadParagraphGrouping(test, enabled) {
+                    if (!test?.id || !test?.paragraph_grouping_url || this.uploadTestsBusy) return;
+
+                    const previous = Boolean(test.paragraph_grouping_enabled);
+                    test.paragraph_grouping_enabled = Boolean(enabled);
+                    this.updatingParagraphGroupingId = test.id;
+                    this.uploadError = '';
+                    this.uploadSuccess = '';
+                    try {
+                        const response = await fetch(test.paragraph_grouping_url, {
+                            method: 'PATCH',
+                            credentials: 'same-origin',
+                            headers: {
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                paragraph_grouping_enabled: Boolean(enabled),
+                            }),
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok || !data.success) {
+                            throw new Error(data.message || 'Paragraph grouping could not be updated.');
+                        }
+
+                        test.paragraph_grouping_enabled = Boolean(
+                            data.test?.paragraph_grouping_enabled
+                        );
+                        this.uploadSuccess = data.message || 'Paragraph grouping updated.';
+                    } catch (error) {
+                        test.paragraph_grouping_enabled = previous;
+                        this.uploadError = error?.message || String(error);
+                    } finally {
+                        this.updatingParagraphGroupingId = null;
+                    }
+                },
+
+                async runUploadTest(test, testCase) {
+                    if (!test?.id || !testCase?.id || this.uploadTestsBusy) return;
+                    this.uploadBatchFinished = false;
+                    await this.executeUploadTest(test, testCase);
+                },
+
+                async executeUploadTest(test, testCase) {
+                    this.runningUploadTestCaseId = testCase.id;
+                    this.uploadError = '';
+                    this.uploadSuccess = '';
+                    delete this.uploadTestResults[testCase.id];
+                    let result;
+                    try {
+                        const response = await fetch('{{ route('pdfTests.runSingleTest') }}', {
+                            method: 'POST',
+                            credentials: 'same-origin',
+                            headers: {
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || '',
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json',
+                            },
+                            body: JSON.stringify({
+                                test_key: 'pdf_upload_saved_test',
+                                upload_test_id: test.id,
+                                upload_test_case_id: testCase.id,
+                                run_id: this.nextRunId(),
+                            }),
+                        });
+                        const data = await response.json().catch(() => ({}));
+                        if (!response.ok || !data.success) {
+                            throw new Error(data.message || 'The uploaded PDF test could not run.');
+                        }
+
+                        result = this.normalizeResult(data.result || {});
+                    } catch (error) {
+                        result = this.normalizeResult({
+                            test_key: `pdf_upload_test_${test.id}_case_${testCase.id}`,
+                            filename: test.original_name || `pdf-upload-test-${test.id}.pdf`,
+                            status: 'error',
+                            checks_passed: 0,
+                            checks_total: 0,
+                            checks: [],
+                            error: error?.message || String(error),
+                            warnings: [],
+                            artifacts: [],
+                        });
+                    } finally {
+                        this.uploadTestResults[testCase.id] = result;
+                        this.runningUploadTestCaseId = null;
+                    }
+                    return result;
+                },
+
+                async runAllUploadTestsForPdf(test) {
+                    const entries = (Array.isArray(test?.cases) ? test.cases : [])
+                        .map((testCase) => ({ test, testCase }));
+                    await this.runUploadTestBatch(entries, `pdf:${test?.id || ''}`);
+                },
+
+                async runAllUploadedPdfTests() {
+                    const entries = [];
+                    for (const test of (this.uploadTests || [])) {
+                        for (const testCase of (Array.isArray(test?.cases) ? test.cases : [])) {
+                            entries.push({ test, testCase });
+                        }
+                    }
+                    await this.runUploadTestBatch(entries, 'all');
+                },
+
+                async runUploadTestBatch(entries, scope) {
+                    if (this.uploadTestsBusy || !Array.isArray(entries) || entries.length === 0) return;
+
+                    this.uploadBatchRunning = true;
+                    this.uploadBatchFinished = false;
+                    this.uploadBatchScope = scope;
+                    this.uploadBatchTotal = entries.length;
+                    this.uploadBatchCompleted = 0;
+                    this.uploadBatchPassed = 0;
+                    this.uploadBatchFailed = 0;
+                    this.uploadBatchErrors = 0;
+                    this.uploadError = '';
+                    this.uploadSuccess = '';
+
+                    try {
+                        for (const entry of entries) {
+                            const result = await this.executeUploadTest(entry.test, entry.testCase);
+                            this.uploadBatchCompleted += 1;
+                            if (result?.status === 'pass') this.uploadBatchPassed += 1;
+                            else if (result?.status === 'fail') this.uploadBatchFailed += 1;
+                            else this.uploadBatchErrors += 1;
+                        }
+                        this.uploadSuccess = `Completed ${this.uploadBatchCompleted} uploaded PDF tests.`;
+                    } finally {
+                        this.uploadBatchRunning = false;
+                        this.uploadBatchFinished = true;
+                        this.runningUploadTestCaseId = null;
+                    }
+                },
+
+                uploadResultDetailsUrl(result) {
+                    if (!result?.id) {
+                        return '{{ \App\Filament\Resources\OverlayEditorTestResource::getUrl() }}';
+                    }
+                    return '{{ \App\Filament\Resources\OverlayEditorTestResource::getUrl('view', ['record' => '__RECORD__']) }}'
+                        .replace('__RECORD__', encodeURIComponent(result.id));
                 },
 
                 /* ── navigation ── */
@@ -910,6 +1433,15 @@
                     const d = new Date(value);
                     if (Number.isNaN(d.getTime())) return value;
                     return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(d);
+                },
+
+                formatBytes(value) {
+                    const bytes = Number(value || 0);
+                    if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+                    const units = ['B', 'KB', 'MB', 'GB'];
+                    const index = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+                    const amount = bytes / Math.pow(1024, index);
+                    return `${amount.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
                 },
 
                 openArtifact(artifact) { this.activeArtifact = artifact; },

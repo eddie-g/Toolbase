@@ -1,12 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+    clampSourceMaskRectToCell,
+    dominantSourceRunFontSize,
     isPdfjsPromotedExtractionAnnotation,
     isPdfjsSourceBackedTextAnnotation,
+    naturalSourceLineSeparator,
+    pdfjsFontWeightFromFaceName,
     pdfjsPromotedOverlayShouldRenderAsPersistedOverlay,
     pdfjsSourceOverlayShouldUseSourceBoxInEditMode,
+    promotedTextEditFlags,
     reconcileRichTextRunWhitespace,
+    resolveRichTextRunFontIdentity,
+    restoreExplicitSourceWhitespace,
     richTextViewportCssLength,
+    sourceNaturalizedGapText,
+    sourceRunDrawnUnderlineMetadata,
+    sourceRunTextsUseDistributedLeaderSpacing,
+    sourceSpanDrawnUnderlineSegments,
+    sourceSpanDrawnUnderlineRanges,
+    sourceVisualLineSlots,
+    splitSourceRunsAtDrawnUnderlineRanges,
 } from './source-edit-contract.js';
 
 const baseSourceOverlay = {
@@ -44,6 +58,42 @@ test('converts versioned PDF-point rich text to viewport pixels', () => {
     assert.equal(richTextViewportCssLength('1.2em', { pointScale: 3 }), '1.2em');
 });
 
+test('drops a stale embedded PDF font after changing the authored family to Montserrat', () => {
+    const original = resolveRichTextRunFontIdentity({
+        computedFontFamily: 'g_d0_f13',
+        sourcePdfFontName: 'ETILIDL+HelveticaNeueLTStd-BdCn',
+        computedDocumentFont: {
+            source: 'pdfjs-runtime',
+            pdfFontName: 'ETILIDL+HelveticaNeueLTStd-BdCn',
+            cleanName: 'HelveticaNeueLTStd-BdCn',
+        },
+        styleDirty: false,
+    });
+    assert.deepEqual(original, {
+        fontFamily: 'ETILIDL+HelveticaNeueLTStd-BdCn',
+        fontSourceName: 'HelveticaNeueLTStd-BdCn',
+    });
+
+    const changed = resolveRichTextRunFontIdentity({
+        computedFontFamily: 'Montserrat',
+        // Source-fidelity markup still has this attribute after the picker
+        // changes the box-level family. It must not leak into the export run.
+        sourcePdfFontName: 'ETILIDL+HelveticaNeueLTStd-BdCn',
+        computedDocumentFont: null,
+        styleDirty: true,
+    });
+    assert.deepEqual(changed, {
+        fontFamily: 'Montserrat',
+        fontSourceName: 'Montserrat',
+    });
+});
+
+test('recognizes abbreviated bold-condensed PDF face names', () => {
+    assert.equal(pdfjsFontWeightFromFaceName('ETLIDL+HelveticaNeueLTStd-BdCn'), '700');
+    assert.equal(pdfjsFontWeightFromFaceName('HelveticaNeueLTStd-BdIt'), '700');
+    assert.equal(pdfjsFontWeightFromFaceName('BBBPSR+HelveticaNeueLTStd-Cn'), '400');
+});
+
 test('repairs whitespace-only drift without losing mixed run styles', () => {
     const runs = reconcileRichTextRunWhitespace([
         { type: 'text', text: 'Sales', fontWeight: '700', fontSize: 21 },
@@ -65,6 +115,276 @@ test('repairs whitespace-only drift without losing mixed run styles', () => {
     assert.deepEqual(reconcileRichTextRunWhitespace([
         { type: 'text', text: 'Different', fontWeight: '700' },
     ], 'Content'), []);
+});
+
+test('preserves a spaced suffix and source typography when promoted_1_8 is edited', () => {
+    const sourceText = (
+        'The provider or facility will not condition treatment on whether I sign the authorization. '
+        + 'I may be charged for copies in accordance with state law. '
+        + 'This authorization will not expire unless revoked by you or your legal representative '
+        + 'or upon notification of death.'
+    );
+    const editedText = `${sourceText} test`;
+    const runs = reconcileRichTextRunWhitespace([
+        {
+            type: 'text',
+            text: 'The provider or facility will not condition treatment on whether I sign the authorization. ',
+            fontWeight: '400',
+            fontSourceName: 'HelveticaNeueLTStd-Cn',
+        },
+        {
+            type: 'text',
+            text: 'I may be charged for copies in accordance with state law.',
+            fontWeight: '700',
+            fontSourceName: 'HelveticaNeueLTStd-BdCn',
+        },
+        {
+            type: 'text',
+            // Reproduce the first-input DOM drift: the leading space was
+            // omitted from the final regular run.
+            text: 'This authorization will not expire unless revoked by you or your legal representative or upon notification of death.test',
+            fontWeight: '400',
+            fontSourceName: 'HelveticaNeueLTStd-Cn',
+        },
+    ], editedText);
+
+    assert.equal(runs.map((run) => run.text || '').join(''), editedText);
+    assert.equal(runs.at(-1).text.endsWith('death. test'), true);
+    assert.equal(runs.some((run) => (
+        run.fontWeight === '700'
+        && run.fontSourceName === 'HelveticaNeueLTStd-BdCn'
+        && run.text.includes('I may be charged')
+    )), true);
+
+    assert.deepEqual(promotedTextEditFlags({
+        isPromoted: true,
+        currentText: editedText,
+        sourceText,
+        promotedDirty: false,
+        preserveSourceTypography: false,
+    }), {
+        textChanged: true,
+        promotedDirty: true,
+        preserveSourceTypography: true,
+    });
+});
+
+test('keeps the f1040s3 line 13 separator on the regular rich-text run', () => {
+    const runs = reconcileRichTextRunWhitespace([
+        { type: 'text', text: '13', fontWeight: '700', fontSize: 9.06 },
+        {
+            type: 'text',
+            text: 'Other payments or refundable credits:',
+            fontWeight: '400',
+            fontSize: 9.06,
+        },
+    ], '13 Other payments or refundable credits:');
+
+    assert.deepEqual(runs.map((run) => ({
+        text: run.text,
+        fontWeight: run.fontWeight,
+    })), [
+        { text: '13', fontWeight: '700' },
+        { text: ' Other payments or refundable credits:', fontWeight: '400' },
+    ]);
+    assert.equal(runs.map((run) => run.text).join(''), '13 Other payments or refundable credits:');
+});
+
+test('preserves captured distributed-leader gaps when source markup is naturalized for resize', () => {
+    const leaderRuns = ['years', ...Array(24).fill('.')];
+    assert.equal(sourceRunTextsUseDistributedLeaderSpacing(leaderRuns), true);
+    assert.equal(sourceRunTextsUseDistributedLeaderSpacing(['13', 'Other payments']), false);
+
+    assert.equal(sourceNaturalizedGapText({
+        originalSpaceCount: 4,
+        preserveCapturedSpacing: true,
+    }), '    ');
+    assert.equal(sourceNaturalizedGapText({
+        originalSpaceCount: 4,
+        preserveCapturedSpacing: false,
+    }), ' ');
+    assert.equal(sourceNaturalizedGapText({
+        atLineStart: true,
+        originalSpaceCount: 4,
+        preserveCapturedSpacing: true,
+    }), '');
+    assert.equal(sourceNaturalizedGapText({
+        currentText: '  x',
+        originalSpaceCount: 4,
+        preserveCapturedSpacing: true,
+        userMutated: true,
+    }), '  x');
+});
+
+test('clamps an expanded source mask to midpoint-owned neighbouring rows', () => {
+    const clamped = clampSourceMaskRectToCell(
+        { left: 1262, top: 548.73, width: 175.91, height: 34.98 },
+        { left: 1264.78, top: 555.61, width: 170.38, height: 25.33 },
+        [
+            { left: 1264.78, top: 535.34, width: 130, height: 25.33 },
+            { left: 1264.78, top: 575.88, width: 88.73, height: 25.33 },
+        ],
+    );
+
+    assert.ok(Math.abs(clamped.top - 558.14) < 0.001);
+    assert.ok(Math.abs(clamped.bottom - 578.41) < 0.001);
+    assert.equal(clamped.left, 1262);
+    assert.ok(Math.abs(clamped.right - 1437.91) < 0.001);
+});
+
+test('assigns horizontally overlapping same-row masks to one source column', () => {
+    const clamped = clampSourceMaskRectToCell(
+        { left: 90, top: 100, width: 125, height: 20 },
+        { left: 100, top: 100, width: 100, height: 20 },
+        [
+            { left: 20, top: 100, width: 100, height: 20 },
+            { left: 180, top: 100, width: 80, height: 20 },
+            // A distant, differently-sized run on the row does not constrain
+            // the mask because the mask never reaches it.
+            { left: 500, top: 100, width: 10, height: 20 },
+        ],
+    );
+
+    assert.equal(clamped.left, 110);
+    assert.equal(clamped.right, 185);
+    assert.equal(clamped.top, 100);
+    assert.equal(clamped.bottom, 120);
+});
+
+test('restores an explicit PDF.js whitespace span without inventing word breaks', () => {
+    assert.equal(
+        restoreExplicitSourceWhitespace(
+            'SatelliteTV antennas will be removed',
+            'Satellite TV antennas will be removed',
+        ),
+        'Satellite TV antennas will be removed',
+    );
+    assert.equal(
+        restoreExplicitSourceWhitespace('PAYMENTSARE DUE', 'PAYMENT SHARE DUE'),
+        'PAYMENTSARE DUE',
+    );
+    assert.equal(
+        restoreExplicitSourceWhitespace('Label     Value', 'Label Value'),
+        'Label     Value',
+    );
+});
+
+test('moves only the words covered by a drawn PDF underline segment', () => {
+    const prefix = 'amended by section 2 of the ';
+    const underlined = 'Paperwork Reduction Act of 1995';
+    const suffix = '. You do not need to answer these questions unless we';
+    const text = `${prefix}${underlined}${suffix}`;
+    const glyphWidth = 5;
+    const bboxX = 18;
+    const sourceSpan = {
+        text,
+        bbox: [bboxX, 346.84, bboxX + (text.length * glyphWidth), 357.29],
+        origin: [bboxX, 354.892],
+        font_size: 10.45,
+        has_drawn_underline: true,
+        drawn_underline_segments: [{
+            x0: bboxX + (prefix.length * glyphWidth),
+            x1: bboxX + ((prefix.length + underlined.length) * glyphWidth),
+            y: 355.905,
+            width: 0.37,
+        }],
+    };
+    const ranges = sourceSpanDrawnUnderlineRanges(sourceSpan);
+    const runs = splitSourceRunsAtDrawnUnderlineRanges([{
+        text,
+        leftPx: 60,
+        rightPx: 60 + (text.length * glyphWidth),
+        topPx: 100,
+        bottomPx: 111,
+        underlineRanges: ranges,
+    }], (value) => String(value).length * glyphWidth);
+
+    assert.deepEqual(runs.map((run) => ({
+        text: run.text,
+        underline: run.underline,
+    })), [
+        { text: prefix, underline: false },
+        { text: underlined, underline: true },
+        { text: suffix, underline: false },
+    ]);
+    assert.equal(runs[0].rightPx, runs[1].leftPx);
+    assert.equal(runs[1].rightPx, runs[2].leftPx);
+
+    const metadata = sourceRunDrawnUnderlineMetadata(runs.map((run) => ({
+        ...run,
+        hasDrawnUnderline: true,
+        sourceUnderlineSegments: sourceSpan.drawn_underline_segments,
+    })));
+    assert.equal(metadata.hasDrawnUnderline, true);
+    assert.deepEqual(metadata.segments, sourceSpan.drawn_underline_segments);
+    assert.equal(splitSourceRunsAtDrawnUnderlineRanges([{
+        text: prefix,
+        underlineRanges: [],
+        underlineRangesPrecise: true,
+        hasDrawnUnderline: true,
+    }])[0].underline, false);
+});
+
+test('rejects a nearby f1040 form rule as a drawn text underline', () => {
+    const sourceSpan = {
+        text: '15 Add lines 9 through 12 and 14. Enter here and on Form 1040, 1040-SR, or 1040-NR, line 31',
+        bbox: [64.799995, 601.57782, 434.952057, 610.57782],
+        origin: [64.799995, 608.926025],
+        font_size: 9,
+        has_drawn_underline: true,
+        drawn_underline_segments: [
+            { x0: 64.8, x1: 302.65, y: 612, width: 1 },
+            { x0: 302.15, x1: 417.85, y: 612, width: 1 },
+        ],
+    };
+
+    assert.deepEqual(sourceSpanDrawnUnderlineSegments(sourceSpan), []);
+    // Explicit segments are authoritative: once rejected, the stale boolean
+    // must not turn the entire annotation into an underline.
+    assert.deepEqual(sourceSpanDrawnUnderlineRanges(sourceSpan), []);
+    assert.equal(splitSourceRunsAtDrawnUnderlineRanges([{
+        text: sourceSpan.text,
+        underlineRanges: sourceSpanDrawnUnderlineRanges(sourceSpan),
+        underlineRangesPrecise: true,
+        hasDrawnUnderline: false,
+    }])[0].underline, false);
+});
+
+test('preserves exact source line slots and recognizes a double-height break', () => {
+    const slots = sourceVisualLineSlots([
+        537.266,
+        585.453,
+        609.531,
+        633.625,
+    ]);
+    assert.equal(slots.length, 4);
+    assert.ok(Math.abs(slots[0].slotHeightPx - 48.187) < 0.001);
+    assert.equal(slots[0].breakCount, 2);
+    assert.ok(Math.abs(slots[1].slotHeightPx - 24.078) < 0.001);
+    assert.equal(slots[1].breakCount, 1);
+    assert.equal(slots[3].slotHeightPx, 0);
+});
+
+test('uses paragraph text rather than a larger bullet glyph as the source font reference', () => {
+    assert.equal(dominantSourceRunFontSize([
+        { text: 'Household employers.', fontSizePx: 25.3333 },
+        { text: '\u2022', fontSizePx: 30.4 },
+        { text: 'You will have federal income tax withheld from wages,', fontSizePx: 25.3333 },
+        { text: '\u2022', fontSizePx: 30.4 },
+        { text: 'You would be required to make estimated tax payments.', fontSizePx: 25.3333 },
+    ]), 25.3333);
+    assert.equal(dominantSourceRunFontSize([
+        { text: '\u2022', fontSizePx: 30.4 },
+        { text: '\u2022', fontSizePx: 30.4 },
+    ]), 30.4);
+});
+
+test('joins extracted visual wraps while preserving semantic paragraph and list breaks', () => {
+    assert.equal(naturalSourceLineSeparator('When estimating the tax on your', '2026 tax return, include your household employment'), ' ');
+    assert.equal(naturalSourceLineSeparator('taxes if either of the following applies.', '\u2022 You will have tax withheld'), '\n');
+    assert.equal(naturalSourceLineSeparator('The Scope of Work includes:', '1. Remove the existing shingles'), '\n');
+    assert.equal(naturalSourceLineSeparator('The Scope of Work includes:', 'Remove the existing shingles', 2), '\n\n');
+    assert.equal(naturalSourceLineSeparator('hyphen-', 'ated word'), '');
 });
 
 test('recognizes PDF.js source-backed text annotations', () => {

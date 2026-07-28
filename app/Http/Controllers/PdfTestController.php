@@ -11,6 +11,8 @@ use App\Models\PdfExtractionPage;
 use App\Models\PdfExtractionSpan;
 use App\Models\PdfGroup;
 use App\Models\PdfState;
+use App\Models\PdfUploadTest;
+use App\Models\PdfUploadTestCase;
 use App\Services\PdfAnnotationAssetService;
 use App\Support\PdfAnnotationSuppression;
 use Illuminate\Http\Request;
@@ -174,6 +176,12 @@ class PdfTestController extends Controller
         if ($pdfX === null || $pdfY === null || $pdfWidth === null || $pdfHeight === null) {
             return false;
         }
+        // A zero-sized saved box is invalid legacy geometry, not evidence of
+        // an intentional user move/resize. Let the canonical extraction
+        // repair it instead of preserving an unusable overlay.
+        if ($pdfWidth <= 0.0 || $pdfHeight <= 0.0) {
+            return false;
+        }
 
         $currentTop = $sourcePageHeight - ($pdfY + $pdfHeight);
         $geometryTolerance = 0.75;
@@ -309,12 +317,174 @@ class PdfTestController extends Controller
         $request->validate([
             'test_key' => 'required|string',
             'run_id' => 'required|string',
+            'upload_test_id' => 'nullable|integer|min:1',
+            'upload_test_case_id' => 'nullable|integer|min:1',
         ]);
 
         $testKey = $request->input('test_key');
         $runId = $request->input('run_id');
         $nodeScript = base_path('tests/OverlayEditor/Pdf/run_pdf_tests.cjs');
         $baseUrl = $this->resolveScriptBaseUrl($request);
+        $uploadFixture = null;
+        $uploadTestCase = null;
+        $uploadConfigPath = null;
+        $uploadSourcePath = null;
+        $resultTestKey = $testKey;
+
+        if ($request->filled('upload_test_id')) {
+            abort_unless($testKey === 'pdf_upload_saved_test', 422, 'Invalid uploaded PDF test key.');
+
+            $adminId = $this->currentAdminId();
+            abort_unless($adminId !== null, 403);
+
+            $uploadFixture = PdfUploadTest::query()
+                ->whereKey((int) $request->integer('upload_test_id'))
+                ->where('admin_id', $adminId)
+                ->firstOrFail();
+            abort_unless(
+                $request->filled('upload_test_case_id'),
+                422,
+                'Choose a saved annotation test to run.'
+            );
+            $uploadTestCase = PdfUploadTestCase::query()
+                ->whereKey((int) $request->integer('upload_test_case_id'))
+                ->where('pdf_upload_test_id', $uploadFixture->id)
+                ->firstOrFail();
+
+            $resultTestKey = 'pdf_upload_test_'.$uploadTestCase->test_id;
+            $tempDir = storage_path('app/temp');
+            File::ensureDirectoryExists($tempDir);
+            $token = Str::uuid()->toString();
+            $uploadSourcePath = $tempDir.'/pdf_upload_test_'.$uploadFixture->id.'_'.$token.'.pdf';
+            $uploadConfigPath = $tempDir.'/pdf_upload_test_'.$uploadFixture->id.'_'.$token.'.json';
+
+            $scenarioConfig = $this->resolveUploadTestScenario($uploadTestCase);
+            $savedTargetAnnotation = PdfState::query()
+                ->where('document_id', $uploadFixture->document_id)
+                ->where('page_number', $uploadTestCase->page_index)
+                ->where(function ($query) use ($uploadTestCase) {
+                    $ids = array_values(array_unique(array_filter([
+                        trim((string) $uploadTestCase->runtime_annotation_id),
+                        trim((string) $uploadTestCase->annotation_id),
+                    ])));
+                    foreach ($ids as $index => $id) {
+                        $method = $index === 0 ? 'whereRaw' : 'orWhereRaw';
+                        $query->{$method}(
+                            "JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?",
+                            [$id]
+                        );
+                    }
+                })
+                ->latest('id')
+                ->value('annotation_data');
+
+            try {
+                File::put($uploadSourcePath, $uploadFixture->pdfContents());
+                File::put($uploadConfigPath, json_encode([
+                    'upload_test_id' => (int) $uploadFixture->id,
+                    'upload_test_case_id' => (int) $uploadTestCase->id,
+                    'test_id' => $uploadTestCase->test_id,
+                    'source_document_id' => (int) $uploadFixture->document_id,
+                    'source_pdf_path' => $uploadSourcePath,
+                    'original_name' => $uploadFixture->original_name,
+                    'sha256' => $uploadFixture->sha256,
+                    'saved_annotation_id' => $uploadTestCase->annotation_id,
+                    'saved_runtime_annotation_id' => $uploadTestCase->runtime_annotation_id,
+                    'page_index' => $uploadTestCase->page_index,
+                    'target_text' => $uploadTestCase->target_text,
+                    'test_comment' => $uploadTestCase->test_comment,
+                    'scenario' => $scenarioConfig['scenario'],
+                    'paragraph_grouping_enabled' => (bool) $uploadFixture->paragraph_grouping_enabled,
+                    'saved_target_annotation' => is_array($savedTargetAnnotation)
+                        ? $savedTargetAnnotation
+                        : null,
+                    'delete_suffix' => '3_3:20',
+                    'survivor_suffixes' => ['3_3:19', '3_3:21'],
+                    'swap_primary_suffix' => $scenarioConfig['swap_primary_suffix'],
+                    'swap_partner_suffix' => $scenarioConfig['swap_partner_suffix'],
+                    'swap_expected_text' => [
+                        '0_0:9' => 'Apply for an original Social Security card',
+                        '0_0:11' => 'Apply for a replacement Social Security card',
+                    ],
+                    'sentence_to_delete' => $scenarioConfig['sentence_to_delete'],
+                    'sentence_preserved_text' => $scenarioConfig['sentence_preserved_text'],
+                    'f1040_edit_suffix' => '0_0:113',
+                    'f1040_drag_spacing_suffix' => '0_0:71',
+                    'f1040_move_glyph_inset_suffix' => '0_0:38',
+                    'f1040_mixed_style_suffix' => '0_0:95',
+                    'f1040_resize_spacing_suffix' => '0_0:101',
+                    'f1040_scroll_spacing_suffix' => '0_0:23',
+                    'f1040_date_weight_suffix' => '0_0:119',
+                    'f1040_scroll_geometry_suffix' => '0_0:34',
+                    'f1040_move_suffix' => '0_0:115',
+                    'f1040_delete_name_suffix' => '0_0:12',
+                    'f1040_part_header_suffix' => '0_0:14',
+                    'move_down_suffix' => $scenarioConfig['move_down_suffix'],
+                    'move_down_pixels' => $scenarioConfig['move_down_pixels'],
+                    'drylab_title_suffix' => '0_0:0',
+                    'drylab_title_expected_text' => 'DrylabNews',
+                    'drylab_footer_expected_text' => 'for investors & friends * May 2017',
+                    'drylab_move_down_pixels' => $scenarioConfig['move_down_pixels'],
+                    'table_header_suffix' => '0_0:6',
+                    'table_header_expected_text' => 'Header 2',
+                    'table_move_up_pixels' => 200,
+                    'table_edit_page_number' => $scenarioConfig['table_edit_page_number'],
+                    'table_edit_suffix' => $scenarioConfig['table_edit_suffix'],
+                    'table_edit_expected_text' => $scenarioConfig['table_edit_expected_text'],
+                    'table_edit_append_text' => $scenarioConfig['table_edit_append_text'],
+                    'require_exact_document_font' => $scenarioConfig['require_exact_document_font'],
+                    'table_export_page_number' => $scenarioConfig['table_export_page_number'],
+                    'table_export_suffix' => $scenarioConfig['table_export_suffix'],
+                    'table_export_expected_text' => $scenarioConfig['table_export_expected_text'],
+                    'table_export_font_family' => $scenarioConfig['table_export_font_family'],
+                    'promoted_edit_annotation_id' => $scenarioConfig['promoted_edit_annotation_id'],
+                    'promoted_edit_expected_text' => $scenarioConfig['promoted_edit_expected_text'],
+                    'expected_pdf_font_name' => 'UHABOU+Calibri',
+                    'expected_document_fonts' => [
+                        'ERBEYA+Calibri-Light',
+                        'FTKFMY+SegoeUI-BoldItalic',
+                        'HJLROU+SegoeUI',
+                        'QHUTKC+SegoeUI-Italic',
+                        'UHABOU+Calibri',
+                        'UXWWOU+Calibri-Bold',
+                        'YGTKSM+SegoeUI-Bold',
+                    ],
+                    'paragraph_shrink_ratio' => $scenarioConfig['paragraph_shrink_ratio'],
+                    'f1040_edit_expected_text' => 'Total other payments or refundable credits. Add lines 13a through 13z',
+                    'f1040_drag_spacing_expected_text' => 'Credit for previously owned clean vehicles. Attach Form 8936',
+                    'f1040_move_glyph_inset_expected_text' => 'Credit for prior year minimum tax. Attach Form 8801',
+                    'f1040_mixed_style_expected_text' => '13 Other payments or refundable credits:',
+                    'f1040_resize_spacing_expected_text' => 'years',
+                    'f1040_scroll_spacing_expected_text' => 'Education credits from Form 8863, line 19',
+                    'f1040_date_weight_expected_text' => 'Schedule 3 (Form 1040) 2025 Created 11/17/25',
+                    'f1040_scroll_geometry_expected_text' => 'a',
+                    'f1040_move_expected_text' => '15 Add lines 9 through 12 and 14. Enter here and on Form 1040',
+                    'f1040_delete_name_expected_text' => 'Name(s) shown on Form 1040, 1040-SR, or 1040-NR',
+                    'f1040_part_header_expected_text' => 'Part I',
+                    'expected_text' => [
+                        '3_3:19' => 'Paperwork Reduction Act Statement -This information collection meets the requirements of 44 U.S.C. § 3507, as',
+                        '3_3:20' => 'amended by section 2 of the Paperwork Reduction Act of 1995. You do not need to answer these questions unless we',
+                        '3_3:21' => 'display a valid Office of Management and Budget control number. We estimate that it will take between 5 and 60',
+                    ],
+                    'underlined_phrase' => 'Paperwork Reduction Act of 1995',
+                    'result_test_key' => $resultTestKey,
+                ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+            } catch (\Throwable $error) {
+                if ($uploadConfigPath) {
+                    File::delete($uploadConfigPath);
+                }
+                if ($uploadSourcePath) {
+                    File::delete($uploadSourcePath);
+                }
+
+                report($error);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'The uploaded PDF test could not be prepared.',
+                ], 500);
+            }
+        }
 
         // Suite runs (eg. text_layout_test_suite_1, paragraph_suite) chain
         // many sub-tests sequentially and can easily exceed PHP's default
@@ -322,14 +492,28 @@ class PdfTestController extends Controller
         // budget (1800s) for the HTTP request to complete.
         @set_time_limit(1900);
 
-        $command = sprintf(
-            'BASE_URL=%s timeout 1800 node %s --single-test %s 2>&1',
-            escapeshellarg($baseUrl),
-            escapeshellarg($nodeScript),
-            escapeshellarg($testKey)
-        );
+        $command = $uploadConfigPath
+            ? sprintf(
+                'BASE_URL=%s PDF_UPLOAD_TEST_CONFIG=%s timeout 1800 node %s --single-test %s 2>&1',
+                escapeshellarg($baseUrl),
+                escapeshellarg($uploadConfigPath),
+                escapeshellarg($nodeScript),
+                escapeshellarg($testKey)
+            )
+            : sprintf(
+                'BASE_URL=%s timeout 1800 node %s --single-test %s 2>&1',
+                escapeshellarg($baseUrl),
+                escapeshellarg($nodeScript),
+                escapeshellarg($testKey)
+            );
 
         $output = shell_exec($command);
+        if ($uploadConfigPath) {
+            File::delete($uploadConfigPath);
+        }
+        if ($uploadSourcePath) {
+            File::delete($uploadSourcePath);
+        }
         if (!$output) {
             return response()->json(['success' => false, 'message' => 'PDF test script produced no output'], 500);
         }
@@ -345,7 +529,7 @@ class PdfTestController extends Controller
 
         $storedArtifacts = $this->normalizeArtifactsForStorage($result['artifacts'] ?? []);
         $artifacts = $this->mapArtifacts($storedArtifacts);
-        $result['test_key'] = $testKey;
+        $result['test_key'] = $resultTestKey;
         $result['artifacts'] = $artifacts;
 
         $reportId = null;
@@ -369,7 +553,7 @@ class PdfTestController extends Controller
                 'artifacts' => $storedArtifacts,
             ];
             if ($this->supportsTestKeyColumn()) {
-                $reportPayload['test_key'] = $testKey;
+                $reportPayload['test_key'] = $resultTestKey;
             }
 
             $report = OverlayEditorTest::create($this->filterPersistableReportPayload($reportPayload));
@@ -377,7 +561,7 @@ class PdfTestController extends Controller
             $createdAt = $report->created_at?->toIso8601String();
         } catch (\Throwable $error) {
             Log::warning('Failed to persist PDF test result', [
-                'test_key' => $testKey,
+                'test_key' => $resultTestKey,
                 'run_id' => $runId,
                 'error' => $error->getMessage(),
             ]);
@@ -1784,6 +1968,143 @@ PYTHON;
         return $annotation;
     }
 
+    /**
+     * Extraction rows share their parent block's source key. Older saves could
+     * therefore be re-enriched with the parent block's complete line metadata,
+     * turning a one-line row into a page-sized edit box. The row's positioned
+     * source spans are the authoritative ownership geometry in that case.
+     */
+    private function repairPromotedRowSourceMetadataFromSpans(array $annotation): array
+    {
+        if (empty($annotation['promotedFromExtraction'])
+            || preg_match('/_row_\d+$/', trim((string) ($annotation['id'] ?? ''))) !== 1) {
+            return $annotation;
+        }
+
+        $sourceSpans = array_values(array_filter(
+            is_array($annotation['sourceSpans'] ?? null) ? $annotation['sourceSpans'] : [],
+            static fn ($span): bool => is_array($span)
+        ));
+        $synthesized = $this->synthesizeVisualLinesFromSourceSpans($sourceSpans);
+        if (!$synthesized) {
+            return $annotation;
+        }
+
+        $savedBoxes = $this->sanitizeSourceLineBBoxes($annotation['sourceLineBBoxes'] ?? []);
+        $spanBoxes = $this->sanitizeSourceLineBBoxes($synthesized['boxes'] ?? []);
+        if (empty($spanBoxes)) {
+            return $annotation;
+        }
+
+        $spanLeft = min(array_map(static fn (array $bbox): float => (float) $bbox[0], $spanBoxes));
+        $spanTop = min(array_map(static fn (array $bbox): float => (float) $bbox[1], $spanBoxes));
+        $spanRight = max(array_map(static fn (array $bbox): float => (float) $bbox[2], $spanBoxes));
+        $spanBottom = max(array_map(static fn (array $bbox): float => (float) $bbox[3], $spanBoxes));
+        $spanWidth = max(0.0, $spanRight - $spanLeft);
+        $spanHeight = max(0.0, $spanBottom - $spanTop);
+        if ($spanWidth <= 0.0 || $spanHeight <= 0.0) {
+            return $annotation;
+        }
+
+        $savedLeft = !empty($savedBoxes)
+            ? min(array_map(static fn (array $bbox): float => (float) $bbox[0], $savedBoxes))
+            : null;
+        $savedTop = !empty($savedBoxes)
+            ? min(array_map(static fn (array $bbox): float => (float) $bbox[1], $savedBoxes))
+            : null;
+        $savedRight = !empty($savedBoxes)
+            ? max(array_map(static fn (array $bbox): float => (float) $bbox[2], $savedBoxes))
+            : null;
+        $savedBottom = !empty($savedBoxes)
+            ? max(array_map(static fn (array $bbox): float => (float) $bbox[3], $savedBoxes))
+            : null;
+        $savedWidth = $savedLeft !== null && $savedRight !== null ? max(0.0, $savedRight - $savedLeft) : 0.0;
+        $savedHeight = $savedTop !== null && $savedBottom !== null ? max(0.0, $savedBottom - $savedTop) : 0.0;
+        $lineCountMismatch = count($savedBoxes) !== count($spanBoxes);
+        $geometryMismatch = $savedHeight > max($spanHeight + 2.0, $spanHeight * 1.75)
+            || $savedWidth > max($spanWidth + 12.0, $spanWidth * 1.35)
+            || ($savedTop !== null && abs($savedTop - $spanTop) > max(2.0, $spanHeight));
+        if (!$lineCountMismatch && !$geometryMismatch) {
+            return $annotation;
+        }
+
+        $annotation['sourceTextLines'] = array_values($synthesized['lines']);
+        $annotation['sourceLineBBoxes'] = $spanBoxes;
+        $annotation['sourceBlockLeft'] = $spanLeft;
+        $annotation['sourceBlockTop'] = $spanTop;
+        $annotation['sourceBlockWidth'] = $spanWidth;
+        $annotation['sourceBlockHeight'] = $spanHeight;
+
+        $pageHeight = isset($annotation['sourcePageHeight']) && is_numeric($annotation['sourcePageHeight'])
+            ? (float) $annotation['sourcePageHeight']
+            : (isset($annotation['pdfjsSourcePageHeight']) && is_numeric($annotation['pdfjsSourcePageHeight'])
+                ? (float) $annotation['pdfjsSourcePageHeight']
+                : 0.0);
+        if ($pageHeight > 0.0) {
+            $sourcePdfY = $pageHeight - $spanBottom;
+            $annotation['pdfjsSourceX'] = $spanLeft;
+            $annotation['pdfjsSourceY'] = $sourcePdfY;
+            $annotation['pdfjsSourceW'] = $spanWidth;
+            $annotation['pdfjsSourceH'] = $spanHeight;
+            $annotation['pdfjsSourcePageHeight'] = $pageHeight;
+
+            $hasExplicitUserEdits = !empty($annotation['promotedDirty'])
+                || !empty($annotation['promotedReflowEnabled'])
+                || !empty($annotation['userAuthored'])
+                || !empty($annotation['styleDirty'])
+                || !empty($annotation['userForcedRichText'])
+                || !empty($annotation['movedTextOverlay'])
+                || !empty($annotation['userSizedTextBox'])
+                || $this->normalizePromotedComparableText($annotation['text'] ?? '')
+                    !== $this->normalizePromotedComparableText($annotation['originalText'] ?? '');
+            if (!$hasExplicitUserEdits) {
+                $annotation['pdfX'] = $spanLeft;
+                $annotation['pdfY'] = $sourcePdfY;
+                $annotation['pdfWidth'] = $spanWidth;
+                $annotation['pdfHeight'] = $spanHeight;
+            }
+        }
+
+        $runsJson = trim((string) ($annotation['pdfjsSourceSpanRuns'] ?? ''));
+        $runsScale = isset($annotation['pdfjsSourceSpanRunsScale']) && is_numeric($annotation['pdfjsSourceSpanRunsScale'])
+            ? (float) $annotation['pdfjsSourceSpanRunsScale']
+            : 0.0;
+        $runs = $runsJson !== '' ? json_decode($runsJson, true) : null;
+        if (is_array($runs) && $runsScale > 0.0) {
+            $keptRuns = array_values(array_filter($runs, static function ($run) use ($spanBoxes, $runsScale): bool {
+                if (!is_array($run)) {
+                    return false;
+                }
+                $left = isset($run['leftPx']) && is_numeric($run['leftPx']) ? (float) $run['leftPx'] / $runsScale : null;
+                $right = isset($run['rightPx']) && is_numeric($run['rightPx']) ? (float) $run['rightPx'] / $runsScale : null;
+                $top = isset($run['topPx']) && is_numeric($run['topPx']) ? (float) $run['topPx'] / $runsScale : null;
+                $bottom = isset($run['bottomPx']) && is_numeric($run['bottomPx']) ? (float) $run['bottomPx'] / $runsScale : null;
+                if ($left === null || $right === null || $top === null || $bottom === null) {
+                    return false;
+                }
+
+                foreach ($spanBoxes as $bbox) {
+                    $horizontalOverlap = min($right, (float) $bbox[2] + 1.0) - max($left, (float) $bbox[0] - 1.0);
+                    $verticalOverlap = min($bottom, (float) $bbox[3] + 1.0) - max($top, (float) $bbox[1] - 1.0);
+                    if ($horizontalOverlap > 0.0 && $verticalOverlap > 0.0) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }));
+            if (count($keptRuns) < count($runs)) {
+                if (!empty($keptRuns)) {
+                    $annotation['pdfjsSourceSpanRuns'] = json_encode($keptRuns, JSON_UNESCAPED_SLASHES);
+                } else {
+                    unset($annotation['pdfjsSourceSpanRuns'], $annotation['pdfjsSourceSpanRunsScale']);
+                }
+            }
+        }
+
+        return $annotation;
+    }
+
     private function syncAnnotationGeometryFromSourceLineBBoxes(array $annotation): array
     {
         $lineBBoxes = $this->sanitizeSourceLineBBoxes($annotation['sourceLineBBoxes'] ?? []);
@@ -1802,6 +2123,12 @@ PYTHON;
             return $annotation;
         }
 
+        // Compare the saved geometry with the pre-normalized source block
+        // before replacing that source block with the tighter line union.
+        // Otherwise a clean canonical block whose bbox includes padding is
+        // incorrectly reclassified as a user resize.
+        $preserveSavedGeometry = $this->promotedAnnotationHasMaterialGeometryEdits($annotation);
+
         $annotation['sourceLineBBoxes'] = $lineBBoxes;
         $annotation['sourceBlockLeft'] = $left;
         $annotation['sourceBlockTop'] = $top;
@@ -1811,7 +2138,6 @@ PYTHON;
         $pageHeight = isset($annotation['sourcePageHeight']) && is_numeric($annotation['sourcePageHeight'])
             ? (float) $annotation['sourcePageHeight']
             : 0.0;
-        $preserveSavedGeometry = $this->promotedAnnotationHasMaterialGeometryEdits($annotation);
         if ($pageHeight > 0.0 && !$preserveSavedGeometry) {
             $annotation['pdfX'] = $left;
             $annotation['pdfWidth'] = $width;
@@ -3700,10 +4026,175 @@ PYTHON;
             || str_starts_with(trim((string) ($annotation['id'] ?? '')), 'deleted_promoted:');
     }
 
-    private function enrichAnnotationFromDb(array $annotation, int $fitzId): array
+    private function extractionPageLookupKey(int $fitzId, int $pageNumber): string
+    {
+        return $fitzId . ':' . $pageNumber;
+    }
+
+    /**
+     * Load the extraction rows needed by a document-info response in three
+     * bounded queries. Without this lookup, every annotation independently
+     * fetches its block, spans, and page geometry.
+     */
+    private function buildAnnotationEnrichmentContext($states, ?int $fallbackFitzId): array
+    {
+        $pageNumbersByFitz = [];
+        $blockRequirements = [];
+        $spanRequirements = [];
+
+        foreach ($states as $state) {
+            $annotation = is_array($state->annotation_data) ? $state->annotation_data : [];
+            $fitzId = (int) ($state->pdf_extraction_fitz_id ?: $fallbackFitzId);
+            if (empty($annotation) || $fitzId <= 0) {
+                continue;
+            }
+
+            $pageNumber = (int) ($annotation['pageIndex'] ?? 0) + 1;
+            $pageNumbersByFitz[$fitzId][$pageNumber] = true;
+            $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
+            $blockNum = (int) ($annotation['promotedSourceBlockNum'] ?? 0);
+
+            if ($sourceKey !== '' || $blockNum > 0) {
+                $blockRequirements[$fitzId][$pageNumber] ??= [
+                    'source_keys' => [],
+                    'block_nums' => [],
+                ];
+                if ($sourceKey !== '') {
+                    $blockRequirements[$fitzId][$pageNumber]['source_keys'][$sourceKey] = true;
+                }
+                if ($blockNum > 0) {
+                    $blockRequirements[$fitzId][$pageNumber]['block_nums'][$blockNum] = true;
+                }
+            }
+
+            if (!empty($annotation['sourceSpans'])) {
+                $spanRequirements[$fitzId][$pageNumber] ??= [
+                    'all' => false,
+                    'block_nums' => [],
+                ];
+                if ($blockNum > 0) {
+                    $spanRequirements[$fitzId][$pageNumber]['block_nums'][$blockNum] = true;
+                } else {
+                    $spanRequirements[$fitzId][$pageNumber]['all'] = true;
+                }
+            }
+        }
+
+        if (empty($pageNumbersByFitz)) {
+            return [
+                'blocks_by_page' => [],
+                'spans_by_page' => [],
+                'pages_by_page' => [],
+            ];
+        }
+
+        $applyPageScope = static function ($query) use ($pageNumbersByFitz) {
+            return $query->where(function ($scope) use ($pageNumbersByFitz) {
+                foreach ($pageNumbersByFitz as $fitzId => $pageNumbers) {
+                    $scope->orWhere(function ($pairScope) use ($fitzId, $pageNumbers) {
+                        $pairScope
+                            ->where('pdf_extraction_fitz_id', (int) $fitzId)
+                            ->whereIn('page_number', array_map('intval', array_keys($pageNumbers)));
+                    });
+                }
+            });
+        };
+
+        $blocksByPage = [];
+        if (!empty($blockRequirements)) {
+            $blocks = PdfExtractionBlock::query()
+                ->where(function ($scope) use ($blockRequirements) {
+                    foreach ($blockRequirements as $fitzId => $pageRequirements) {
+                        foreach ($pageRequirements as $pageNumber => $requirements) {
+                            $sourceKeys = array_keys($requirements['source_keys']);
+                            $blockNums = array_map('intval', array_keys($requirements['block_nums']));
+                            $scope->orWhere(function ($pairScope) use ($fitzId, $pageNumber, $sourceKeys, $blockNums) {
+                                $pairScope
+                                    ->where('pdf_extraction_fitz_id', (int) $fitzId)
+                                    ->where('page_number', (int) $pageNumber)
+                                    ->where(function ($matchScope) use ($sourceKeys, $blockNums) {
+                                        if (!empty($sourceKeys)) {
+                                            $matchScope
+                                                ->whereIn('source_key', $sourceKeys)
+                                                ->orWhereIn('root_source_key', $sourceKeys);
+                                        }
+                                        if (!empty($blockNums)) {
+                                            $method = empty($sourceKeys) ? 'whereIn' : 'orWhereIn';
+                                            $matchScope->{$method}('block_num', $blockNums);
+                                        }
+                                    });
+                            });
+                        }
+                    }
+                })
+                ->get();
+            foreach ($blocks as $block) {
+                $key = $this->extractionPageLookupKey(
+                    (int) $block->pdf_extraction_fitz_id,
+                    (int) $block->page_number
+                );
+                $blocksByPage[$key] ??= collect();
+                $blocksByPage[$key]->push($block);
+            }
+        }
+
+        $spansByPage = [];
+        if (!empty($spanRequirements)) {
+            $spans = PdfExtractionSpan::query()
+                ->where(function ($scope) use ($spanRequirements) {
+                    foreach ($spanRequirements as $fitzId => $pageRequirements) {
+                        foreach ($pageRequirements as $pageNumber => $requirements) {
+                            $blockNums = array_map('intval', array_keys($requirements['block_nums']));
+                            $scope->orWhere(function ($pairScope) use ($fitzId, $pageNumber, $requirements, $blockNums) {
+                                $pairScope
+                                    ->where('pdf_extraction_fitz_id', (int) $fitzId)
+                                    ->where('page_number', (int) $pageNumber);
+                                if (!$requirements['all']) {
+                                    $pairScope->whereIn('block_num', $blockNums);
+                                }
+                            });
+                        }
+                    }
+                })
+                ->get();
+            foreach ($spans as $span) {
+                $key = $this->extractionPageLookupKey(
+                    (int) $span->pdf_extraction_fitz_id,
+                    (int) $span->page_number
+                );
+                $spansByPage[$key] ??= collect();
+                $spansByPage[$key]->push($span);
+            }
+        }
+
+        $pagesByPage = [];
+        $pages = $applyPageScope(PdfExtractionPage::query())->get();
+        foreach ($pages as $page) {
+            $key = $this->extractionPageLookupKey(
+                (int) $page->pdf_extraction_fitz_id,
+                (int) $page->page_number
+            );
+            $pagesByPage[$key] ??= $page;
+        }
+
+        return [
+            'blocks_by_page' => $blocksByPage,
+            'spans_by_page' => $spansByPage,
+            'pages_by_page' => $pagesByPage,
+        ];
+    }
+
+    private function enrichAnnotationFromDb(array $annotation, int $fitzId, ?array $enrichmentContext = null): array
     {
         $pageIndex = (int) ($annotation['pageIndex'] ?? 0);
         $dbPageNum = $pageIndex + 1;
+        $lookupKey = $this->extractionPageLookupKey($fitzId, $dbPageNum);
+        $blocksForPage = $enrichmentContext === null
+            ? null
+            : ($enrichmentContext['blocks_by_page'][$lookupKey] ?? collect());
+        $spansForPage = $enrichmentContext === null
+            ? null
+            : ($enrichmentContext['spans_by_page'][$lookupKey] ?? collect());
 
         $sourceKey = trim((string) ($annotation['promotedSourceKey'] ?? ''));
         $blockNum = (int) ($annotation['promotedSourceBlockNum'] ?? 0);
@@ -3721,34 +4212,56 @@ PYTHON;
         $canonicalBlock = null;
 
         if ($sourceKey !== '') {
-            $canonicalBlock = PdfExtractionBlock::where('pdf_extraction_fitz_id', $fitzId)
-                ->where('page_number', $dbPageNum)
-                ->where(function ($query) use ($sourceKey) {
-                    $query->where('source_key', $sourceKey)
-                        ->orWhere('root_source_key', $sourceKey);
-                })
-                ->orderByRaw('CASE WHEN source_key = ? THEN 0 ELSE 1 END', [$sourceKey])
-                ->first();
+            if ($blocksForPage !== null) {
+                $matchingBlocks = $blocksForPage->filter(static function (PdfExtractionBlock $block) use ($sourceKey): bool {
+                    return (string) $block->source_key === $sourceKey
+                        || (string) $block->root_source_key === $sourceKey;
+                });
+                $canonicalBlock = $matchingBlocks->first(
+                    static fn (PdfExtractionBlock $block): bool => (string) $block->source_key === $sourceKey
+                ) ?: $matchingBlocks->first();
+            } else {
+                $canonicalBlock = PdfExtractionBlock::where('pdf_extraction_fitz_id', $fitzId)
+                    ->where('page_number', $dbPageNum)
+                    ->where(function ($query) use ($sourceKey) {
+                        $query->where('source_key', $sourceKey)
+                            ->orWhere('root_source_key', $sourceKey);
+                    })
+                    ->orderByRaw('CASE WHEN source_key = ? THEN 0 ELSE 1 END', [$sourceKey])
+                    ->first();
+            }
         }
 
         if (!$canonicalBlock && $blockNum > 0) {
-            $canonicalBlock = PdfExtractionBlock::where('pdf_extraction_fitz_id', $fitzId)
-                ->where('page_number', $dbPageNum)
-                ->where('block_num', $blockNum)
-                ->first();
+            $canonicalBlock = $blocksForPage !== null
+                ? $blocksForPage->first(
+                    static fn (PdfExtractionBlock $block): bool => (int) $block->block_num === $blockNum
+                )
+                : PdfExtractionBlock::where('pdf_extraction_fitz_id', $fitzId)
+                    ->where('page_number', $dbPageNum)
+                    ->where('block_num', $blockNum)
+                    ->first();
         }
 
         // Refresh sourceSpans with canonical span data from the live extraction table.
         $sourceSpans = $annotation['sourceSpans'] ?? [];
         if (is_array($sourceSpans) && !empty($sourceSpans)) {
-            $spanQuery = PdfExtractionSpan::where('pdf_extraction_fitz_id', $fitzId)
-                ->where('page_number', $dbPageNum);
+            if ($spansForPage !== null) {
+                $candidateSpans = $blockNum > 0
+                    ? $spansForPage->filter(
+                        static fn (PdfExtractionSpan $span): bool => (int) $span->block_num === $blockNum
+                    )->values()
+                    : $spansForPage;
+            } else {
+                $spanQuery = PdfExtractionSpan::where('pdf_extraction_fitz_id', $fitzId)
+                    ->where('page_number', $dbPageNum);
 
-            if ($blockNum > 0) {
-                $spanQuery->where('block_num', $blockNum);
+                if ($blockNum > 0) {
+                    $spanQuery->where('block_num', $blockNum);
+                }
+
+                $candidateSpans = $spanQuery->get();
             }
-
-            $candidateSpans = $spanQuery->get();
             $spanLookup = [];
             foreach ($candidateSpans as $span) {
                 $origin = is_array($span->origin) ? $span->origin : null;
@@ -3823,9 +4336,9 @@ PYTHON;
             }
 
             $canonicalTextLines = array_values(array_filter(array_map(
-                static fn ($line) => trim((string) $line),
+                static fn ($line) => (string) $line,
                 is_array($canonicalBlock->text_lines) ? $canonicalBlock->text_lines : []
-            ), static fn (string $line): bool => $line !== ''));
+            ), static fn (string $line): bool => trim($line) !== ''));
             if (!$hasDerivedSourceKey && !$hasUserEditedPromotedText && !empty($canonicalTextLines)) {
                 $annotation['sourceTextLines'] = $canonicalTextLines;
             }
@@ -3849,9 +4362,11 @@ PYTHON;
         }
 
         // Add page geometry from the live page table (width, height, drawn boxes, widgets).
-        $page = PdfExtractionPage::where('pdf_extraction_fitz_id', $fitzId)
-            ->where('page_number', $dbPageNum)
-            ->first();
+        $page = $enrichmentContext === null
+            ? PdfExtractionPage::where('pdf_extraction_fitz_id', $fitzId)
+                ->where('page_number', $dbPageNum)
+                ->first()
+            : ($enrichmentContext['pages_by_page'][$lookupKey] ?? null);
 
         if ($page) {
             $pageHeight = (float) $page->height;
@@ -3875,7 +4390,8 @@ PYTHON;
             is_array($annotation['sourceLineBBoxes'] ?? null) ? $annotation['sourceLineBBoxes'] : [],
             static fn ($bbox) => is_array($bbox) && count($bbox) >= 4
         ));
-        if (!empty($lineBBoxes)) {
+        $isPromotedRow = preg_match('/_row_\d+$/', trim((string) ($annotation['id'] ?? ''))) === 1;
+        if (!empty($lineBBoxes) && ($hasDerivedSourceKey || $isPromotedRow)) {
             $annotation['sourceSpans'] = array_values(array_filter(
                 is_array($annotation['sourceSpans'] ?? null) ? $annotation['sourceSpans'] : [],
                 static function ($sourceSpan) use ($lineBBoxes): bool {
@@ -3905,6 +4421,7 @@ PYTHON;
             ));
         }
 
+        $annotation = $this->repairPromotedRowSourceMetadataFromSpans($annotation);
         $annotation = $this->syncAnnotationGeometryFromSourceLineBBoxes(
             $this->normalizeAnnotationLineMetadata($annotation)
         );
@@ -4046,7 +4563,9 @@ PYTHON;
         // loaded so the backfill request only ships what's missing.
         // `skip_meta=1` suppresses heavy per-document metadata (embedded
         // fonts, acro form entries) during backfill since the first request
-        // already supplied them.
+        // already supplied them. `skip_embedded_fonts=1` skips only the
+        // synchronous font extraction, allowing the PDF.js path to load the
+        // remaining metadata without duplicating work it does in-browser.
         $pageFilter = null;
         $pageRaw = $request->query('page', null);
         if ($pageRaw !== null && $pageRaw !== '' && is_numeric($pageRaw)) {
@@ -4067,6 +4586,8 @@ PYTHON;
             $pagesExclude = array_keys($pagesExclude);
         }
         $skipMeta = (string) $request->query('skip_meta', '') === '1';
+        $skipEmbeddedFonts = $skipMeta
+            || (string) $request->query('skip_embedded_fonts', '') === '1';
         $includeAnnotationDebug = filter_var($request->query('include_annotation_debug', false), FILTER_VALIDATE_BOOLEAN);
 
         // Build the scope query: rows owned by the current viewer (by user/admin/session)
@@ -4124,15 +4645,16 @@ PYTHON;
         $hasAcroFormWidgets = $skipMeta
             ? null
             : $this->extractedAcroFormWidgetPresence($fallbackFitz);
+        $enrichmentContext = $this->buildAnnotationEnrichmentContext($states, $fallbackFitzId);
 
         // Deduplicate by annotation `id` field, keeping the highest db_id (most recent save)
         $annotationAssets = app(PdfAnnotationAssetService::class);
         $seen = [];
-        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId, $annotationAssets, $includeAnnotationDebug) {
+        $annotations = $states->map(function (PdfState $state) use (&$seen, $fallbackFitzId, $annotationAssets, $includeAnnotationDebug, $enrichmentContext) {
             $data = is_array($state->annotation_data) ? $state->annotation_data : [];
             $fitzId = $state->pdf_extraction_fitz_id ?: $fallbackFitzId;
             if (!empty($data) && $fitzId) {
-                $data = $this->enrichAnnotationFromDb($data, $fitzId);
+                $data = $this->enrichAnnotationFromDb($data, $fitzId, $enrichmentContext);
             }
             // Resolve persisted image assets (signatures, uploaded images, and
             // direct-draw marker/pen strokes) back into a loadable `src` URL so
@@ -4235,12 +4757,25 @@ PYTHON;
             }
         }
 
-        $annotations = collect($this->mergeContainedPromotedAnnotationsForEditor(
-            $annotations->values()->all()
-        ))->values();
-        $annotations = collect($this->mergeLogicalListParagraphAnnotationsForEditor(
-            $annotations->values()->all()
-        ))->values();
+        // Uploaded-PDF fixtures can deliberately expose the underlying
+        // extraction boxes while a test is being authored. Enabling the
+        // fixture switch runs the exact same paragraph-merging pass used by
+        // ordinary documents.
+        $uploadFixture = Schema::hasTable('pdf_upload_tests')
+            ? PdfUploadTest::query()
+                ->where('document_id', $document->id)
+                ->first(['paragraph_grouping_enabled'])
+            : null;
+        $paragraphGroupingEnabled = !$uploadFixture
+            || (bool) $uploadFixture->paragraph_grouping_enabled;
+        if ($paragraphGroupingEnabled) {
+            $annotations = collect($this->mergeContainedPromotedAnnotationsForEditor(
+                $annotations->values()->all()
+            ))->values();
+            $annotations = collect($this->mergeLogicalListParagraphAnnotationsForEditor(
+                $annotations->values()->all()
+            ))->values();
+        }
         $annotations = collect($this->normalizeDotLeaderPromotedAnnotationsForEditor(
             $annotations->values()->all()
         ))->values();
@@ -4265,8 +4800,9 @@ PYTHON;
         // Load embedded font metadata per source. Reconstruction can render either the
         // current file PDF or the clean/original-backed PDF, and each source may carry
         // different font programs even when the extracted annotations are the same.
-        // Skip during backfill (skip_meta) — the first request already shipped them.
-        $embeddedFontsBySource = $skipMeta ? ['file' => [], 'clean' => []] : [
+        // Skip during backfill (skip_meta), or when the PDF.js client explicitly
+        // handles fonts itself. In both cases keep the response shape stable.
+        $embeddedFontsBySource = $skipEmbeddedFonts ? ['file' => [], 'clean' => []] : [
             'file' => $this->extractEmbeddedFontsForSource($document, 'file'),
             'clean' => $this->extractEmbeddedFontsForSource($document, 'clean'),
         ];
@@ -4563,5 +5099,303 @@ PYTHON;
             'flag_reason' => $state->flag_reason,
             'flag_images' => $state->flag_images ?? [],
         ]);
+    }
+
+    private function resolveUploadTestScenario(PdfUploadTestCase $testCase): array
+    {
+        $savedRuntimeId = trim((string) (
+            $testCase->runtime_annotation_id
+            ?: $testCase->annotation_id
+        ));
+        $normalizedComment = Str::lower((string) $testCase->test_comment);
+        $normalizedTargetText = preg_replace(
+            '/\s+/u',
+            ' ',
+            trim((string) $testCase->target_text)
+        );
+        $sentenceToDelete = 'For assistance call us at 1-800-772-1213 or visit our';
+
+        $isUnderlineDeletion = (int) $testCase->page_index === 3
+            && str_ends_with($savedRuntimeId, '_3_3:19')
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Paperwork Reduction Act Statement'
+            )
+            && Str::contains($normalizedComment, 'delete')
+            && Str::contains($normalizedComment, 'underline')
+            && Str::contains($normalizedComment, ':19')
+            && Str::contains($normalizedComment, ':21');
+
+        $swapPartnerSuffix = null;
+        if (preg_match('/pdfjs_\\d+_(0_0:(?:9|11))\\b/i', $normalizedComment, $swapMatch)) {
+            $swapPartnerSuffix = $swapMatch[1];
+        }
+        $savedSwapSuffix = null;
+        if (preg_match('/_(0_0:(?:9|11))$/', $savedRuntimeId, $savedSwapMatch)) {
+            $savedSwapSuffix = $savedSwapMatch[1];
+        }
+        $isPageOneSwap = (int) $testCase->page_index === 0
+            && $savedSwapSuffix !== null
+            && $swapPartnerSuffix !== null
+            && $savedSwapSuffix !== $swapPartnerSuffix
+            && Str::contains($normalizedComment, 'switch places');
+
+        $isParagraphSentenceDeletion = (int) $testCase->page_index === 0
+            && $savedRuntimeId === 'promoted_1_5'
+            && str_starts_with((string) $normalizedTargetText, 'IMPORTANT:')
+            && Str::contains($normalizedComment, 'delete')
+            && Str::contains($normalizedComment, Str::lower($sentenceToDelete));
+
+        $isF1040BoundingBoxSnapping = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:113')
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Total other payments or refundable credits. Add lines 13a through 13z'
+            )
+            && Str::contains($normalizedComment, 'edit')
+            && Str::contains($normalizedComment, 'font')
+            && Str::contains($normalizedComment, 'bounding box snapping');
+
+        $isF1040DragPreviewSpacing = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:71')
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Credit for previously owned clean vehicles. Attach Form 8936'
+            )
+            && Str::contains($normalizedComment, 'drag')
+            && Str::contains($normalizedComment, 'spacing');
+
+        $isF1040MovePreservesGlyphInset = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:38')
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Credit for prior year minimum tax. Attach Form 8801'
+            )
+            && Str::contains($normalizedComment, ['move', 'drag'])
+            && Str::contains($normalizedComment, ['snap', 'top'])
+            && Str::contains($normalizedComment, 'bounding box');
+
+        $isF1040MixedStyleEditResize = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:95')
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                '13 Other payments or refundable credits:'
+            )
+            && Str::contains($normalizedComment, 'edit')
+            && Str::contains($normalizedComment, 'bold')
+            && Str::contains($normalizedComment, 'resize')
+            && Str::contains($normalizedComment, 'space');
+
+        $isF1040ResizePreservesSourceSpacing = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:101')
+            && str_starts_with((string) $normalizedTargetText, 'years')
+            && Str::contains($normalizedComment, 'resize')
+            && Str::contains($normalizedComment, 'spacing')
+            && Str::contains($normalizedComment, ['preserve', 'collapse', 'leader']);
+
+        $isF1040ScrollPreservesEditedSpacing = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:23')
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Education credits from Form 8863, line 19'
+            )
+            && Str::contains($normalizedComment, 'scroll')
+            && Str::contains($normalizedComment, ['spacing', 'horizontal', 'jump'])
+            && Str::contains($normalizedComment, 'edit');
+
+        $isF1040DateEditPreservesMixedWeight = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:119')
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Schedule 3 (Form 1040) 2025 Created 11/17/25'
+            )
+            && Str::contains($normalizedComment, 'edit')
+            && Str::contains($normalizedComment, ['bold', 'weight'])
+            && Str::contains($normalizedComment, ['regular', 'non-bold', 'not bold']);
+
+        $isF1040ScrollPreservesUserSizedGeometry = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:34')
+            && $normalizedTargetText === 'a'
+            && Str::contains($normalizedComment, 'scroll')
+            && Str::contains($normalizedComment, ['grow', 'geometry', 'bounding box'])
+            && Str::contains($normalizedComment, ['lag', 'performance', 'rebuild']);
+
+        $isF1040MoveWithoutFalseUnderline = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:115')
+            && (
+                str_starts_with(
+                    (string) $normalizedTargetText,
+                    '15 Add lines 9 through 12 and 14. Enter here and on Form 1040'
+                )
+                || str_starts_with(
+                    (string) $normalizedTargetText,
+                    'Add lines 9 through 12 and 14. Enter here and on Form 1040'
+                )
+            )
+            && (
+                Str::contains($normalizedComment, 'move')
+                || Str::contains($normalizedComment, 'drag')
+            )
+            && Str::contains($normalizedComment, 'underline');
+
+        $isF1040DeleteNamePreservesFormArtwork = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:12')
+            && $normalizedTargetText === 'Name(s) shown on Form 1040, 1040-SR, or 1040-NR'
+            && Str::contains($normalizedComment, 'delete')
+            && Str::contains($normalizedComment, [
+                'rule',
+                'line',
+                'form artwork',
+                'background',
+            ]);
+
+        $isF1040MovePartHeaderPreservesSourceTile = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:14')
+            && $normalizedTargetText === 'Part I'
+            && Str::contains($normalizedComment, ['move', 'drag'])
+            && Str::contains($normalizedComment, [
+                'tile',
+                'background',
+                'dark',
+                'black',
+                'visible',
+            ]);
+
+        $moveDownPixels = null;
+        if (preg_match('/\b(\d+)\s*(?:px|pixels?)\b/i', $normalizedComment, $distanceMatch)) {
+            $moveDownPixels = (int) $distanceMatch[1];
+        }
+        $moveDownSuffix = null;
+        if (preg_match('/_(0_0:(?:87|100))$/', $savedRuntimeId, $moveDownMatch)) {
+            $moveDownSuffix = $moveDownMatch[1];
+        }
+        $isF1040MoveDownPreservesFontSize = (int) $testCase->page_index === 0
+            && $moveDownSuffix !== null
+            && in_array($moveDownPixels, [400, 600], true)
+            && Str::contains($normalizedComment, ['drag down', 'move down'])
+            && Str::contains($normalizedComment, 'font size');
+
+        $isDrylabTitleMovePreservesFooter = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:0')
+            && preg_replace('/\s+/u', '', Str::lower((string) $normalizedTargetText)) === 'drylabnews'
+            && $moveDownPixels === 400
+            && Str::contains($normalizedComment, ['move', 'drag'])
+            && Str::contains($normalizedComment, ['download pdf', 'resulting pdf'])
+            && Str::contains($normalizedComment, ['fragment', 'redact']);
+
+        $isTableHeaderMovePreservesEditorRules = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:6')
+            && Str::lower((string) $normalizedTargetText) === 'header 2'
+            && $moveDownPixels === 200
+            && Str::contains($normalizedComment, ['move', 'drag'])
+            && Str::contains($normalizedComment, ['up 200', 'up 200px', 'up 200 pixels'])
+            && Str::contains($normalizedComment, ['table', 'background'])
+            && Str::contains($normalizedComment, 'editor')
+            && Str::contains($normalizedComment, ['not a download', 'not download']);
+
+        $isTableTextEditPreservesGeometry = (int) $testCase->page_index === 1
+            && str_ends_with($savedRuntimeId, '_1_1:31')
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Best Practices: Separate two tables with header rows'
+            )
+            && Str::contains($normalizedComment, ['edit', 'editing'])
+            && Str::contains($normalizedComment, ['add', 'append'])
+            && Str::contains($normalizedComment, '1')
+            && Str::contains($normalizedComment, ['bounding box', 'annotation'])
+            && Str::contains($normalizedComment, ['deselect', 'deselection'])
+            && Str::contains($normalizedComment, ['jump', 'shift', 'cannot happen']);
+
+        $isTableExactFontEditPreservesGeometry = (int) $testCase->page_index === 2
+            && str_ends_with($savedRuntimeId, '_2_2:35')
+            && $normalizedTargetText === 'Project 1'
+            && Str::contains($normalizedComment, ['font', 'calibri', 'sans-serif'])
+            && Str::contains($normalizedComment, ['type', 'edit'])
+            && Str::contains($normalizedComment, ['jump', 'consistent'])
+            && Str::contains($normalizedComment, ['document fonts', 'pdf font', 'exact font']);
+
+        $isTableEdgeTightHeaderExport = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:6')
+            && Str::lower((string) $normalizedTargetText) === 'header 3'
+            && Str::contains($normalizedComment, 'bounding box')
+            && Str::contains($normalizedComment, ['edge', 'spacing', 'padding'])
+            && Str::contains($normalizedComment, ['overflow', 'wrap', 'next line'])
+            && Str::contains($normalizedComment, ['export', 'download']);
+
+        $isTablePromotedEditEntryStable = (int) $testCase->page_index === 0
+            && $savedRuntimeId === 'promoted_1_0'
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Use tables to organize data not format information'
+            )
+            && Str::contains($normalizedComment, ['edit text', 'edit mode'])
+            && Str::contains($normalizedComment, 'padding')
+            && Str::contains($normalizedComment, ['jump', 'shift'])
+            && Str::contains($normalizedComment, ['top', 'vertical']);
+
+        $isParagraphShrinkAndExport = (int) $testCase->page_index === 2
+            && $savedRuntimeId === 'promoted_3_9'
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'In most cases, you can take or mail this signed application'
+            )
+            && Str::contains($normalizedComment, 'shrink')
+            && Str::contains($normalizedComment, ['50%', '50 percent'])
+            && Str::contains($normalizedComment, ['downloaded pdf', 'download pdf']);
+
+        return [
+            'scenario' => match (true) {
+                $isUnderlineDeletion => 'ss5_page4_delete_underlined_neighbor',
+                $isPageOneSwap => 'ss5_page1_swap_annotations',
+                $isParagraphSentenceDeletion => 'ss5_page1_delete_paragraph_sentence',
+                $isF1040BoundingBoxSnapping => 'f1040s3_page1_bounding_box_snapping',
+                $isF1040DragPreviewSpacing => 'f1040s3_page1_drag_preview_spacing',
+                $isF1040MovePreservesGlyphInset => 'f1040s3_page1_move_preserves_glyph_inset',
+                $isF1040MixedStyleEditResize => 'f1040s3_page1_mixed_style_edit_resize',
+                $isF1040ResizePreservesSourceSpacing => 'f1040s3_page1_resize_preserves_source_spacing',
+                $isF1040ScrollPreservesEditedSpacing => 'f1040s3_page1_scroll_preserves_edited_spacing',
+                $isF1040DateEditPreservesMixedWeight => 'f1040s3_page1_date_edit_preserves_mixed_weight',
+                $isF1040ScrollPreservesUserSizedGeometry => 'f1040s3_page1_scroll_preserves_user_sized_geometry',
+                $isF1040MoveWithoutFalseUnderline => 'f1040s3_page1_move_without_false_underline',
+                $isF1040DeleteNamePreservesFormArtwork => 'f1040s3_page1_delete_name_preserves_form_artwork',
+                $isF1040MovePartHeaderPreservesSourceTile => 'f1040s3_page1_move_part_header_preserves_source_tile',
+                $isF1040MoveDownPreservesFontSize => 'f1040s3_page1_move_down_preserves_font_size',
+                $isDrylabTitleMovePreservesFooter => 'drylab_page1_move_title_preserves_footer',
+                $isTableHeaderMovePreservesEditorRules => 'table_examples_page1_move_header_preserves_editor_table',
+                $isTableEdgeTightHeaderExport => 'table_examples_page1_edge_tight_header_export',
+                $isTablePromotedEditEntryStable => 'table_examples_page1_promoted_edit_entry_stable',
+                $isTableTextEditPreservesGeometry => 'table_examples_page2_edit_text_preserves_geometry',
+                $isTableExactFontEditPreservesGeometry => 'table_examples_page3_exact_font_edit_preserves_geometry',
+                $isParagraphShrinkAndExport => 'ss5_page3_shrink_paragraph_and_export',
+                default => 'unsupported',
+            },
+            'swap_primary_suffix' => $savedSwapSuffix,
+            'swap_partner_suffix' => $swapPartnerSuffix,
+            'sentence_to_delete' => $sentenceToDelete,
+            'sentence_preserved_text' => [
+                'IMPORTANT: You MUST provide a properly completed application',
+                'Notarized copies or photocopies which have not been certified by the custodian of the record are not acceptable. We',
+                'will return any documents submitted with your application.',
+                'website at www.socialsecurity.gov.',
+            ],
+            'move_down_suffix' => $moveDownSuffix,
+            'move_down_pixels' => $moveDownPixels,
+            'table_edit_page_number' => $isTableExactFontEditPreservesGeometry ? 3 : 2,
+            'table_edit_suffix' => $isTableExactFontEditPreservesGeometry ? '2_2:35' : '1_1:31',
+            'table_edit_expected_text' => $isTableExactFontEditPreservesGeometry
+                ? 'Project 1'
+                : 'Best Practices: Separate two tables with header rows',
+            'table_edit_append_text' => $isTableExactFontEditPreservesGeometry ? '2' : '1',
+            'require_exact_document_font' => $isTableExactFontEditPreservesGeometry,
+            'table_export_page_number' => $isTableEdgeTightHeaderExport ? 1 : null,
+            'table_export_suffix' => $isTableEdgeTightHeaderExport ? '0_0:6' : null,
+            'table_export_expected_text' => $isTableEdgeTightHeaderExport ? 'Header 3' : null,
+            'table_export_font_family' => $isTableEdgeTightHeaderExport ? 'Helvetica' : null,
+            'promoted_edit_annotation_id' => $isTablePromotedEditEntryStable ? 'promoted_1_0' : null,
+            'promoted_edit_expected_text' => $isTablePromotedEditEntryStable
+                ? 'Use tables to organize data not format information'
+                : null,
+            'paragraph_shrink_ratio' => $isParagraphShrinkAndExport ? 0.5 : null,
+        ];
     }
 }

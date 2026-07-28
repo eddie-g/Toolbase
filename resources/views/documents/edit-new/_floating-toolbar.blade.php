@@ -100,7 +100,11 @@
     <!-- Group 3: Convert -->
     <div class="ftb-group">
         @if(request()->query('pdfjs') === '1')
-            <button type="button" class="ftb-btn" id="ftb-convert" title="Convert — export this PDF to another format">
+            <button type="button"
+                    class="ftb-btn{{ ($editorCanUsePremiumFeatures ?? false) ? '' : ' is-premium-locked' }}"
+                    id="ftb-convert"
+                    data-premium-feature="Convert"
+                    title="Convert — export this PDF to another format">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
                     <path d="M14 2v6h6"></path>
@@ -118,6 +122,19 @@
                         <path d="m8 9 4 4 4-4"></path>
                     </svg>
                     <span>Merge / Split</span>
+                </button>
+                <button type="button"
+                        class="ftb-btn"
+                        id="ftb-encrypt"
+                        title="Password — protect or unlock a downloadable PDF copy"
+                        aria-label="Set or remove a PDF password"
+                        aria-haspopup="dialog"
+                        aria-controls="enpv-encrypt-modal">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="5" y="10" width="14" height="11" rx="2"></rect>
+                        <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+                    </svg>
+                    <span>Password</span>
                 </button>
             @endunless
         @endif

@@ -29,6 +29,20 @@ Thumbs.db
 /python/.playwright
 /python/screenshots
 /tests/
+!/tests/
+/tests/*
+!/tests/OverlayEditor/
+/tests/OverlayEditor/*
+!/tests/OverlayEditor/run_doc5144_promoted_1_8_spacing_format_export_regression.cjs
+!/tests/OverlayEditor/fixtures/
+/tests/OverlayEditor/fixtures/*
+!/tests/OverlayEditor/fixtures/ast_sci_data_tables_sample.pdf
+!/tests/Feature/
+/tests/Feature/*
+!/tests/Feature/PdfPasswordProtectionTest.php
+!/tests/Unit/
+/tests/Unit/*
+!/tests/Unit/RecraftPromptBuilderTest.php
 
 # Debug/temp files
 /tmp/

@@ -1216,22 +1216,81 @@ def _collect_vertical_lines(page):
     return lines
 
 
-def _span_has_drawn_underline(span_bbox, horizontal_lines):
-    """True when a span bbox sits on top of an existing horizontal vector line."""
+def _span_drawn_underline_segments(
+    span_bbox,
+    horizontal_lines,
+    origin=None,
+    font_size=None,
+):
+    """Return horizontal vector segments that act as an underline for a span.
+
+    A PDF text span can contain a whole sentence while the vector stroke only
+    covers a phrase inside it. Keep the clipped page-space segment geometry so
+    the editor can move and redraw only those underlined words.
+    """
     if not span_bbox or not horizontal_lines:
-        return False
+        return []
     x0, y0, x1, y1 = [float(v) for v in span_bbox]
+    baseline = None
+    try:
+        if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+            baseline = float(origin[1])
+        elif isinstance(origin, dict) and origin.get("y") is not None:
+            baseline = float(origin["y"])
+        elif origin is not None and getattr(origin, "y", None) is not None:
+            baseline = float(origin.y)
+    except (TypeError, ValueError):
+        baseline = None
+    try:
+        resolved_font_size = float(font_size)
+    except (TypeError, ValueError):
+        resolved_font_size = 0.0
     span_w = max(1.0, x1 - x0)
-    for lx0, lx1, ly, _sw in horizontal_lines:
-        if ly < (y0 - 2.0) or ly > (y1 + 2.0):
+    segments = []
+    for lx0, lx1, ly, stroke_width in horizontal_lines:
+        line_y = float(ly)
+        # PDF coordinates increase down the page. A real underline belongs to
+        # the glyph descender band, while nearby form/table rules generally sit
+        # below the glyph bbox (or above the baseline). Keep only the former.
+        if line_y < (y0 - 2.0) or line_y > (y1 + 0.25):
             continue
+        if baseline is not None:
+            maximum_baseline_gap = max(
+                1.5,
+                resolved_font_size * 0.22 if resolved_font_size > 0 else 0.0,
+            )
+            if (
+                line_y < baseline + 0.1
+                or line_y > baseline + maximum_baseline_gap
+            ):
+                continue
         overlap = max(0.0, min(x1, lx1) - max(x0, lx0))
         if overlap <= 0:
             continue
         overlap_ratio = overlap / span_w
         if overlap_ratio >= 0.55 or overlap >= 40:
-            return True
-    return False
+            segments.append({
+                "x0": max(x0, float(lx0)),
+                "x1": min(x1, float(lx1)),
+                "y": line_y,
+                "width": max(0.0, float(stroke_width or 0.0)),
+            })
+    return segments
+
+
+def _span_has_drawn_underline(
+    span_bbox,
+    horizontal_lines,
+    origin=None,
+    font_size=None,
+):
+    """True when a span bbox sits on top of an existing horizontal vector line."""
+    return bool(_span_drawn_underline_segments(
+        span_bbox,
+        horizontal_lines,
+        origin=origin,
+        font_size=font_size,
+    ))
 
 
 def _rect_union(a, b):
@@ -2283,8 +2342,26 @@ def _trace_text_can_replace_original_text(original_text, rebuilt_text):
 
     original_compact = _compact_duplicate_compare_text(original)
     rebuilt_compact = _compact_duplicate_compare_text(rebuilt)
-    if not original_compact or original_compact != rebuilt_compact:
+    if not original_compact:
         return False
+
+    if original_compact != rebuilt_compact:
+        # Some malformed PDFs assign text from several distant header fields
+        # to every individual span. The span bbox and texttrace characters are
+        # authoritative in that case: accept a substantial visible substring
+        # instead of retaining the unrelated suffix/prefix from get_text().
+        visible_ratio = len(rebuilt_compact) / max(1, len(original_compact))
+        placeholder_free_original = re.sub(r'_+', '', original_compact)
+        return (
+            len(rebuilt_compact) >= 4
+            and (
+                (
+                    visible_ratio >= 0.18
+                    and rebuilt_compact in original_compact
+                )
+                or rebuilt_compact == placeholder_free_original
+            )
+        )
 
     original_space_runs = re.findall(r'\s+', original)
     rebuilt_space_runs = re.findall(r'\s+', rebuilt)
@@ -2621,15 +2698,45 @@ def _rebuild_visible_text_from_trace_bbox(trace_chars, bbox, font, size, widget_
     }
 
 
+def _normalize_malformed_checkbox_row_text(text):
+    normalized = sanitize_extracted_text(text)
+    if not normalized:
+        return normalized
+
+    trailing_duplicate = re.fullmatch(
+        r'(?P<label>[^•◦▪■◻□]{2,}:)\s*(?:[•◦▪■◻□]\s*){2,}',
+        normalized.strip(),
+    )
+    if trailing_duplicate:
+        return f"{trailing_duplicate.group('label').strip()} •"
+
+    leading_symbols = re.match(r'^\s*(?:[•◦▪■◻□]\s*){2,}', normalized)
+    if not leading_symbols:
+        return normalized
+    labels = [
+        part.strip()
+        for part in re.split(r'[•◦▪■◻□]+', normalized)
+        if part.strip()
+    ]
+    if len(labels) < 2:
+        return normalized
+    return f"•  {'   '.join(labels)}"
+
+
 def _dedupe_block_text_lines(block):
     if not isinstance(block, dict):
         return block
 
-    text_lines = [
+    raw_text_lines = [
         sanitize_extracted_text(line)
         for line in (block.get('text_lines') or [])
         if sanitize_extracted_text(line)
     ]
+    text_lines = [
+        _normalize_malformed_checkbox_row_text(line)
+        for line in raw_text_lines
+    ]
+    normalized_text_changed = text_lines != raw_text_lines
     line_bboxes = [
         tuple(float(value) for value in bbox[:4])
         for bbox in (block.get('line_bboxes') or [])
@@ -2657,7 +2764,7 @@ def _dedupe_block_text_lines(block):
         font_size_key=None,
     )
     deduped_entries.sort(key=lambda entry: entry.get('_index', 0))
-    if len(deduped_entries) == len(entries):
+    if len(deduped_entries) == len(entries) and not normalized_text_changed:
         return block
 
     deduped_lines = [entry['text'] for entry in deduped_entries]
@@ -3365,6 +3472,23 @@ def _merge_same_row_lines(line_items, vertical_lines=None, widget_rects=None, dr
             ):
                 should_merge = False
 
+        if should_merge:
+            row_text = ' '.join(
+                ''.join(_line_item_text(existing_item) for existing_item in row).split()
+            )
+            item_text = ' '.join(_line_item_text(item).split())
+            if (
+                (
+                    _looks_like_form_section_header(row_text)
+                    and re.match(r'^[•◦▪■◻□]', item_text)
+                )
+                or (
+                    _looks_like_form_section_header(item_text)
+                    and re.match(r'^[•◦▪■◻□]', row_text)
+                )
+            ):
+                should_merge = False
+
         # Don't merge items with a significant horizontal overlap (z-ordered text).
         # Normal text flows left-to-right with positive gaps.
         # Minimal negative gap (kerning) is okay, but large overlap means
@@ -3551,8 +3675,22 @@ def _split_line_item_by_structural_span_barriers(line_item, vertical_lines=None,
             abs(current_group_max_size - span_size) >= 8.0
             and size_ratio <= 0.5
         )
+        current_text = ' '.join(
+            ''.join(str(existing_span.get('text') or '') for existing_span in current_group).split()
+        )
+        span_text = ' '.join(str(span.get('text') or '').split())
+        gap = (
+            float(span_bbox[0]) - float(current_bbox[2])
+            if current_bbox and span_bbox
+            else 0.0
+        )
+        force_form_header_option_split = (
+            _looks_like_form_section_header(current_text)
+            and span_text in {'•', '◦', '▪', '■', '◻', '□'}
+            and gap >= 6.0
+        )
 
-        if has_structural_barrier or force_style_split:
+        if has_structural_barrier or force_style_split or force_form_header_option_split:
             span_groups.append([span])
         else:
             current_group.append(span)
@@ -4544,6 +4682,29 @@ def _merge_adjacent_page_blocks(page_blocks, page_width, page_words, page_lines,
                 # Elements must be very close together to merge (max 3x font size)
                 h_gap = max(b_left - a_right, a_left - b_right, 0)
                 max_font = max(a_size, b_size) if max(a_size, b_size) > 0 else 12
+
+                a_text = ' '.join(str(block_a.get('text') or '').split())
+                b_text = ' '.join(str(block_b.get('text') or '').split())
+                standalone_year = re.compile(r'^(?:19|20)\d{2}$')
+                standalone_part = re.compile(r'^Part\s+[IVXLCM]+$', re.IGNORECASE)
+                if standalone_year.fullmatch(a_text) or standalone_year.fullmatch(b_text):
+                    continue
+                if a_text.casefold() == 'initial' or b_text.casefold() == 'initial':
+                    continue
+                if (
+                    (standalone_part.fullmatch(a_text) or standalone_part.fullmatch(b_text))
+                    and h_gap > max(10.0, max_font)
+                ):
+                    continue
+                option_symbols = re.compile(r'^[•◦▪■◻□]')
+                if (
+                    _looks_like_form_section_header(a_text)
+                    and option_symbols.match(b_text)
+                ) or (
+                    _looks_like_form_section_header(b_text)
+                    and option_symbols.match(a_text)
+                ):
+                    continue
                 
                 # Don't re-merge blocks that were explicitly split by x-gap detection
                 if block_a.get('_from_xgap_split') or block_b.get('_from_xgap_split'):
@@ -5565,7 +5726,13 @@ def extract_text_with_pymupdf(pdf_path):
                                     text,
                                 )
 
-                                has_drawn_underline = _span_has_drawn_underline(bbox, horizontal_lines)
+                                drawn_underline_segments = _span_drawn_underline_segments(
+                                    bbox,
+                                    horizontal_lines,
+                                    origin=origin,
+                                    font_size=size,
+                                )
+                                has_drawn_underline = bool(drawn_underline_segments)
                                 render_text, suppressed_drawn_underline = _overlay_render_text(
                                     text, has_drawn_underline
                                 )
@@ -5646,6 +5813,7 @@ def extract_text_with_pymupdf(pdf_path):
                                     'render_text': render_text,
                                     'suppress_drawn_underline': suppressed_drawn_underline,
                                     'has_drawn_underline': has_drawn_underline,
+                                    'drawn_underline_segments': drawn_underline_segments,
                                     'font': font,
                                     'font_xref': font_xref,
                                     'font_size': size,

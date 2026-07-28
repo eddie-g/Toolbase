@@ -10,6 +10,7 @@ use App\Http\Controllers\ComplianceController;
 use App\Http\Controllers\CreditController;
 use App\Http\Controllers\OverlayEditorTestController;
 use App\Http\Controllers\PdfTestController;
+use App\Http\Controllers\PdfUploadTestController;
 use App\Http\Controllers\ShapeTestController;
 use Illuminate\Support\Facades\Route;
 
@@ -119,8 +120,11 @@ Route::post('/documents/{document}/convert-html-to-pdf', [DocumentController::cl
 Route::post('/documents/{document}/save-guided-form', [DocumentController::class, 'saveGuidedFormData'])->name('documents.saveGuidedForm');
 Route::post('/documents/{document}/screenshot', [DocumentController::class, 'takeScreenshot'])->name('documents.takeScreenshot');
 Route::post('/documents/{document}/convert-to-pdfa', [DocumentController::class, 'convertToPdfA'])->name('documents.convertToPdfA');
-Route::post('/documents/{document}/convert-to-word', [DocumentController::class, 'convertToWord'])->name('documents.convertToWord');
-Route::post('/documents/{document}/convert-to-excel', [DocumentController::class, 'convertToExcel'])->name('documents.convertToExcel');
+Route::post('/documents/{document}/convert-to-word', [DocumentController::class, 'convertToWord'])->middleware('auth:web,admin')->name('documents.convertToWord');
+Route::post('/documents/{document}/convert-to-excel', [DocumentController::class, 'convertToExcel'])->middleware('auth:web,admin')->name('documents.convertToExcel');
+Route::post('/documents/{document}/pdf-password/unlock', [DocumentController::class, 'unlockPdfPassword'])
+    ->middleware('throttle:10,1')
+    ->name('documents.unlockPdfPassword');
 Route::post('/documents/{document}/encrypt-pdf', [DocumentController::class, 'encryptPdf'])->name('documents.encryptPdf');
 Route::post('/documents/{document}/split-pdf', [DocumentController::class, 'splitPdf'])->name('documents.splitPdf');
 Route::get('/documents/download-pdfa', [DocumentController::class, 'downloadPdfA'])->name('documents.downloadPdfA');
@@ -158,6 +162,20 @@ Route::post('/pdf-tests/document/{document}/render-annotations', [PdfTestControl
 Route::post('/pdf-tests/document/{document}/compare-first-annotation', [PdfTestController::class, 'compareFirstAnnotation'])->name('pdfTests.compareFirstAnnotation');
 Route::post('/pdf-tests/document/{document}/compare-written-vs-original', [PdfTestController::class, 'compareWrittenVsOriginal'])->name('pdfTests.compareWrittenVsOriginal');
 Route::post('/pdf-tests/document/{document}/compare-edit-new-snapshot', [PdfTestController::class, 'compareEditNewSnapshot'])->name('pdfTests.compareEditNewSnapshot');
+
+Route::middleware('auth:admin')
+    ->prefix('/pdf-tests/upload-tests')
+    ->name('pdfTests.uploadTests.')
+    ->group(function () {
+        Route::get('/', [PdfUploadTestController::class, 'index'])->name('index');
+        Route::post('/', [PdfUploadTestController::class, 'store'])->name('store');
+        Route::get('/{pdfUploadTest}/review', [PdfUploadTestController::class, 'review'])->name('review');
+        Route::patch('/{pdfUploadTest}', [PdfUploadTestController::class, 'update'])->name('update');
+        Route::patch('/{pdfUploadTest}/paragraph-grouping', [PdfUploadTestController::class, 'updateParagraphGrouping'])
+            ->name('paragraphGrouping');
+        Route::delete('/{pdfUploadTest}', [PdfUploadTestController::class, 'destroy'])->name('destroy');
+        Route::get('/{pdfUploadTest}/original', [PdfUploadTestController::class, 'original'])->name('original');
+    });
 
 Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
 Route::post('/documents/bulk-destroy', [DocumentController::class, 'bulkDestroy'])->name('documents.bulkDestroy');

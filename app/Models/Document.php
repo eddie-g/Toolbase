@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Document extends Model
 {
@@ -24,11 +25,15 @@ class Document extends Model
         'template_type',
         'template_slug',
         'form_data',
+        'pdf_password_hash',
+        'pdf_password_algorithm',
+        'pdf_password_set_at',
     ];
 
     protected $casts = [
         'form_data' => 'array',
         'preview_image_updated_at' => 'datetime',
+        'pdf_password_set_at' => 'datetime',
     ];
 
     public function pdfExtractionsFitz()
@@ -54,5 +59,10 @@ class Document extends Model
     public function admin(): BelongsTo
     {
         return $this->belongsTo(Admin::class);
+    }
+
+    public function pdfUploadTest(): HasOne
+    {
+        return $this->hasOne(PdfUploadTest::class);
     }
 }

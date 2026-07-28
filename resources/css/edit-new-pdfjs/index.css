@@ -23,6 +23,8 @@
     --enpv-bg: #404040;
     --enpv-page-top-gutter: 96px;
     --enpv-page-bottom-gap: 16px;
+    --enpv-side-panel-width: min(400px, calc(100vw - 104px));
+    --enpv-wide-side-panel-width: min(420px, calc(100vw - 104px));
 }
 
 /* ----------------------------------------------------------------------
@@ -1312,6 +1314,11 @@ body.enpv-body .enpv-pdfa-report-icon {
     width: 44px;
     height: 44px;
     border-radius: 12px;
+    background: #059669;
+}
+
+body.enpv-body .enpv-pdfa-report-icon.is-fail {
+    background: #dc2626;
 }
 
 body.enpv-body .enpv-convert-header h2,
@@ -1321,6 +1328,14 @@ body.enpv-body .enpv-pdfa-report-header h2 {
     font-size: 17px;
     line-height: 1.2;
     font-weight: 750;
+}
+
+body.enpv-body #enpv-pdfa-report-title {
+    color: #047857;
+}
+
+body.enpv-body #enpv-pdfa-report-title.is-fail {
+    color: #b91c1c;
 }
 
 body.enpv-body .enpv-convert-header p,
@@ -1398,6 +1413,15 @@ body.enpv-body .enpv-field-group > .enpv-label {
     font-weight: 750;
     letter-spacing: 0.04em;
     text-transform: uppercase;
+}
+
+body.enpv-body #enpv-convert-images .enpv-field-group {
+    margin-bottom: 14px;
+}
+
+body.enpv-body #enpv-convert-images .enpv-choice {
+    min-height: 38px;
+    padding-block: 6px;
 }
 
 body.enpv-body .enpv-choice-grid {
@@ -1488,63 +1512,290 @@ body.enpv-body .enpv-help-text.is-error {
     font-weight: 750;
 }
 
+body.enpv-body .enpv-field-group.is-disabled {
+    opacity: 0.42;
+}
+
+body.enpv-body .enpv-convert-antialias {
+    width: fit-content;
+    margin: 0;
+    color: #475569;
+    font-size: 13px;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+body.enpv-body .enpv-convert-config-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+}
+
+body.enpv-body .enpv-convert-config-grid .enpv-range-row {
+    grid-template-columns: minmax(0, 1fr) 32px;
+    gap: 6px;
+}
+
+body.enpv-body .enpv-convert-antialias-group .enpv-help-text {
+    font-size: 10px;
+}
+
+body.enpv-body #enpv-convert-page-count.is-error {
+    color: #b91c1c;
+    font-weight: 700;
+}
+
+body.enpv-body .enpv-convert-summary {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+body.enpv-body .enpv-convert-size-estimate {
+    color: #64748b;
+}
+
+body.enpv-body .enpv-convert-size-estimate strong {
+    color: #172033;
+    font-weight: 750;
+}
+
 body.enpv-body .enpv-encrypt-card {
-    max-width: 620px;
+    width: min(390px, calc(100vw - 28px));
+    max-height: min(92vh, 620px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid #e2e5ec;
+    border-radius: 14px;
+    background: #ffffff;
+    color: #1f2028;
+    box-shadow: 0 26px 80px rgba(15, 23, 42, 0.28);
+}
+
+body.enpv-body .enpv-encrypt-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 22px 14px;
+}
+
+body.enpv-body .enpv-encrypt-header h2 {
+    margin: 0;
+    color: #1f2028;
+    font-size: 25px;
+    font-weight: 760;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+}
+
+body.enpv-body .enpv-encrypt-close {
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #252631;
+    cursor: pointer;
+}
+
+body.enpv-body .enpv-encrypt-close:hover,
+body.enpv-body .enpv-encrypt-close:focus-visible {
+    background: #f1f2f6;
+    outline: none;
+}
+
+body.enpv-body .enpv-encrypt-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0 22px;
+    padding: 2px;
+    border-radius: 9px;
+    background: #f0f0f3;
+}
+
+body.enpv-body .enpv-encrypt-tabs[hidden] {
+    display: none !important;
+}
+
+body.enpv-body .enpv-encrypt-tab {
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #20212a;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+body.enpv-body .enpv-encrypt-tab.is-active {
+    background: #ffffff;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+}
+
+body.enpv-body .enpv-encrypt-tab:focus-visible {
+    outline: 2px solid #4b44ee;
+    outline-offset: 2px;
+}
+
+body.enpv-body .enpv-encrypt-notices {
+    display: grid;
+    gap: 12px;
+    padding: 20px 22px 10px;
+}
+
+body.enpv-body .enpv-encrypt-notices p {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 9px;
+    align-items: start;
+    margin: 0;
+    color: #252631;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+body.enpv-body .enpv-encrypt-notices svg {
+    margin-top: 1px;
+    color: #242631;
+}
+
+body.enpv-body .enpv-encrypt-body {
+    overflow-y: auto;
+    padding: 8px 22px 0;
+}
+
+body.enpv-body .enpv-encrypt-body [role="tabpanel"] {
+    display: grid;
+    gap: 16px;
+}
+
+body.enpv-body .enpv-encrypt-body [role="tabpanel"][hidden],
+body.enpv-body .enpv-password-field[hidden] {
+    display: none !important;
 }
 
 body.enpv-body .enpv-password-field {
     display: grid;
-    gap: 8px;
-    color: #111827;
-    font-size: 13px;
-    font-weight: 750;
+    gap: 7px;
+    color: #22232c;
 }
 
-body.enpv-body .enpv-password-field span {
-    display: flex;
-    align-items: center;
-    overflow: hidden;
-    border: 1px solid #cfd8e5;
-    border-radius: 6px;
-    background: #fff;
+body.enpv-body .enpv-password-label {
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.3;
 }
 
 body.enpv-body .enpv-password-field input {
-    min-width: 0;
     width: 100%;
-    height: 38px;
-    border: 0;
-    padding: 0 10px;
+    height: 49px;
+    box-sizing: border-box;
+    border: 1px solid #d6d8df;
+    border-radius: 9px;
+    padding: 0 12px;
+    background: #ffffff;
+    color: #20212a;
     outline: 0;
     font: inherit;
-    font-weight: 600;
+    font-size: 16px;
+    font-weight: 500;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-body.enpv-body .enpv-password-field button {
-    width: 42px;
-    height: 38px;
+body.enpv-body .enpv-password-field input::placeholder {
+    color: #b9bfce;
+}
+
+body.enpv-body .enpv-password-field input:focus {
+    border-color: #4b44ee;
+    box-shadow: 0 0 0 1px #4b44ee;
+}
+
+body.enpv-body .enpv-encrypt-remove-help {
+    margin: -5px 0 0;
+    color: #6a6e7c;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+body.enpv-body .enpv-encrypt-message {
+    min-height: 18px;
+    margin: 12px 0 0;
+    color: #4b5563;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+body.enpv-body .enpv-encrypt-message:empty {
+    min-height: 0;
+    margin-top: 0;
+}
+
+body.enpv-body .enpv-encrypt-message.is-error {
+    color: #b42318;
+}
+
+body.enpv-body .enpv-encrypt-footer {
+    padding: 18px 22px 22px;
+}
+
+body.enpv-body .enpv-encrypt-submit {
+    width: 100%;
+    min-height: 46px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
     border: 0;
-    border-left: 1px solid #e2e8f0;
-    background: transparent;
-    color: #475569;
-    display: grid;
-    place-items: center;
+    border-radius: 7px;
+    background: #4b44ee;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 760;
     cursor: pointer;
+    transition: background-color 0.15s ease, opacity 0.15s ease;
 }
 
-body.enpv-body #enpv-encrypt-icon,
-body.enpv-body #enpv-encrypt-accept {
-    background: #0f172a;
-    border-color: #0f172a;
+body.enpv-body .enpv-encrypt-submit:hover:not(:disabled) {
+    background: #3931dc;
 }
 
-body.enpv-body #enpv-encrypt-accept {
-    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
+body.enpv-body .enpv-encrypt-submit:focus-visible {
+    outline: 3px solid rgba(75, 68, 238, 0.22);
+    outline-offset: 2px;
 }
 
-body.enpv-body #enpv-encrypt-accept:hover:not(:disabled) {
-    background: #111827;
-    border-color: #111827;
+body.enpv-body .enpv-encrypt-submit:disabled {
+    background: #e8eaf0;
+    color: #bdc4d2;
+    cursor: not-allowed;
+}
+
+body.enpv-body .enpv-encrypt-submit.is-busy {
+    cursor: wait;
+    opacity: 0.72;
+}
+
+@media (max-width: 480px) {
+    body.enpv-body .enpv-convert-modal.enpv-encrypt-modal {
+        align-items: flex-end;
+        padding: 0;
+    }
+
+    body.enpv-body .enpv-encrypt-card {
+        width: 100%;
+        max-height: 94vh;
+        border-radius: 14px 14px 0 0;
+    }
 }
 
 body.enpv-body .enpv-convert-two-col {
@@ -1600,18 +1851,54 @@ body.enpv-body .enpv-option-card {
 }
 
 body.enpv-body .enpv-option-card {
-    margin-bottom: 10px;
-    padding: 12px;
+    align-items: flex-start;
+    margin: 0;
+    padding: 12px 13px;
     border: 1px solid #dbe3ef;
-    border-radius: 8px;
+    border-radius: 10px;
     background: #f8fafc;
+    line-height: 1.3;
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+body.enpv-body .enpv-option-card:hover {
+    border-color: #93c5fd;
+    background: #f8fbff;
+}
+
+body.enpv-body .enpv-option-card:has(input:focus-visible) {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+body.enpv-body .enpv-option-card input {
+    width: 16px;
+    height: 16px;
+    margin: 1px 0 0;
+    flex: 0 0 auto;
+    accent-color: #2563eb;
+}
+
+body.enpv-body .enpv-option-card strong {
+    display: block;
+    color: #172033;
+    font-size: 13px;
+    font-weight: 750;
 }
 
 body.enpv-body .enpv-option-card small {
     display: block;
-    margin-top: 2px;
+    margin-top: 4px;
     color: #64748b;
     font-size: 11px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+body.enpv-body .enpv-option-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
 }
 
 body.enpv-body .enpv-info-box {
@@ -1710,6 +1997,35 @@ body.enpv-body .enpv-primary-button {
 body.enpv-body .enpv-primary-button.is-green {
     border-color: #059669;
     background: #059669;
+}
+
+body.enpv-body .enpv-primary-button.is-green:hover:not(:disabled) {
+    border-color: #047857;
+    background: #047857;
+}
+
+body.enpv-body .enpv-primary-button.is-warning,
+body.enpv-body .enpv-primary-button.is-warning:hover:not(:disabled) {
+    border-color: #d97706;
+    background: #d97706;
+}
+
+body.enpv-body #enpv-pdfa-report-download {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-width: 142px;
+    white-space: nowrap;
+    box-shadow: 0 8px 18px rgba(5, 150, 105, 0.2);
+}
+
+body.enpv-body #enpv-pdfa-report-download.is-warning {
+    box-shadow: 0 8px 18px rgba(217, 119, 6, 0.2);
+}
+
+body.enpv-body #enpv-pdfa-report-download svg {
+    flex: 0 0 auto;
 }
 
 body.enpv-body .enpv-secondary-button {
@@ -2248,6 +2564,10 @@ body.enpv-body .enpv-pdfa-check {
     border-bottom: 1px solid #eef2f7;
 }
 
+body.enpv-body .enpv-pdfa-check:last-child {
+    border-bottom: 0;
+}
+
 body.enpv-body .enpv-pdfa-check-icon {
     color: #059669;
 }
@@ -2298,8 +2618,24 @@ body.enpv-body .enpv-pdfa-fonts div {
     margin-top: 3px;
 }
 
+body.enpv-body .enpv-pdfa-fonts .is-pass {
+    color: #047857;
+}
+
+body.enpv-body .enpv-pdfa-fonts .is-fail {
+    color: #b91c1c;
+}
+
+body.enpv-body #enpv-pdfa-report-summary {
+    min-width: 0;
+    color: #475569;
+    line-height: 1.4;
+}
+
 @media (max-width: 640px) {
     body.enpv-body .enpv-convert-two-col,
+    body.enpv-body .enpv-convert-config-grid,
+    body.enpv-body .enpv-option-grid,
     body.enpv-body .enpv-choice-grid-5,
     body.enpv-body .enpv-choice-grid-2,
     body.enpv-body .enpv-choice-grid-3 {
@@ -3006,13 +3342,14 @@ body.enpv-body .enpv-page-manager-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-content: start;
-    gap: 14px;
-    padding: 16px 18px 22px;
+    gap: 12px;
+    padding: 14px 16px 22px;
     overflow: auto;
     background: #f1f5f9;
 }
 
 body.enpv-body .enpv-page-manager-item {
+    position: relative;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -3046,6 +3383,7 @@ body.enpv-body .enpv-page-manager-item.is-drag-over {
 }
 
 body.enpv-body .enpv-page-manager-thumb {
+    position: relative;
     width: 100%;
     aspect-ratio: var(--enpv-thumb-aspect, 0.77);
     display: flex;
@@ -3061,6 +3399,86 @@ body.enpv-body .enpv-page-manager-thumb canvas {
     width: 100%;
     height: 100%;
     display: block;
+}
+
+body.enpv-body .enpv-page-manager-rotate-controls {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 140ms ease, transform 140ms ease;
+}
+
+body.enpv-body .enpv-page-manager-rotate {
+    width: 34px;
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 1px solid rgba(148, 163, 184, 0.7);
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.9);
+    color: #ffffff;
+    box-shadow: 0 5px 16px rgba(15, 23, 42, 0.28);
+    cursor: pointer;
+    transition: background-color 140ms ease, transform 140ms ease;
+}
+
+body.enpv-body .enpv-page-manager-rotate svg {
+    width: 19px;
+    height: 19px;
+}
+
+body.enpv-body .enpv-page-manager-item:hover .enpv-page-manager-rotate-controls,
+body.enpv-body .enpv-page-manager-item:focus-within .enpv-page-manager-rotate-controls {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+body.enpv-body .enpv-page-manager-rotate:hover:not(:disabled),
+body.enpv-body .enpv-page-manager-rotate:focus-visible:not(:disabled) {
+    background: #2563eb;
+    outline: 3px solid rgba(147, 197, 253, 0.7);
+    outline-offset: 2px;
+}
+
+body.enpv-body .enpv-page-manager-rotate:disabled {
+    cursor: wait;
+}
+
+body.enpv-body .enpv-page-manager-rotate.is-rotating {
+    background: #2563eb;
+}
+
+body.enpv-body .enpv-page-manager-rotate.is-rotating,
+body.enpv-body .enpv-page-manager-rotate:hover:not(:disabled) {
+    transform: scale(1.06);
+}
+
+body.enpv-body .enpv-page-manager-item:has(.enpv-page-manager-rotate.is-rotating) .enpv-page-manager-rotate-controls {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+body.enpv-body .enpv-page-manager-rotate.is-rotating svg {
+    animation: enpv-page-manager-rotate-spin 800ms linear infinite;
+}
+
+@keyframes enpv-page-manager-rotate-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (hover: none) {
+    body.enpv-body .enpv-page-manager-rotate-controls {
+        opacity: 0.94;
+        transform: translateY(0);
+    }
 }
 
 body.enpv-body .enpv-page-manager-label {
@@ -3130,21 +3548,55 @@ body.enpv-body .top-bar {
     z-index: 2147482000;
 }
 
-/* The legacy #pages-wrap is a flex column that auto-centers page boxes.
-   We repurpose it as the absolutely-positioned host for #viewerContainer.
-   Strip its padding/flex so the viewer fills the available area. */
+/* Keep the legacy #pages-wrap inert on this route. The actual PDF.js viewer
+   is mounted separately in #viewerContainer below. */
 body.enpv-body #pages-wrap {
     padding: 0;
     margin: 0;
     max-width: none;
     display: block;
     position: absolute;
-    left: 0; right: 0;
+    left: 0;
+    right: 0;
     /* leave room for the legacy top-bar (~60px). Adjusted at runtime if
        the toolbar reports a different height. */
     top: 60px;
     bottom: 0;
     background: var(--enpv-bg);
+}
+
+/* Side panels overlay the fixed viewer. Their visibility must never resize,
+   rescale, or otherwise invalidate the PDF.js canvas. */
+body.enpv-body #ann-format-bar,
+body.enpv-body #shape-tool-panel,
+body.enpv-body .draw-tool-panel,
+body.enpv-body .enpv-layers-panel,
+body.enpv-body .enpv-notes-panel {
+    width: var(--enpv-side-panel-width);
+    max-width: var(--enpv-side-panel-width);
+    box-shadow: -12px 0 28px rgba(15, 23, 42, 0.18);
+}
+
+body.enpv-body .enpv-guided-helper-panel,
+body.enpv-body .enpv-page-manager-card {
+    width: var(--enpv-wide-side-panel-width);
+    max-width: var(--enpv-wide-side-panel-width);
+}
+
+body.enpv-body .enpv-guided-helper-panel {
+    box-shadow: -12px 0 28px rgba(15, 23, 42, 0.18);
+}
+
+body.enpv-body .enpv-page-manager-card {
+    box-shadow: 12px 0 28px rgba(15, 23, 42, 0.2);
+    pointer-events: auto;
+}
+
+/* The page manager behaves as a left drawer on this route, not a modal
+   scrim over the document. Only the drawer itself captures input. */
+body.enpv-body .enpv-page-manager-modal {
+    background: transparent;
+    pointer-events: none;
 }
 
 /* The new viewer mounts here. PDFViewer requires its container to be
@@ -3158,7 +3610,7 @@ body.enpv-body #pages-wrap {
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transition: opacity 180ms ease;
+    transition: opacity 80ms ease-out;
 }
 body.enpv-body.enpv-viewer-ready #viewerContainer {
     opacity: 1;
@@ -3180,7 +3632,7 @@ body.enpv-body.enpv-viewer-ready .pdfViewer .page.enpv-overlays-pending > .annot
     color: #f2f4f5;
     opacity: 1;
     visibility: visible;
-    transition: opacity 180ms ease, visibility 180ms ease;
+    transition: opacity 80ms ease-out, visibility 80ms ease-out;
 }
 body.enpv-body.enpv-viewer-ready .enpv-loading-screen {
     opacity: 0;
@@ -3400,12 +3852,41 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
     display: block;
     user-select: text;
 }
+/*
+ * Clean promoted paragraphs are painted by the PDF canvas before editing.
+ * Keep those authoritative pixels visible on edit entry and use the aligned
+ * contenteditable only for hit-testing, selection, and its caret. The first
+ * real mutation installs a source mask and removes this class atomically.
+ */
+.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content,
+.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content * {
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+    -webkit-text-stroke-color: transparent !important;
+    text-decoration-color: transparent !important;
+    text-shadow: none !important;
+}
+.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content {
+    caret-color: var(--enpv-text-color, #000) !important;
+}
+.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content::selection,
+.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content *::selection {
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
+}
 .enpv-annotation-box.is-user-sized-text .enpv-text-content {
     overflow: hidden;
     /* Resizing changes the container, never the glyph aspect ratio. */
     transform: none !important;
     transform-origin: initial !important;
     width: 100% !important;
+}
+.enpv-annotation-box[data-preserve-distributed-leader-spacing="1"] .enpv-text-content {
+    /* PDF dot leaders are fixed single rows. Keep their captured gaps intact
+       even when rich-mode setup resets the element's inline flow styles. */
+    white-space: pre !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
 }
 .enpv-annotation-box.is-editing.is-source-fidelity .enpv-text-content {
     display: block;
@@ -3416,6 +3897,16 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
     line-height: var(--enpv-line-height, var(--enpv-font-size, 12px));
     transform-origin: 0 0;
     overflow: visible;
+}
+.enpv-edit-source-line[data-source-span-line="1"] {
+    display: inline-block;
+    vertical-align: top;
+    white-space: pre;
+}
+.enpv-edit-gap[data-source-span-gap="1"][style*="--enpv-source-gap-width"] {
+    display: inline-block;
+    width: var(--enpv-source-gap-width);
+    white-space: pre;
 }
 .enpv-annotation-box:hover {
     background: rgba(147, 197, 253, 0.18);
@@ -4925,4 +5416,348 @@ body.enpv-guided .floating-tool-bar .ftb-sep:last-of-type {
 }
 body:not(.enpv-guided) #ftb-guided-convert {
     display: none !important;
+}
+
+/* ---------------------------------------------------------------------
+ * Persistent upload-test review.
+ *
+ * This is deliberately a viewer, not another editor surface. It keeps the
+ * PDF.js edit-mode overlay renderer so the rectangles and IDs are identical
+ * to ?pdfjs=1, while removing every mutation control and interaction.
+ * --------------------------------------------------------------------- */
+body.enpv-upload-test-review {
+    --putr-header-height: 72px;
+    --putr-panel-width: 380px;
+    overflow: hidden;
+    background: #374151;
+    color: #0f172a;
+}
+
+body.enpv-upload-test-review > .top-bar,
+body.enpv-upload-test-review #floating-tool-bar,
+body.enpv-upload-test-review #floating-zoom-bar,
+body.enpv-upload-test-review #ann-format-bar,
+body.enpv-upload-test-review #shape-tool-panel,
+body.enpv-upload-test-review #draw-tool-panel,
+body.enpv-upload-test-review #highlight-tool-panel,
+body.enpv-upload-test-review #enpv-page-manager-rail,
+body.enpv-upload-test-review #enpv-page-manager-modal,
+body.enpv-upload-test-review #enpv-layers-rail,
+body.enpv-upload-test-review #enpv-layers-panel,
+body.enpv-upload-test-review #enpv-notes-rail,
+body.enpv-upload-test-review #enpv-notes-panel,
+body.enpv-upload-test-review #enpv-guided-helper-open,
+body.enpv-upload-test-review #enpv-guided-helper-panel,
+body.enpv-upload-test-review #enpv-ann-menu,
+body.enpv-upload-test-review #enpv-edit-bar,
+body.enpv-upload-test-review #enpv-status,
+body.enpv-upload-test-review #enpv-download,
+body.enpv-upload-test-review #enpv-debug-panel,
+body.enpv-upload-test-review .markup-modal,
+body.enpv-upload-test-review .signature-modal,
+body.enpv-upload-test-review .image-modal,
+body.enpv-upload-test-review .enpv-convert-modal,
+body.enpv-upload-test-review .enpv-merge-modal,
+body.enpv-upload-test-review .enpv-encrypt-modal,
+body.enpv-upload-test-review #save-toast,
+body.enpv-upload-test-review #shape-constrain-tip {
+    display: none !important;
+}
+
+body.enpv-upload-test-review #pages-wrap {
+    top: var(--putr-header-height);
+    right: var(--putr-panel-width);
+}
+
+body.enpv-upload-test-review #viewerContainer,
+body.enpv-upload-test-review .enpv-loading-screen {
+    top: var(--putr-header-height);
+    right: var(--putr-panel-width);
+    bottom: 0;
+    left: 0;
+}
+
+body.enpv-upload-test-review .pdfViewer .page {
+    margin-top: 24px;
+}
+
+body.enpv-upload-test-review .pdfViewer .textLayer,
+body.enpv-upload-test-review .pdfViewer .annotationLayer {
+    pointer-events: none !important;
+    user-select: none !important;
+}
+
+body.enpv-upload-test-review .enpv-annotation-box {
+    pointer-events: auto !important;
+    cursor: pointer !important;
+}
+
+body.enpv-upload-test-review .enpv-annotation-box *,
+body.enpv-upload-test-review .enpv-resize-handle,
+body.enpv-upload-test-review .enpv-shape-rotate-handle,
+body.enpv-upload-test-review .enpv-shape-angle-badge {
+    pointer-events: none !important;
+}
+
+body.enpv-upload-test-review.enpv-edit-on .enpv-annotation-box.is-test-target {
+    outline: 2px solid #2563eb !important;
+    outline-offset: 1px;
+    background: rgba(37, 99, 235, 0.16) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+    z-index: 100001 !important;
+}
+
+.putr-header {
+    position: fixed;
+    inset: 0 0 auto 0;
+    z-index: 2147483600;
+    height: var(--putr-header-height);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 18px;
+    border-bottom: 1px solid #e2e8f0;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 1px 8px rgba(15, 23, 42, 0.12);
+}
+
+.putr-back,
+.putr-open-pdf {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    color: #334155;
+    background: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.putr-back:hover,
+.putr-open-pdf:hover {
+    border-color: #94a3b8;
+    background: #f8fafc;
+}
+
+.putr-document {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.putr-document strong,
+.putr-document span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.putr-document strong {
+    color: #0f172a;
+    font-size: 15px;
+}
+
+.putr-document span {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: 11px;
+}
+
+.putr-panel {
+    position: fixed;
+    z-index: 2147483590;
+    top: var(--putr-header-height);
+    right: 0;
+    bottom: 0;
+    width: var(--putr-panel-width);
+    box-sizing: border-box;
+    padding: 24px;
+    overflow-y: auto;
+    border-left: 1px solid #e2e8f0;
+    background: #ffffff;
+    box-shadow: -8px 0 24px rgba(15, 23, 42, 0.12);
+}
+
+.putr-eyebrow {
+    margin: 0 0 6px;
+    color: #2563eb;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.putr-panel h1 {
+    margin: 0;
+    color: #0f172a;
+    font-size: 22px;
+    line-height: 1.2;
+}
+
+.putr-help {
+    margin: 9px 0 22px;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.putr-field {
+    display: block;
+    margin-bottom: 16px;
+}
+
+.putr-field > span {
+    display: block;
+    margin-bottom: 7px;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.putr-field input,
+.putr-field textarea {
+    box-sizing: border-box;
+    width: 100%;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 10px 11px;
+    color: #0f172a;
+    background: #ffffff;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.putr-field input[readonly] {
+    color: #1d4ed8;
+    background: #eff6ff;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+}
+
+.putr-field textarea {
+    min-height: 150px;
+    resize: vertical;
+}
+
+.putr-field textarea:focus {
+    border-color: #2563eb;
+    outline: 3px solid rgba(37, 99, 235, 0.14);
+}
+
+.putr-target-meta {
+    margin: -6px 0 18px;
+    padding: 11px 12px;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.putr-target-meta > span {
+    color: #475569;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.putr-target-meta p {
+    margin: 5px 0 0;
+    color: #475569;
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.putr-target-meta code {
+    color: #1d4ed8;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.putr-status {
+    min-height: 20px;
+    margin: 2px 0 11px;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.putr-status.is-error {
+    color: #b91c1c;
+}
+
+.putr-status.is-success {
+    color: #15803d;
+    font-weight: 700;
+}
+
+.putr-save {
+    width: 100%;
+    min-height: 42px;
+    border: 0;
+    border-radius: 8px;
+    color: #ffffff;
+    background: #2563eb;
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.putr-save:hover {
+    background: #1d4ed8;
+}
+
+.putr-save:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+@media (max-width: 820px) {
+    body.enpv-upload-test-review {
+        --putr-header-height: 64px;
+        --putr-panel-width: 0px;
+        --putr-panel-height: 330px;
+    }
+
+    body.enpv-upload-test-review #viewerContainer,
+    body.enpv-upload-test-review .enpv-loading-screen {
+        right: 0;
+        bottom: var(--putr-panel-height);
+    }
+
+    .putr-header {
+        gap: 8px;
+        padding: 0 10px;
+    }
+
+    .putr-back span:last-child {
+        display: none;
+    }
+
+    .putr-panel {
+        top: auto;
+        left: 0;
+        width: 100%;
+        height: var(--putr-panel-height);
+        padding: 16px;
+        border-top: 1px solid #e2e8f0;
+        border-left: 0;
+        box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.14);
+    }
+
+    .putr-panel > div:first-child {
+        display: none;
+    }
+
+    .putr-target-meta {
+        max-height: 82px;
+        overflow: auto;
+    }
+
+    .putr-comment-field textarea {
+        min-height: 82px;
+    }
 }
