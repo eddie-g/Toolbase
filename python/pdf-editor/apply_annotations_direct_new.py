@@ -302,12 +302,19 @@ _STATIC_INSTANCE_CACHE_DIR = os.path.join(TEMP_DIR, "font-instances")
 def _is_variable_font_file(path: str) -> bool:
     if not path or not os.path.exists(path):
         return False
+    ttf = None
     try:
         from fontTools.ttLib import TTFont
         ttf = TTFont(path, lazy=True)
         return "fvar" in ttf
     except Exception:
         return False
+    finally:
+        if ttf is not None:
+            try:
+                ttf.close()
+            except Exception:
+                pass
 
 
 def _materialize_variable_font_instance(src_path: str, wght: int, italic: bool) -> str:
@@ -1066,6 +1073,14 @@ def pdfjs_visible_overlay_scale_x(ann: Dict[str, Any]) -> float:
 def _pdfjs_source_base_rect(page: fitz.Page, ann: Dict[str, Any]) -> Optional[fitz.Rect]:
     source_rect = pdfjs_source_edit_source_rect(ann)
     if source_rect is None:
+        # Promoted extraction blocks were persisted before the browser began
+        # emitting per-overlay pdfjsSource* coordinates. Their sourceBlock*
+        # geometry is already in PyMuPDF's top-origin page space and is the
+        # only immutable source anchor available for text-only replacement.
+        if _boolish(ann.get("promotedFromExtraction")):
+            promoted_rect = _resolve_promoted_source_clip_rect(ann)
+            if promoted_rect is not None and not promoted_rect.is_empty:
+                return promoted_rect & page.rect
         return None
     x = source_rect["x"]
     y = source_rect["y"]
@@ -1817,6 +1832,16 @@ def split_pdfjs_source_mask_around_page_rules(page: fitz.Page, rect: fitz.Rect) 
         rule_rect = drawing.get("rect") if isinstance(drawing, dict) else None
         if not isinstance(rule_rect, fitz.Rect):
             continue
+        # PyMuPDF drawing dictionaries include the vector operations that
+        # produced their aggregate bbox. A bbox alone can also describe a
+        # glyph-like painted bar, so require an actual line/rectangle path
+        # before carving a hole in the source mask.
+        drawing_items = drawing.get("items") if isinstance(drawing, dict) else None
+        if not isinstance(drawing_items, list) or not any(
+            item and item[0] in {"l", "re"}
+            for item in drawing_items
+        ):
+            continue
         rule = _is_thin_page_rule(rule_rect, rect)
         if rule is None:
             continue
@@ -2007,6 +2032,338 @@ def draw_pdfjs_source_mask(page: fitz.Page, ann: Dict[str, Any]) -> None:
             page.draw_rect(piece, color=None, fill=fill, width=0, overlay=True)
 
 
+def _pdfjs_source_drawn_underline_segments(
+    page: fitz.Page,
+    ann: Dict[str, Any],
+) -> list[Dict[str, float]]:
+    """Return underline strokes owned by this source-backed annotation.
+
+    Extracted PDF underlines are page graphics, not text decorations. Their
+    original page-space geometry must stay attached to the source annotation
+    so export can remove the old stroke before drawing the moved replacement.
+    """
+    raw_groups: list[Any] = [ann.get("pdfjsSourceUnderlineSegments")]
+    # An explicit (even empty) segment collection is authoritative. Falling
+    # back to a legacy boolean after rejecting its geometry can turn a nearby
+    # form rule into a synthetic underline.
+    has_explicit_segment_metadata = ann.get("pdfjsSourceUnderlineSegments") is not None
+    source_spans = ann.get("sourceSpans")
+    if isinstance(source_spans, list):
+        for span in source_spans:
+            if not isinstance(span, dict):
+                continue
+            if (
+                "drawn_underline_segments" in span
+                or "drawnUnderlineSegments" in span
+            ):
+                has_explicit_segment_metadata = True
+            raw_groups.append(
+                span.get("drawn_underline_segments")
+                or span.get("drawnUnderlineSegments")
+            )
+
+    segments: list[Dict[str, float]] = []
+    for raw in raw_groups:
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except Exception:
+                raw = None
+        if not isinstance(raw, list):
+            continue
+        for value in raw:
+            try:
+                if isinstance(value, dict):
+                    x0 = float(value.get("x0", value.get("left")))
+                    x1 = float(value.get("x1", value.get("right")))
+                    y = float(value.get("y", value.get("top")))
+                    width = float(value.get("width", value.get("line_width", 0.0)) or 0.0)
+                elif isinstance(value, (list, tuple)) and len(value) >= 3:
+                    x0 = float(value[0])
+                    x1 = float(value[1])
+                    y = float(value[2])
+                    width = float(value[3] or 0.0) if len(value) >= 4 else 0.0
+                else:
+                    continue
+            except Exception:
+                continue
+            if not all(math.isfinite(number) for number in (x0, x1, y, width)):
+                continue
+            left, right = sorted((x0, x1))
+            if right - left <= 0.05:
+                continue
+            segments.append({
+                "x0": left,
+                "x1": right,
+                "y": y,
+                "width": max(0.0, width),
+            })
+
+    has_drawn_underline_hint = _boolish(ann.get("pdfjsSourceHasDrawnUnderline"))
+    if isinstance(source_spans, list):
+        has_drawn_underline_hint = has_drawn_underline_hint or any(
+            isinstance(span, dict)
+            and (
+                _boolish(span.get("has_drawn_underline"))
+                or _boolish(span.get("suppress_drawn_underline"))
+                or _boolish(span.get("underline"))
+            )
+            for span in source_spans
+        )
+
+    # Saved rows extracted before precise segment metadata was introduced can
+    # recover the exact line directly from the unchanged source page. Deleted
+    # source handles are intentionally minimal (they carry the source bbox and
+    # text, not all typography metadata), so deletion must always perform this
+    # narrow vector scan as well.
+    should_detect_from_source_page = (
+        has_drawn_underline_hint
+        or _boolish(ann.get("pdfjsDeleted"))
+    )
+    if (
+        not segments
+        and not has_explicit_segment_metadata
+        and should_detect_from_source_page
+    ):
+        source_rect_for_detection = _pdfjs_explicit_source_mask_rect(page, ann)
+        if source_rect_for_detection is None or source_rect_for_detection.is_empty:
+            source_rect_for_detection = _pdfjs_source_base_rect(page, ann)
+        if source_rect_for_detection is not None and not source_rect_for_detection.is_empty:
+            source_baselines: list[float] = []
+            normalized_source = _compact_source_mask_text(
+                ann.get("pdfjsSourceText")
+                or ann.get("originalText")
+                or ann.get("text")
+                or ""
+            )
+            try:
+                source_blocks = page.get_text("dict").get("blocks", [])
+            except Exception:
+                source_blocks = []
+            for block in source_blocks:
+                if not isinstance(block, dict):
+                    continue
+                for line in block.get("lines", []) or []:
+                    if not isinstance(line, dict):
+                        continue
+                    line_rect: Optional[fitz.Rect] = None
+                    line_parts: list[str] = []
+                    line_baselines: list[float] = []
+                    for span in line.get("spans", []) or []:
+                        if not isinstance(span, dict):
+                            continue
+                        span_rect = _fitz_rect_from_bbox(span.get("bbox"))
+                        if span_rect is None or span_rect.is_empty:
+                            continue
+                        line_rect = fitz.Rect(span_rect) if line_rect is None else (line_rect | span_rect)
+                        line_parts.append(str(span.get("text") or ""))
+                        origin = span.get("origin")
+                        if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+                            try:
+                                baseline = float(origin[1])
+                            except Exception:
+                                baseline = math.nan
+                            if math.isfinite(baseline):
+                                line_baselines.append(baseline)
+                    if line_rect is None or line_rect.is_empty:
+                        continue
+                    if (line_rect & source_rect_for_detection).is_empty:
+                        continue
+                    normalized_line = _compact_source_mask_text("".join(line_parts))
+                    if (
+                        normalized_source
+                        and normalized_line
+                        and normalized_line not in normalized_source
+                        and normalized_source not in normalized_line
+                    ):
+                        continue
+                    source_baselines.extend(line_baselines)
+            try:
+                drawings = page.get_drawings() or []
+            except Exception:
+                drawings = []
+            # The export path removes source glyphs before it asks this legacy
+            # fallback to find an owned vector underline. Text containing word
+            # spaces can leave blank spans whose origins still preserve the
+            # original baseline, but a single-word source may leave no text
+            # geometry at all. In that case a nearby form-cell border is
+            # indistinguishable from an underline by rectangle overlap alone.
+            # Precise, explicit segment metadata was handled above and does not
+            # depend on this fallback; without a matching baseline, reject
+            # ambiguous page graphics instead of claiming them for deletion.
+            if not source_baselines:
+                drawings = []
+            for drawing in drawings:
+                try:
+                    stroke_width = float(drawing.get("width") or 0.0)
+                except Exception:
+                    stroke_width = 0.0
+                for item in drawing.get("items") or []:
+                    if not item or item[0] != "l":
+                        continue
+                    try:
+                        first, second = item[1], item[2]
+                        if abs(float(first.y) - float(second.y)) > 0.5:
+                            continue
+                        left = min(float(first.x), float(second.x))
+                        right = max(float(first.x), float(second.x))
+                        y = (float(first.y) + float(second.y)) / 2.0
+                    except Exception:
+                        continue
+                    # A true underline sits just below one of the source text
+                    # baselines. A form-cell border can still fall inside an
+                    # expanded multi-line source rectangle and overlap its
+                    # entire width (f1040s3 :12), but is several points away
+                    # from the final baseline. When matching text baselines are
+                    # available, reject those neighboring rules before they
+                    # become deletion-owned underline segments.
+                    if source_baselines and not any(
+                        -0.35 <= y - baseline <= 2.5
+                        for baseline in source_baselines
+                    ):
+                        continue
+                    # Underlines sit on or inside the glyph bbox for the PDFs
+                    # this path supports. A looser lower-edge allowance
+                    # captures adjacent form/table rules (f1040s3's y=612
+                    # rule is 1.42pt below the :115 glyph bbox).
+                    if (
+                        y < source_rect_for_detection.y0 - 2.0
+                        or y > source_rect_for_detection.y1 + 0.35
+                    ):
+                        continue
+                    overlap = max(
+                        0.0,
+                        min(float(source_rect_for_detection.x1), right)
+                        - max(float(source_rect_for_detection.x0), left),
+                    )
+                    overlap_ratio = overlap / max(1.0, float(source_rect_for_detection.width))
+                    if overlap < 40.0 and overlap_ratio < 0.55:
+                        continue
+                    segments.append({
+                        "x0": max(float(source_rect_for_detection.x0), left),
+                        "x1": min(float(source_rect_for_detection.x1), right),
+                        "y": y,
+                        "width": max(0.0, stroke_width),
+                    })
+
+    # Last-resort legacy fallback: approximate a full-span underline when the
+    # old boolean exists but the vector path cannot be inspected.
+    if (
+        not segments
+        and not has_explicit_segment_metadata
+        and isinstance(source_spans, list)
+    ):
+        for span in source_spans:
+            if not isinstance(span, dict):
+                continue
+            if not (
+                _boolish(span.get("has_drawn_underline"))
+                or _boolish(span.get("suppress_drawn_underline"))
+                or _boolish(span.get("underline"))
+            ):
+                continue
+            bbox = _fitz_rect_from_bbox(span.get("bbox"))
+            if bbox is None or bbox.is_empty:
+                continue
+            try:
+                font_size = float(span.get("font_size") or span.get("fontSize") or bbox.height)
+            except Exception:
+                font_size = float(bbox.height)
+            origin = span.get("origin")
+            try:
+                baseline_y = float(origin[1]) if isinstance(origin, (list, tuple)) and len(origin) >= 2 else bbox.y1
+            except Exception:
+                baseline_y = bbox.y1
+            segments.append({
+                "x0": float(bbox.x0),
+                "x1": float(bbox.x1),
+                "y": baseline_y + max(0.5, font_size * 0.08),
+                "width": max(0.0, float(span.get("line_width") or 0.0)),
+            })
+
+    source_rect = _pdfjs_explicit_source_mask_rect(page, ann)
+    if source_rect is None or source_rect.is_empty:
+        source_rect = _pdfjs_source_base_rect(page, ann)
+    if source_rect is None or source_rect.is_empty:
+        return []
+
+    owned: list[Dict[str, float]] = []
+    seen: set[tuple[float, float, float]] = set()
+    for segment in segments:
+        clipped_x0 = max(float(source_rect.x0), segment["x0"])
+        clipped_x1 = min(float(source_rect.x1), segment["x1"])
+        y = segment["y"]
+        if clipped_x1 - clipped_x0 <= 0.05:
+            continue
+        if y < source_rect.y0 - 3.0 or y > source_rect.y1 + 0.35:
+            continue
+        key = (round(clipped_x0, 3), round(clipped_x1, 3), round(y, 3))
+        if key in seen:
+            continue
+        seen.add(key)
+        owned.append({
+            "x0": clipped_x0,
+            "x1": clipped_x1,
+            "y": y,
+            "width": segment["width"],
+        })
+    return owned
+
+
+def erase_pdfjs_source_drawn_underlines(page: fitz.Page, ann: Dict[str, Any]) -> bool:
+    """Remove source-owned underline graphics without touching page rules."""
+    segments = _pdfjs_source_drawn_underline_segments(page, ann)
+    if not segments:
+        return False
+
+    erase_rects: list[fitz.Rect] = []
+    for segment in segments:
+        stroke_width = max(0.25, float(segment.get("width") or 0.0))
+        pad_x = max(0.35, stroke_width)
+        pad_y = max(0.8, stroke_width * 2.0)
+        rect = fitz.Rect(
+            float(segment["x0"]) - pad_x,
+            float(segment["y"]) - pad_y,
+            float(segment["x1"]) + pad_x,
+            float(segment["y"]) + pad_y,
+        ) & page.rect
+        if rect.is_empty:
+            continue
+        try:
+            page.add_redact_annot(rect, fill=None)
+            erase_rects.append(rect)
+        except Exception:
+            continue
+    if not erase_rects:
+        return False
+
+    try:
+        # graphics=1 removes vector paths fully covered by the precise
+        # underline rectangles while preserving unrelated crossing rules.
+        page.apply_redactions(images=0, graphics=1)
+        return True
+    except TypeError:
+        pass
+    except Exception:
+        pass
+
+    # Older PyMuPDF builds cannot target graphics. Paint only the captured
+    # stroke rectangles with the source background as a visual fallback.
+    source_rect = _pdfjs_explicit_source_mask_rect(page, ann)
+    if source_rect is None or source_rect.is_empty:
+        source_rect = _pdfjs_source_base_rect(page, ann)
+    if source_rect is None or source_rect.is_empty:
+        return False
+    fill = (
+        sample_pdfjs_moved_source_mask_fill(page, source_rect)
+        if _boolish(ann.get("movedTextOverlay"))
+        else sample_pdfjs_mask_fill(page, source_rect)
+    )
+    for rect in erase_rects:
+        page.draw_rect(rect, color=None, fill=fill, width=0, overlay=True)
+    return True
+
+
 def requires_search_safe_source_redaction(ann: Dict[str, Any]) -> bool:
     """Return whether this source-backed overlay must remove source glyphs.
 
@@ -2024,6 +2381,10 @@ def requires_search_safe_source_redaction(ann: Dict[str, Any]) -> bool:
         ann.get("pdfjsSourceMaskX") is not None
         or ann.get("pdfjsSourceX") is not None
         or ann.get("pdfjsAnchorUid") is not None
+        or (
+            _boolish(ann.get("promotedFromExtraction"))
+            and _resolve_promoted_source_clip_rect(ann) is not None
+        )
     )
 
 
@@ -2109,6 +2470,28 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
     # "small glyph" boxes can leave a strip that appears clear during planning
     # but still intersects (and deletes) the full box of the row above or below.
     page_words = _page_words_with_default_glyph_heights(page)
+    source_text = ann.get("pdfjsSourceText") or ann.get("originalText") or ann.get("text") or ""
+    def matching_source_line_identities(words: list) -> set[tuple[int, int]]:
+        words_by_line: Dict[tuple[int, int], list[Any]] = {}
+        for word in words:
+            identity = _pdf_word_identity(word)
+            if identity is None:
+                continue
+            words_by_line.setdefault(identity[:2], []).append(word)
+        return {
+            line_identity
+            for line_identity, line_words in words_by_line.items()
+            if _source_mask_line_matches_source_text(
+                " ".join(
+                    str(word[4] or "")
+                    for word in sorted(line_words, key=lambda entry: int(entry[7]))
+                ),
+                source_text,
+            )
+        }
+
+    matching_source_lines = matching_source_line_identities(page_words)
+    source_line_identity_available = bool(matching_source_lines)
 
     target_entries: list[tuple[fitz.Rect, Optional[tuple[int, int, int]]]] = []
     collateral_entries: list[tuple[fitz.Rect, Optional[tuple[int, int, int]]]] = []
@@ -2135,10 +2518,16 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
             (word_rect.x0 + word_rect.x1) * 0.5,
             (word_rect.y0 + word_rect.y1) * 0.5,
         )
-        if source_rect.contains(center):
-            target_entries.append((word_rect, _pdf_word_identity(word)))
+        identity = _pdf_word_identity(word)
+        line_identity = identity[:2] if identity is not None else None
+        belongs_to_matching_source_line = (
+            not source_line_identity_available
+            or (line_identity is not None and line_identity in matching_source_lines)
+        )
+        if source_rect.contains(center) and belongs_to_matching_source_line:
+            target_entries.append((word_rect, identity))
         else:
-            collateral_entries.append((word_rect, _pdf_word_identity(word)))
+            collateral_entries.append((word_rect, identity))
             if not (word_rect & collateral_watch_rect).is_empty:
                 collateral_word_snapshots.append((
                     normalize_pdfjs_compare_text(word[4]),
@@ -2222,6 +2611,36 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
             planning_words,
             clearance=0.5,
         )
+        overlapping_collateral = [
+            neighbor
+            for neighbor in collision_rects
+            if not (rect & neighbor).is_empty
+        ]
+        if overlapping_collateral:
+            safe_pieces = [fitz.Rect(rect)]
+            for neighbor in overlapping_collateral:
+                protected = fitz.Rect(
+                    neighbor.x0 - 0.5,
+                    neighbor.y0 - 0.5,
+                    neighbor.x1 + 0.5,
+                    neighbor.y1 + 0.5,
+                ) & page.rect
+                safe_pieces = _subtract_rect_from_rects(safe_pieces, protected)
+                if not safe_pieces:
+                    break
+            safe_pieces = [
+                piece
+                for piece in safe_pieces
+                if not piece.is_empty
+                and piece.width > 0.05
+                and piece.height > 0.05
+                and not (piece & default_rect).is_empty
+            ]
+            if safe_pieces:
+                rect = max(
+                    safe_pieces,
+                    key=lambda piece: float(piece.width) * float(piece.height),
+                )
         if rect.is_empty or rect.width <= 0.05 or rect.height <= 0.05:
             continue
         # If no rectangular strip can avoid a neighboring word, fail the
@@ -2250,6 +2669,7 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
     remaining_words = _page_words_with_default_glyph_heights(page)
     if not _nearby_collateral_words_survive(collateral_word_snapshots, remaining_words):
         return False
+    remaining_matching_source_lines = matching_source_line_identities(remaining_words)
     remaining_inside = []
     for word in remaining_words:
         try:
@@ -2259,7 +2679,20 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
             )
         except Exception:
             continue
-        if source_rect.contains(center):
+        identity = _pdf_word_identity(word)
+        line_identity = identity[:2] if identity is not None else None
+        belongs_to_matching_source_line = (
+            (
+                not source_line_identity_available
+                and source_rect.contains(center)
+            )
+            or (
+                source_line_identity_available
+                and line_identity is not None
+                and line_identity in remaining_matching_source_lines
+            )
+        )
+        if source_rect.contains(center) and belongs_to_matching_source_line:
             remaining_inside.append(word)
     if not remaining_inside:
         return True
@@ -2282,6 +2715,7 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
         page.add_redact_annot(fallback_rect, fill=None)
         _apply_redactions_compat(page)
         remaining_words = _page_words_with_default_glyph_heights(page)
+        remaining_matching_source_lines = matching_source_line_identities(remaining_words)
         return (
             _nearby_collateral_words_survive(collateral_word_snapshots, remaining_words)
             and not any(
@@ -2289,6 +2723,13 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
                     (float(word[0]) + float(word[2])) * 0.5,
                     (float(word[1]) + float(word[3])) * 0.5,
                 ))
+                and (
+                    not source_line_identity_available
+                    or (
+                        _pdf_word_identity(word) is not None
+                        and _pdf_word_identity(word)[:2] in remaining_matching_source_lines
+                    )
+                )
                 for word in remaining_words
             )
         )
@@ -2686,7 +3127,23 @@ def resolve_pdfjs_visible_overlay_typography(page: fitz.Page, ann: Dict[str, Any
     if source_size > 0:
         resolved["fontSize"] = source_size
         resolved["lineHeight"] = max(float(resolved.get("lineHeight") or 0.0), source_size)
-    if best_span.get("color") is not None:
+    moved_editor_color = str(
+        ann.get("textColor")
+        or ann.get("color")
+        or ""
+    ).strip()
+    preserve_moved_editor_color = (
+        _boolish(ann.get("movedTextOverlay"))
+        and bool(moved_editor_color)
+    )
+    if preserve_moved_editor_color:
+        # Older editor payloads serialized only ``color``. The renderer reads
+        # ``textColor``, so merely declining to replace the legacy value with
+        # the source span's color would still make it fall back to black.
+        # Normalize the authoritative moved-editor value onto both aliases.
+        resolved["textColor"] = moved_editor_color
+        resolved["color"] = moved_editor_color
+    elif best_span.get("color") is not None:
         resolved["textColor"] = _source_color_to_hex(best_span.get("color"))
         resolved["color"] = resolved["textColor"]
     inferred_source_weight = _font_weight_from_source_name(source_font)
@@ -4026,6 +4483,7 @@ def build_wrapped_rich_text_span_layout(
     align: int,
     font_ascender: float,
     vertical_align: str = "top",
+    fit_width: Optional[float] = None,
 ) -> list[Dict[str, Any]]:
     ops = parse_rich_text_layout_ops(ann)
     if not ops:
@@ -4094,22 +4552,33 @@ def build_wrapped_rich_text_span_layout(
     for line_index, line_runs in enumerate(wrapped_lines):
         metrics = line_metrics[line_index]
         line_bottom = line_top + metrics["height"]
-        line_rect = fitz.Rect(
-            text_rect.x0 + padding_x,
-            line_top,
-            text_rect.x0 + padding_x + available_width,
-            line_bottom,
-        )
-        baseline_y = line_top + metrics["baseline_offset"]
         total_width = sum(
             _measure_style_run_text_width(run.get("text") or "", run, font_cache)
             for run in line_runs
         )
+        target_width = (
+            max(1.0, min(float(available_width), float(fit_width)))
+            if fit_width is not None
+            else float(available_width)
+        )
+        line_scale_x = (
+            min(1.0, target_width / total_width)
+            if total_width > 0.0
+            else 1.0
+        )
+        rendered_width = total_width * line_scale_x
+        line_rect = fitz.Rect(
+            text_rect.x0 + padding_x,
+            line_top,
+            text_rect.x0 + padding_x + target_width,
+            line_bottom,
+        )
+        baseline_y = line_top + metrics["baseline_offset"]
         draw_x = line_rect.x0
         if align == 1:
-            draw_x = line_rect.x0 + max(0.0, (available_width - total_width) / 2.0)
+            draw_x = line_rect.x0 + max(0.0, (target_width - rendered_width) / 2.0)
         elif align == 2:
-            draw_x = line_rect.x1 - total_width
+            draw_x = line_rect.x1 - rendered_width
 
         spans: list[Dict[str, Any]] = []
         cursor_x = draw_x
@@ -4125,8 +4594,9 @@ def build_wrapped_rich_text_span_layout(
                 "baseline_x": cursor_x,
                 "baseline_y": baseline_y,
                 "span_rotation": run.get("span_rotation") or 0.0,
+                "scale_x": line_scale_x,
             })
-            cursor_x += run_width
+            cursor_x += run_width * line_scale_x
 
         layout.append({
             "rect": line_rect,
@@ -4463,21 +4933,16 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
     if is_pdfjs_visible_overlay and not has_exact_pdfjs_source_font:
         return None
 
-    if (
-        bool(ann.get("promotedFromExtraction"))
-        and not _boolish(ann.get("preserveSourceTypography"))
-        and (
-            bool(ann.get("promotedDirty"))
-            or bool(ann.get("userAuthored"))
-            or bool(ann.get("styleDirty"))
-            or bool(str(ann.get("richTextHtml") or "").strip())
-        )
-    ):
-        return None
-
     text_to_stamp = str(ann.get("text") or "")
     preserve_source = _boolish(ann.get("preserveSourceTypography")) and bool(
         ann.get("promotedFromExtraction")
+    )
+    edited_promoted = bool(ann.get("promotedFromExtraction")) and (
+        bool(ann.get("promotedDirty"))
+        or bool(ann.get("userAuthored"))
+        or bool(ann.get("styleDirty"))
+        or bool(str(ann.get("richTextHtml") or "").strip())
+        or bool(ann.get("richTextRuns"))
     )
 
     # ── Priority 1: admin-uploaded FULL source font ────────────────────────
@@ -4592,7 +5057,7 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
     # compatible bundled font) before giving up to the Arimo fallback.
     if (
         best_entry is not None
-        and (preserve_source or force_embedded_font)
+        and (preserve_source or force_embedded_font or edited_promoted)
         and text_to_stamp
         and not _embedded_font_covers_text(best_entry.get("fontfile"), text_to_stamp)
     ):
@@ -7035,8 +7500,17 @@ def draw_text_using_exact_source_spans(
                             _use_word_justify = True
                             _word_extra_spacing = _extra_per_space
 
+            span_scale_x = max(0.001, float(span_entry.get("scale_x") or 1.0))
             effective_morph = combine_morphs(
-                build_rotation_morph(span_rotation, fitz.Point(draw_x, baseline_y)),
+                combine_morphs(
+                    (
+                        fitz.Point(draw_x, baseline_y),
+                        fitz.Matrix(span_scale_x, 0.0, 0.0, 1.0, 0.0, 0.0),
+                    )
+                    if abs(span_scale_x - 1.0) > 1e-6
+                    else None,
+                    build_rotation_morph(span_rotation, fitz.Point(draw_x, baseline_y)),
+                ),
                 morph,
             )
 
@@ -7541,7 +8015,7 @@ def should_preserve_pdfjs_moved_source_line(ann: Dict[str, Any], text: str) -> b
 def should_preserve_pdfjs_source_inline_flow(ann: Dict[str, Any], text: str) -> bool:
     if not is_pdfjs_visible_overlay_text(ann):
         return False
-    if _boolish(ann.get("pdfjsDeleted")) or _boolish(ann.get("movedTextOverlay")):
+    if _boolish(ann.get("pdfjsDeleted")):
         return False
     if not _boolish(ann.get("savedTextOverlay")):
         return False
@@ -7552,11 +8026,31 @@ def should_preserve_pdfjs_source_inline_flow(ann: Dict[str, Any], text: str) -> 
     normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
     if "\n" in normalized:
         return False
-    source_text = normalize_pdfjs_compare_text(ann.get("pdfjsSourceText") or ann.get("originalText") or "")
-    current_text = normalize_pdfjs_compare_text(text)
-    if source_text and current_text and source_text != current_text:
+    # Current ``pdfjsVisualLines`` are measurements, not authored breaks. On a
+    # tight source box they contain the very accidental wrap this path must
+    # correct (["Header", "3"]). Only immutable extraction rows or explicit
+    # rich-text breaks establish a true multi-line source annotation.
+    if any(
+        isinstance(ann.get(field_name), list)
+        and len(ann.get(field_name)) > 1
+        for field_name in ("sourceTextLines", "sourceLineBBoxes")
+    ):
         return False
-    return has_single_run_rich_text(ann, text)
+    rich_runs = ann.get("richTextRuns")
+    if isinstance(rich_runs, list) and any(
+        isinstance(run, dict)
+        and str(run.get("type") or "").strip().lower() == "break"
+        for run in rich_runs
+    ):
+        return False
+    # Source-mode labels are authored as one visual row. A font/style edit can
+    # serialize that row as several rich runs, and substitute PDF font metrics
+    # can be a fraction wider than the browser face. Wrapping those runs changes
+    # "Header 3" into "Header" / "3" even though the user never resized the
+    # box or introduced a line break. Keep every unresized source row atomic;
+    # the rich-layout path retains its run styles and applies a small horizontal
+    # fit when the rendered line is wider than the saved box.
+    return normalized.strip() != ""
 
 
 def rich_text_style_runs_for_exact_text(ann: Dict[str, Any], text: str) -> list[Dict[str, Any]]:
@@ -7727,7 +8221,7 @@ def normalize_pdfjs_source_span_run_layout(
         items = json.loads(str(raw)) if isinstance(raw, str) else raw
     except Exception:
         return []
-    if not isinstance(items, list) or len(items) < 2:
+    if not isinstance(items, list) or len(items) < 1:
         return []
 
     runs: list[Dict[str, Any]] = []
@@ -7761,8 +8255,9 @@ def normalize_pdfjs_source_span_run_layout(
             "font_size_px": font_size_px,
             "font_weight": str(item.get("fontWeight") or ann.get("fontWeight") or "400"),
             "font_style": str(item.get("fontStyle") or ann.get("fontStyle") or "normal"),
+            "underline": _boolish(item.get("underline")),
         })
-    if len(runs) < 2:
+    if len(runs) < 1:
         return []
 
     reconstructed = ""
@@ -8794,6 +9289,7 @@ def draw_text(
     if pdfjs_visible_overlay:
         render_ann = resolve_pdfjs_visible_overlay_typography(page, render_ann)
     dirty_promoted_source_erase = should_erase_dirty_promoted_source(render_ann)
+    source_redacted = False
     if pdfjs_visible_overlay:
         # An edited source span must mask its original glyphs even when
         # `skipPdfjsSourceMask` is set, otherwise the source text shows through
@@ -8809,11 +9305,13 @@ def draw_text(
                     raise RuntimeError(
                         "Source text removal failed; refusing to create an export with hidden searchable text."
                     )
+                erase_pdfjs_source_drawn_underlines(page, render_ann)
+                source_redacted = True
             elif pdfjs_source_text_needs_redaction(render_ann):
                 erase_pdfjs_deleted_source_text(page, render_ann)
             else:
                 draw_pdfjs_source_mask(page, render_ann)
-        if mask_only and not dirty_promoted_source_erase:
+        if mask_only and (source_redacted or not dirty_promoted_source_erase):
             return
         if _boolish(render_ann.get("pdfjsDeleted")):
             return
@@ -9125,12 +9623,36 @@ def draw_text(
             and _normalize_rich_text_compare_text(_rich_text_layout_ops_to_text(rich_layout_ops))
             == _normalize_rich_text_compare_text(text)
         )
+        rich_layout_available_width = preview_available_width
+        if rich_layout_text_matches and preserve_pdfjs_source_inline_flow:
+            unwrapped_rich_lines = wrap_rich_text_layout_ops(
+                rich_layout_ops,
+                1_000_000_000.0,
+            )
+            rich_font_cache: Dict[tuple[Any, ...], fitz.Font] = {}
+            unwrapped_rich_width = max(
+                (
+                    sum(
+                        _measure_style_run_text_width(
+                            run.get("text") or "",
+                            run,
+                            rich_font_cache,
+                        )
+                        for run in line_runs
+                    )
+                    for line_runs in unwrapped_rich_lines
+                ),
+                default=0.0,
+            )
+            rich_layout_available_width = max(
+                preview_available_width,
+                unwrapped_rich_width,
+            )
         rich_wrapped_lines = (
-            wrap_rich_text_layout_ops(rich_layout_ops, preview_available_width)
+            wrap_rich_text_layout_ops(rich_layout_ops, rich_layout_available_width)
             if (
                 rich_layout_text_matches
                 and not preserve_extracted_lines
-                and not preserve_pdfjs_source_inline_flow
                 and not preserve_pdfjs_moved_source_line
             )
             else []
@@ -9175,13 +9697,18 @@ def draw_text(
             rich_span_layout = build_wrapped_rich_text_span_layout(
                 ann,
                 text_rect,
-                preview_available_width,
+                rich_layout_available_width,
                 preview_padding_x,
                 preview_padding_top,
                 effective_line_height,
                 align,
                 ascender,
                 str(render_ann.get("verticalAlign") or "top"),
+                fit_width=(
+                    preview_available_width
+                    if preserve_pdfjs_source_inline_flow
+                    else None
+                ),
             )
             rich_span_layout = apply_source_faces_to_rich_span_layout(render_ann, rich_span_layout)
             if rich_span_layout and draw_text_using_exact_source_spans(
@@ -9307,10 +9834,7 @@ def draw_text(
             + (size * ascender)
             - guided_lease_field_baseline_lift(render_ann, size)
         )
-        if (
-            use_pdfjs_single_line_source_baseline
-            and not preserve_pdfjs_moved_source_line
-        ):
+        if use_pdfjs_single_line_source_baseline:
             try:
                 baseline_y = text_rect.y0 + float(render_ann.get("pdfjsSourceBaselineOffsetY") or 0.0)
             except Exception:
@@ -9350,10 +9874,7 @@ def draw_text(
 
             text_width = draw_font.text_length(line, fontsize=size) if line else 0.0
             draw_x = text_rect.x0 + padding_x
-            if (
-                use_pdfjs_single_line_source_baseline
-                and not preserve_pdfjs_moved_source_line
-            ):
+            if use_pdfjs_single_line_source_baseline:
                 try:
                     draw_x = text_rect.x0 + float(render_ann.get("pdfjsSourceBaselineOffsetX") or 0.0)
                 except Exception:
@@ -9658,8 +10179,7 @@ def draw_direct_draw_vector_annotation(page: fitz.Page, ann: Dict[str, Any], rec
         color = hex_to_rgb(stroke.get("color") or ann.get("drawStrokeColor") or "#111827")
         opacity = normalized_opacity(stroke.get("opacity", ann.get("opacity", 1.0)))
         shape = page.new_shape()
-        for start, end in zip(points, points[1:]):
-            shape.draw_line(start, end)
+        shape.draw_polyline(points)
         finish_kwargs = {
             "color": color,
             "width": brush_size,

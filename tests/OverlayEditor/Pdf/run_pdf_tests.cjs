@@ -625,6 +625,14 @@ const EDIT_NEW_WHATS_NEW_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..'
 const EDIT_NEW_F1040S1_FIXTURE_PATH = path.resolve(__dirname, '..', '..', 'OverlayEditor', 'f1040s1.pdf');
 const EDIT_NEW_SS5_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'ss-5.pdf');
 const FSS4_FIXTURE_PATH = path.resolve(__dirname, '..', '..', 'OverlayEditor', 'fixtures', 'fss4.pdf');
+const AST_SCI_DATA_TABLES_FIXTURE_PATH = path.resolve(
+    __dirname,
+    '..',
+    '..',
+    'OverlayEditor',
+    'fixtures',
+    'ast_sci_data_tables_sample.pdf',
+);
 const PDFJS_TEST_PDF_1_FIXTURE_PATH = path.resolve(__dirname, '..', '..', 'pdfjs', 'test_pdf_1.pdf');
 // Specific paragraph the user called out — the noop-edit parity test must
 // confirm this annotation exists, gets clicked into edit mode, blurred back
@@ -722,6 +730,13 @@ const PARAGRAPH_TEST_KEYS = [
 ];
 
 const TESTS = {
+    pdf_upload_saved_test: {
+        key: 'pdf_upload_saved_test',
+        label: 'Uploaded PDF Saved Instruction',
+        description: 'Run the test instruction saved beside an uploaded PDF against a disposable document, then inspect the real PDF.js Download PDF result.',
+        test_category: 'PDF Upload Tests',
+        run: runPdfUploadSavedTestFlow,
+    },
     test_1_text_position: {
         key: 'test_1_text_position',
         label: 'Test 1 : Text Position',
@@ -784,6 +799,20 @@ const TESTS = {
         description: 'Upload tests/pdfjs/test_pdf_1.pdf, resize promoted_1_5 through the real PDF.js paragraph resize handle, capture the live editor box width, height, font size, and visual line count, download the PDF, and require the exported paragraph to match those metrics without shrinking back to the original two source rows.',
         test_category: 'PDF JS Test Suite',
         run: runPdfJsTestPdf1ResizeParagraphMatchesDownloadFlow,
+    },
+    pdf_js_5022_missing_glyph_mapping_move_warning: {
+        key: 'pdf_js_5022_missing_glyph_mapping_move_warning',
+        label: 'PDF.js Test Suite : Missing Glyph Mapping Warning Before Move',
+        description: 'Regression for document 5022 annotation :2. Upload ast_sci_data_tables_sample.pdf, enter PDF.js Edit PDF mode, confirm the source text contains U+FFFD replacement characters because the embedded Futura face lacks a complete character map, press the annotation without moving it, and require a small warning that full glyph mapping is unavailable before any move promotion occurs.',
+        test_category: 'PDF JS Test Suite',
+        run: runPdfJs5022MissingGlyphMappingMoveWarningFlow,
+    },
+    pdf_js_5022_moved_leader_mask_preserves_title: {
+        key: 'pdf_js_5022_moved_leader_mask_preserves_title',
+        label: 'PDF.js Test Suite : Moved Leader Mask Preserves Neighbor Title',
+        description: 'Regression for document 5022 annotations :4 and :5. Upload ast_sci_data_tables_sample.pdf, move the full-width dotted leader (:5), and verify its oversized source-run mask is carved around the captured glyph bounds of the preceding Tutoring Two title (:4), with no mask segment or raster change over that title.',
+        test_category: 'PDF JS Test Suite',
+        run: runPdfJs5022MovedLeaderMaskPreservesTitleFlow,
     },
     pdf_js_ss4_moved_label_source_mask_no_widget_overlap: {
         key: 'pdf_js_ss4_moved_label_source_mask_no_widget_overlap',
@@ -1078,6 +1107,14 @@ const TEST_SUITES = {
  * Each entry is a short sentence describing one specific thing the test verifies.
  */
 const TEST_CRITERIA = {
+    pdf_upload_saved_test: [
+        'The database-retained original PDF is uploaded into a disposable document',
+        'Only source group :20 is deleted through the real PDF.js editor control',
+        'The Download PDF request uses the real PDF.js visible-export payload',
+        'The deleted :20 text and its drawn underline are absent from the resulting PDF',
+        'Neighbor source groups :19 and :21 retain their text, geometry, and raster appearance',
+        'No newly-added opaque drawing or mask overlaps :19 or :21',
+    ],
     test_1_text_position: [
         'Fresh blank PDFs were created through the frontend blank-PDF flow',
         'The first annotation save produced an in-page annotation with valid PDF coordinates',
@@ -1283,6 +1320,20 @@ const TEST_CRITERIA = {
         'promoted_1_5 is resized narrower and taller through the production resize handle',
         'Downloaded paragraph matches the editor width, height, font size, text, and visual line count',
         'Downloaded paragraph does not fall back to scaled original source-row geometry',
+    ],
+    pdf_js_5022_missing_glyph_mapping_move_warning: [
+        'ast_sci_data_tables_sample.pdf uploads and annotation :2 opens in PDF.js Edit PDF mode',
+        'Annotation :2 source text contains U+FFFD, proving the PDF character map is incomplete',
+        'Pointer-down shows the full-glyph-mapping warning before the annotation is promoted or moved',
+        'The warning is a small fixed toast and remains visible while the drag begins',
+        'The annotation can still be moved after the user has been warned',
+    ],
+    pdf_js_5022_moved_leader_mask_preserves_title: [
+        'ast_sci_data_tables_sample.pdf uploads and annotations :4 and :5 open in PDF.js Edit PDF mode',
+        'Moving dotted leader :5 creates a source mask at its original location',
+        'The source mask uses sibling :4 captured glyph bounds rather than its shorter PDF.js DOM span box',
+        'No source-mask segment overlaps either captured glyph run of the Tutoring Two title',
+        'A canvas-and-mask-only raster comparison shows no visual change over the title after :5 moves',
     ],
     test_19_loaded_saved_standalone_no_duplicate: [
         'Blank PDF created and standalone text annotation saved',
@@ -4992,6 +5043,502 @@ print(json.dumps(result))
     } finally {
         if (documentId) {
             try { await cleanupDocument(page, documentId); } catch (_error) {}
+        }
+        await browser.close();
+    }
+}
+
+async function openPdfJs5022FixtureInEditMode(page) {
+    const documentId = await createFixtureDocument(page, AST_SCI_DATA_TABLES_FIXTURE_PATH);
+    await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 90000,
+    });
+    await page.waitForSelector(
+        'body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]',
+        { timeout: 120000 },
+    );
+    await page.evaluate(() => {
+        const toggle = document.getElementById('edit-mode-toggle')
+            || document.getElementById('ftb-edit-mode');
+        if (!toggle) throw new Error('Missing PDF.js edit-mode toggle.');
+        if (!document.body.classList.contains('enpv-edit-on')) toggle.click();
+    });
+    const ids = {
+        missingMapping: `pdfjs_${documentId}_0_0:2`,
+        title: `pdfjs_${documentId}_0_0:4`,
+        leader: `pdfjs_${documentId}_0_0:5`,
+    };
+    await page.waitForFunction((expectedIds) => (
+        document.body.classList.contains('enpv-edit-on')
+        && Object.values(expectedIds).every((id) => {
+            const box = document.querySelector(
+                `.enpv-annotation-box[data-annotation-id="${CSS.escape(id)}"]`,
+            );
+            return box && String(box.dataset.sourceSpanRuns || '').trim();
+        })
+    ), ids, { timeout: 60000 });
+    await page.waitForTimeout(400);
+    return { documentId, ids };
+}
+
+function changedPixelsInsideRects(beforePngBuffer, afterPngBuffer, rects, threshold = 8) {
+    const before = _PNG.sync.read(beforePngBuffer);
+    const after = _PNG.sync.read(afterPngBuffer);
+    if (before.width !== after.width || before.height !== after.height) {
+        return {
+            changed: Number.POSITIVE_INFINITY,
+            total: 0,
+            ratio: Number.POSITIVE_INFINITY,
+            dimensions: {
+                before: [before.width, before.height],
+                after: [after.width, after.height],
+            },
+        };
+    }
+    const visited = new Set();
+    let changed = 0;
+    let total = 0;
+    for (const rect of rects || []) {
+        const left = Math.max(0, Math.floor(Number(rect.left) || 0));
+        const top = Math.max(0, Math.floor(Number(rect.top) || 0));
+        const right = Math.min(before.width, Math.ceil(Number(rect.right) || 0));
+        const bottom = Math.min(before.height, Math.ceil(Number(rect.bottom) || 0));
+        for (let y = top; y < bottom; y += 1) {
+            for (let x = left; x < right; x += 1) {
+                const pixelKey = (y * before.width) + x;
+                if (visited.has(pixelKey)) continue;
+                visited.add(pixelKey);
+                total += 1;
+                const offset = pixelKey * 4;
+                const delta = Math.max(
+                    Math.abs(before.data[offset] - after.data[offset]),
+                    Math.abs(before.data[offset + 1] - after.data[offset + 1]),
+                    Math.abs(before.data[offset + 2] - after.data[offset + 2]),
+                );
+                if (delta > threshold) changed += 1;
+            }
+        }
+    }
+    return {
+        changed,
+        total,
+        ratio: total ? changed / total : 0,
+        dimensions: [before.width, before.height],
+    };
+}
+
+async function screenshotPdfJsPageWithoutEditorChrome(page, outputPath) {
+    const pageSelector = '.pdfViewer .page[data-page-number="1"]';
+    await page.evaluate((selector) => {
+        const pageDiv = document.querySelector(selector);
+        const boxLayer = pageDiv?.querySelector(':scope > .enpv-annotation-box-layer');
+        if (!boxLayer) throw new Error('Missing annotation-box layer for screenshot.');
+        boxLayer.dataset.testPreviousVisibility = boxLayer.style.visibility || '';
+        boxLayer.style.visibility = 'hidden';
+        const annotationMenu = document.getElementById('enpv-ann-menu');
+        if (annotationMenu) {
+            annotationMenu.dataset.testPreviousHidden = annotationMenu.hidden ? '1' : '0';
+            annotationMenu.hidden = true;
+        }
+    }, pageSelector);
+    try {
+        return await page.locator(pageSelector).screenshot({ path: outputPath });
+    } finally {
+        await page.evaluate((selector) => {
+            const pageDiv = document.querySelector(selector);
+            const boxLayer = pageDiv?.querySelector(':scope > .enpv-annotation-box-layer');
+            if (!boxLayer) return;
+            boxLayer.style.visibility = boxLayer.dataset.testPreviousVisibility || '';
+            delete boxLayer.dataset.testPreviousVisibility;
+            const annotationMenu = document.getElementById('enpv-ann-menu');
+            if (annotationMenu) {
+                annotationMenu.hidden = annotationMenu.dataset.testPreviousHidden === '1';
+                delete annotationMenu.dataset.testPreviousHidden;
+            }
+        }, pageSelector);
+    }
+}
+
+// Document 5022 embeds the Futura glyph outlines without a usable complete
+// character map. The original canvas can draw those glyph ids, but the moved
+// DOM overlay receives U+FFFD characters. Warn synchronously on pointer-down,
+// before the first move frame promotes the source handle.
+async function runPdfJs5022MissingGlyphMappingMoveWarningFlow() {
+    const test = TESTS.pdf_js_5022_missing_glyph_mapping_move_warning;
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactName = `pdfjs_5022_glyph_mapping_warning_${runToken}.png`;
+    const artifactPath = path.join(OUTPUT_DIR, artifactName);
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1800, height: 1200 } });
+    const checks = [];
+    const addCheck = (item, passed, description, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description,
+        detail,
+    });
+    let documentId = null;
+    let ids = null;
+    let inspection = null;
+
+    try {
+        ({ documentId, ids } = await openPdfJs5022FixtureInEditMode(page));
+        const target = page.locator(
+            `.enpv-annotation-box[data-annotation-id="${ids.missingMapping}"]`,
+        ).first();
+        const targetRect = await target.boundingBox();
+        if (!targetRect) throw new Error(`Missing annotation ${ids.missingMapping}.`);
+
+        const precondition = await target.evaluate((box) => {
+            const sourceText = String(
+                box.dataset.baseText
+                || box.dataset.originalText
+                || box.textContent
+                || '',
+            );
+            return {
+                sourceText,
+                replacementCount: Array.from(sourceText).filter((char) => char === '\uFFFD').length,
+                movedTextOverlay: box.dataset.movedTextOverlay || '',
+                dxPts: Number(box.dataset.dxPts || 0),
+                dyPts: Number(box.dataset.dyPts || 0),
+            };
+        });
+        addCheck(
+            'fixture_exposes_incomplete_character_map',
+            precondition.replacementCount > 0,
+            'Annotation :2 exposes U+FFFD replacement characters from the incomplete PDF font map.',
+            JSON.stringify(precondition),
+        );
+
+        const pointerX = targetRect.x + Math.min(60, targetRect.width / 2);
+        const pointerY = targetRect.y + Math.min(8, targetRect.height / 2);
+        await page.mouse.move(pointerX, pointerY);
+        await page.mouse.down();
+        await page.waitForTimeout(80);
+
+        inspection = await page.evaluate((targetId) => {
+            const box = document.querySelector(
+                `.enpv-annotation-box[data-annotation-id="${CSS.escape(targetId)}"]`,
+            );
+            const toast = document.getElementById('save-toast');
+            const toastRect = toast?.getBoundingClientRect();
+            const toastStyle = toast ? getComputedStyle(toast) : null;
+            return {
+                boxFound: Boolean(box),
+                movedBeforePointerMove: box?.dataset.movedTextOverlay === '1',
+                dxPtsBeforePointerMove: Number(box?.dataset.dxPts || 0),
+                dyPtsBeforePointerMove: Number(box?.dataset.dyPts || 0),
+                toastFound: Boolean(toast),
+                toastShown: Boolean(toast?.classList.contains('show')),
+                toastText: String(toast?.textContent || ''),
+                toastPosition: toastStyle?.position || '',
+                toastOpacity: Number.parseFloat(toastStyle?.opacity || '0') || 0,
+                toastRect: toastRect ? {
+                    width: toastRect.width,
+                    height: toastRect.height,
+                } : null,
+            };
+        }, ids.missingMapping);
+
+        addCheck(
+            'warning_shown_before_move',
+            inspection.toastShown
+                && /full glyph mapping is unavailable/i.test(inspection.toastText)
+                && inspection.movedBeforePointerMove === false
+                && Math.abs(inspection.dxPtsBeforePointerMove) < 0.01
+                && Math.abs(inspection.dyPtsBeforePointerMove) < 0.01,
+            'Pointer-down shows the glyph-mapping warning before any move promotion or coordinate change.',
+            JSON.stringify(inspection),
+        );
+        addCheck(
+            'warning_is_small_fixed_notification',
+            inspection.toastPosition === 'fixed'
+                && Number(inspection.toastRect?.width || 0) > 0
+                && Number(inspection.toastRect?.width || 0) <= 720
+                && Number(inspection.toastRect?.height || 0) <= 90,
+            'The warning uses the editor’s small fixed toast instead of blocking the move.',
+            JSON.stringify(inspection.toastRect),
+        );
+        await page.screenshot({ path: artifactPath });
+
+        await page.mouse.move(pointerX + 34, pointerY + 30, { steps: 8 });
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+        const afterMove = await target.evaluate((box) => ({
+            movedTextOverlay: box.dataset.movedTextOverlay || '',
+            dxPts: Number(box.dataset.dxPts || 0),
+            dyPts: Number(box.dataset.dyPts || 0),
+            toastShown: document.getElementById('save-toast')?.classList.contains('show') || false,
+        }));
+        addCheck(
+            'move_continues_after_warning',
+            afterMove.movedTextOverlay === '1'
+                && (Math.abs(afterMove.dxPts) > 1 || Math.abs(afterMove.dyPts) > 1)
+                && afterMove.toastShown,
+            'The warning remains non-blocking and visible while the annotation begins moving.',
+            JSON.stringify(afterMove),
+        );
+
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status,
+            checks,
+            artifacts: [
+                { label: 'Glyph mapping warning before movement', kind: 'image', filename: artifactName },
+            ],
+            metadata: { document_id: documentId, ids, precondition, inspection, after_move: afterMove },
+        });
+    } catch (error) {
+        try { await page.mouse.up(); } catch (_) { /* no active pointer */ }
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPath)
+                ? [{ label: 'Glyph mapping warning failure state', kind: 'image', filename: artifactName }]
+                : [],
+            metadata: { document_id: documentId, ids, inspection },
+        });
+    } finally {
+        if (documentId) {
+            try { await cleanupDocument(page, documentId); } catch (_error) { /* best-effort fixture cleanup */ }
+        }
+        await browser.close();
+    }
+}
+
+// Document 5022's dotted leader has a tall full-width source run whose mask
+// overlaps the DOM span box of the title above it. Protect the title using its
+// captured text-run glyph bounds and verify both geometry and pixels.
+async function runPdfJs5022MovedLeaderMaskPreservesTitleFlow() {
+    const test = TESTS.pdf_js_5022_moved_leader_mask_preserves_title;
+    ensureOutputDir();
+    getPixelDiffLibs();
+    const runToken = buildRunToken();
+    const beforeName = `pdfjs_5022_leader_mask_before_${runToken}.png`;
+    const afterName = `pdfjs_5022_leader_mask_after_${runToken}.png`;
+    const beforePath = path.join(OUTPUT_DIR, beforeName);
+    const afterPath = path.join(OUTPUT_DIR, afterName);
+    const browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage({ viewport: { width: 1800, height: 1200 } });
+    const checks = [];
+    const addCheck = (item, passed, description, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description,
+        detail,
+    });
+    let documentId = null;
+    let ids = null;
+    let inspection = null;
+    let pixelDiff = null;
+
+    try {
+        ({ documentId, ids } = await openPdfJs5022FixtureInEditMode(page));
+        const title = page.locator(
+            `.enpv-annotation-box[data-annotation-id="${ids.title}"]`,
+        ).first();
+        const leader = page.locator(
+            `.enpv-annotation-box[data-annotation-id="${ids.leader}"]`,
+        ).first();
+        await title.waitFor({ state: 'attached', timeout: 60000 });
+        const leaderRect = await leader.boundingBox();
+        if (!leaderRect) throw new Error(`Missing annotation ${ids.leader}.`);
+
+        const beforeBuffer = await screenshotPdfJsPageWithoutEditorChrome(page, beforePath);
+        const pointerX = leaderRect.x + Math.min(80, leaderRect.width / 2);
+        const pointerY = leaderRect.y + Math.min(8, leaderRect.height / 2);
+        await page.mouse.move(pointerX, pointerY);
+        await page.mouse.down();
+        await page.mouse.move(pointerX + 24, pointerY + 42, { steps: 8 });
+        await page.mouse.up();
+        await page.waitForTimeout(1400);
+        const afterBuffer = await screenshotPdfJsPageWithoutEditorChrome(page, afterPath);
+
+        inspection = await page.evaluate(({ titleId, leaderId }) => {
+            const pageDiv = document.querySelector('.pdfViewer .page[data-page-number="1"]');
+            const pageRect = pageDiv?.getBoundingClientRect();
+            const titleBox = pageDiv?.querySelector(
+                `.enpv-annotation-box[data-annotation-id="${CSS.escape(titleId)}"]`,
+            );
+            const leaderBox = pageDiv?.querySelector(
+                `.enpv-annotation-box[data-annotation-id="${CSS.escape(leaderId)}"]`,
+            );
+            const mask = leaderBox?._enpvSourceMask || null;
+            if (!pageDiv || !pageRect || !titleBox || !leaderBox || !mask) {
+                return {
+                    error: 'Missing page, title, moved leader, or source mask.',
+                    found: {
+                        page: Boolean(pageDiv),
+                        title: Boolean(titleBox),
+                        leader: Boolean(leaderBox),
+                        mask: Boolean(mask),
+                    },
+                };
+            }
+            const currentScale = Number.parseFloat(titleBox.parentElement?.dataset?.scale || '') || 1;
+            const capturedScale = Number.parseFloat(titleBox.dataset.sourceSpanRunsScale || '') || currentScale;
+            const ratio = currentScale > 0 && capturedScale > 0 ? currentScale / capturedScale : 1;
+            let titleRuns = [];
+            try { titleRuns = JSON.parse(titleBox.dataset.sourceSpanRuns || '[]'); } catch (_) { titleRuns = []; }
+            const titleRunRects = titleRuns.map((run) => {
+                const left = Number(run.textLeftPx ?? run.leftPx) * ratio;
+                const right = Number(run.textRightPx ?? run.rightPx) * ratio;
+                const top = Number(run.textTopPx ?? run.topPx) * ratio;
+                const bottom = Number(run.textBottomPx ?? run.bottomPx) * ratio;
+                return { left, top, right, bottom, width: right - left, height: bottom - top };
+            }).filter((rect) => (
+                [rect.left, rect.top, rect.right, rect.bottom].every(Number.isFinite)
+                && rect.right > rect.left
+                && rect.bottom > rect.top
+            ));
+            const relativeRect = (element) => {
+                const rect = element.getBoundingClientRect();
+                return {
+                    left: rect.left - pageRect.left,
+                    top: rect.top - pageRect.top,
+                    right: rect.right - pageRect.left,
+                    bottom: rect.bottom - pageRect.top,
+                    width: rect.width,
+                    height: rect.height,
+                };
+            };
+            const maskRect = relativeRect(mask);
+            const maskSegments = (mask.children.length
+                ? Array.from(mask.children)
+                : [mask]).map(relativeRect);
+            const overlapArea = (left, right) => (
+                Math.max(0, Math.min(left.right, right.right) - Math.max(left.left, right.left))
+                * Math.max(0, Math.min(left.bottom, right.bottom) - Math.max(left.top, right.top))
+            );
+            const titleArea = titleRunRects.reduce((sum, rect) => sum + (rect.width * rect.height), 0);
+            const titleMaskOverlapArea = titleRunRects.reduce((sum, titleRect) => (
+                sum + maskSegments.reduce((segmentSum, segment) => (
+                    segmentSum + overlapArea(titleRect, segment)
+                ), 0)
+            ), 0);
+            let protectedRects = [];
+            try { protectedRects = JSON.parse(mask.dataset.enpvMaskProtectedRects || '[]'); } catch (_) { protectedRects = []; }
+            const protectedByCapturedRuns = titleRunRects.every((titleRect) => (
+                protectedRects.some((protectedRect) => (
+                    protectedRect.left <= titleRect.left
+                    && protectedRect.top <= titleRect.top
+                    && protectedRect.right >= titleRect.right
+                    && protectedRect.bottom >= titleRect.bottom
+                ))
+            ));
+            return {
+                titleText: String(titleBox.dataset.baseText || titleBox.textContent || ''),
+                leaderText: String(leaderBox.dataset.baseText || leaderBox.textContent || ''),
+                movedTextOverlay: leaderBox.dataset.movedTextOverlay || '',
+                dxPts: Number(leaderBox.dataset.dxPts || 0),
+                dyPts: Number(leaderBox.dataset.dyPts || 0),
+                titleRunRects,
+                maskRect,
+                maskSegments,
+                protectedRects,
+                protectedByCapturedRuns,
+                titleMaskOverlapArea,
+                titleArea,
+                titleMaskOverlapRatio: titleArea ? titleMaskOverlapArea / titleArea : 1,
+            };
+        }, { titleId: ids.title, leaderId: ids.leader });
+        if (inspection.error) throw new Error(`${inspection.error} ${JSON.stringify(inspection.found)}`);
+
+        pixelDiff = changedPixelsInsideRects(
+            beforeBuffer,
+            afterBuffer,
+            inspection.titleRunRects,
+            8,
+        );
+        addCheck(
+            'leader_move_creates_source_mask',
+            inspection.movedTextOverlay === '1'
+                && (Math.abs(inspection.dxPts) > 1 || Math.abs(inspection.dyPts) > 1)
+                && Number(inspection.maskRect?.width || 0) > 1000,
+            'Moving :5 creates its intentionally wide source mask at the original dotted leader.',
+            JSON.stringify({
+                moved: inspection.movedTextOverlay,
+                dxPts: inspection.dxPts,
+                dyPts: inspection.dyPts,
+                maskRect: inspection.maskRect,
+            }),
+        );
+        addCheck(
+            'title_uses_captured_glyph_protection',
+            inspection.titleRunRects.length === 2 && inspection.protectedByCapturedRuns,
+            'Both :4 title runs are protected through their captured glyph bounds, including their lower extents.',
+            JSON.stringify({
+                titleRunRects: inspection.titleRunRects,
+                protectedRects: inspection.protectedRects,
+            }),
+        );
+        addCheck(
+            'mask_segments_do_not_overlap_title',
+            inspection.titleMaskOverlapArea <= 0.01,
+            'No opaque :5 source-mask segment overlaps either :4 title glyph run.',
+            JSON.stringify({
+                overlapArea: inspection.titleMaskOverlapArea,
+                overlapRatio: inspection.titleMaskOverlapRatio,
+                maskSegments: inspection.maskSegments,
+            }),
+        );
+        addCheck(
+            'title_raster_unchanged_after_leader_move',
+            Number.isFinite(pixelDiff.ratio)
+                && pixelDiff.total > 0
+                && pixelDiff.ratio <= 0.0005,
+            'With editor chrome hidden, the :4 title raster remains unchanged after :5 moves.',
+            JSON.stringify(pixelDiff),
+        );
+
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status,
+            checks,
+            artifacts: [
+                { label: 'Title before moving dotted leader', kind: 'image', filename: beforeName },
+                { label: 'Title after moving dotted leader', kind: 'image', filename: afterName },
+            ],
+            metadata: { document_id: documentId, ids, inspection, pixel_diff: pixelDiff },
+        });
+    } catch (error) {
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: [
+                ...(fs.existsSync(beforePath)
+                    ? [{ label: 'Leader mask failure before state', kind: 'image', filename: beforeName }]
+                    : []),
+                ...(fs.existsSync(afterPath)
+                    ? [{ label: 'Leader mask failure after state', kind: 'image', filename: afterName }]
+                    : []),
+            ],
+            metadata: { document_id: documentId, ids, inspection, pixel_diff: pixelDiff },
+        });
+    } finally {
+        if (documentId) {
+            try { await cleanupDocument(page, documentId); } catch (_error) { /* best-effort fixture cleanup */ }
         }
         await browser.close();
     }
@@ -18553,6 +19100,9844 @@ async function runEditNewFontDropdownWeightBoldFlow() {
     }
 }
 
+function analyzePdfUploadSs5Deletion({
+    sourcePdfPath,
+    resultPdfPath,
+    pageIndex,
+    expectedText,
+    sourceBoxes,
+    originalPagePath,
+    resultPagePath,
+}) {
+    const pythonCode = String.raw`
+import fitz
+import json
+import re
+import sys
+
+source_path, result_path = sys.argv[1], sys.argv[2]
+page_index = int(sys.argv[3])
+expected = json.loads(sys.argv[4])
+source_boxes = json.loads(sys.argv[5])
+original_png, result_png = sys.argv[6], sys.argv[7]
+
+def compact(value):
+    return re.sub(r'\s+', '', str(value or ''))
+
+def rect_values(rect):
+    if rect is None:
+        return None
+    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+
+def rect_union(rects):
+    if not rects:
+        return None
+    result = fitz.Rect(rects[0])
+    for rect in rects[1:]:
+        result |= fitz.Rect(rect)
+    return result
+
+def search_rect(page, suffix):
+    text = str(expected.get(suffix) or '')
+    if suffix == '3_3:19':
+        terms = [
+            'Paperwork Reduction Act Statement -',
+            'This information collection meets the requirements of 44 U.S.C. § 3507, as',
+        ]
+    else:
+        terms = [text]
+    matches = []
+    for term in terms:
+        matches.extend(page.search_for(term))
+    return rect_union(matches), [rect_values(rect) for rect in matches]
+
+def horizontal_segments(page):
+    segments = []
+    for drawing in page.get_drawings() or []:
+        width = float(drawing.get('width') or 0.0)
+        for item in drawing.get('items') or []:
+            if not item:
+                continue
+            if item[0] == 'l':
+                first, second = item[1], item[2]
+                if abs(float(first.y) - float(second.y)) > 0.6:
+                    continue
+                x0, x1 = sorted((float(first.x), float(second.x)))
+                if x1 - x0 < 4:
+                    continue
+                segments.append({
+                    'x0': x0,
+                    'x1': x1,
+                    'y': (float(first.y) + float(second.y)) / 2.0,
+                    'width': width,
+                })
+            elif item[0] == 're':
+                rect = fitz.Rect(item[1])
+                if float(rect.height) <= 1.5 and float(rect.width) >= 4:
+                    segments.append({
+                        'x0': float(rect.x0),
+                        'x1': float(rect.x1),
+                        'y': (float(rect.y0) + float(rect.y1)) / 2.0,
+                        'width': max(width, float(rect.height)),
+                    })
+    return segments
+
+def filled_drawings(page):
+    output = []
+    for drawing in page.get_drawings() or []:
+        fill = drawing.get('fill')
+        rect = drawing.get('rect')
+        if fill is None or rect is None:
+            continue
+        output.append({
+            'rect': rect_values(rect),
+            'fill': [float(value) for value in fill],
+        })
+    return output
+
+def overlaps(rect, other, tolerance=0.0):
+    if rect is None or other is None:
+        return False
+    a = fitz.Rect(rect)
+    b = fitz.Rect(other)
+    intersection = a & b
+    return not intersection.is_empty and float(intersection.get_area()) > tolerance
+
+source_doc = fitz.open(source_path)
+result_doc = fitz.open(result_path)
+source_page = source_doc[page_index]
+result_page = result_doc[page_index]
+source_text = source_page.get_text('text')
+result_text = result_page.get_text('text')
+
+source_rects = {}
+result_rects = {}
+source_matches = {}
+result_matches = {}
+for suffix in ('3_3:19', '3_3:20', '3_3:21'):
+    source_rect, source_found = search_rect(source_page, suffix)
+    result_rect, result_found = search_rect(result_page, suffix)
+    source_rects[suffix] = rect_values(source_rect)
+    result_rects[suffix] = rect_values(result_rect)
+    source_matches[suffix] = source_found
+    result_matches[suffix] = result_found
+
+target_rect = fitz.Rect(source_rects['3_3:20']) if source_rects['3_3:20'] else None
+def in_target(segment):
+    if target_rect is None:
+        return False
+    horizontal_overlap = max(
+        0.0,
+        min(float(target_rect.x1), segment['x1'])
+        - max(float(target_rect.x0), segment['x0']),
+    )
+    return (
+        horizontal_overlap >= 4.0
+        and float(target_rect.y0) - 2.0 <= segment['y'] <= float(target_rect.y1) + 2.0
+    )
+
+source_underlines = [segment for segment in horizontal_segments(source_page) if in_target(segment)]
+result_underlines = [segment for segment in horizontal_segments(result_page) if in_target(segment)]
+source_fills = filled_drawings(source_page)
+result_fills = filled_drawings(result_page)
+
+new_survivor_fills = {}
+for suffix in ('3_3:19', '3_3:21'):
+    survivor_rect = source_rects[suffix]
+    newly_overlapping = []
+    for drawing in result_fills:
+        if not overlaps(drawing['rect'], survivor_rect, 0.25):
+            continue
+        has_source_match = any(
+            all(abs(float(left) - float(right)) <= 0.5 for left, right in zip(drawing['rect'], source_drawing['rect']))
+            and source_drawing['fill'] == drawing['fill']
+            for source_drawing in source_fills
+        )
+        if not has_source_match:
+            newly_overlapping.append(drawing)
+    new_survivor_fills[suffix] = newly_overlapping
+
+matrix = fitz.Matrix(2, 2)
+source_page.get_pixmap(matrix=matrix, alpha=False).save(original_png)
+result_page.get_pixmap(matrix=matrix, alpha=False).save(result_png)
+
+output = {
+    'page_count': len(result_doc),
+    'page_width': float(source_page.rect.width),
+    'page_height': float(source_page.rect.height),
+    'source_text': source_text,
+    'result_text': result_text,
+    'source_text_compact': compact(source_text),
+    'result_text_compact': compact(result_text),
+    'expected_compact': {key: compact(value) for key, value in expected.items()},
+    'source_rects': source_rects,
+    'result_rects': result_rects,
+    'source_matches': source_matches,
+    'result_matches': result_matches,
+    'source_underlines': source_underlines,
+    'result_underlines': result_underlines,
+    'source_filled_drawings': source_fills,
+    'result_filled_drawings': result_fills,
+    'new_survivor_fills': new_survivor_fills,
+    'source_boxes': source_boxes,
+}
+print(json.dumps(output))
+`;
+
+    const raw = execFileSync(PYTHON_BIN, [
+        '-c',
+        pythonCode,
+        sourcePdfPath,
+        resultPdfPath,
+        String(pageIndex),
+        JSON.stringify(expectedText),
+        JSON.stringify(sourceBoxes),
+        originalPagePath,
+        resultPagePath,
+    ], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    return JSON.parse(raw);
+}
+
+function comparePdfUploadSs5Rasters({
+    analysis,
+    originalPagePath,
+    resultPagePath,
+    diffPagePath,
+    cropPaths,
+}) {
+    const { pixelmatch, PNG } = getPixelDiffLibs();
+    const original = PNG.sync.read(fs.readFileSync(originalPagePath));
+    const result = PNG.sync.read(fs.readFileSync(resultPagePath));
+    if (original.width !== result.width || original.height !== result.height) {
+        throw new Error(`page raster dimensions differ: original=${original.width}x${original.height} result=${result.width}x${result.height}`);
+    }
+
+    const scaleX = original.width / Number(analysis.page_width || 1);
+    const scaleY = original.height / Number(analysis.page_height || 1);
+    const clampRect = (rect, paddingPoints = 0) => {
+        if (!Array.isArray(rect) || rect.length < 4) return null;
+        const x0 = Math.max(0, Math.floor((Number(rect[0]) - paddingPoints) * scaleX));
+        const y0 = Math.max(0, Math.floor((Number(rect[1]) - paddingPoints) * scaleY));
+        const x1 = Math.min(original.width, Math.ceil((Number(rect[2]) + paddingPoints) * scaleX));
+        const y1 = Math.min(original.height, Math.ceil((Number(rect[3]) + paddingPoints) * scaleY));
+        if (x1 <= x0 || y1 <= y0) return null;
+        return { x0, y0, x1, y1, width: x1 - x0, height: y1 - y0 };
+    };
+    const crop = (png, rect) => {
+        const output = new PNG({ width: rect.width, height: rect.height });
+        for (let y = 0; y < rect.height; y += 1) {
+            const sourceOffset = ((rect.y0 + y) * png.width + rect.x0) * 4;
+            const targetOffset = y * rect.width * 4;
+            png.data.copy(output.data, targetOffset, sourceOffset, sourceOffset + rect.width * 4);
+        }
+        return output;
+    };
+    const compareRegion = (rect) => {
+        const left = crop(original, rect);
+        const right = crop(result, rect);
+        const diff = new PNG({ width: rect.width, height: rect.height });
+        const mismatch = pixelmatch(left.data, right.data, diff.data, rect.width, rect.height, {
+            threshold: 0.12,
+            includeAA: false,
+        });
+        return {
+            mismatch,
+            pixels: rect.width * rect.height,
+            ratio: mismatch / Math.max(1, rect.width * rect.height),
+            original: left,
+            result: right,
+            diff,
+        };
+    };
+
+    const pageDiff = new PNG({ width: original.width, height: original.height });
+    const pageMismatch = pixelmatch(original.data, result.data, pageDiff.data, original.width, original.height, {
+        threshold: 0.12,
+        includeAA: false,
+    });
+    fs.writeFileSync(diffPagePath, PNG.sync.write(pageDiff));
+
+    const regions = {};
+    for (const suffix of ['3_3:19', '3_3:20', '3_3:21']) {
+        // Survivor comparisons use their exact extracted glyph bounds. A
+        // padded :21 crop also contains :20's underline (the two source rows
+        // are only about one point apart), which would incorrectly attribute
+        // the intended underline removal to the surviving row.
+        const rect = clampRect(analysis.source_rects?.[suffix], suffix === '3_3:20' ? 2.5 : 0);
+        if (!rect) {
+            regions[suffix] = null;
+            continue;
+        }
+        const compared = compareRegion(rect);
+        fs.writeFileSync(cropPaths[suffix].original, PNG.sync.write(compared.original));
+        fs.writeFileSync(cropPaths[suffix].result, PNG.sync.write(compared.result));
+        regions[suffix] = {
+            mismatch: compared.mismatch,
+            pixels: compared.pixels,
+            ratio: compared.ratio,
+            rect,
+        };
+    }
+
+    const maskedOriginal = PNG.sync.read(fs.readFileSync(originalPagePath));
+    const maskedResult = PNG.sync.read(fs.readFileSync(resultPagePath));
+    const targetMaskRect = clampRect(analysis.source_rects?.['3_3:20'], 3);
+    if (targetMaskRect) {
+        for (let y = targetMaskRect.y0; y < targetMaskRect.y1; y += 1) {
+            for (let x = targetMaskRect.x0; x < targetMaskRect.x1; x += 1) {
+                const offset = (y * original.width + x) * 4;
+                for (let channel = 0; channel < 3; channel += 1) {
+                    maskedOriginal.data[offset + channel] = 255;
+                    maskedResult.data[offset + channel] = 255;
+                }
+                maskedOriginal.data[offset + 3] = 255;
+                maskedResult.data[offset + 3] = 255;
+            }
+        }
+    }
+    const outsideDiff = new PNG({ width: original.width, height: original.height });
+    const outsideMismatch = pixelmatch(
+        maskedOriginal.data,
+        maskedResult.data,
+        outsideDiff.data,
+        original.width,
+        original.height,
+        { threshold: 0.12, includeAA: false },
+    );
+    const outsidePixels = (original.width * original.height)
+        - (targetMaskRect ? targetMaskRect.width * targetMaskRect.height : 0);
+
+    return {
+        page_mismatch: pageMismatch,
+        page_pixels: original.width * original.height,
+        page_ratio: pageMismatch / Math.max(1, original.width * original.height),
+        outside_target_mismatch: outsideMismatch,
+        outside_target_pixels: outsidePixels,
+        outside_target_ratio: outsideMismatch / Math.max(1, outsidePixels),
+        regions,
+    };
+}
+
+async function capturePdfUploadEditorDownload(page, outputPath) {
+    const requestPromise = page.waitForRequest(
+        (request) => request.method() === 'POST'
+            && /\/(download-annotated-pdf|download-pdfjs|stamp(ed)?-pdf)/i.test(request.url()),
+        { timeout: 90000 },
+    );
+    await page.locator('#download-pdf-btn').click();
+    const downloadRequest = await requestPromise;
+    const requestBody = downloadRequest.postData() || '';
+    const payload = JSON.parse(requestBody || '{}');
+    const requestHeaders = await downloadRequest.allHeaders();
+    const safeHeaders = {};
+    for (const [header, value] of Object.entries(requestHeaders)) {
+        const lower = header.toLowerCase();
+        if (lower.startsWith(':') || ['content-length', 'host', 'connection'].includes(lower)) continue;
+        safeHeaders[header] = value;
+    }
+    const replay = await page.context().request.post(downloadRequest.url(), {
+        data: requestBody,
+        headers: safeHeaders,
+        timeout: 180000,
+    });
+    if (!replay.ok()) {
+        const body = await replay.text().catch(() => '');
+        throw new Error(`Download PDF replay failed (${replay.status()}): ${body.slice(0, 500)}`);
+    }
+    const pdf = await replay.body();
+    fs.writeFileSync(outputPath, pdf);
+    return { payload, pdf };
+}
+
+async function openPdfUploadDisposableEditor(page, sourcePdfPath, pageNumber = 1, options = {}) {
+    const documentId = await createFixtureDocument(page, sourcePdfPath);
+    const seedAnnotations = Array.isArray(options.seedAnnotations)
+        ? options.seedAnnotations.filter((annotation) => annotation && typeof annotation === 'object')
+        : [];
+    if (seedAnnotations.length) {
+        const sessionId = `pdf-upload-test-${buildRunToken()}-${documentId}`;
+        await savePdfJsSuiteAnnotations(page, documentId, sessionId, seedAnnotations);
+        await page.evaluate(({ id, value }) => {
+            localStorage.setItem('pdf_session_id', value);
+            localStorage.setItem(`edit_new_session_${id}`, value);
+        }, { id: documentId, value: sessionId });
+    }
+    await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 90000,
+    });
+    await page.waitForSelector('body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]', {
+        timeout: 120000,
+    });
+    await page.evaluate(() => {
+        const toggle = document.getElementById('edit-mode-toggle') || document.getElementById('ftb-edit-mode');
+        if (toggle && !document.body.classList.contains('enpv-edit-on')) toggle.click();
+    });
+    await page.waitForSelector('body.enpv-edit-on', { timeout: 15000 });
+    const pageLocator = page.locator(`.pdfViewer .page[data-page-number="${pageNumber}"]`);
+    await pageLocator.waitFor({ state: 'attached', timeout: 60000 });
+    await pageLocator.scrollIntoViewIfNeeded();
+    await page.waitForSelector(`.pdfViewer .page[data-page-number="${pageNumber}"] .textLayer`, {
+        state: 'attached',
+        timeout: 60000,
+    });
+    return { documentId, pageLocator };
+}
+
+async function selectPdfUploadEditorBox(page, locator) {
+    const rect = await locator.boundingBox();
+    if (!rect) throw new Error('Could not select PDF.js annotation box.');
+    const point = {
+        clientX: rect.x + Math.min(8, Math.max(2, rect.width / 2)),
+        clientY: rect.y + Math.min(8, Math.max(2, rect.height / 2)),
+        pointerId: 41,
+        button: 0,
+    };
+    await locator.dispatchEvent('pointerdown', point);
+    await page.evaluate((eventInit) => {
+        window.dispatchEvent(new PointerEvent('pointerup', {
+            bubbles: true,
+            cancelable: true,
+            ...eventInit,
+        }));
+    }, point);
+    await page.waitForTimeout(150);
+}
+
+async function movePdfUploadEditorBox(page, locator, deltaX, deltaY) {
+    await selectPdfUploadEditorBox(page, locator);
+    const before = await locator.boundingBox();
+    const grip = page.locator('#enpv-ann-menu [data-action="move"]').first();
+    if (!before) throw new Error('Could not resolve the selected annotation box.');
+    // Let Playwright actionability resolve the live menu hit target first.
+    // The menu is re-anchored as selection settles, so coordinates sampled
+    // before the hover can point at the PDF canvas instead of the move button.
+    await grip.hover();
+    const gripRect = await grip.boundingBox();
+    if (!gripRect) throw new Error('Could not resolve annotation move handle.');
+    const startX = gripRect.x + (gripRect.width / 2);
+    const startY = gripRect.y + (gripRect.height / 2);
+    const beforeDrag = await page.evaluate(({ startX: x, startY: y }) => {
+        const selected = document.querySelector('.enpv-annotation-box.is-selected');
+        const hit = document.elementFromPoint(x, y);
+        return {
+            selected_annotation_id: String(selected?.dataset?.annotationId || ''),
+            selected_uid: String(selected?.dataset?.uid || ''),
+            selected_classes: Array.from(selected?.classList || []),
+            hit_tag: String(hit?.tagName || ''),
+            hit_action: String(hit?.closest?.('[data-action]')?.dataset?.action || ''),
+            hit_classes: Array.from(hit?.classList || []),
+        };
+    }, { startX, startY });
+    await page.mouse.down();
+    await page.waitForTimeout(100);
+    const pointerDown = await locator.evaluate((box) => ({
+        classes: Array.from(box.classList),
+        moved_text_overlay: String(box.dataset.movedTextOverlay || ''),
+    }));
+    await page.mouse.move(startX + deltaX, startY + deltaY, { steps: 20 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    const after = await locator.boundingBox();
+    return {
+        before,
+        after,
+        requestedDelta: { x: deltaX, y: deltaY },
+        beforeDrag,
+        pointerDown,
+    };
+}
+
+async function pdfUploadMoveDeltaToTopLeftPdfPoint(locator, pdfX, topLeftPdfY) {
+    return locator.evaluate((box, destination) => {
+        const pageDiv = box.closest('.page');
+        const canvas = pageDiv?.querySelector('.canvasWrapper canvas, canvas');
+        const canvasRect = canvas?.getBoundingClientRect?.();
+        const boxRect = box.getBoundingClientRect();
+        const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 1;
+        const pageHeightPoints = Number.parseFloat(box.dataset.basePageHeight || '')
+            || (canvasRect ? canvasRect.height / scale : 792);
+        const pageWidthPoints = canvasRect ? canvasRect.width / scale : 576;
+        if (!canvasRect || !(pageWidthPoints > 0) || !(pageHeightPoints > 0)) {
+            throw new Error('Could not map the PDF move destination into the page viewport.');
+        }
+        const targetLeft = canvasRect.left
+            + ((Number(destination.pdfX) / pageWidthPoints) * canvasRect.width);
+        const targetTop = canvasRect.top
+            + ((Number(destination.topLeftPdfY) / pageHeightPoints) * canvasRect.height);
+        return {
+            x: targetLeft - boxRect.left,
+            y: targetTop - boxRect.top,
+            target_browser_left: targetLeft,
+            target_browser_top: targetTop,
+            page_width_points: pageWidthPoints,
+            page_height_points: pageHeightPoints,
+            scale,
+        };
+    }, { pdfX, topLeftPdfY });
+}
+
+function analyzePdfUploadSs5Swap({
+    sourcePdfPath,
+    resultPdfPath,
+    pageIndex,
+    expectedText,
+    originalPagePath,
+    resultPagePath,
+}) {
+    const pythonCode = String.raw`
+import fitz
+import json
+import re
+import sys
+
+source_path, result_path = sys.argv[1], sys.argv[2]
+page_index = int(sys.argv[3])
+expected = json.loads(sys.argv[4])
+original_png, result_png = sys.argv[5], sys.argv[6]
+
+def compact(value):
+    return re.sub(r'\s+', '', str(value or ''))
+
+def rect_values(rect):
+    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+
+def union_rect(rects):
+    if not rects:
+        return None
+    result = fitz.Rect(rects[0])
+    for rect in rects[1:]:
+        result |= fitz.Rect(rect)
+    return result
+
+def matches(page, text):
+    found = page.search_for(str(text or ''))
+    rect = union_rect(found)
+    return [rect_values(item) for item in found], (rect_values(rect) if rect else None)
+
+source_doc = fitz.open(source_path)
+result_doc = fitz.open(result_path)
+source_page = source_doc[page_index]
+result_page = result_doc[page_index]
+source_text = source_page.get_text('text')
+result_text = result_page.get_text('text')
+source_compact = compact(source_text)
+result_compact = compact(result_text)
+
+source_matches = {}
+result_matches = {}
+source_rects = {}
+result_rects = {}
+source_counts = {}
+result_counts = {}
+for suffix, text in expected.items():
+    source_matches[suffix], source_rects[suffix] = matches(source_page, text)
+    result_matches[suffix], result_rects[suffix] = matches(result_page, text)
+    needle = compact(text)
+    source_counts[suffix] = source_compact.count(needle)
+    result_counts[suffix] = result_compact.count(needle)
+
+matrix = fitz.Matrix(2, 2)
+source_page.get_pixmap(matrix=matrix, alpha=False).save(original_png)
+result_page.get_pixmap(matrix=matrix, alpha=False).save(result_png)
+
+print(json.dumps({
+    'page_count': len(result_doc),
+    'page_width': float(source_page.rect.width),
+    'page_height': float(source_page.rect.height),
+    'source_text': source_text,
+    'result_text': result_text,
+    'source_counts': source_counts,
+    'result_counts': result_counts,
+    'source_matches': source_matches,
+    'result_matches': result_matches,
+    'source_rects': source_rects,
+    'result_rects': result_rects,
+}))
+`;
+    const raw = execFileSync(PYTHON_BIN, [
+        '-c',
+        pythonCode,
+        sourcePdfPath,
+        resultPdfPath,
+        String(pageIndex),
+        JSON.stringify(expectedText),
+        originalPagePath,
+        resultPagePath,
+    ], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+function analyzePdfUploadSs5SentenceDeletion({
+    sourcePdfPath,
+    resultPdfPath,
+    pageIndex,
+    sentence,
+    preservedText,
+    originalPagePath,
+    resultPagePath,
+}) {
+    const pythonCode = String.raw`
+import fitz
+import json
+import re
+import sys
+
+source_path, result_path = sys.argv[1], sys.argv[2]
+page_index = int(sys.argv[3])
+sentence = sys.argv[4]
+preserved = json.loads(sys.argv[5])
+original_png, result_png = sys.argv[6], sys.argv[7]
+
+def compact(value):
+    return re.sub(r'\s+', '', str(value or ''))
+
+def rect_values(rect):
+    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+
+def found(page, text):
+    return [rect_values(rect) for rect in page.search_for(str(text or ''))]
+
+source_doc = fitz.open(source_path)
+result_doc = fitz.open(result_path)
+source_page = source_doc[page_index]
+result_page = result_doc[page_index]
+source_text = source_page.get_text('text')
+result_text = result_page.get_text('text')
+source_compact = compact(source_text)
+result_compact = compact(result_text)
+sentence_compact = compact(sentence)
+
+matrix = fitz.Matrix(2, 2)
+source_page.get_pixmap(matrix=matrix, alpha=False).save(original_png)
+result_page.get_pixmap(matrix=matrix, alpha=False).save(result_png)
+
+print(json.dumps({
+    'page_count': len(result_doc),
+    'page_width': float(source_page.rect.width),
+    'page_height': float(source_page.rect.height),
+    'source_text': source_text,
+    'result_text': result_text,
+    'source_sentence_count': source_compact.count(sentence_compact),
+    'result_sentence_count': result_compact.count(sentence_compact),
+    'source_sentence_matches': found(source_page, sentence),
+    'result_sentence_matches': found(result_page, sentence),
+    'preserved': {
+        text: {
+            'source_count': source_compact.count(compact(text)),
+            'result_count': result_compact.count(compact(text)),
+            'source_matches': found(source_page, text),
+            'result_matches': found(result_page, text),
+        }
+        for text in preserved
+    },
+}))
+`;
+    const raw = execFileSync(PYTHON_BIN, [
+        '-c',
+        pythonCode,
+        sourcePdfPath,
+        resultPdfPath,
+        String(pageIndex),
+        sentence,
+        JSON.stringify(preservedText),
+        originalPagePath,
+        resultPagePath,
+    ], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+function comparePdfUploadOperationPages(originalPagePath, resultPagePath, diffPagePath) {
+    const { pixelmatch, PNG } = getPixelDiffLibs();
+    const original = PNG.sync.read(fs.readFileSync(originalPagePath));
+    const result = PNG.sync.read(fs.readFileSync(resultPagePath));
+    if (original.width !== result.width || original.height !== result.height) {
+        throw new Error(`page raster dimensions differ: original=${original.width}x${original.height} result=${result.width}x${result.height}`);
+    }
+    const diff = new PNG({ width: original.width, height: original.height });
+    const mismatch = pixelmatch(
+        original.data,
+        result.data,
+        diff.data,
+        original.width,
+        original.height,
+        { threshold: 0.12, includeAA: false },
+    );
+    fs.writeFileSync(diffPagePath, PNG.sync.write(diff));
+    return {
+        mismatch,
+        pixels: original.width * original.height,
+        ratio: mismatch / Math.max(1, original.width * original.height),
+    };
+}
+
+function pdfUploadColorChannels(value) {
+    const text = String(value || '').trim().toLowerCase();
+    const hex = text.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+        const digits = hex[1].length === 3
+            ? hex[1].split('').map((digit) => `${digit}${digit}`).join('')
+            : hex[1];
+        return [
+            Number.parseInt(digits.slice(0, 2), 16),
+            Number.parseInt(digits.slice(2, 4), 16),
+            Number.parseInt(digits.slice(4, 6), 16),
+        ];
+    }
+    const rgb = text.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+    if (rgb) {
+        return rgb.slice(1, 4).map((channel) => Number.parseFloat(channel));
+    }
+    return null;
+}
+
+function pdfUploadColorIsDark(value, maximumChannel = 96) {
+    const channels = pdfUploadColorChannels(value);
+    return Array.isArray(channels)
+        && channels.length === 3
+        && channels.every((channel) => Number.isFinite(channel) && channel <= maximumChannel);
+}
+
+function pdfUploadRectMaxDelta(left, right) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length < 4 || right.length < 4) {
+        return Number.POSITIVE_INFINITY;
+    }
+    return Math.max(...left.slice(0, 4).map((value, index) => (
+        Math.abs(Number(value) - Number(right[index]))
+    )));
+}
+
+function pdfUploadRasterPixelRect(png, pageWidth, pageHeight, pdfRect, paddingPoints = 0) {
+    if (!Array.isArray(pdfRect) || pdfRect.length < 4) return null;
+    const widthPts = Number(pageWidth);
+    const heightPts = Number(pageHeight);
+    if (!(widthPts > 0) || !(heightPts > 0)) return null;
+    const scaleX = png.width / widthPts;
+    const scaleY = png.height / heightPts;
+    const x0 = Math.max(0, Math.floor((Number(pdfRect[0]) - paddingPoints) * scaleX));
+    const y0 = Math.max(0, Math.floor((Number(pdfRect[1]) - paddingPoints) * scaleY));
+    const x1 = Math.min(png.width, Math.ceil((Number(pdfRect[2]) + paddingPoints) * scaleX));
+    const y1 = Math.min(png.height, Math.ceil((Number(pdfRect[3]) + paddingPoints) * scaleY));
+    if (![x0, y0, x1, y1].every(Number.isFinite) || x1 <= x0 || y1 <= y0) return null;
+    return { x0, y0, x1, y1, width: x1 - x0, height: y1 - y0 };
+}
+
+function pdfUploadCropPng(png, rect) {
+    const { PNG } = getPixelDiffLibs();
+    const output = new PNG({ width: rect.width, height: rect.height });
+    for (let y = 0; y < rect.height; y += 1) {
+        const sourceOffset = ((rect.y0 + y) * png.width + rect.x0) * 4;
+        const targetOffset = y * rect.width * 4;
+        png.data.copy(output.data, targetOffset, sourceOffset, sourceOffset + (rect.width * 4));
+    }
+    return output;
+}
+
+function pdfUploadRasterStats(png) {
+    let darkPixels = 0;
+    let lightPixels = 0;
+    let luminanceTotal = 0;
+    const pixels = png.width * png.height;
+    for (let offset = 0; offset < png.data.length; offset += 4) {
+        const red = png.data[offset];
+        const green = png.data[offset + 1];
+        const blue = png.data[offset + 2];
+        const luminance = (red * 0.2126) + (green * 0.7152) + (blue * 0.0722);
+        if (luminance <= 96) darkPixels += 1;
+        if (luminance >= 220) lightPixels += 1;
+        luminanceTotal += luminance;
+    }
+    return {
+        width: png.width,
+        height: png.height,
+        pixels,
+        dark_pixels: darkPixels,
+        light_pixels: lightPixels,
+        dark_ratio: darkPixels / Math.max(1, pixels),
+        light_ratio: lightPixels / Math.max(1, pixels),
+        average_luminance: luminanceTotal / Math.max(1, pixels),
+    };
+}
+
+function measurePdfUploadRasterRegion({
+    imagePath,
+    pageWidth,
+    pageHeight,
+    rect,
+    paddingPoints = 0,
+    outputPath = null,
+}) {
+    const { PNG } = getPixelDiffLibs();
+    const pagePng = PNG.sync.read(fs.readFileSync(imagePath));
+    const pixelRect = pdfUploadRasterPixelRect(
+        pagePng,
+        pageWidth,
+        pageHeight,
+        rect,
+        paddingPoints,
+    );
+    if (!pixelRect) return null;
+    const crop = pdfUploadCropPng(pagePng, pixelRect);
+    if (outputPath) fs.writeFileSync(outputPath, PNG.sync.write(crop));
+    return {
+        pdf_rect: rect,
+        pixel_rect: pixelRect,
+        ...pdfUploadRasterStats(crop),
+    };
+}
+
+function comparePdfUploadRasterRegions({
+    originalPagePath,
+    resultPagePath,
+    diffPagePath,
+    pageWidth,
+    pageHeight,
+    regions,
+    cropPaths = {},
+}) {
+    const { pixelmatch, PNG } = getPixelDiffLibs();
+    const original = PNG.sync.read(fs.readFileSync(originalPagePath));
+    const result = PNG.sync.read(fs.readFileSync(resultPagePath));
+    if (original.width !== result.width || original.height !== result.height) {
+        throw new Error(`page raster dimensions differ: original=${original.width}x${original.height} result=${result.width}x${result.height}`);
+    }
+    const fullDiff = new PNG({ width: original.width, height: original.height });
+    const fullMismatch = pixelmatch(
+        original.data,
+        result.data,
+        fullDiff.data,
+        original.width,
+        original.height,
+        { threshold: 0.12, includeAA: false },
+    );
+    fs.writeFileSync(diffPagePath, PNG.sync.write(fullDiff));
+
+    const output = {
+        page: {
+            mismatch: fullMismatch,
+            pixels: original.width * original.height,
+            ratio: fullMismatch / Math.max(1, original.width * original.height),
+        },
+        regions: {},
+    };
+    for (const [name, definition] of Object.entries(regions || {})) {
+        const pdfRect = Array.isArray(definition) ? definition : definition?.rect;
+        const paddingPoints = Array.isArray(definition)
+            ? 0
+            : Number(definition?.padding_points || 0);
+        const pixelRect = pdfUploadRasterPixelRect(
+            original,
+            pageWidth,
+            pageHeight,
+            pdfRect,
+            paddingPoints,
+        );
+        if (!pixelRect) {
+            output.regions[name] = null;
+            continue;
+        }
+        const originalCrop = pdfUploadCropPng(original, pixelRect);
+        const resultCrop = pdfUploadCropPng(result, pixelRect);
+        const diffCrop = new PNG({ width: pixelRect.width, height: pixelRect.height });
+        const mismatch = pixelmatch(
+            originalCrop.data,
+            resultCrop.data,
+            diffCrop.data,
+            pixelRect.width,
+            pixelRect.height,
+            { threshold: 0.12, includeAA: false },
+        );
+        const paths = cropPaths[name] || {};
+        if (paths.original) fs.writeFileSync(paths.original, PNG.sync.write(originalCrop));
+        if (paths.result) fs.writeFileSync(paths.result, PNG.sync.write(resultCrop));
+        if (paths.diff) fs.writeFileSync(paths.diff, PNG.sync.write(diffCrop));
+        output.regions[name] = {
+            pdf_rect: pdfRect,
+            pixel_rect: pixelRect,
+            mismatch,
+            pixels: pixelRect.width * pixelRect.height,
+            ratio: mismatch / Math.max(1, pixelRect.width * pixelRect.height),
+            original: pdfUploadRasterStats(originalCrop),
+            result: pdfUploadRasterStats(resultCrop),
+        };
+    }
+    return output;
+}
+
+async function runPdfUploadSs5SwapTestFlow({ config, testKey, label, description, sourcePdfPath }) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_before_swap'),
+        after: buildArtifactName(testKey, runToken, 'page1_after_swap'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        originalPage: buildArtifactName(testKey, runToken, 'page1_original'),
+        resultPage: buildArtifactName(testKey, runToken, 'page1_result'),
+        diffPage: buildArtifactName(testKey, runToken, 'page1_diff'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let sourceBoxes = {};
+    let finalBoxes = {};
+    let moves = [];
+    let downloadPayload = null;
+    let analysis = null;
+    let raster = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const pageLocator = opened.pageLocator;
+        addCheck(
+            'disposable_clone_created',
+            documentId > 0 && documentId !== Number(config.source_document_id),
+            'The database original was uploaded as a disposable document.',
+            `source_document=${config.source_document_id} disposable_document=${documentId}`,
+        );
+
+        const suffixes = ['0_0:9', '0_0:11'];
+        await page.waitForFunction((expectedSuffixes) => expectedSuffixes.every((suffix) => (
+            Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .some((box) => String(box.dataset.annotationId || '').endsWith(`_${suffix}`))
+        )), suffixes, { timeout: 90000 });
+        const locatorFor = (suffix) => page.locator(
+            `.enpv-annotation-box[data-annotation-id$="_${suffix}"]`
+        ).first();
+        sourceBoxes = await page.evaluate((expectedSuffixes) => {
+            const output = {};
+            for (const suffix of expectedSuffixes) {
+                const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                    .find((candidate) => String(candidate.dataset.annotationId || '').endsWith(`_${suffix}`));
+                if (!box) continue;
+                const rect = box.getBoundingClientRect();
+                output[suffix] = {
+                    annotation_id: box.dataset.annotationId || '',
+                    text: String(box.dataset.baseText || box.dataset.originalText || box.textContent || '').replace(/\s+/g, ' ').trim(),
+                    browser_rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+                };
+            }
+            return output;
+        }, suffixes);
+        const expectedText = config.swap_expected_text || {};
+        addCheck(
+            'swap_sources_resolved',
+            suffixes.every((suffix) => (
+                sourceBoxes[suffix]
+                && normalize(sourceBoxes[suffix].text) === normalize(expectedText[suffix])
+            )),
+            'Both saved page-1 PDF.js source annotations resolve with their expected text.',
+            JSON.stringify(sourceBoxes),
+        );
+        addCheck(
+            'saved_swap_instruction_resolved',
+            suffixes.includes(config.swap_primary_suffix)
+                && suffixes.includes(config.swap_partner_suffix)
+                && config.swap_primary_suffix !== config.swap_partner_suffix,
+            'The saved annotation and its requested partner resolve to different source IDs.',
+            JSON.stringify({
+                primary: config.swap_primary_suffix,
+                partner: config.swap_partner_suffix,
+            }),
+        );
+
+        await pageLocator.screenshot({ path: artifactPaths.before });
+        const primary = sourceBoxes[config.swap_primary_suffix]?.browser_rect;
+        const partner = sourceBoxes[config.swap_partner_suffix]?.browser_rect;
+        if (!primary || !partner) throw new Error('Missing source geometry for swap.');
+        moves.push(await movePdfUploadEditorBox(
+            page,
+            locatorFor(config.swap_primary_suffix),
+            partner.left - primary.left,
+            partner.top - primary.top,
+        ));
+        moves.push(await movePdfUploadEditorBox(
+            page,
+            locatorFor(config.swap_partner_suffix),
+            primary.left - partner.left,
+            primary.top - partner.top,
+        ));
+        finalBoxes = await page.evaluate((expectedSuffixes) => {
+            const output = {};
+            for (const suffix of expectedSuffixes) {
+                const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                    .find((candidate) => String(candidate.dataset.annotationId || '').endsWith(`_${suffix}`));
+                if (!box) continue;
+                const rect = box.getBoundingClientRect();
+                output[suffix] = {
+                    annotation_id: box.dataset.annotationId || '',
+                    dx_pts: Number(box.dataset.dxPts || 0),
+                    dy_pts: Number(box.dataset.dyPts || 0),
+                    moved_text_overlay: box.dataset.movedTextOverlay || '',
+                    browser_rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height },
+                };
+            }
+            return output;
+        }, suffixes);
+        const browserSwapPass = suffixes.every((suffix) => {
+            const expectedDestination = sourceBoxes[
+                suffix === config.swap_primary_suffix
+                    ? config.swap_partner_suffix
+                    : config.swap_primary_suffix
+            ]?.browser_rect;
+            const result = finalBoxes[suffix]?.browser_rect;
+            return expectedDestination && result
+                && Math.abs(result.left - expectedDestination.left) <= 3
+                && Math.abs(result.top - expectedDestination.top) <= 3
+                && finalBoxes[suffix].moved_text_overlay === '1';
+        });
+        addCheck(
+            'editor_swapped_both_annotations',
+            browserSwapPass,
+            'The PDF.js move controls place each annotation at the other annotation’s original position.',
+            JSON.stringify({ source_boxes: sourceBoxes, final_boxes: finalBoxes, moves }),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.after });
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        downloadPayload = downloaded.payload;
+        const sessionAnnotations = Array.isArray(downloadPayload.session_annotations)
+            ? downloadPayload.session_annotations
+            : [];
+        const movedIds = sessionAnnotations
+            .filter((annotation) => annotation?.movedTextOverlay === true || annotation?.movedTextOverlay === 1 || annotation?.movedTextOverlay === '1')
+            .map((annotation) => String(annotation.id || ''))
+            .filter((id) => suffixes.some((suffix) => id.endsWith(`_${suffix}`)));
+        addCheck(
+            'download_payload_contains_both_moves',
+            suffixes.every((suffix) => movedIds.some((id) => id.endsWith(`_${suffix}`)))
+                && movedIds.length === 2,
+            'The real Download PDF payload contains exactly the two requested moved source annotations.',
+            JSON.stringify({ moved_ids: movedIds }),
+        );
+        addCheck(
+            'download_uses_pdfjs_visible_export',
+            downloadPayload.use_exact_download_path === true
+                && downloadPayload.use_pdfjs_visible_export === true
+                && downloadPayload.use_conversion_safe_export === true,
+            'The request used the editor’s exact visible conversion-safe download path.',
+            JSON.stringify({
+                use_exact_download_path: downloadPayload.use_exact_download_path,
+                use_pdfjs_visible_export: downloadPayload.use_pdfjs_visible_export,
+                use_conversion_safe_export: downloadPayload.use_conversion_safe_export,
+            }),
+        );
+        addCheck(
+            'downloaded_pdf_created',
+            downloaded.pdf.length > 1000,
+            'downloadAnnotatedPdf() returned a non-empty PDF.',
+            `bytes=${downloaded.pdf.length}`,
+        );
+
+        analysis = analyzePdfUploadSs5Swap({
+            sourcePdfPath,
+            resultPdfPath: artifactPaths.pdf,
+            pageIndex: 0,
+            expectedText,
+            originalPagePath: artifactPaths.originalPage,
+            resultPagePath: artifactPaths.resultPage,
+        });
+        raster = comparePdfUploadOperationPages(
+            artifactPaths.originalPage,
+            artifactPaths.resultPage,
+            artifactPaths.diffPage,
+        );
+        addCheck(
+            'swapped_text_present_once',
+            suffixes.every((suffix) => analysis.source_counts?.[suffix] === 1 && analysis.result_counts?.[suffix] === 1),
+            'Both source strings remain searchable exactly once, with no duplicate or missing text.',
+            JSON.stringify({
+                source_counts: analysis.source_counts,
+                result_counts: analysis.result_counts,
+            }),
+        );
+        const pdfSwapDiffs = {};
+        const pdfSwapPass = suffixes.every((suffix) => {
+            const destinationSuffix = suffix === config.swap_primary_suffix
+                ? config.swap_partner_suffix
+                : config.swap_primary_suffix;
+            const sourceRect = analysis.source_rects?.[destinationSuffix];
+            const resultRect = analysis.result_rects?.[suffix];
+            if (!Array.isArray(sourceRect) || !Array.isArray(resultRect)) return false;
+            const diffs = [
+                Math.abs(Number(sourceRect[0]) - Number(resultRect[0])),
+                Math.abs(Number(sourceRect[1]) - Number(resultRect[1])),
+            ];
+            pdfSwapDiffs[suffix] = { destination_suffix: destinationSuffix, origin_diffs: diffs };
+            return diffs.every((difference) => difference <= 3);
+        });
+        addCheck(
+            'downloaded_pdf_positions_swapped',
+            pdfSwapPass,
+            'The downloaded PDF places each searchable string at the other string’s original coordinates.',
+            JSON.stringify(pdfSwapDiffs),
+        );
+        addCheck(
+            'downloaded_page_visibly_changed',
+            Number(raster.ratio) > 0,
+            'The downloaded page raster reflects the requested position changes.',
+            JSON.stringify(raster),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            source_boxes: sourceBoxes,
+            final_boxes: finalBoxes,
+            moves,
+            download_payload: downloadPayload,
+            pdf_analysis: analysis,
+            raster_analysis: raster,
+            checks,
+        }, null, 2)}\n`);
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        const result = buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status,
+            checks,
+            artifacts: [
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Page 1 before swap', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 after swap', kind: 'image', filename: artifactNames.after },
+                { label: 'Original page 1 raster', kind: 'image', filename: artifactNames.originalPage },
+                { label: 'Result page 1 raster', kind: 'image', filename: artifactNames.resultPage },
+                { label: 'Page 1 raster diff', kind: 'image', filename: artifactNames.diffPage },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloaded.pdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                primary_suffix: config.swap_primary_suffix,
+                partner_suffix: config.swap_partner_suffix,
+                raster,
+            },
+        });
+        result.page_count = Number(analysis.page_count) || 0;
+        return result;
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                source_boxes: sourceBoxes,
+                final_boxes: finalBoxes,
+                moves,
+                download_payload: downloadPayload,
+                pdf_analysis: analysis,
+                raster_analysis: raster,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadSs5SentenceDeletionFlow({ config, testKey, label, description, sourcePdfPath }) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_before_sentence_delete'),
+        after: buildArtifactName(testKey, runToken, 'page1_after_sentence_delete'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        originalPage: buildArtifactName(testKey, runToken, 'page1_original'),
+        resultPage: buildArtifactName(testKey, runToken, 'page1_result'),
+        diffPage: buildArtifactName(testKey, runToken, 'page1_diff'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let resolvedAnnotationId = '';
+    let beforeText = '';
+    let afterText = '';
+    let downloadPayload = null;
+    let analysis = null;
+    let raster = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const pageLocator = opened.pageLocator;
+        addCheck(
+            'disposable_clone_created',
+            documentId > 0 && documentId !== Number(config.source_document_id),
+            'The database original was uploaded as a disposable document.',
+            `source_document=${config.source_document_id} disposable_document=${documentId}`,
+        );
+
+        const sentence = String(config.sentence_to_delete || '');
+        const preservedText = Array.isArray(config.sentence_preserved_text)
+            ? config.sentence_preserved_text
+            : [];
+        await page.waitForFunction(({ savedId, sentenceText, targetText }) => (
+            Array.from(document.querySelectorAll('.enpv-annotation-box')).some((box) => {
+                const annotationId = String(box.dataset.annotationId || '');
+                const text = String(
+                    box.dataset.baseText
+                    || box.dataset.originalText
+                    || box.querySelector('.enpv-text-content')?.textContent
+                    || box.textContent
+                    || ''
+                ).replace(/\s+/g, ' ').trim();
+                return annotationId === savedId
+                    || text.includes(sentenceText)
+                    || (text.includes(targetText) && text.includes('For assistance'));
+            })
+        ), {
+            savedId: String(config.saved_runtime_annotation_id || config.saved_annotation_id || ''),
+            sentenceText: sentence,
+            targetText: 'IMPORTANT:',
+        }, { timeout: 90000 });
+        resolvedAnnotationId = await page.evaluate(({ savedId, sentenceText }) => {
+            const boxes = Array.from(document.querySelectorAll('.enpv-annotation-box'));
+            const exact = boxes.find((box) => String(box.dataset.annotationId || '') === savedId);
+            const byText = boxes.find((box) => {
+                const text = String(
+                    box.dataset.baseText
+                    || box.dataset.originalText
+                    || box.querySelector('.enpv-text-content')?.textContent
+                    || box.textContent
+                    || ''
+                ).replace(/\s+/g, ' ').trim();
+                return text.includes(sentenceText);
+            });
+            return String((exact || byText)?.dataset?.annotationId || '');
+        }, {
+            savedId: String(config.saved_runtime_annotation_id || config.saved_annotation_id || ''),
+            sentenceText: sentence,
+        });
+        if (!resolvedAnnotationId) throw new Error('Could not resolve the saved promoted paragraph.');
+        const target = page.locator(
+            `.enpv-annotation-box[data-annotation-id="${resolvedAnnotationId}"]`
+        ).first();
+        await target.waitFor({ state: 'attached', timeout: 30000 });
+        beforeText = await target.locator('.enpv-text-content').textContent();
+        addCheck(
+            'paragraph_target_resolved',
+            normalize(beforeText).includes(normalize(sentence))
+                && normalize(beforeText).includes('will return any documents submitted with your application.'),
+            'The saved promoted paragraph resolves to the physical PDF.js source line containing the requested sentence.',
+            JSON.stringify({
+                saved_annotation_id: config.saved_runtime_annotation_id || config.saved_annotation_id,
+                resolved_annotation_id: resolvedAnnotationId,
+                text: beforeText,
+            }),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.before });
+
+        await selectPdfUploadEditorBox(page, target);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').dispatchEvent('pointerdown');
+        await page.waitForFunction((annotationId) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === annotationId);
+            return box?.classList.contains('is-editing')
+                && box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, resolvedAnnotationId, { timeout: 30000 });
+        const selected = await page.evaluate(({ annotationId, needle }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === annotationId);
+            const root = box?.querySelector('.enpv-text-content');
+            if (!root) return { ok: false, reason: 'missing editable text' };
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            const nodes = [];
+            let joined = '';
+            while (walker.nextNode()) {
+                const node = walker.currentNode;
+                nodes.push({ node, start: joined.length, end: joined.length + node.nodeValue.length });
+                joined += node.nodeValue;
+            }
+            const start = joined.indexOf(needle);
+            if (start < 0) return { ok: false, reason: 'sentence not found', joined };
+            const end = start + needle.length;
+            const startNode = nodes.find((entry) => start >= entry.start && start <= entry.end);
+            const endNode = nodes.find((entry) => end >= entry.start && end <= entry.end);
+            if (!startNode || !endNode) return { ok: false, reason: 'range nodes missing', joined };
+            const range = document.createRange();
+            range.setStart(startNode.node, start - startNode.start);
+            range.setEnd(endNode.node, end - endNode.start);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            root.focus();
+            return { ok: true, joined };
+        }, { annotationId: resolvedAnnotationId, needle: sentence });
+        if (!selected.ok) throw new Error(`Could not select requested sentence: ${JSON.stringify(selected)}`);
+        await page.keyboard.press('Backspace');
+        await page.waitForFunction(({ annotationId, needle }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === annotationId);
+            const text = box?.querySelector('.enpv-text-content')?.textContent || '';
+            return !text.includes(needle);
+        }, { annotationId: resolvedAnnotationId, needle: sentence }, { timeout: 30000 });
+        await page.mouse.click(8, 8);
+        await page.waitForTimeout(600);
+        afterText = await target.locator('.enpv-text-content').textContent();
+        const preservedInEditor = preservedText
+            .filter((text) => normalize(beforeText).includes(normalize(text)))
+            .every((text) => normalize(afterText).includes(normalize(text)));
+        addCheck(
+            'editor_deleted_only_requested_sentence',
+            !normalize(afterText).includes(normalize(sentence))
+                && normalize(afterText).includes('will return any documents submitted with your application.')
+                && preservedInEditor,
+            'The PDF.js in-place editor removes the requested sentence while retaining the paragraph’s other text.',
+            JSON.stringify({ before_text: beforeText, after_text: afterText }),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.after });
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        downloadPayload = downloaded.payload;
+        const sessionAnnotations = Array.isArray(downloadPayload.session_annotations)
+            ? downloadPayload.session_annotations
+            : [];
+        const targetAnnotations = sessionAnnotations.filter((annotation) => (
+            String(annotation?.id || '') === resolvedAnnotationId
+        ));
+        const payloadText = targetAnnotations.map((annotation) => String(annotation.text || '')).join(' ');
+        addCheck(
+            'download_payload_contains_sentence_edit',
+            targetAnnotations.length === 1
+                && !normalize(payloadText).includes(normalize(sentence))
+                && normalize(payloadText).includes('will return any documents submitted with your application.'),
+            'The real Download PDF payload contains one edited source line without the deleted sentence.',
+            JSON.stringify({ target_annotation_count: targetAnnotations.length, text: payloadText }),
+        );
+        addCheck(
+            'download_uses_pdfjs_visible_export',
+            downloadPayload.use_exact_download_path === true
+                && downloadPayload.use_pdfjs_visible_export === true
+                && downloadPayload.use_conversion_safe_export === true,
+            'The request used the editor’s exact visible conversion-safe download path.',
+            JSON.stringify({
+                use_exact_download_path: downloadPayload.use_exact_download_path,
+                use_pdfjs_visible_export: downloadPayload.use_pdfjs_visible_export,
+                use_conversion_safe_export: downloadPayload.use_conversion_safe_export,
+            }),
+        );
+        addCheck(
+            'downloaded_pdf_created',
+            downloaded.pdf.length > 1000,
+            'downloadAnnotatedPdf() returned a non-empty PDF.',
+            `bytes=${downloaded.pdf.length}`,
+        );
+
+        analysis = analyzePdfUploadSs5SentenceDeletion({
+            sourcePdfPath,
+            resultPdfPath: artifactPaths.pdf,
+            pageIndex: 0,
+            sentence,
+            preservedText,
+            originalPagePath: artifactPaths.originalPage,
+            resultPagePath: artifactPaths.resultPage,
+        });
+        raster = comparePdfUploadOperationPages(
+            artifactPaths.originalPage,
+            artifactPaths.resultPage,
+            artifactPaths.diffPage,
+        );
+        addCheck(
+            'deleted_sentence_absent_from_pdf',
+            analysis.source_sentence_count === 1
+                && analysis.result_sentence_count === 0
+                && (analysis.result_sentence_matches || []).length === 0,
+            'The requested sentence exists in the original and is absent from searchable downloaded-PDF text.',
+            JSON.stringify({
+                source_count: analysis.source_sentence_count,
+                result_count: analysis.result_sentence_count,
+                source_matches: analysis.source_sentence_matches,
+                result_matches: analysis.result_sentence_matches,
+            }),
+        );
+        const preservedResults = Object.entries(analysis.preserved || {});
+        addCheck(
+            'neighboring_text_preserved',
+            preservedResults.length === preservedText.length
+                && preservedResults.every(([, value]) => value.source_count >= 1 && value.result_count >= 1),
+            'The paragraph prefix, preceding source lines, edited-line prefix, and following website line remain searchable.',
+            JSON.stringify(analysis.preserved),
+        );
+        const editedPrefixText = preservedText.find((text) => text.startsWith('will return')) || '';
+        const editedPrefixData = analysis.preserved?.[editedPrefixText];
+        const editedPrefixGeometryPass = Array.isArray(editedPrefixData?.source_matches)
+            && Array.isArray(editedPrefixData?.result_matches)
+            && editedPrefixData.source_matches.length === 1
+            && editedPrefixData.result_matches.length === 1
+            && editedPrefixData.source_matches[0].every((value, index) => (
+                Math.abs(Number(value) - Number(editedPrefixData.result_matches[0][index])) <= 0.75
+            ));
+        addCheck(
+            'edited_line_prefix_stays_in_place',
+            editedPrefixGeometryPass,
+            'The retained beginning of the edited source line stays at its original PDF coordinates.',
+            JSON.stringify(editedPrefixData || null),
+        );
+        const websiteText = preservedText.find((text) => text.includes('website at')) || '';
+        const websiteData = analysis.preserved?.[websiteText];
+        const websiteGeometryPass = Array.isArray(websiteData?.source_matches)
+            && Array.isArray(websiteData?.result_matches)
+            && websiteData.source_matches.length === 1
+            && websiteData.result_matches.length === 1
+            && websiteData.source_matches[0].every((value, index) => (
+                Math.abs(Number(value) - Number(websiteData.result_matches[0][index])) <= 0.75
+            ));
+        addCheck(
+            'following_website_line_unchanged',
+            websiteGeometryPass,
+            'The following website line keeps its original downloaded-PDF coordinates.',
+            JSON.stringify(websiteData || null),
+        );
+        addCheck(
+            'downloaded_page_visibly_changed',
+            Number(raster.ratio) > 0,
+            'The downloaded page raster reflects the requested paragraph edit.',
+            JSON.stringify(raster),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: resolvedAnnotationId,
+            before_text: beforeText,
+            after_text: afterText,
+            download_payload: downloadPayload,
+            pdf_analysis: analysis,
+            raster_analysis: raster,
+            checks,
+        }, null, 2)}\n`);
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        const result = buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status,
+            checks,
+            artifacts: [
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Page 1 before sentence deletion', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 after sentence deletion', kind: 'image', filename: artifactNames.after },
+                { label: 'Original page 1 raster', kind: 'image', filename: artifactNames.originalPage },
+                { label: 'Result page 1 raster', kind: 'image', filename: artifactNames.resultPage },
+                { label: 'Page 1 raster diff', kind: 'image', filename: artifactNames.diffPage },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloaded.pdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: resolvedAnnotationId,
+                sentence_to_delete: sentence,
+                raster,
+            },
+        });
+        result.page_count = Number(analysis.page_count) || 0;
+        return result;
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: resolvedAnnotationId,
+                before_text: beforeText,
+                after_text: afterText,
+                download_payload: downloadPayload,
+                pdf_analysis: analysis,
+                raster_analysis: raster,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function resolvePdfUploadF1040Box(page, suffix, expectedText) {
+    const normalizedExpected = normalize(expectedText);
+    await page.waitForFunction(({ wantedSuffix, wantedText }) => (
+        Array.from(document.querySelectorAll('.enpv-annotation-box')).some((box) => {
+            const id = String(box.dataset.annotationId || '');
+            const text = String(
+                box.dataset.baseText
+                || box.dataset.originalText
+                || box.querySelector('.enpv-text-content')?.textContent
+                || box.textContent
+                || ''
+            ).replace(/\s+/g, ' ').trim();
+            return id.endsWith(`_${wantedSuffix}`)
+                && (
+                    !wantedText
+                    || text.startsWith(wantedText)
+                    || text.startsWith(wantedText.replace(/^15\s+/, ''))
+                );
+        })
+    ), {
+        wantedSuffix: suffix,
+        wantedText: normalizedExpected,
+    }, { timeout: 90000 });
+
+    const annotationId = await page.evaluate(({ wantedSuffix, wantedText }) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((candidate) => {
+            const id = String(candidate.dataset.annotationId || '');
+            const text = String(
+                candidate.dataset.baseText
+                || candidate.dataset.originalText
+                || candidate.querySelector('.enpv-text-content')?.textContent
+                || candidate.textContent
+                || ''
+            ).replace(/\s+/g, ' ').trim();
+            return id.endsWith(`_${wantedSuffix}`)
+                && (
+                    !wantedText
+                    || text.startsWith(wantedText)
+                    || text.startsWith(wantedText.replace(/^15\s+/, ''))
+                );
+        });
+        return String(box?.dataset?.annotationId || '');
+    }, {
+        wantedSuffix: suffix,
+        wantedText: normalizedExpected,
+    });
+    if (!annotationId) {
+        throw new Error(`Could not resolve f1040s3 annotation suffix ${suffix}.`);
+    }
+    const locator = page.locator(
+        `.enpv-annotation-box[data-annotation-id="${annotationId}"]`
+    ).first();
+    await locator.waitFor({ state: 'attached', timeout: 30000 });
+    await locator.scrollIntoViewIfNeeded();
+    return { annotationId, locator };
+}
+
+async function resolvePdfUploadBoxByExactText(page, expectedText) {
+    const normalizedExpected = normalize(expectedText);
+    await page.waitForFunction((wantedText) => (
+        Array.from(document.querySelectorAll('.enpv-annotation-box')).some((box) => {
+            const text = String(
+                box.dataset.baseText
+                || box.dataset.originalText
+                || box.querySelector('.enpv-text-content')?.textContent
+                || box.textContent
+                || ''
+            ).replace(/\s+/g, ' ').trim();
+            return text === wantedText;
+        })
+    ), normalizedExpected, { timeout: 90000 });
+    const annotationId = await page.evaluate((wantedText) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((candidate) => {
+            const text = String(
+                candidate.dataset.baseText
+                || candidate.dataset.originalText
+                || candidate.querySelector('.enpv-text-content')?.textContent
+                || candidate.textContent
+                || ''
+            ).replace(/\s+/g, ' ').trim();
+            return text === wantedText;
+        });
+        return String(box?.dataset?.annotationId || '');
+    }, normalizedExpected);
+    if (!annotationId) {
+        throw new Error(`Could not resolve uploaded PDF annotation text ${expectedText}.`);
+    }
+    const locator = page.locator(
+        `.enpv-annotation-box[data-annotation-id="${annotationId}"]`
+    ).first();
+    await locator.waitFor({ state: 'attached', timeout: 30000 });
+    await locator.scrollIntoViewIfNeeded();
+    return { annotationId, locator };
+}
+
+async function readPdfUploadF1040BoxState(page, annotationId) {
+    return page.evaluate((id) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+            .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+        if (!box) return null;
+        const text = box.querySelector('.enpv-text-content');
+        const boxRect = box.getBoundingClientRect();
+        const textRect = text?.getBoundingClientRect?.() || null;
+        let textRangeRect = null;
+        if (text) {
+            try {
+                const range = document.createRange();
+                range.selectNodeContents(text);
+                const measured = range.getBoundingClientRect();
+                range.detach?.();
+                if (measured.width > 0 && measured.height > 0) {
+                    textRangeRect = measured;
+                }
+            } catch (_) {}
+        }
+        const parseJson = (raw, fallback) => {
+            try {
+                return raw ? JSON.parse(raw) : fallback;
+            } catch (_) {
+                return fallback;
+            }
+        };
+        const sourceRuns = parseJson(box.dataset.sourceSpanRuns, []);
+        const sourceUnderlineSegments = parseJson(box.dataset.sourceUnderlineSegments, []);
+        const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+        const pageDiv = box.closest('.page');
+        const textLayer = pageDiv?.querySelector('.textLayer');
+        const textLayerRect = textLayer?.getBoundingClientRect?.() || null;
+        const currentScale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 1;
+        const sourceRunsScale = Number.parseFloat(box.dataset.sourceSpanRunsScale || '') || currentScale;
+        const sourceRunRatio = currentScale > 0 && sourceRunsScale > 0
+            ? currentScale / sourceRunsScale
+            : 1;
+        const sourceGlyphRuns = Array.isArray(sourceRuns)
+            ? sourceRuns.map((run) => ({
+                left: Number(run?.textLeftPx),
+                right: Number(run?.textRightPx),
+                top: Number(run?.textTopPx),
+                bottom: Number(run?.textBottomPx),
+            })).filter((run) => Object.values(run).every(Number.isFinite))
+            : [];
+        const sourceGlyphRect = textLayerRect && sourceGlyphRuns.length
+            ? {
+                left: textLayerRect.left
+                    + (Math.min(...sourceGlyphRuns.map((run) => run.left)) * sourceRunRatio),
+                right: textLayerRect.left
+                    + (Math.max(...sourceGlyphRuns.map((run) => run.right)) * sourceRunRatio),
+                top: textLayerRect.top
+                    + (Math.min(...sourceGlyphRuns.map((run) => run.top)) * sourceRunRatio),
+                bottom: textLayerRect.top
+                    + (Math.max(...sourceGlyphRuns.map((run) => run.bottom)) * sourceRunRatio),
+            }
+            : null;
+        const renderedSourceRuns = text
+            ? Array.from(text.querySelectorAll('[data-source-span-run="1"]')).map((run) => {
+                let rangeRect = null;
+                try {
+                    const range = document.createRange();
+                    range.selectNodeContents(run);
+                    const measured = range.getBoundingClientRect();
+                    range.detach?.();
+                    if (measured.width > 0 && measured.height > 0) rangeRect = measured;
+                } catch (_) {}
+                const style = window.getComputedStyle(run);
+                return {
+                    text: String(run.textContent || ''),
+                    left: rangeRect?.left ?? null,
+                    right: rangeRect?.right ?? null,
+                    top: rangeRect?.top ?? null,
+                    bottom: rangeRect?.bottom ?? null,
+                    width: rangeRect?.width ?? null,
+                    height: rangeRect?.height ?? null,
+                    font_size_px: Number.parseFloat(style.fontSize || ''),
+                    font_family: String(style.fontFamily || ''),
+                    font_weight: String(
+                        run.dataset.sourceSemanticFontWeight
+                        || style.fontWeight
+                        || ''
+                    ),
+                    font_style: String(
+                        run.dataset.sourceSemanticFontStyle
+                        || style.fontStyle
+                        || ''
+                    ),
+                    render_font_weight: String(style.fontWeight || ''),
+                    render_font_style: String(style.fontStyle || ''),
+                    pdf_font_name: String(run.dataset.sourcePdfFontName || ''),
+                    color: String(style.color || ''),
+                    text_fill_color: String(style.webkitTextFillColor || ''),
+                    opacity: Number.parseFloat(style.opacity || '1'),
+                    visibility: String(style.visibility || ''),
+                    display: String(style.display || ''),
+                };
+            })
+            : [];
+        const visibleCharacterRect = (node, fromEnd = false) => {
+            if (!node) return null;
+            const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+            const candidates = [];
+            while (walker.nextNode()) candidates.push(walker.currentNode);
+            if (node.nodeType === Node.TEXT_NODE) candidates.push(node);
+            const ordered = fromEnd ? candidates.reverse() : candidates;
+            for (const textNode of ordered) {
+                const value = String(textNode.nodeValue || '');
+                const indexes = Array.from(value, (character, index) => (
+                    /\S/.test(character) ? index : -1
+                )).filter((index) => index >= 0);
+                const offset = fromEnd ? indexes.at(-1) : indexes[0];
+                if (!Number.isInteger(offset)) continue;
+                try {
+                    const range = document.createRange();
+                    range.setStart(textNode, offset);
+                    range.setEnd(textNode, offset + 1);
+                    const rect = range.getBoundingClientRect();
+                    range.detach?.();
+                    if (rect.width > 0 && rect.height > 0) return rect;
+                } catch (_) {}
+            }
+            return null;
+        };
+        const richDomRuns = text
+            ? Array.from(text.childNodes || []).map((node) => {
+                const element = node.nodeType === Node.ELEMENT_NODE
+                    ? node
+                    : node.parentElement;
+                const value = String(node.textContent || '');
+                if (!value) return null;
+                const style = element ? window.getComputedStyle(element) : null;
+                const firstGlyphRect = visibleCharacterRect(node);
+                const lastGlyphRect = visibleCharacterRect(node, true);
+                return {
+                    text: value,
+                    font_weight: String(
+                        element?.dataset?.sourceSemanticFontWeight
+                        || style?.fontWeight
+                        || ''
+                    ),
+                    font_style: String(
+                        element?.dataset?.sourceSemanticFontStyle
+                        || style?.fontStyle
+                        || ''
+                    ),
+                    render_font_weight: String(style?.fontWeight || ''),
+                    render_font_style: String(style?.fontStyle || ''),
+                    pdf_font_name: String(element?.dataset?.sourcePdfFontName || ''),
+                    font_family: String(style?.fontFamily || ''),
+                    first_glyph_left: firstGlyphRect?.left ?? null,
+                    last_glyph_right: lastGlyphRect?.right ?? null,
+                };
+            }).filter(Boolean)
+            : [];
+        const richVisibleGapPx = richDomRuns.length >= 2
+            && Number.isFinite(richDomRuns[0]?.last_glyph_right)
+            && Number.isFinite(richDomRuns[1]?.first_glyph_left)
+            ? richDomRuns[1].first_glyph_left - richDomRuns[0].last_glyph_right
+            : null;
+        const boolishLocal = (value) => (
+            value === true
+            || value === 1
+            || String(value || '').toLowerCase() === 'true'
+            || String(value || '') === '1'
+        );
+        const underlineMetadata = [];
+        const inspectUnderlineMetadata = (value, path = '') => {
+            if (!value || typeof value !== 'object') return;
+            if (Array.isArray(value)) {
+                value.forEach((item, index) => inspectUnderlineMetadata(item, `${path}[${index}]`));
+                return;
+            }
+            for (const [key, item] of Object.entries(value)) {
+                const field = key.toLowerCase();
+                const fieldPath = path ? `${path}.${key}` : key;
+                if ([
+                    'underline',
+                    'hasdrawnunderline',
+                    'has_drawn_underline',
+                    'suppressdrawnunderline',
+                    'suppress_drawn_underline',
+                ].includes(field) && boolishLocal(item)) {
+                    underlineMetadata.push({ path: fieldPath, value: item });
+                } else if (
+                    (
+                        field.includes('underlinerange')
+                        || field.includes('underlinesegment')
+                    )
+                    && (
+                        (Array.isArray(item) && item.length > 0)
+                        || (typeof item === 'string' && !['', '[]', '{}'].includes(item.trim()))
+                    )
+                ) {
+                    underlineMetadata.push({ path: fieldPath, value: item });
+                }
+                if (item && typeof item === 'object') {
+                    inspectUnderlineMetadata(item, fieldPath);
+                }
+            }
+        };
+        inspectUnderlineMetadata(sourceRuns, 'sourceSpanRuns');
+        inspectUnderlineMetadata(sourceUnderlineSegments, 'sourceUnderlineSegments');
+
+        const styledNodes = text ? [text, ...Array.from(text.querySelectorAll('*'))] : [];
+        const decoratedNodes = styledNodes.map((node) => {
+            const style = window.getComputedStyle(node);
+            return {
+                tag: node.tagName,
+                className: String(node.className || ''),
+                line: String(style.textDecorationLine || ''),
+                shorthand: String(style.textDecoration || ''),
+            };
+        }).filter((entry) => (
+            entry.tag === 'U'
+            || entry.line.split(/\s+/).includes('underline')
+            || entry.shorthand.split(/\s+/).includes('underline')
+        ));
+        const masks = Array.from(
+            box.closest('.page')?.querySelectorAll('.enpv-source-mask, .enpv-orig-mask') || []
+        ).filter((mask) => {
+            const rect = mask.getBoundingClientRect();
+            return Math.max(0, Math.min(rect.right, boxRect.right) - Math.max(rect.left, boxRect.left))
+                * Math.max(0, Math.min(rect.bottom, boxRect.bottom) - Math.max(rect.top, boxRect.top)) > 0;
+        });
+        const pageRect = pageDiv?.getBoundingClientRect?.() || null;
+        const sourceMasks = Array.from(
+            pageDiv?.querySelectorAll('.enpv-source-mask, .enpv-orig-mask') || []
+        ).map((mask) => {
+            const maskRect = mask.getBoundingClientRect();
+            const maskStyle = window.getComputedStyle(mask);
+            return {
+                rect: {
+                    left: maskRect.left,
+                    top: maskRect.top,
+                    right: maskRect.right,
+                    bottom: maskRect.bottom,
+                    width: maskRect.width,
+                    height: maskRect.height,
+                },
+                background: maskStyle.backgroundColor,
+                diagnostics: {
+                    run_rects: parseJson(mask.dataset.enpvMaskRunRects, []),
+                    protected_rects: parseJson(mask.dataset.enpvMaskProtectedRects, []),
+                    cut_rects: parseJson(mask.dataset.enpvMaskCutRects, []),
+                },
+                child_segments: Array.from(mask.children || []).map((segment) => {
+                    const segmentRect = segment.getBoundingClientRect();
+                    return {
+                        rect: {
+                            left: segmentRect.left,
+                            top: segmentRect.top,
+                            right: segmentRect.right,
+                            bottom: segmentRect.bottom,
+                            width: segmentRect.width,
+                            height: segmentRect.height,
+                        },
+                        background: window.getComputedStyle(segment).backgroundColor,
+                    };
+                }),
+            };
+        });
+        const textStyle = text ? window.getComputedStyle(text) : null;
+        const paintIsTransparent = (value) => {
+            const color = String(value || '').trim().toLowerCase();
+            if (color === 'transparent') return true;
+            if (/^rgba\([^)]*,\s*0(?:\.0+)?\s*\)$/i.test(color)) return true;
+            return /^rgba?\([^)]*\/\s*0(?:\.0+)?\s*\)$/i.test(color);
+        };
+        const transparentPaint = Boolean(textStyle) && (
+            paintIsTransparent(textStyle.color)
+            || paintIsTransparent(textStyle.webkitTextFillColor)
+        );
+        return {
+            annotation_id: String(box.dataset.annotationId || ''),
+            page_index: pageIndex,
+            text: String(
+                box.dataset.baseText
+                || box.dataset.originalText
+                || text?.textContent
+                || box.textContent
+                || ''
+            ).replace(/\s+/g, ' ').trim(),
+            editor_text: String(text?.textContent || '').replace(/\s+/g, ' ').trim(),
+            editor_text_exact: String(text?.textContent || ''),
+            rich_dom_runs: richDomRuns,
+            rich_visible_gap_px: richVisibleGapPx,
+            classes: Array.from(box.classList),
+            browser_rect: {
+                left: boxRect.left,
+                top: boxRect.top,
+                width: boxRect.width,
+                height: boxRect.height,
+            },
+            text_rect: textRect ? {
+                left: textRect.left,
+                top: textRect.top,
+                width: textRect.width,
+                height: textRect.height,
+            } : null,
+            text_range_rect: textRangeRect ? {
+                left: textRangeRect.left,
+                top: textRangeRect.top,
+                right: textRangeRect.right,
+                bottom: textRangeRect.bottom,
+                width: textRangeRect.width,
+                height: textRangeRect.height,
+            } : null,
+            source_glyph_rect: sourceGlyphRect ? {
+                ...sourceGlyphRect,
+                width: sourceGlyphRect.right - sourceGlyphRect.left,
+                height: sourceGlyphRect.bottom - sourceGlyphRect.top,
+            } : null,
+            current_scale: currentScale,
+            source_runs_scale: sourceRunsScale,
+            rendered_source_runs: renderedSourceRuns,
+            source_font_size_px: Number.parseFloat(box.dataset.sourceFontSizePx || ''),
+            source_font_family: String(box.dataset.sourceFontFamily || ''),
+            source_runtime_font_family: String(box.dataset.sourceRuntimeFontFamily || ''),
+            font_family_value: String(box.dataset.fontFamilyValue || ''),
+            font_size_pts: Number.parseFloat(box.dataset.fontSizePts || ''),
+            computed_font_size_px: Number.parseFloat(textStyle?.fontSize || ''),
+            computed_font_family: String(textStyle?.fontFamily || ''),
+            computed_font_weight: String(textStyle?.fontWeight || ''),
+            computed_text_color: String(textStyle?.color || ''),
+            computed_text_fill_color: String(textStyle?.webkitTextFillColor || ''),
+            computed_background_color: String(window.getComputedStyle(box).backgroundColor || ''),
+            css_text_color: box.style.getPropertyValue('--enpv-text-color'),
+            css_background_color: box.style.getPropertyValue('--enpv-bg-color'),
+            dataset_text_color: String(box.dataset.textColor || box.dataset.sourceTextColor || ''),
+            dataset_background_color: String(box.dataset.backgroundColor || ''),
+            css_font_size: box.style.getPropertyValue('--enpv-font-size'),
+            computed_line_height: textStyle?.lineHeight || '',
+            inline_white_space: text?.style?.whiteSpace || '',
+            computed_white_space: textStyle?.whiteSpace || '',
+            computed_overflow_wrap: textStyle?.overflowWrap || '',
+            computed_position: textStyle?.position || '',
+            computed_left: textStyle?.left || '',
+            computed_top: textStyle?.top || '',
+            computed_transform: textStyle?.transform || '',
+            computed_transform_origin: textStyle?.transformOrigin || '',
+            document_font_options: Array.from(
+                document.querySelectorAll('option[data-pdfjs-embedded-font="1"]')
+            ).map((option) => ({
+                value: String(option.value || ''),
+                label: String(option.textContent || '').trim(),
+                pdf_font_name: String(option.dataset.pdfFontName || ''),
+                runtime: option.dataset.pdfjsRuntimeFont === '1',
+            })),
+            selected_document_font_value: String(
+                document.getElementById('afb-font')?.value || ''
+            ),
+            computed_padding_left: textStyle?.paddingLeft || '',
+            computed_padding_top: textStyle?.paddingTop || '',
+            bounding_box_snapped: box.dataset.sourceBoundingBoxSnapped === '1',
+            bounding_box_snap_x: Number.parseFloat(box.dataset.sourceBoundingBoxSnapX || ''),
+            bounding_box_snap_y: Number.parseFloat(box.dataset.sourceBoundingBoxSnapY || ''),
+            source_run_font_sizes_px: Array.isArray(sourceRuns)
+                ? sourceRuns
+                    .map((run) => Number(run?.fontSizePx))
+                    .filter((value) => Number.isFinite(value) && value > 0)
+                : [],
+            source_span_runs: sourceRuns,
+            source_underline_segments: sourceUnderlineSegments,
+            underline_metadata: underlineMetadata,
+            decorated_nodes: decoratedNodes,
+            root_underline: box.dataset.underline === '1'
+                || String(box.style.getPropertyValue('--enpv-text-decoration-line')).includes('underline')
+                || String(box.style.getPropertyValue('--enpv-text-decoration')).includes('underline'),
+            canvas_backed_edit_preview: box.classList.contains('is-canvas-backed-edit-preview')
+                && box.dataset.canvasBackedEditPreview === '1',
+            transparent_text_paint: transparentPaint,
+            is_editing: box.classList.contains('is-editing'),
+            is_dragging: box.classList.contains('is-dragging'),
+            content_editable: Boolean(text?.isContentEditable),
+            source_mask_attached: box.dataset.sourceMaskAttached === '1'
+                || Boolean(box._enpvSourceMask?.isConnected)
+                || Boolean(box._enpvOrigMask?.isConnected),
+            overlapping_mask_count: masks.length,
+            page_rect: pageRect ? {
+                left: pageRect.left,
+                top: pageRect.top,
+                right: pageRect.right,
+                bottom: pageRect.bottom,
+                width: pageRect.width,
+                height: pageRect.height,
+            } : null,
+            source_masks: sourceMasks,
+            pending_edit: box.dataset.pendingEdit || '',
+            style_dirty: box.dataset.styleDirty || '',
+            editor_mode: box.dataset.editorMode || '',
+            user_forced_rich_text: box.dataset.userForcedRichText || '',
+            user_sized_text_box: box.dataset.userSizedTextBox || '',
+            preserve_distributed_leader_spacing: box.dataset.preserveDistributedLeaderSpacing || '',
+            moved_text_overlay: box.dataset.movedTextOverlay || '',
+            dx_pts: Number(box.dataset.dxPts || 0),
+            dy_pts: Number(box.dataset.dyPts || 0),
+        };
+    }, annotationId);
+}
+
+async function selectPdfUploadTextOffsets(page, annotationId, startOffset, endOffset) {
+    await page.evaluate(({ id, start, end }) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+            .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+        const root = box?.querySelector('.enpv-text-content');
+        if (!root) throw new Error(`Editable text root is missing for ${id}.`);
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const nodes = [];
+        let total = 0;
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            const length = String(node.nodeValue || '').length;
+            nodes.push({ node, start: total, end: total + length });
+            total += length;
+        }
+        const resolvePoint = (offset) => {
+            const bounded = Math.max(0, Math.min(Number(offset) || 0, total));
+            const entry = nodes.find((item) => bounded >= item.start && bounded <= item.end)
+                || nodes.at(-1);
+            if (!entry) throw new Error(`Editable text is empty for ${id}.`);
+            return {
+                node: entry.node,
+                offset: Math.max(0, Math.min(bounded - entry.start, entry.end - entry.start)),
+            };
+        };
+        const from = resolvePoint(start);
+        const to = resolvePoint(end);
+        const range = document.createRange();
+        range.setStart(from.node, from.offset);
+        range.setEnd(to.node, to.offset);
+        root.focus();
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+    }, {
+        id: annotationId,
+        start: startOffset,
+        end: endOffset,
+    });
+}
+
+async function runPdfUploadNearViewportScrollProbe(page, annotationId, options = {}) {
+    const cycles = Math.max(2, Number(options.cycles) || 8);
+    const distance = Math.max(30, Number(options.distance) || 140);
+    return page.evaluate(async ({ id, cycleCount, scrollDistance }) => {
+        const findBox = () => Array.from(document.querySelectorAll('.enpv-annotation-box'))
+            .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+        const originalBox = findBox();
+        const originalLayer = originalBox?.closest('.enpv-annotation-box-layer');
+        const pageDiv = originalBox?.closest('.page');
+        const viewer = document.getElementById('viewerContainer')
+            || document.querySelector('.pdfViewerContainer')
+            || document.scrollingElement;
+        if (!originalBox || !originalLayer || !pageDiv || !viewer) {
+            throw new Error(`Could not initialize the scroll stability probe for ${id}.`);
+        }
+
+        const baseScrollTop = Number(viewer.scrollTop) || 0;
+        const maxScrollTop = Math.max(0, Number(viewer.scrollHeight) - Number(viewer.clientHeight));
+        const records = [];
+        const mutationRecords = [];
+        let targetRebuildCount = 0;
+        let layerChildListMutationCount = 0;
+        let scrollEventCount = 0;
+        const onScroll = () => {
+            scrollEventCount += 1;
+        };
+        viewer.addEventListener('scroll', onScroll, { passive: true });
+
+        const nodeTouchesTarget = (node) => {
+            if (!(node instanceof Element)) return false;
+            if (node === originalLayer || node === originalBox) return true;
+            if (node.matches?.('.enpv-annotation-box-layer')) return true;
+            if (node.matches?.(`.enpv-annotation-box[data-annotation-id="${CSS.escape(id)}"]`)) return true;
+            return Boolean(
+                node.querySelector?.('.enpv-annotation-box-layer')
+                || node.querySelector?.(`.enpv-annotation-box[data-annotation-id="${CSS.escape(id)}"]`)
+            );
+        };
+        const observer = new MutationObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.type !== 'childList') continue;
+                const added = Array.from(entry.addedNodes || []);
+                const removed = Array.from(entry.removedNodes || []);
+                const touchesTarget = entry.target === originalLayer
+                    || entry.target === originalBox
+                    || added.some(nodeTouchesTarget)
+                    || removed.some(nodeTouchesTarget);
+                if (entry.target === originalLayer) layerChildListMutationCount += 1;
+                if (touchesTarget) targetRebuildCount += 1;
+                if (touchesTarget && mutationRecords.length < 40) {
+                    mutationRecords.push({
+                        target: entry.target instanceof Element
+                            ? `${entry.target.tagName}.${String(entry.target.className || '')}`
+                            : String(entry.target?.nodeName || ''),
+                        added: added.map((node) => String(node?.className || node?.nodeName || '')).slice(0, 8),
+                        removed: removed.map((node) => String(node?.className || node?.nodeName || '')).slice(0, 8),
+                    });
+                }
+            }
+        });
+        observer.observe(pageDiv, { childList: true, subtree: true });
+
+        const rangeRect = (node, start, end) => {
+            try {
+                const range = document.createRange();
+                range.setStart(node, start);
+                range.setEnd(node, end);
+                const rect = range.getBoundingClientRect();
+                range.detach?.();
+                return rect.width > 0 && rect.height > 0 ? rect : null;
+            } catch (_) {
+                return null;
+            }
+        };
+        const snapshot = (label) => {
+            const box = findBox();
+            const layer = box?.closest('.enpv-annotation-box-layer');
+            if (!box || !layer) {
+                return {
+                    label,
+                    found: false,
+                    same_box: false,
+                    same_layer: false,
+                    text: '',
+                    scroll_top: Number(viewer.scrollTop) || 0,
+                };
+            }
+            const boxRect = box.getBoundingClientRect();
+            const layerRect = layer.getBoundingClientRect();
+            const textRoot = box.querySelector('.enpv-text-content');
+            const textRect = textRoot?.getBoundingClientRect?.() || null;
+            const wordLandmarks = [];
+            if (textRoot) {
+                const walker = document.createTreeWalker(textRoot, NodeFilter.SHOW_TEXT);
+                while (walker.nextNode()) {
+                    const node = walker.currentNode;
+                    const value = String(node.nodeValue || '');
+                    for (const match of value.matchAll(/\S+/g)) {
+                        const start = Number(match.index) || 0;
+                        const rect = rangeRect(node, start, start + String(match[0]).length);
+                        if (!rect) continue;
+                        wordLandmarks.push({
+                            text: String(match[0]),
+                            left: rect.left - boxRect.left,
+                            right: rect.right - boxRect.left,
+                            width: rect.width,
+                        });
+                    }
+                }
+            }
+            let fullTextRange = null;
+            if (textRoot) {
+                try {
+                    const range = document.createRange();
+                    range.selectNodeContents(textRoot);
+                    const rect = range.getBoundingClientRect();
+                    range.detach?.();
+                    if (rect.width > 0 && rect.height > 0) {
+                        fullTextRange = {
+                            left: rect.left - boxRect.left,
+                            right: rect.right - boxRect.left,
+                            width: rect.width,
+                            height: rect.height,
+                        };
+                    }
+                } catch (_) {}
+            }
+            return {
+                label,
+                found: true,
+                same_box: box === originalBox,
+                same_layer: layer === originalLayer,
+                box_connected: originalBox.isConnected,
+                layer_connected: originalLayer.isConnected,
+                text: String(textRoot?.textContent || ''),
+                editor_mode: String(box.dataset.editorMode || ''),
+                user_sized_text_box: String(box.dataset.userSizedTextBox || ''),
+                vertical_align: String(box.dataset.verticalAlign || ''),
+                scroll_top: Number(viewer.scrollTop) || 0,
+                local_box: {
+                    left: boxRect.left - layerRect.left,
+                    top: boxRect.top - layerRect.top,
+                    width: boxRect.width,
+                    height: boxRect.height,
+                },
+                local_text: textRect ? {
+                    left: textRect.left - boxRect.left,
+                    top: textRect.top - boxRect.top,
+                    width: textRect.width,
+                    height: textRect.height,
+                } : null,
+                full_text_range: fullTextRange,
+                word_landmarks: wordLandmarks,
+            };
+        };
+        const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+        const baseline = snapshot('baseline');
+        records.push(baseline);
+        const destinations = [
+            Math.max(0, Math.min(maxScrollTop, baseScrollTop + scrollDistance)),
+            Math.max(0, Math.min(maxScrollTop, baseScrollTop - scrollDistance)),
+        ];
+        if (destinations[0] === destinations[1]) {
+            destinations[0] = Math.max(0, Math.min(maxScrollTop, baseScrollTop + (scrollDistance / 2)));
+            destinations[1] = baseScrollTop;
+        }
+        const startedAt = performance.now();
+        for (let cycle = 0; cycle < cycleCount; cycle += 1) {
+            for (let leg = 0; leg < destinations.length; leg += 1) {
+                const destination = destinations[(cycle + leg) % destinations.length];
+                const from = Number(viewer.scrollTop) || 0;
+                for (let step = 1; step <= 5; step += 1) {
+                    viewer.scrollTop = from + ((destination - from) * (step / 5));
+                    records.push(snapshot(`${cycle}:${leg}:${step}:sync`));
+                    await nextFrame();
+                    records.push(snapshot(`${cycle}:${leg}:${step}:raf1`));
+                    await nextFrame();
+                    records.push(snapshot(`${cycle}:${leg}:${step}:raf2`));
+                }
+            }
+        }
+        viewer.scrollTop = baseScrollTop;
+        await nextFrame();
+        await nextFrame();
+        records.push(snapshot('restored'));
+        await Promise.resolve();
+        const durationMs = performance.now() - startedAt;
+        observer.disconnect();
+        viewer.removeEventListener('scroll', onScroll);
+
+        const finiteDrift = (value, baselineValue) => (
+            Number.isFinite(Number(value)) && Number.isFinite(Number(baselineValue))
+                ? Math.abs(Number(value) - Number(baselineValue))
+                : Number.POSITIVE_INFINITY
+        );
+        const drift = {
+            box_left: 0,
+            box_top: 0,
+            box_width: 0,
+            box_height: 0,
+            text_left: 0,
+            text_top: 0,
+            text_width: 0,
+            text_height: 0,
+            text_range_left: 0,
+            text_range_width: 0,
+            word_left: 0,
+            word_right: 0,
+            word_width: 0,
+        };
+        for (const record of records) {
+            if (!record.found || !baseline.found) continue;
+            drift.box_left = Math.max(drift.box_left, finiteDrift(record.local_box?.left, baseline.local_box?.left));
+            drift.box_top = Math.max(drift.box_top, finiteDrift(record.local_box?.top, baseline.local_box?.top));
+            drift.box_width = Math.max(drift.box_width, finiteDrift(record.local_box?.width, baseline.local_box?.width));
+            drift.box_height = Math.max(drift.box_height, finiteDrift(record.local_box?.height, baseline.local_box?.height));
+            drift.text_left = Math.max(drift.text_left, finiteDrift(record.local_text?.left, baseline.local_text?.left));
+            drift.text_top = Math.max(drift.text_top, finiteDrift(record.local_text?.top, baseline.local_text?.top));
+            drift.text_width = Math.max(drift.text_width, finiteDrift(record.local_text?.width, baseline.local_text?.width));
+            drift.text_height = Math.max(drift.text_height, finiteDrift(record.local_text?.height, baseline.local_text?.height));
+            drift.text_range_left = Math.max(
+                drift.text_range_left,
+                finiteDrift(record.full_text_range?.left, baseline.full_text_range?.left),
+            );
+            drift.text_range_width = Math.max(
+                drift.text_range_width,
+                finiteDrift(record.full_text_range?.width, baseline.full_text_range?.width),
+            );
+            if (record.word_landmarks?.length !== baseline.word_landmarks?.length) {
+                drift.word_left = Number.POSITIVE_INFINITY;
+                drift.word_right = Number.POSITIVE_INFINITY;
+                drift.word_width = Number.POSITIVE_INFINITY;
+                continue;
+            }
+            record.word_landmarks.forEach((word, index) => {
+                const baselineWord = baseline.word_landmarks[index];
+                if (word.text !== baselineWord?.text) {
+                    drift.word_left = Number.POSITIVE_INFINITY;
+                    drift.word_right = Number.POSITIVE_INFINITY;
+                    drift.word_width = Number.POSITIVE_INFINITY;
+                    return;
+                }
+                drift.word_left = Math.max(drift.word_left, finiteDrift(word.left, baselineWord.left));
+                drift.word_right = Math.max(drift.word_right, finiteDrift(word.right, baselineWord.right));
+                drift.word_width = Math.max(drift.word_width, finiteDrift(word.width, baselineWord.width));
+            });
+        }
+        return {
+            completed: true,
+            cycles: cycleCount,
+            assignments: cycleCount * destinations.length * 5,
+            sample_count: records.length,
+            duration_ms: durationMs,
+            scroll_event_count: scrollEventCount,
+            base_scroll_top: baseScrollTop,
+            destinations,
+            baseline,
+            final: records.at(-1),
+            all_samples_found: records.every((record) => record.found === true),
+            all_same_box: records.every((record) => record.same_box === true),
+            all_same_layer: records.every((record) => record.same_layer === true),
+            all_text_exact: records.every((record) => record.text === baseline.text),
+            target_rebuild_count: targetRebuildCount,
+            layer_child_list_mutation_count: layerChildListMutationCount,
+            mutation_records: mutationRecords,
+            max_drift_px: drift,
+            samples: records,
+        };
+    }, {
+        id: annotationId,
+        cycleCount: cycles,
+        scrollDistance: distance,
+    });
+}
+
+async function runPdfUploadFarScrollRoundTrip(page, annotationId) {
+    const farState = await page.evaluate(async (id) => {
+        const findBox = () => Array.from(document.querySelectorAll('.enpv-annotation-box'))
+            .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+        const originalBox = findBox();
+        const originalLayer = originalBox?.closest('.enpv-annotation-box-layer');
+        const viewer = document.getElementById('viewerContainer')
+            || document.querySelector('.pdfViewerContainer')
+            || document.scrollingElement;
+        if (!originalBox || !originalLayer || !viewer) {
+            throw new Error(`Could not initialize the far-scroll round trip for ${id}.`);
+        }
+        const start = Number(viewer.scrollTop) || 0;
+        const maximum = Math.max(0, Number(viewer.scrollHeight) - Number(viewer.clientHeight));
+        const destination = Math.abs(maximum - start) >= Math.abs(start)
+            ? maximum
+            : 0;
+        const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+        viewer.scrollTop = destination;
+        await nextFrame();
+        await nextFrame();
+        await new Promise((resolve) => setTimeout(resolve, 180));
+        const disconnectedWhileFar = !originalBox.isConnected || !originalLayer.isConnected;
+        viewer.scrollTop = start;
+        await nextFrame();
+        await nextFrame();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        return {
+            start_scroll_top: start,
+            destination_scroll_top: destination,
+            traveled_px: Math.abs(destination - start),
+            disconnected_while_far: disconnectedWhileFar,
+            same_box_after_return: findBox() === originalBox,
+            same_layer_after_return: findBox()?.closest('.enpv-annotation-box-layer') === originalLayer,
+        };
+    }, annotationId);
+    await page.waitForFunction((id) => Array.from(document.querySelectorAll('.enpv-annotation-box'))
+        .some((candidate) => String(candidate.dataset.annotationId || '') === id), annotationId, {
+        timeout: 30000,
+    });
+    return farState;
+}
+
+async function capturePdfUploadCanvasCrop(page, locator, outputPath, fixedClip = null) {
+    const captured = await locator.evaluate((box, requestedClip) => {
+        const pageDiv = box.closest('.page');
+        const canvas = pageDiv?.querySelector('.canvasWrapper canvas, canvas');
+        if (!canvas) throw new Error('PDF.js page canvas is missing.');
+        const canvasRect = canvas.getBoundingClientRect();
+        const boxRect = box.getBoundingClientRect();
+        const padding = 4;
+        const clip = requestedClip || {
+            left: boxRect.left - canvasRect.left - padding,
+            top: boxRect.top - canvasRect.top - padding,
+            width: boxRect.width + (padding * 2),
+            height: boxRect.height + (padding * 2),
+        };
+        const scaleX = canvas.width / Math.max(1, canvasRect.width);
+        const scaleY = canvas.height / Math.max(1, canvasRect.height);
+        const sx = Math.max(0, Math.floor(clip.left * scaleX));
+        const sy = Math.max(0, Math.floor(clip.top * scaleY));
+        const right = Math.min(canvas.width, Math.ceil((clip.left + clip.width) * scaleX));
+        const bottom = Math.min(canvas.height, Math.ceil((clip.top + clip.height) * scaleY));
+        const sw = Math.max(1, right - sx);
+        const sh = Math.max(1, bottom - sy);
+        const output = document.createElement('canvas');
+        output.width = sw;
+        output.height = sh;
+        const context = output.getContext('2d', { alpha: false });
+        context.drawImage(canvas, sx, sy, sw, sh, 0, 0, sw, sh);
+        return {
+            data_url: output.toDataURL('image/png'),
+            clip,
+            backing_rect: { sx, sy, width: sw, height: sh },
+        };
+    }, fixedClip);
+    const encoded = String(captured.data_url || '').split(',', 2)[1] || '';
+    fs.writeFileSync(outputPath, Buffer.from(encoded, 'base64'));
+    return {
+        clip: captured.clip,
+        backing_rect: captured.backing_rect,
+    };
+}
+
+function pdfUploadAnnotationUnderlineMetadata(annotation) {
+    const findings = [];
+    const truthy = (value) => (
+        value === true
+        || value === 1
+        || String(value || '').toLowerCase() === 'true'
+        || String(value || '') === '1'
+    );
+    const visit = (value, currentPath = '') => {
+        if (!value || typeof value !== 'object') return;
+        if (Array.isArray(value)) {
+            value.forEach((item, index) => visit(item, `${currentPath}[${index}]`));
+            return;
+        }
+        for (const [key, item] of Object.entries(value)) {
+            const field = key.toLowerCase();
+            const itemPath = currentPath ? `${currentPath}.${key}` : key;
+            if ([
+                'underline',
+                'hasdrawnunderline',
+                'has_drawn_underline',
+                'suppressdrawnunderline',
+                'suppress_drawn_underline',
+            ].includes(field) && truthy(item)) {
+                findings.push({ path: itemPath, value: item });
+            } else if (
+                (field.includes('underlinerange') || field.includes('underlinesegment'))
+                && (
+                    (Array.isArray(item) && item.length > 0)
+                    || (typeof item === 'string' && !['', '[]', '{}'].includes(item.trim()))
+                )
+            ) {
+                findings.push({ path: itemPath, value: item });
+            }
+            if (
+                typeof item === 'string'
+                && (field.includes('spanrun') || field.includes('sourcespan'))
+            ) {
+                try {
+                    visit(JSON.parse(item), itemPath);
+                } catch (_) {
+                    // A non-JSON legacy span value carries no inspectable run metadata.
+                }
+            }
+            if (item && typeof item === 'object') visit(item, itemPath);
+        }
+    };
+    visit(annotation);
+    return findings;
+}
+
+function analyzePdfUploadF1040Move({
+    sourcePdfPath,
+    resultPdfPath,
+    pageIndex,
+    expectedText,
+    originalPagePath,
+    resultPagePath,
+}) {
+    const pythonCode = String.raw`
+import fitz
+import json
+import re
+import sys
+
+source_path, result_path = sys.argv[1], sys.argv[2]
+page_index = int(sys.argv[3])
+expected = sys.argv[4]
+original_png, result_png = sys.argv[5], sys.argv[6]
+search_text = re.sub(r'^\s*15\s+', '', expected).strip()
+
+def compact(value):
+    return re.sub(r'\s+', '', str(value or ''))
+
+def rect_values(rect):
+    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+
+def union_rect(rects):
+    if not rects:
+        return None
+    result = fitz.Rect(rects[0])
+    for rect in rects[1:]:
+        result |= fitz.Rect(rect)
+    return result
+
+def horizontal_segments(page):
+    output = []
+    for drawing in page.get_drawings():
+        for item in drawing.get('items', []):
+            if not item or item[0] != 'l':
+                continue
+            p1, p2 = item[1], item[2]
+            if abs(float(p1.y) - float(p2.y)) > 0.35:
+                continue
+            x0, x1 = sorted([float(p1.x), float(p2.x)])
+            if x1 - x0 < 3:
+                continue
+            output.append({
+                'x0': x0,
+                'y': (float(p1.y) + float(p2.y)) / 2,
+                'x1': x1,
+                'width': float(drawing.get('width') or 0),
+            })
+    return output
+
+def same_segment(left, right):
+    return (
+        abs(left['x0'] - right['x0']) <= 0.75
+        and abs(left['x1'] - right['x1']) <= 0.75
+        and abs(left['y'] - right['y']) <= 0.75
+    )
+
+source_doc = fitz.open(source_path)
+result_doc = fitz.open(result_path)
+source_page = source_doc[page_index]
+result_page = result_doc[page_index]
+source_text = source_page.get_text('text')
+result_text = result_page.get_text('text')
+source_matches = source_page.search_for(search_text)
+result_matches = result_page.search_for(search_text)
+source_rect = union_rect(source_matches)
+result_rect = union_rect(result_matches)
+source_segments = horizontal_segments(source_page)
+result_segments = horizontal_segments(result_page)
+new_segments = [
+    segment
+    for segment in result_segments
+    if not any(same_segment(segment, source_segment) for source_segment in source_segments)
+]
+
+source_form_rule_segments = []
+missing_source_form_rule_segments = []
+if source_rect:
+    # The Schedule 3 row is closed by the three adjacent horizontal segments
+    # at y=612, immediately beneath the source text. Moving the text must not
+    # mistake those table segments for its underline, but it must also leave
+    # the original form artwork intact.
+    source_form_rule_segments = [
+        segment
+        for segment in source_segments
+        if (
+            float(source_rect.y1) <= segment['y'] <= float(source_rect.y1) + 3.5
+            and segment['x1'] - segment['x0'] >= 20
+        )
+    ]
+    missing_source_form_rule_segments = [
+        segment
+        for segment in source_form_rule_segments
+        if not any(same_segment(segment, result_segment) for result_segment in result_segments)
+    ]
+
+baseline_strokes = []
+if result_rect:
+    text_height = max(1.0, float(result_rect.height))
+    baseline_top = float(result_rect.y0) + (text_height * 0.55)
+    baseline_bottom = float(result_rect.y1) + 3.5
+    for segment in new_segments:
+        overlap = max(
+            0.0,
+            min(float(result_rect.x1), segment['x1'])
+            - max(float(result_rect.x0), segment['x0'])
+        )
+        if (
+            baseline_top <= segment['y'] <= baseline_bottom
+            and overlap >= min(12.0, max(5.0, float(result_rect.width) * 0.08))
+        ):
+            baseline_strokes.append({**segment, 'overlap': overlap})
+
+matrix = fitz.Matrix(2, 2)
+source_page.get_pixmap(matrix=matrix, alpha=False).save(original_png)
+result_page.get_pixmap(matrix=matrix, alpha=False).save(result_png)
+
+needle = compact(expected)
+print(json.dumps({
+    'page_count': len(result_doc),
+    'source_count': compact(source_text).count(needle),
+    'result_count': compact(result_text).count(needle),
+    'source_matches': [rect_values(rect) for rect in source_matches],
+    'result_matches': [rect_values(rect) for rect in result_matches],
+    'source_rect': rect_values(source_rect) if source_rect else None,
+    'result_rect': rect_values(result_rect) if result_rect else None,
+    'source_horizontal_segments': source_segments,
+    'result_horizontal_segments': result_segments,
+    'new_horizontal_segments': new_segments,
+    'new_baseline_strokes': baseline_strokes,
+    'source_form_rule_segments': source_form_rule_segments,
+    'missing_source_form_rule_segments': missing_source_form_rule_segments,
+}))
+`;
+    const raw = execFileSync(PYTHON_BIN, [
+        '-c',
+        pythonCode,
+        sourcePdfPath,
+        resultPdfPath,
+        String(pageIndex),
+        expectedText,
+        originalPagePath,
+        resultPagePath,
+    ], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+function analyzePdfUploadF1040NameDeletion({
+    sourcePdfPath,
+    resultPdfPath,
+    pageIndex,
+    targetText,
+    neighborText,
+    originalPagePath,
+    resultPagePath,
+}) {
+    const pythonCode = String.raw`
+import fitz
+import json
+import re
+import sys
+
+source_path, result_path = sys.argv[1], sys.argv[2]
+page_index = int(sys.argv[3])
+target_text, neighbor_text = sys.argv[4], sys.argv[5]
+original_png, result_png = sys.argv[6], sys.argv[7]
+
+def compact(value):
+    return re.sub(r'\s+', '', str(value or ''))
+
+def rect_values(rect):
+    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+
+def union_rect(rects):
+    if not rects:
+        return None
+    result = fitz.Rect(rects[0])
+    for rect in rects[1:]:
+        result |= fitz.Rect(rect)
+    return result
+
+def horizontal_rule_segments(page):
+    output = []
+    for drawing in page.get_drawings() or []:
+        width = float(drawing.get('width') or 0.0)
+        color = drawing.get('color')
+        for item in drawing.get('items') or []:
+            if not item or item[0] != 'l':
+                continue
+            first, second = item[1], item[2]
+            if abs(float(first.y) - float(second.y)) > 0.25:
+                continue
+            x0, x1 = sorted((float(first.x), float(second.x)))
+            y = (float(first.y) + float(second.y)) / 2.0
+            if not (83.0 <= y <= 85.0 and x1 - x0 >= 10.0):
+                continue
+            output.append({
+                'x0': x0,
+                'x1': x1,
+                'y': y,
+                'width': width,
+                'color': [float(value) for value in color] if color is not None else None,
+            })
+    return output
+
+def same_segment(left, right):
+    return (
+        abs(left['x0'] - right['x0']) <= 0.3
+        and abs(left['x1'] - right['x1']) <= 0.3
+        and abs(left['y'] - right['y']) <= 0.3
+        and abs(left['width'] - right['width']) <= 0.15
+    )
+
+def widgets(page):
+    output = []
+    for widget in list(page.widgets() or []):
+        output.append({
+            'field_name': str(widget.field_name or ''),
+            'rect': rect_values(widget.rect),
+        })
+    return output
+
+source_doc = fitz.open(source_path)
+result_doc = fitz.open(result_path)
+source_page = source_doc[page_index]
+result_page = result_doc[page_index]
+source_text = source_page.get_text('text')
+result_text = result_page.get_text('text')
+source_target_matches = source_page.search_for(target_text)
+result_target_matches = result_page.search_for(target_text)
+source_neighbor_matches = source_page.search_for(neighbor_text)
+result_neighbor_matches = result_page.search_for(neighbor_text)
+source_rules = horizontal_rule_segments(source_page)
+result_rules = horizontal_rule_segments(result_page)
+missing_rules = [
+    segment for segment in source_rules
+    if not any(same_segment(segment, candidate) for candidate in result_rules)
+]
+
+matrix = fitz.Matrix(2, 2)
+source_page.get_pixmap(matrix=matrix, alpha=False).save(original_png)
+result_page.get_pixmap(matrix=matrix, alpha=False).save(result_png)
+
+print(json.dumps({
+    'page_count': len(result_doc),
+    'page_width': float(source_page.rect.width),
+    'page_height': float(source_page.rect.height),
+    'source_target_count': compact(source_text).count(compact(target_text)),
+    'result_target_count': compact(result_text).count(compact(target_text)),
+    'source_neighbor_count': compact(source_text).count(compact(neighbor_text)),
+    'result_neighbor_count': compact(result_text).count(compact(neighbor_text)),
+    'source_target_matches': [rect_values(rect) for rect in source_target_matches],
+    'result_target_matches': [rect_values(rect) for rect in result_target_matches],
+    'source_neighbor_matches': [rect_values(rect) for rect in source_neighbor_matches],
+    'result_neighbor_matches': [rect_values(rect) for rect in result_neighbor_matches],
+    'source_target_rect': rect_values(union_rect(source_target_matches)) if source_target_matches else None,
+    'result_target_rect': rect_values(union_rect(result_target_matches)) if result_target_matches else None,
+    'source_neighbor_rect': rect_values(union_rect(source_neighbor_matches)) if source_neighbor_matches else None,
+    'result_neighbor_rect': rect_values(union_rect(result_neighbor_matches)) if result_neighbor_matches else None,
+    'source_rule_segments': source_rules,
+    'result_rule_segments': result_rules,
+    'missing_rule_segments': missing_rules,
+    'source_widgets': widgets(source_page),
+    'result_widgets': widgets(result_page),
+}))
+`;
+    const raw = execFileSync(PYTHON_BIN, [
+        '-c',
+        pythonCode,
+        sourcePdfPath,
+        resultPdfPath,
+        String(pageIndex),
+        targetText,
+        neighborText,
+        originalPagePath,
+        resultPagePath,
+    ], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+function analyzePdfUploadF1040PartHeaderMove({
+    sourcePdfPath,
+    resultPdfPath,
+    pageIndex,
+    targetText,
+    neighborText,
+    originalPagePath,
+    resultPagePath,
+}) {
+    const pythonCode = String.raw`
+import fitz
+import json
+import re
+import sys
+
+source_path, result_path = sys.argv[1], sys.argv[2]
+page_index = int(sys.argv[3])
+target_text, neighbor_text = sys.argv[4], sys.argv[5]
+original_png, result_png = sys.argv[6], sys.argv[7]
+source_tile = fitz.Rect(36.0, 108.0, 79.2, 120.0)
+
+def normalized(value):
+    return re.sub(r'\s+', ' ', str(value or '')).strip()
+
+def rect_values(rect):
+    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+
+def union_rect(rects):
+    if not rects:
+        return None
+    result = fitz.Rect(rects[0])
+    for rect in rects[1:]:
+        result |= fitz.Rect(rect)
+    return result
+
+def rgb_from_int(value):
+    color = int(value or 0)
+    return [(color >> 16) & 255, (color >> 8) & 255, color & 255]
+
+def exact_spans(page, wanted):
+    output = []
+    for block in page.get_text('dict').get('blocks', []):
+        for line in block.get('lines', []):
+            for span in line.get('spans', []):
+                if normalized(span.get('text')) != normalized(wanted):
+                    continue
+                output.append({
+                    'text': str(span.get('text') or ''),
+                    'rect': [float(value) for value in span.get('bbox')],
+                    'color': int(span.get('color') or 0),
+                    'color_rgb': rgb_from_int(span.get('color')),
+                    'size': float(span.get('size') or 0.0),
+                    'font': str(span.get('font') or ''),
+                })
+    return output
+
+def dark_fills_overlapping_tile(page):
+    output = []
+    for drawing in page.get_drawings() or []:
+        fill = drawing.get('fill')
+        rect = drawing.get('rect')
+        if fill is None or rect is None:
+            continue
+        fill_values = [float(value) for value in fill]
+        if max(fill_values) > 0.2:
+            continue
+        overlap = fitz.Rect(rect) & source_tile
+        if overlap.is_empty or float(overlap.get_area()) < 100.0:
+            continue
+        output.append({
+            'rect': rect_values(rect),
+            'fill': fill_values,
+            'tile_overlap_area': float(overlap.get_area()),
+        })
+    return output
+
+source_doc = fitz.open(source_path)
+result_doc = fitz.open(result_path)
+source_page = source_doc[page_index]
+result_page = result_doc[page_index]
+source_target_spans = exact_spans(source_page, target_text)
+result_target_spans = exact_spans(result_page, target_text)
+source_neighbor_matches = source_page.search_for(neighbor_text)
+result_neighbor_matches = result_page.search_for(neighbor_text)
+source_target_rects = [fitz.Rect(span['rect']) for span in source_target_spans]
+result_target_rects = [fitz.Rect(span['rect']) for span in result_target_spans]
+
+matrix = fitz.Matrix(2, 2)
+source_page.get_pixmap(matrix=matrix, alpha=False).save(original_png)
+result_page.get_pixmap(matrix=matrix, alpha=False).save(result_png)
+
+print(json.dumps({
+    'page_count': len(result_doc),
+    'page_width': float(source_page.rect.width),
+    'page_height': float(source_page.rect.height),
+    'source_target_count': len(source_target_spans),
+    'result_target_count': len(result_target_spans),
+    'source_target_spans': source_target_spans,
+    'result_target_spans': result_target_spans,
+    'source_target_rect': rect_values(union_rect(source_target_rects)) if source_target_rects else None,
+    'result_target_rect': rect_values(union_rect(result_target_rects)) if result_target_rects else None,
+    'source_neighbor_count': len(source_neighbor_matches),
+    'result_neighbor_count': len(result_neighbor_matches),
+    'source_neighbor_matches': [rect_values(rect) for rect in source_neighbor_matches],
+    'result_neighbor_matches': [rect_values(rect) for rect in result_neighbor_matches],
+    # The label is repeated in later sections. The adjacent :15 heading is
+    # the top-most occurrence beside Part I, so compare that occurrence
+    # directly instead of unioning every page match into one tall rectangle.
+    'source_neighbor_rect': rect_values(min(source_neighbor_matches, key=lambda rect: float(rect.y0))) if source_neighbor_matches else None,
+    'result_neighbor_rect': rect_values(min(result_neighbor_matches, key=lambda rect: float(rect.y0))) if result_neighbor_matches else None,
+    'source_tile_rect': rect_values(source_tile),
+    'source_dark_tile_fills': dark_fills_overlapping_tile(source_page),
+    'result_dark_tile_fills': dark_fills_overlapping_tile(result_page),
+}))
+`;
+    const raw = execFileSync(PYTHON_BIN, [
+        '-c',
+        pythonCode,
+        sourcePdfPath,
+        resultPdfPath,
+        String(pageIndex),
+        targetText,
+        neighborText,
+        originalPagePath,
+        resultPagePath,
+    ], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+async function runPdfUploadF1040BoundingBoxSnappingFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_before_edit'),
+        after: buildArtifactName(testKey, runToken, 'page1_active_edit'),
+        afterTyping: buildArtifactName(testKey, runToken, 'page1_after_first_keystroke'),
+        canvasBefore: buildArtifactName(testKey, runToken, 'target_canvas_before'),
+        canvasAfter: buildArtifactName(testKey, runToken, 'target_canvas_active_edit'),
+        canvasDiff: buildArtifactName(testKey, runToken, 'target_canvas_diff'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let afterState = null;
+    let afterTypingState = null;
+    let raster = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const pageLocator = opened.pageLocator;
+        addCheck(
+            'disposable_clone_created',
+            documentId > 0 && documentId !== Number(config.source_document_id),
+            'The database original was opened through a disposable PDF.js editor clone.',
+            `source_document=${config.source_document_id} disposable_document=${documentId}`,
+        );
+
+        const suffix = String(config.f1040_edit_suffix || '0_0:113');
+        const expectedText = String(
+            config.f1040_edit_expected_text
+            || 'Total other payments or refundable credits. Add lines 13a through 13z'
+        );
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        addCheck(
+            'saved_bounding_box_target_resolved',
+            Boolean(beforeState)
+                && annotationId.endsWith(`_${suffix}`)
+                && normalize(beforeState.text).startsWith(normalize(expectedText)),
+            'The saved f1040s3 bounding box snapping test resolves the exact PDF.js :113 row.',
+            JSON.stringify(beforeState),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.before });
+        const canvasCapture = await capturePdfUploadCanvasCrop(
+            page,
+            resolved.locator,
+            artifactPaths.canvasBefore,
+        );
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').dispatchEvent('pointerdown');
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.classList.contains('is-canvas-backed-edit-preview')
+                && box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(250);
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        await capturePdfUploadCanvasCrop(
+            page,
+            resolved.locator,
+            artifactPaths.canvasAfter,
+            canvasCapture.clip,
+        );
+        raster = comparePdfUploadOperationPages(
+            artifactPaths.canvasBefore,
+            artifactPaths.canvasAfter,
+            artifactPaths.canvasDiff,
+        );
+        await pageLocator.screenshot({ path: artifactPaths.after });
+
+        const sourceSizeUnchanged = Number.isFinite(beforeState?.source_font_size_px)
+            && Number.isFinite(afterState?.source_font_size_px)
+            && Math.abs(beforeState.source_font_size_px - afterState.source_font_size_px) <= 0.01;
+        const annotationSizeUnchanged = Number.isFinite(beforeState?.font_size_pts)
+            && Number.isFinite(afterState?.font_size_pts)
+            && Math.abs(beforeState.font_size_pts - afterState.font_size_pts) <= 0.01;
+        const runSizesUnchanged = JSON.stringify(beforeState?.source_run_font_sizes_px || [])
+            === JSON.stringify(afterState?.source_run_font_sizes_px || []);
+        addCheck(
+            'source_font_size_unchanged_on_edit_entry',
+            sourceSizeUnchanged && annotationSizeUnchanged && runSizesUnchanged,
+            'Entering edit mode does not rewrite the captured source, annotation, or per-run font sizes.',
+            JSON.stringify({
+                before: {
+                    source_font_size_px: beforeState?.source_font_size_px,
+                    font_size_pts: beforeState?.font_size_pts,
+                    source_run_font_sizes_px: beforeState?.source_run_font_sizes_px,
+                },
+                after: {
+                    source_font_size_px: afterState?.source_font_size_px,
+                    font_size_pts: afterState?.font_size_pts,
+                    source_run_font_sizes_px: afterState?.source_run_font_sizes_px,
+                },
+            }),
+        );
+        addCheck(
+            'edit_entry_is_canvas_backed_without_mask',
+            afterState?.is_editing === true
+                && afterState?.content_editable === true
+                && afterState?.canvas_backed_edit_preview === true
+                && afterState?.transparent_text_paint === true
+                && afterState?.source_mask_attached === false
+                && afterState?.overlapping_mask_count === 0,
+            'The active editor uses the unchanged PDF canvas as its visible preview and adds no source mask.',
+            JSON.stringify(afterState),
+        );
+        addCheck(
+            'edit_entry_is_a_strict_noop',
+            normalize(beforeState?.text) === normalize(afterState?.text)
+                && afterState?.pending_edit !== '1'
+                && afterState?.style_dirty !== '1',
+            'Clicking Edit without typing does not mutate text or mark typography dirty.',
+            JSON.stringify({
+                before_text: beforeState?.text,
+                after_text: afterState?.text,
+                pending_edit: afterState?.pending_edit,
+                style_dirty: afterState?.style_dirty,
+            }),
+        );
+        const geometryDiff = beforeState && afterState
+            ? {
+                left: Math.abs(beforeState.browser_rect.left - afterState.browser_rect.left),
+                top: Math.abs(beforeState.browser_rect.top - afterState.browser_rect.top),
+                width: Math.abs(beforeState.browser_rect.width - afterState.browser_rect.width),
+                height: Math.abs(beforeState.browser_rect.height - afterState.browser_rect.height),
+            }
+            : null;
+        addCheck(
+            'edit_entry_geometry_unchanged',
+            geometryDiff !== null && Object.values(geometryDiff).every((value) => value <= 0.5),
+            'The :113 annotation keeps the same box geometry when edit mode opens.',
+            JSON.stringify(geometryDiff),
+        );
+        addCheck(
+            'visible_canvas_pixels_unchanged',
+            Number(raster?.ratio ?? 1) === 0,
+            'The exact visible PDF-canvas crop behind :113 is pixel-identical before and during active edit.',
+            JSON.stringify(raster),
+        );
+
+        await page.keyboard.type('1');
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.dataset?.pendingEdit === '1'
+                && box.dataset.canvasBackedEditPreview !== '1'
+                && !box.classList.contains('is-canvas-backed-edit-preview');
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(250);
+        afterTypingState = await readPdfUploadF1040BoxState(page, annotationId);
+        await pageLocator.screenshot({ path: artifactPaths.afterTyping });
+
+        const typedGeometryDiff = afterState && afterTypingState
+            ? {
+                left: Math.abs(afterState.browser_rect.left - afterTypingState.browser_rect.left),
+                top: Math.abs(afterState.browser_rect.top - afterTypingState.browser_rect.top),
+                width: Math.abs(afterState.browser_rect.width - afterTypingState.browser_rect.width),
+                height: Math.abs(afterState.browser_rect.height - afterTypingState.browser_rect.height),
+            }
+            : null;
+        const typedGlyphSnap = afterTypingState?.text_range_rect
+            && afterTypingState?.source_glyph_rect
+            ? {
+                left: afterTypingState.text_range_rect.left - afterTypingState.source_glyph_rect.left,
+                top: afterTypingState.text_range_rect.top - afterTypingState.source_glyph_rect.top,
+            }
+            : null;
+        const typedFontFidelity = afterState && afterTypingState
+            ? {
+                source_font_size_px: Math.abs(
+                    Number(afterState.source_font_size_px)
+                    - Number(afterTypingState.source_font_size_px)
+                ),
+                annotation_font_size_pts: Math.abs(
+                    Number(afterState.font_size_pts)
+                    - Number(afterTypingState.font_size_pts)
+                ),
+                computed_font_size_px: Math.abs(
+                    Number(afterState.computed_font_size_px)
+                    - Number(afterTypingState.computed_font_size_px)
+                ),
+                source_run_sizes_unchanged: JSON.stringify(afterState.source_run_font_sizes_px || [])
+                    === JSON.stringify(afterTypingState.source_run_font_sizes_px || []),
+            }
+            : null;
+        addCheck(
+            'bounding_box_snapping_preserves_first_keystroke_geometry',
+            typedGeometryDiff !== null
+                && Object.values(typedGeometryDiff).every((value) => value <= 0.5)
+                && typedGlyphSnap !== null
+                && Math.abs(typedGlyphSnap.left) <= 0.75
+                && Math.abs(typedGlyphSnap.top) <= 0.75
+                && typedFontFidelity !== null
+                && typedFontFidelity.source_font_size_px <= 0.01
+                && typedFontFidelity.annotation_font_size_pts <= 0.01
+                && typedFontFidelity.computed_font_size_px <= 0.01
+                && typedFontFidelity.source_run_sizes_unchanged === true,
+            'Bounding box snapping keeps the :113 box, visible glyph origin, and font size fixed when the first character reveals the DOM editor.',
+            JSON.stringify({
+                box_geometry_delta: typedGeometryDiff,
+                glyph_origin_delta: typedGlyphSnap,
+                font_size_delta: typedFontFidelity,
+                source_glyph_rect: afterTypingState?.source_glyph_rect,
+                rendered_text_range_rect: afterTypingState?.text_range_rect,
+                bounding_box_snapped: afterTypingState?.bounding_box_snapped,
+                snap_x: afterTypingState?.bounding_box_snap_x,
+                snap_y: afterTypingState?.bounding_box_snap_y,
+                position: afterTypingState?.computed_position,
+                left: afterTypingState?.computed_left,
+                top: afterTypingState?.computed_top,
+                transform: afterTypingState?.computed_transform,
+                padding_left: afterTypingState?.computed_padding_left,
+                padding_top: afterTypingState?.computed_padding_top,
+            }),
+        );
+        addCheck(
+            'bounding_box_snapping_preserves_typed_character',
+            String(afterTypingState?.editor_text || '').endsWith('1')
+                && afterTypingState?.pending_edit === '1',
+            'The first character is retained while the canvas-backed preview hands off to the snapped DOM editor.',
+            JSON.stringify({
+                editor_text: afterTypingState?.editor_text,
+                pending_edit: afterTypingState?.pending_edit,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            active_edit_state: afterState,
+            after_first_keystroke_state: afterTypingState,
+            canvas_raster: raster,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Page 1 before edit', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 active edit', kind: 'image', filename: artifactNames.after },
+                { label: 'Page 1 after first keystroke', kind: 'image', filename: artifactNames.afterTyping },
+                { label: ':113 canvas before edit', kind: 'image', filename: artifactNames.canvasBefore },
+                { label: ':113 canvas during edit', kind: 'image', filename: artifactNames.canvasAfter },
+                { label: ':113 canvas diff', kind: 'image', filename: artifactNames.canvasDiff },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                canvas_raster: raster,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                active_edit_state: afterState,
+                after_first_keystroke_state: afterTypingState,
+                canvas_raster: raster,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+function comparePdfUploadF1040SourceRunSpacing(state) {
+    const sourceRuns = Array.isArray(state?.source_span_runs)
+        ? state.source_span_runs.map((run) => ({
+            text: String(run?.text || ''),
+            left: Number(run?.textLeftPx),
+            right: Number(run?.textRightPx),
+            fontSize: Number(run?.fontSizePx),
+        })).filter((run) => (
+            Number.isFinite(run.left)
+            && Number.isFinite(run.right)
+            && run.right > run.left
+        ))
+        : [];
+    const renderedRuns = Array.isArray(state?.rendered_source_runs)
+        ? state.rendered_source_runs.map((run) => ({
+            text: String(run?.text || ''),
+            left: Number(run?.left),
+            right: Number(run?.right),
+            width: Number(run?.width),
+            fontSize: Number(run?.font_size_px),
+        })).filter((run) => (
+            Number.isFinite(run.left)
+            && Number.isFinite(run.right)
+            && Number.isFinite(run.width)
+            && run.width > 0
+        ))
+        : [];
+    const currentScale = Number(state?.current_scale) || 1;
+    const sourceScale = Number(state?.source_runs_scale) || currentScale;
+    const ratio = currentScale > 0 && sourceScale > 0 ? currentScale / sourceScale : 1;
+    const countMatches = sourceRuns.length > 0 && sourceRuns.length === renderedRuns.length;
+    if (!countMatches) {
+        return {
+            passed: false,
+            source_run_count: sourceRuns.length,
+            rendered_run_count: renderedRuns.length,
+            reason: 'Source and rendered run counts differ.',
+        };
+    }
+
+    const sourceOrigin = Math.min(...sourceRuns.map((run) => run.left));
+    const renderedOrigin = Math.min(...renderedRuns.map((run) => run.left));
+    const runs = sourceRuns.map((source, index) => {
+        const rendered = renderedRuns[index];
+        const sourceOffset = (source.left - sourceOrigin) * ratio;
+        const renderedOffset = rendered.left - renderedOrigin;
+        const sourceWidth = (source.right - source.left) * ratio;
+        const expectedFontSize = Number.isFinite(source.fontSize)
+            ? source.fontSize * ratio
+            : NaN;
+        return {
+            index,
+            source_text: source.text,
+            rendered_text: rendered.text,
+            offset_delta_px: renderedOffset - sourceOffset,
+            width_delta_px: rendered.width - sourceWidth,
+            font_size_delta_px: Number.isFinite(expectedFontSize)
+                && Number.isFinite(rendered.fontSize)
+                ? rendered.fontSize - expectedFontSize
+                : null,
+        };
+    });
+    const maxAbs = (values) => Math.max(
+        0,
+        ...values.filter(Number.isFinite).map((value) => Math.abs(value)),
+    );
+    const sourceUnionWidth = Number(state?.source_glyph_rect?.width);
+    const renderedUnionWidth = Number(state?.text_range_rect?.width);
+    const unionWidthDelta = Number.isFinite(sourceUnionWidth) && Number.isFinite(renderedUnionWidth)
+        ? renderedUnionWidth - sourceUnionWidth
+        : NaN;
+    const maxOffsetDelta = maxAbs(runs.map((run) => run.offset_delta_px));
+    const maxWidthDelta = maxAbs(runs.map((run) => run.width_delta_px));
+    const maxFontSizeDelta = maxAbs(runs.map((run) => run.font_size_delta_px));
+    return {
+        passed: Number.isFinite(unionWidthDelta)
+            && Math.abs(unionWidthDelta) <= 1.25
+            && maxOffsetDelta <= 1.5
+            && maxWidthDelta <= 1.5
+            && maxFontSizeDelta <= 0.1,
+        source_run_count: sourceRuns.length,
+        rendered_run_count: renderedRuns.length,
+        source_union_width_px: sourceUnionWidth,
+        rendered_union_width_px: renderedUnionWidth,
+        union_width_delta_px: unionWidthDelta,
+        max_offset_delta_px: maxOffsetDelta,
+        max_width_delta_px: maxWidthDelta,
+        max_font_size_delta_px: maxFontSizeDelta,
+        runs,
+    };
+}
+
+function comparePdfUploadF1040RenderedRunSpacing(leftState, rightState) {
+    const leftRuns = Array.isArray(leftState?.rendered_source_runs)
+        ? leftState.rendered_source_runs
+        : [];
+    const rightRuns = Array.isArray(rightState?.rendered_source_runs)
+        ? rightState.rendered_source_runs
+        : [];
+    if (!leftRuns.length || leftRuns.length !== rightRuns.length) {
+        return {
+            passed: false,
+            left_run_count: leftRuns.length,
+            right_run_count: rightRuns.length,
+            reason: 'Rendered run counts differ.',
+        };
+    }
+    const leftOrigin = Math.min(...leftRuns.map((run) => Number(run.left)));
+    const rightOrigin = Math.min(...rightRuns.map((run) => Number(run.left)));
+    const runs = leftRuns.map((left, index) => {
+        const right = rightRuns[index];
+        return {
+            index,
+            text: String(left.text || ''),
+            offset_delta_px: (Number(left.left) - leftOrigin)
+                - (Number(right.left) - rightOrigin),
+            width_delta_px: Number(left.width) - Number(right.width),
+            font_size_delta_px: Number(left.font_size_px) - Number(right.font_size_px),
+        };
+    });
+    const maxAbs = (values) => Math.max(
+        0,
+        ...values.filter(Number.isFinite).map((value) => Math.abs(value)),
+    );
+    const unionWidthDelta = Number(leftState?.text_range_rect?.width)
+        - Number(rightState?.text_range_rect?.width);
+    const maxOffsetDelta = maxAbs(runs.map((run) => run.offset_delta_px));
+    const maxWidthDelta = maxAbs(runs.map((run) => run.width_delta_px));
+    const maxFontSizeDelta = maxAbs(runs.map((run) => run.font_size_delta_px));
+    return {
+        passed: Number.isFinite(unionWidthDelta)
+            && Math.abs(unionWidthDelta) <= 0.5
+            && maxOffsetDelta <= 0.5
+            && maxWidthDelta <= 0.5
+            && maxFontSizeDelta <= 0.05,
+        union_width_delta_px: unionWidthDelta,
+        max_offset_delta_px: maxOffsetDelta,
+        max_width_delta_px: maxWidthDelta,
+        max_font_size_delta_px: maxFontSizeDelta,
+        runs,
+    };
+}
+
+async function runPdfUploadF1040DragPreviewSpacingFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_before_drag'),
+        during: buildArtifactName(testKey, runToken, 'page1_pointer_held_during_drag'),
+        after: buildArtifactName(testKey, runToken, 'page1_after_pointerup'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let duringState = null;
+    let afterState = null;
+    let duringSourceSpacing = null;
+    let afterSourceSpacing = null;
+    let dragToAfterSpacing = null;
+    let pointerHeld = false;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const pageLocator = opened.pageLocator;
+        addCheck(
+            'disposable_clone_created',
+            documentId > 0 && documentId !== Number(config.source_document_id),
+            'The database original was opened through a disposable PDF.js editor clone.',
+            `source_document=${config.source_document_id} disposable_document=${documentId}`,
+        );
+
+        const suffix = String(config.f1040_drag_spacing_suffix || '0_0:71');
+        const expectedText = String(
+            config.f1040_drag_spacing_expected_text
+            || 'Credit for previously owned clean vehicles. Attach Form 8936'
+        );
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        addCheck(
+            'saved_drag_spacing_target_resolved',
+            Boolean(beforeState)
+                && annotationId.endsWith(`_${suffix}`)
+                && normalize(beforeState.text).startsWith(normalize(expectedText)),
+            'The saved f1040s3 drag-preview spacing test resolves the exact PDF.js :71 row.',
+            JSON.stringify(beforeState),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.before });
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        const beforeRect = await resolved.locator.boundingBox();
+        const grip = page.locator('#enpv-ann-menu [data-action="move"]').first();
+        const gripRect = await grip.boundingBox();
+        if (!beforeRect || !gripRect) throw new Error('Could not resolve the :71 move handle.');
+        const startX = gripRect.x + (gripRect.width / 2);
+        const startY = gripRect.y + (gripRect.height / 2);
+        await page.mouse.move(startX, startY);
+        await page.mouse.down();
+        pointerHeld = true;
+        await page.mouse.move(startX + 42, startY - 58, { steps: 20 });
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-dragging')
+                && box.classList.contains('is-persisted-overlay')
+                && box.dataset.movedTextOverlay === '1'
+                && box.querySelectorAll('[data-source-span-run="1"]').length > 0;
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(250);
+        duringState = await readPdfUploadF1040BoxState(page, annotationId);
+        await pageLocator.screenshot({ path: artifactPaths.during });
+
+        const duringDx = Number(duringState?.browser_rect?.left) - Number(beforeState?.browser_rect?.left);
+        const duringDy = Number(duringState?.browser_rect?.top) - Number(beforeState?.browser_rect?.top);
+        addCheck(
+            'real_pointer_drag_preview_captured',
+            duringState?.is_dragging === true
+                && duringState?.moved_text_overlay === '1'
+                && Math.hypot(duringDx, duringDy) >= 20,
+            'The test samples :71 after production pointermove promotion while the mouse button is still held.',
+            JSON.stringify({ during_dx: duringDx, during_dy: duringDy, during_state: duringState }),
+        );
+
+        const duringBoxSizeDelta = {
+            width: Math.abs(
+                Number(duringState?.browser_rect?.width)
+                - Number(beforeState?.browser_rect?.width)
+            ),
+            height: Math.abs(
+                Number(duringState?.browser_rect?.height)
+                - Number(beforeState?.browser_rect?.height)
+            ),
+        };
+        addCheck(
+            'drag_preview_keeps_annotation_box_size',
+            Object.values(duringBoxSizeDelta).every((value) => value <= 0.5),
+            'Pointermove translates the annotation without resizing its bounding box.',
+            JSON.stringify(duringBoxSizeDelta),
+        );
+
+        const duringFontDelta = {
+            source_font_size_px: Math.abs(
+                Number(beforeState?.source_font_size_px)
+                - Number(duringState?.source_font_size_px)
+            ),
+            annotation_font_size_pts: Math.abs(
+                Number(beforeState?.font_size_pts)
+                - Number(duringState?.font_size_pts)
+            ),
+            computed_vs_source_px: Math.abs(
+                Number(duringState?.computed_font_size_px)
+                - (
+                    Number(duringState?.source_font_size_px)
+                    * (
+                        Number(duringState?.current_scale)
+                        / Number(duringState?.source_runs_scale)
+                    )
+                )
+            ),
+        };
+        addCheck(
+            'drag_preview_keeps_source_font_size',
+            Object.values(duringFontDelta).every((value) => Number.isFinite(value) && value <= 0.1),
+            'The live drag preview keeps the captured source and computed font sizes.',
+            JSON.stringify(duringFontDelta),
+        );
+
+        duringSourceSpacing = comparePdfUploadF1040SourceRunSpacing(duringState);
+        addCheck(
+            'drag_preview_keeps_source_glyph_spacing',
+            duringSourceSpacing.passed === true,
+            'While pointerdown remains active, every rendered run keeps the captured PDF.js offsets, widths, font size, and total advance.',
+            JSON.stringify(duringSourceSpacing),
+        );
+
+        await page.mouse.up();
+        pointerHeld = false;
+        await page.waitForTimeout(700);
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        await pageLocator.screenshot({ path: artifactPaths.after });
+        afterSourceSpacing = comparePdfUploadF1040SourceRunSpacing(afterState);
+        dragToAfterSpacing = comparePdfUploadF1040RenderedRunSpacing(duringState, afterState);
+        addCheck(
+            'pointerup_preserves_drag_preview_spacing',
+            afterState?.is_dragging === false
+                && afterState?.moved_text_overlay === '1'
+                && afterSourceSpacing.passed === true
+                && dragToAfterSpacing.passed === true,
+            'Pointerup commits the move without a second typography or spacing change.',
+            JSON.stringify({
+                after_source_spacing: afterSourceSpacing,
+                drag_to_after_spacing: dragToAfterSpacing,
+            }),
+        );
+        addCheck(
+            'drag_does_not_change_annotation_text',
+            normalize(beforeState?.editor_text) === normalize(duringState?.editor_text)
+                && normalize(beforeState?.editor_text) === normalize(afterState?.editor_text),
+            'Dragging changes only position; the :71 annotation text is unchanged.',
+            JSON.stringify({
+                before: beforeState?.editor_text,
+                during: duringState?.editor_text,
+                after: afterState?.editor_text,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            pointer_held_drag_state: duringState,
+            after_pointerup_state: afterState,
+            during_source_spacing: duringSourceSpacing,
+            after_source_spacing: afterSourceSpacing,
+            drag_to_after_spacing: dragToAfterSpacing,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Page 1 before drag', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 pointer held during drag', kind: 'image', filename: artifactNames.during },
+                { label: 'Page 1 after pointerup', kind: 'image', filename: artifactNames.after },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                pointer_held_drag_state: duringState,
+                after_pointerup_state: afterState,
+                during_source_spacing: duringSourceSpacing,
+                after_source_spacing: afterSourceSpacing,
+                drag_to_after_spacing: dragToAfterSpacing,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+            },
+        });
+    } finally {
+        if (pointerHeld) {
+            try { await page.mouse.up(); } catch (_) {}
+        }
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+function pdfUploadGlyphInset(state, glyphRectKey = 'source_glyph_rect') {
+    const box = state?.browser_rect;
+    const glyph = state?.[glyphRectKey];
+    if (!box || !glyph) return null;
+    return {
+        left: Number(glyph.left) - Number(box.left),
+        top: Number(glyph.top) - Number(box.top),
+    };
+}
+
+function pdfUploadInsetDelta(expected, actual) {
+    if (!expected || !actual) return { left: Number.NaN, top: Number.NaN };
+    return {
+        left: Number(actual.left) - Number(expected.left),
+        top: Number(actual.top) - Number(expected.top),
+    };
+}
+
+async function runPdfUploadF1040MovePreservesGlyphInsetFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_38_before_move'),
+        during: buildArtifactName(testKey, runToken, 'page1_38_pointer_held'),
+        after: buildArtifactName(testKey, runToken, 'page1_38_after_move'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let duringState = null;
+    let afterState = null;
+    let expectedInset = null;
+    let duringInsetDelta = null;
+    let afterInsetDelta = null;
+    let pointerHeld = false;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const pageLocator = opened.pageLocator;
+        const suffix = String(config.f1040_move_glyph_inset_suffix || '0_0:38');
+        const expectedText = String(
+            config.f1040_move_glyph_inset_expected_text
+            || 'Credit for prior year minimum tax. Attach Form 8801'
+        );
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        expectedInset = pdfUploadGlyphInset(beforeState);
+        addCheck(
+            'exact_38_source_target_resolved',
+            Boolean(beforeState)
+                && annotationId.endsWith(`_${suffix}`)
+                && normalize(beforeState.text).startsWith(normalize(expectedText))
+                && expectedInset
+                && Number.isFinite(expectedInset.left)
+                && Number.isFinite(expectedInset.top)
+                && expectedInset.top > 1,
+            'The disposable f1040s3 clone resolves :38 with a materially nonzero captured top glyph inset.',
+            JSON.stringify({ annotation_id: annotationId, expected_inset: expectedInset, before_state: beforeState }),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.before });
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        const grip = page.locator('#enpv-ann-menu [data-action="move"]').first();
+        await grip.hover();
+        const gripRect = await grip.boundingBox();
+        if (!gripRect) throw new Error('Could not resolve the :38 move handle.');
+        const startX = gripRect.x + (gripRect.width / 2);
+        const startY = gripRect.y + (gripRect.height / 2);
+        await page.mouse.move(startX, startY);
+        await page.mouse.down();
+        pointerHeld = true;
+        await page.mouse.move(startX + 45, startY + 30, { steps: 20 });
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-dragging')
+                && box.classList.contains('is-persisted-overlay')
+                && box.dataset.movedTextOverlay === '1';
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(150);
+        duringState = await readPdfUploadF1040BoxState(page, annotationId);
+        const duringInset = pdfUploadGlyphInset(duringState, 'text_range_rect');
+        duringInsetDelta = pdfUploadInsetDelta(expectedInset, duringInset);
+        const duringPositionDelta = {
+            left: Number(duringState?.browser_rect?.left) - Number(beforeState?.browser_rect?.left),
+            top: Number(duringState?.browser_rect?.top) - Number(beforeState?.browser_rect?.top),
+        };
+        await pageLocator.screenshot({ path: artifactPaths.during });
+        addCheck(
+            'pointer_held_move_keeps_glyph_inset',
+            duringState?.is_dragging === true
+                && duringState?.moved_text_overlay === '1'
+                && duringPositionDelta.left > 30
+                && duringPositionDelta.top > 20
+                && Object.values(duringInsetDelta).every(
+                    (value) => Number.isFinite(value) && Math.abs(value) <= 0.75
+                ),
+            'The first live drag frame keeps the glyph at its captured left/top inset instead of snapping to box top.',
+            JSON.stringify({
+                position_delta: duringPositionDelta,
+                expected_inset: expectedInset,
+                actual_inset: duringInset,
+                inset_delta: duringInsetDelta,
+            }),
+        );
+
+        await page.mouse.up();
+        pointerHeld = false;
+        await page.waitForTimeout(700);
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        const afterInset = pdfUploadGlyphInset(afterState, 'text_range_rect');
+        afterInsetDelta = pdfUploadInsetDelta(expectedInset, afterInset);
+        const afterPositionDelta = {
+            left: Number(afterState?.browser_rect?.left) - Number(beforeState?.browser_rect?.left),
+            top: Number(afterState?.browser_rect?.top) - Number(beforeState?.browser_rect?.top),
+        };
+        const committedPositionDelta = {
+            left: Number(afterState?.browser_rect?.left) - Number(duringState?.browser_rect?.left),
+            top: Number(afterState?.browser_rect?.top) - Number(duringState?.browser_rect?.top),
+        };
+        await pageLocator.screenshot({ path: artifactPaths.after });
+        addCheck(
+            'pointerup_keeps_glyph_inset',
+            afterState?.is_dragging === false
+                && afterState?.moved_text_overlay === '1'
+                && afterPositionDelta.left > 30
+                && afterPositionDelta.top > 20
+                && Object.values(committedPositionDelta).every(
+                    (value) => Number.isFinite(value) && Math.abs(value) <= 0.75
+                )
+                && Object.values(afterInsetDelta).every(
+                    (value) => Number.isFinite(value) && Math.abs(value) <= 0.75
+                ),
+            'The committed moved overlay retains the same source-relative glyph origin.',
+            JSON.stringify({
+                position_delta: afterPositionDelta,
+                pointerup_position_delta: committedPositionDelta,
+                expected_inset: expectedInset,
+                actual_inset: afterInset,
+                inset_delta: afterInsetDelta,
+            }),
+        );
+        const sizeDelta = {
+            width: Number(afterState?.browser_rect?.width) - Number(beforeState?.browser_rect?.width),
+            height: Number(afterState?.browser_rect?.height) - Number(beforeState?.browser_rect?.height),
+        };
+        addCheck(
+            'move_keeps_38_box_and_text',
+            Object.values(sizeDelta).every((value) => Number.isFinite(value) && Math.abs(value) <= 0.5)
+                && normalize(afterState?.editor_text) === normalize(beforeState?.text),
+            'Moving :38 changes position only; its bounding box and text are unchanged.',
+            JSON.stringify({ size_delta: sizeDelta, before_text: beforeState?.text, after_text: afterState?.editor_text }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            pointer_held_state: duringState,
+            after_state: afterState,
+            expected_glyph_inset: expectedInset,
+            pointer_held_inset_delta: duringInsetDelta,
+            after_inset_delta: afterInsetDelta,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Page 1 :38 before move', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 :38 pointer held', kind: 'image', filename: artifactNames.during },
+                { label: 'Page 1 :38 after move', kind: 'image', filename: artifactNames.after },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                pointer_held_state: duringState,
+                after_state: afterState,
+                expected_glyph_inset: expectedInset,
+                pointer_held_inset_delta: duringInsetDelta,
+                after_inset_delta: afterInsetDelta,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (pointerHeld) {
+            try { await page.mouse.up(); } catch (_) {}
+        }
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+function pdfUploadTextRunWeight(run) {
+    const raw = String(
+        run?.semanticFontWeight
+        ?? run?.source_semantic_font_weight
+        ?? run?.fontWeight
+        ?? run?.font_weight
+        ?? '400'
+    ).trim().toLowerCase();
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? parsed : (raw === 'bold' ? 700 : 400);
+}
+
+function pdfUploadSourceDotLeaderMetrics(state, options = {}) {
+    const runs = Array.isArray(state?.source_span_runs)
+        ? state.source_span_runs.filter((run) => String(run?.text || '').trim())
+        : [];
+    const ratio = Number(state?.current_scale) > 0 && Number(state?.source_runs_scale) > 0
+        ? Number(state.current_scale) / Number(state.source_runs_scale)
+        : 1;
+    const anchorText = String(options.anchorText || 'years').trim().toLowerCase();
+    const word = runs.find(
+        (run) => String(run?.text || '').trim().toLowerCase() === anchorText
+    ) || null;
+    const dots = runs.filter((run) => String(run?.text || '').trim() === '.');
+    const mappedDots = dots.map((run) => {
+        const left = Number(run?.textLeftPx ?? run?.leftPx) * ratio;
+        const right = Number(run?.textRightPx ?? run?.rightPx) * ratio;
+        return {
+            left,
+            right,
+            center: (left + right) / 2,
+            width: right - left,
+        };
+    });
+    const wordRight = Number(word?.textRightPx ?? word?.rightPx) * ratio;
+    const pitches = mappedDots.slice(1).map((dot, index) => (
+        dot.center - mappedDots[index].center
+    ));
+    return {
+        valid: Boolean(word)
+            && mappedDots.length > 1
+            && Number.isFinite(wordRight)
+            && mappedDots.every((dot) => Object.values(dot).every(Number.isFinite)),
+        dot_count: mappedDots.length,
+        word_right: wordRight,
+        first_dot_left: mappedDots[0]?.left ?? null,
+        lead_gap: mappedDots.length ? mappedDots[0].left - wordRight : null,
+        median_dot_pitch: pdfJsSuiteMedian(pitches),
+        leader_span: mappedDots.length > 1
+            ? mappedDots.at(-1).center - mappedDots[0].center
+            : null,
+        median_dot_width: pdfJsSuiteMedian(mappedDots.map((dot) => dot.width)),
+        relative_dot_centers: mappedDots.map((dot) => dot.center - mappedDots[0].center),
+        pitches,
+    };
+}
+
+function pdfUploadRenderedDotLeaderMetrics(state, options = {}) {
+    const runs = Array.isArray(state?.rich_dom_runs)
+        ? state.rich_dom_runs.filter((run) => String(run?.text || '').trim())
+        : [];
+    const anchorText = String(options.anchorText || 'years').trim().toLowerCase();
+    const word = runs.find(
+        (run) => String(run?.text || '').trim().toLowerCase() === anchorText
+    ) || null;
+    const dots = runs.filter((run) => String(run?.text || '').trim() === '.');
+    const mappedDots = dots.map((run) => {
+        const left = Number(run?.first_glyph_left);
+        const right = Number(run?.last_glyph_right);
+        return {
+            left,
+            right,
+            center: (left + right) / 2,
+            width: right - left,
+        };
+    });
+    const wordRight = Number(word?.last_glyph_right);
+    const pitches = mappedDots.slice(1).map((dot, index) => (
+        dot.center - mappedDots[index].center
+    ));
+    const visibleText = runs.map((run) => String(run?.text || '')).join('');
+    return {
+        valid: Boolean(word)
+            && mappedDots.length > 1
+            && Number.isFinite(wordRight)
+            && mappedDots.every((dot) => Object.values(dot).every(Number.isFinite)),
+        dot_count: mappedDots.length,
+        visible_text_without_spaces: visibleText.replace(/\s+/g, ''),
+        word_right: wordRight,
+        first_dot_left: mappedDots[0]?.left ?? null,
+        lead_gap: mappedDots.length ? mappedDots[0].left - wordRight : null,
+        median_dot_pitch: pdfJsSuiteMedian(pitches),
+        leader_span: mappedDots.length > 1
+            ? mappedDots.at(-1).center - mappedDots[0].center
+            : null,
+        median_dot_width: pdfJsSuiteMedian(mappedDots.map((dot) => dot.width)),
+        relative_dot_centers: mappedDots.map((dot) => dot.center - mappedDots[0].center),
+        pitches,
+    };
+}
+
+function comparePdfUploadDotLeaderSpacing(expected, actual, options = {}) {
+    const ratio = (value, baseline) => (
+        Number.isFinite(Number(value)) && Number(baseline) > 0
+            ? Number(value) / Number(baseline)
+            : Number.NaN
+    );
+    const pitchRatio = ratio(actual?.median_dot_pitch, expected?.median_dot_pitch);
+    const spanRatio = ratio(actual?.leader_span, expected?.leader_span);
+    const leadGapRatio = ratio(actual?.lead_gap, expected?.lead_gap);
+    const widthRatio = ratio(actual?.median_dot_width, expected?.median_dot_width);
+    const actualPitches = Array.isArray(actual?.pitches) ? actual.pitches : [];
+    const pitchSpread = actualPitches.length && Number.isFinite(Number(actual?.median_dot_pitch))
+        ? Math.max(...actualPitches.map((pitch) => Math.abs(pitch - actual.median_dot_pitch)))
+        : Number.POSITIVE_INFINITY;
+    const expectedDotCount = Math.max(1, Number(options.dotCount) || 24);
+    const expectedVisible = `${String(options.visiblePrefix || 'years').replace(/\s+/g, '')}${'.'.repeat(expectedDotCount)}`;
+    const passed = expected?.valid === true
+        && actual?.valid === true
+        && expected.dot_count === expectedDotCount
+        && actual.dot_count === expectedDotCount
+        && actual.visible_text_without_spaces === expectedVisible
+        && pitchRatio >= 0.88
+        && pitchRatio <= 1.12
+        && spanRatio >= 0.88
+        && spanRatio <= 1.12
+        && leadGapRatio >= 0.78
+        && leadGapRatio <= 1.22
+        && widthRatio >= 0.85
+        && widthRatio <= 1.15
+        && pitchSpread <= Math.max(2.5, Number(actual.median_dot_pitch) * 0.12);
+    return {
+        passed,
+        pitch_ratio: pitchRatio,
+        span_ratio: spanRatio,
+        lead_gap_ratio: leadGapRatio,
+        dot_width_ratio: widthRatio,
+        pitch_spread: pitchSpread,
+        expected,
+        actual,
+    };
+}
+
+async function runPdfUploadF1040MixedStyleEditResizeFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        edit: buildArtifactName(testKey, runToken, 'page1_95_after_regular_text_edit'),
+        resize: buildArtifactName(testKey, runToken, 'page1_95_after_resize'),
+        resizeOnly: buildArtifactName(testKey, runToken, 'page1_95_fresh_resize_only'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let resizeOnlyDocumentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let editedState = null;
+    let committedState = null;
+    let resizedState = null;
+    let resizeOnlyState = null;
+    let payloadAnnotation = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const pageLocator = opened.pageLocator;
+        const suffix = String(config.f1040_mixed_style_suffix || '0_0:95');
+        const expectedSourceText = String(
+            config.f1040_mixed_style_expected_text
+            || '13 Other payments or refundable credits:'
+        );
+        const expectedEditedText = '13 Other payuments or refundable credits:';
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedSourceText);
+        annotationId = resolved.annotationId;
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            try {
+                const runs = JSON.parse(box?.dataset?.sourceSpanRuns || '[]');
+                return runs.length >= 2
+                    && Number.parseInt(runs[0]?.fontWeight || '0', 10) >= 600
+                    && Number.parseInt(runs[1]?.fontWeight || '900', 10) < 600;
+            } catch (_) {
+                return false;
+            }
+        }, annotationId, { timeout: 30000 });
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        const sourceTextRuns = (beforeState?.source_span_runs || []).filter(
+            (run) => String(run?.text || '').trim()
+        );
+        addCheck(
+            'exact_95_mixed_style_target_resolved',
+            annotationId.endsWith(`_${suffix}`)
+                && beforeState?.editor_text === expectedSourceText
+                && sourceTextRuns.length >= 2
+                && pdfUploadTextRunWeight(sourceTextRuns[0]) >= 600
+                && pdfUploadTextRunWeight(sourceTextRuns[1]) < 600,
+            'The fresh f1040s3 :95 source row is captured as bold “13” plus regular body text.',
+            JSON.stringify({ annotation_id: annotationId, source_runs: sourceTextRuns }),
+        );
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelectorAll('[data-source-span-run="1"]').length >= 2;
+        }, annotationId, { timeout: 30000 });
+        await resolved.locator.locator('.enpv-text-content').evaluate((root) => {
+            const regularRun = Array.from(root.querySelectorAll('[data-source-span-run="1"]'))
+                .find((run) => String(run.textContent || '').includes('Other payments'));
+            if (!regularRun) throw new Error('The regular :95 source run was not rendered.');
+            const walker = document.createTreeWalker(regularRun, NodeFilter.SHOW_TEXT);
+            let node = null;
+            while (walker.nextNode()) {
+                if (String(walker.currentNode.nodeValue || '').includes('payments')) {
+                    node = walker.currentNode;
+                    break;
+                }
+            }
+            if (!node) throw new Error('The “payments” text node was not found.');
+            const offset = String(node.nodeValue || '').indexOf('payments') + 3;
+            const range = document.createRange();
+            range.setStart(node, offset);
+            range.collapse(true);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+        });
+        await page.keyboard.type('u');
+        await page.waitForFunction(({ id, expected }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.dataset?.editorMode === 'rich'
+                && box.querySelector('.enpv-text-content')?.textContent === expected;
+        }, { id: annotationId, expected: expectedEditedText }, { timeout: 30000 });
+        editedState = await readPdfUploadF1040BoxState(page, annotationId);
+        await pageLocator.screenshot({ path: artifactPaths.edit });
+        const editedRuns = (editedState?.rich_dom_runs || []).filter(
+            (run) => String(run?.text || '').trim()
+        );
+        addCheck(
+            'editing_regular_text_keeps_bold_13',
+            editedState?.editor_text_exact === expectedEditedText
+                && editedState?.editor_mode === 'rich'
+                && editedRuns.length === 2
+                && editedRuns[0].text === '13'
+                && pdfUploadTextRunWeight(editedRuns[0]) >= 600
+                && editedRuns[1].text === ' Other payuments or refundable credits:'
+                && pdfUploadTextRunWeight(editedRuns[1]) < 600
+                && Number(editedState?.rich_visible_gap_px) > 0.5,
+            'Editing only the regular word promotes :95 to rich text without flattening the bold label or its separator.',
+            JSON.stringify({ expected: expectedEditedText, edited_state: editedState, edited_runs: editedRuns }),
+        );
+
+        await page.keyboard.press('Escape');
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box
+                && !box.classList.contains('is-editing')
+                && box.classList.contains('is-persisted-overlay')
+                && box.dataset.editorMode === 'rich';
+        }, annotationId, { timeout: 30000 });
+        committedState = await readPdfUploadF1040BoxState(page, annotationId);
+        const committedRuns = (committedState?.rich_dom_runs || []).filter(
+            (run) => String(run?.text || '').trim()
+        );
+        addCheck(
+            'committing_edit_keeps_bold_13',
+            committedState?.editor_text_exact === expectedEditedText
+                && committedRuns.length === 2
+                && committedRuns[0].text === '13'
+                && pdfUploadTextRunWeight(committedRuns[0]) >= 600
+                && committedRuns[1].text === ' Other payuments or refundable credits:'
+                && pdfUploadTextRunWeight(committedRuns[1]) < 600
+                && Number(committedState?.rich_visible_gap_px) > 0.5,
+            'Exiting edit mode commits the regular-text change without flattening the mixed styles.',
+            JSON.stringify({ expected: expectedEditedText, committed_state: committedState, committed_runs: committedRuns }),
+        );
+
+        // Committing the edit replaces the source handle with a persisted
+        // rich overlay carrying the same annotation id. Resolve that live
+        // overlay explicitly; the original `.first()` locator may otherwise
+        // point at the retired source element, which has no resize handles.
+        const committedLocator = page.locator(
+            `.enpv-annotation-box.is-persisted-overlay[data-annotation-id="${annotationId}"]`
+        ).first();
+        await committedLocator.waitFor({ state: 'visible', timeout: 30000 });
+        await selectPdfUploadEditorBox(page, committedLocator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.dataset.editorMode === 'rich';
+        }, annotationId, { timeout: 30000 });
+        const rightHandle = committedLocator.locator(':scope > .enpv-resize-handle.r');
+        const handleRect = await rightHandle.boundingBox();
+        if (!handleRect) {
+            const matchingDom = await page.evaluate((id) => (
+                Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                    .filter((box) => String(box.dataset.annotationId || '') === id)
+                    .map((box) => ({
+                        classes: Array.from(box.classList),
+                        children: Array.from(box.children).map((child) => String(child.className || '')),
+                    }))
+            ), annotationId);
+            throw new Error(`Could not resolve the :95 right resize handle: ${JSON.stringify(matchingDom)}`);
+        }
+        const startX = handleRect.x + (handleRect.width / 2);
+        const startY = handleRect.y + (handleRect.height / 2);
+        await page.mouse.move(startX, startY);
+        await page.mouse.down();
+        await page.mouse.move(startX + 40, startY, { steps: 12 });
+        await page.mouse.up();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.dataset?.userSizedTextBox === '1'
+                && box.classList.contains('is-persisted-overlay');
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(500);
+        resizedState = await readPdfUploadF1040BoxState(page, annotationId);
+        await pageLocator.screenshot({ path: artifactPaths.resize });
+        const resizedRuns = (resizedState?.rich_dom_runs || []).filter(
+            (run) => String(run?.text || '').trim()
+        );
+        const editedResizeWidthDelta = Number(resizedState?.browser_rect?.width)
+            - Number(committedState?.browser_rect?.width);
+        addCheck(
+            'resize_keeps_style_and_exact_separator',
+            resizedState?.editor_text_exact === expectedEditedText
+                && resizedState?.user_sized_text_box === '1'
+                && editedResizeWidthDelta > 20
+                && resizedRuns.length === 2
+                && resizedRuns[0].text === '13'
+                && pdfUploadTextRunWeight(resizedRuns[0]) >= 600
+                && resizedRuns[1].text === ' Other payuments or refundable credits:'
+                && pdfUploadTextRunWeight(resizedRuns[1]) < 600
+                && Number(resizedState?.rich_visible_gap_px) > 0.5,
+            'A real drag-handle resize retains one literal space, a visible glyph gap, and both mixed font weights.',
+            JSON.stringify({
+                expected: expectedEditedText,
+                width_delta: editedResizeWidthDelta,
+                resized_state: resizedState,
+                resized_runs: resizedRuns,
+            }),
+        );
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        const annotations = Array.isArray(downloaded.payload?.session_annotations)
+            ? downloaded.payload.session_annotations
+            : [];
+        payloadAnnotation = annotations.find(
+            (annotation) => String(annotation?.id || '') === annotationId
+        ) || null;
+        const payloadRuns = Array.isArray(payloadAnnotation?.richTextRuns)
+            ? payloadAnnotation.richTextRuns.filter((run) => run?.type === 'text')
+            : [];
+        addCheck(
+            'serialized_rich_runs_keep_style_and_space',
+            payloadAnnotation?.text === expectedEditedText
+                && payloadRuns.length === 2
+                && payloadRuns.map((run) => String(run.text || '')).join('') === expectedEditedText
+                && payloadRuns[0].text === '13'
+                && pdfUploadTextRunWeight(payloadRuns[0]) >= 600
+                && payloadRuns[1].text === ' Other payuments or refundable credits:'
+                && pdfUploadTextRunWeight(payloadRuns[1]) < 600,
+            'The download payload serializes bold “13” and a regular run beginning with the canonical space.',
+            JSON.stringify({ expected: expectedEditedText, payload_annotation: payloadAnnotation }),
+        );
+        addCheck(
+            'downloaded_pdf_created',
+            downloaded.pdf.length > 1000,
+            'The edited/resized annotation produced a non-empty PDF result.',
+            `bytes=${downloaded.pdf.length}`,
+        );
+
+        // Exercise the resize-specific source-scaffold normalization on an
+        // untouched clone as well. The combined edit/resize leg above has
+        // already canonicalized its separator on first input.
+        const resizeOnlyOpened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        resizeOnlyDocumentId = resizeOnlyOpened.documentId;
+        const resizeOnlyResolved = await resolvePdfUploadF1040Box(
+            page,
+            suffix,
+            expectedSourceText,
+        );
+        const resizeOnlyAnnotationId = resizeOnlyResolved.annotationId;
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            try {
+                const runs = JSON.parse(box?.dataset?.sourceSpanRuns || '[]');
+                return runs.length >= 2
+                    && Number.parseInt(runs[0]?.fontWeight || '0', 10) >= 600
+                    && Number.parseInt(runs[1]?.fontWeight || '900', 10) < 600;
+            } catch (_) {
+                return false;
+            }
+        }, resizeOnlyAnnotationId, { timeout: 30000 });
+        const resizeOnlyBeforeState = await readPdfUploadF1040BoxState(page, resizeOnlyAnnotationId);
+        await selectPdfUploadEditorBox(page, resizeOnlyResolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelectorAll('[data-source-span-run="1"]').length >= 2;
+        }, resizeOnlyAnnotationId, { timeout: 30000 });
+        const resizeOnlyHandle = resizeOnlyResolved.locator.locator(':scope > .enpv-resize-handle.r');
+        const resizeOnlyHandleRect = await resizeOnlyHandle.boundingBox();
+        if (!resizeOnlyHandleRect) throw new Error('Could not resolve the fresh :95 right resize handle.');
+        const resizeOnlyStartX = resizeOnlyHandleRect.x + (resizeOnlyHandleRect.width / 2);
+        const resizeOnlyStartY = resizeOnlyHandleRect.y + (resizeOnlyHandleRect.height / 2);
+        await page.mouse.move(resizeOnlyStartX, resizeOnlyStartY);
+        await page.mouse.down();
+        await page.mouse.move(resizeOnlyStartX + 40, resizeOnlyStartY, { steps: 12 });
+        await page.mouse.up();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.dataset?.userSizedTextBox === '1'
+                && box.classList.contains('is-persisted-overlay');
+        }, resizeOnlyAnnotationId, { timeout: 30000 });
+        await page.waitForTimeout(500);
+        resizeOnlyState = await readPdfUploadF1040BoxState(page, resizeOnlyAnnotationId);
+        await resizeOnlyOpened.pageLocator.screenshot({ path: artifactPaths.resizeOnly });
+        const resizeOnlyRuns = (resizeOnlyState?.rich_dom_runs || []).filter(
+            (run) => String(run?.text || '').trim()
+        );
+        const resizeOnlyWidthDelta = Number(resizeOnlyState?.browser_rect?.width)
+            - Number(resizeOnlyBeforeState?.browser_rect?.width);
+        addCheck(
+            'fresh_source_resize_keeps_style_and_visible_separator',
+            resizeOnlyState?.editor_text_exact === expectedSourceText
+                && resizeOnlyState?.user_sized_text_box === '1'
+                && resizeOnlyWidthDelta > 20
+                && resizeOnlyRuns.length === 2
+                && resizeOnlyRuns[0].text === '13'
+                && pdfUploadTextRunWeight(resizeOnlyRuns[0]) >= 600
+                && resizeOnlyRuns[1].text === ' Other payments or refundable credits:'
+                && pdfUploadTextRunWeight(resizeOnlyRuns[1]) < 600
+                && Number(resizeOnlyState?.rich_visible_gap_px) > 0.5,
+            'Resizing untouched :95 directly exercises source-gap normalization without losing bold “13” or its visible separator.',
+            JSON.stringify({
+                expected: expectedSourceText,
+                width_delta: resizeOnlyWidthDelta,
+                before_state: resizeOnlyBeforeState,
+                after_state: resizeOnlyState,
+                resized_runs: resizeOnlyRuns,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resize_only_disposable_document_id: resizeOnlyDocumentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            after_regular_text_edit: editedState,
+            after_edit_commit: committedState,
+            after_resize: resizedState,
+            fresh_resize_only_state: resizeOnlyState,
+            payload_annotation: payloadAnnotation,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Page 1 :95 after regular-text edit', kind: 'image', filename: artifactNames.edit },
+                { label: 'Page 1 :95 after resize', kind: 'image', filename: artifactNames.resize },
+                { label: 'Page 1 :95 fresh resize only', kind: 'image', filename: artifactNames.resizeOnly },
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloaded.pdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resize_only_disposable_document_id: resizeOnlyDocumentId,
+                resolved_annotation_id: annotationId,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resize_only_disposable_document_id: resizeOnlyDocumentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                after_regular_text_edit: editedState,
+                after_edit_commit: committedState,
+                after_resize: resizedState,
+                fresh_resize_only_state: resizeOnlyState,
+                payload_annotation: payloadAnnotation,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (resizeOnlyDocumentId) {
+            try { await deleteDocument(page, resizeOnlyDocumentId); } catch (_) {}
+        }
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadF1040ResizePreservesSourceSpacingFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_101_before_resize'),
+        pointerDown: buildArtifactName(testKey, runToken, 'page1_101_pointer_down'),
+        during: buildArtifactName(testKey, runToken, 'page1_101_pointer_held'),
+        after: buildArtifactName(testKey, runToken, 'page1_101_after_resize'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let initialState = null;
+    let beforeState = null;
+    let pointerDownState = null;
+    let duringState = null;
+    let afterState = null;
+    let sourceSpacing = null;
+    let beforeComparison = null;
+    let pointerDownComparison = null;
+    let duringComparison = null;
+    let afterComparison = null;
+    let payloadAnnotation = null;
+    let pointerHeld = false;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const pageLocator = opened.pageLocator;
+        const suffix = String(config.f1040_resize_spacing_suffix || '0_0:101');
+        const expectedText = String(config.f1040_resize_spacing_expected_text || 'years');
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedText);
+        annotationId = resolved.annotationId;
+        initialState = await readPdfUploadF1040BoxState(page, annotationId);
+        sourceSpacing = pdfUploadSourceDotLeaderMetrics(initialState);
+        addCheck(
+            'exact_101_distributed_leader_target_resolved',
+            annotationId.endsWith(`_${suffix}`)
+                && normalize(initialState?.editor_text).startsWith(normalize(expectedText))
+                && sourceSpacing?.valid === true
+                && sourceSpacing?.dot_count === 24,
+            'The fresh :101 row resolves “years” plus 24 independently spaced source leader dots before any mutation.',
+            JSON.stringify({
+                annotation_id: annotationId,
+                source_spacing: sourceSpacing,
+                initial_state: initialState,
+            }),
+        );
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            const renderedDots = Array.from(
+                box?.querySelectorAll?.('[data-source-span-run="1"]') || []
+            ).filter((run) => String(run.textContent || '').trim() === '.');
+            return box?.classList.contains('is-editing') && renderedDots.length === 24;
+        }, annotationId, { timeout: 30000 });
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        beforeComparison = comparePdfUploadDotLeaderSpacing(
+            sourceSpacing,
+            pdfUploadRenderedDotLeaderMetrics(beforeState),
+        );
+        addCheck(
+            'source_edit_baseline_matches_captured_spacing',
+            beforeComparison.passed === true,
+            'Before resizing, the editable DOM matches the immutable captured leader geometry.',
+            JSON.stringify(beforeComparison),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.before });
+
+        const rightHandle = resolved.locator.locator(':scope > .enpv-resize-handle.r');
+        const handleRect = await rightHandle.boundingBox();
+        if (!handleRect) throw new Error('Could not resolve the :101 right resize handle.');
+        const startX = handleRect.x + (handleRect.width / 2);
+        const startY = handleRect.y + (handleRect.height / 2);
+        await page.mouse.move(startX, startY);
+        await page.mouse.down();
+        pointerHeld = true;
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.dataset?.sourceSpanNaturalized === '1'
+                && box.dataset.editorMode === 'rich';
+        }, annotationId, { timeout: 30000 });
+        pointerDownState = await readPdfUploadF1040BoxState(page, annotationId);
+        pointerDownComparison = comparePdfUploadDotLeaderSpacing(
+            sourceSpacing,
+            pdfUploadRenderedDotLeaderMetrics(pointerDownState),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.pointerDown });
+        addCheck(
+            'resize_pointerdown_does_not_collapse_spacing',
+            pointerDownComparison.passed === true,
+            'The synchronous source-to-rich normalization on pointerdown preserves the leader pitch and span.',
+            JSON.stringify(pointerDownComparison),
+        );
+
+        await page.mouse.move(startX + 60, startY, { steps: 16 });
+        await page.waitForTimeout(150);
+        duringState = await readPdfUploadF1040BoxState(page, annotationId);
+        duringComparison = comparePdfUploadDotLeaderSpacing(
+            sourceSpacing,
+            pdfUploadRenderedDotLeaderMetrics(duringState),
+        );
+        const liveWidthDelta = Number(duringState?.browser_rect?.width)
+            - Number(pointerDownState?.browser_rect?.width);
+        await pageLocator.screenshot({ path: artifactPaths.during });
+        addCheck(
+            'live_resize_keeps_distributed_leader_spacing',
+            duringState?.is_dragging === false
+                && liveWidthDelta > 40
+                && duringComparison.passed === true,
+            'A real outward right-handle drag changes the box width without compressing the 24-dot leader.',
+            JSON.stringify({ width_delta: liveWidthDelta, comparison: duringComparison }),
+        );
+
+        await page.mouse.up();
+        pointerHeld = false;
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.dataset?.userSizedTextBox === '1'
+                && box.classList.contains('is-persisted-overlay');
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(500);
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        afterComparison = comparePdfUploadDotLeaderSpacing(
+            sourceSpacing,
+            pdfUploadRenderedDotLeaderMetrics(afterState),
+        );
+        const committedWidthDelta = Number(afterState?.browser_rect?.width)
+            - Number(pointerDownState?.browser_rect?.width);
+        await pageLocator.screenshot({ path: artifactPaths.after });
+        addCheck(
+            'pointerup_keeps_distributed_leader_spacing',
+            afterState?.user_sized_text_box === '1'
+                && committedWidthDelta > 40
+                && afterComparison.passed === true,
+            'Pointerup commits the new width while retaining the source-like leader pitch and total span.',
+            JSON.stringify({ width_delta: committedWidthDelta, comparison: afterComparison }),
+        );
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        const annotations = Array.isArray(downloaded.payload?.session_annotations)
+            ? downloaded.payload.session_annotations
+            : [];
+        payloadAnnotation = annotations.find(
+            (annotation) => String(annotation?.id || '') === annotationId
+        ) || null;
+        const payloadRuns = Array.isArray(payloadAnnotation?.richTextRuns)
+            ? payloadAnnotation.richTextRuns.filter((run) => run?.type === 'text')
+            : [];
+        const payloadText = String(payloadAnnotation?.text || '');
+        const serializedText = payloadRuns.map((run) => String(run?.text || '')).join('');
+        const multiSpaceLeaderGaps = payloadText.match(/ {2,}\./g) || [];
+        addCheck(
+            'serialized_resize_preserves_leader_gap_width',
+            payloadText.replace(/\s+/g, '') === `years${'.'.repeat(24)}`
+                && serializedText === payloadText
+                && multiSpaceLeaderGaps.length === 24,
+            'The saved rich-text contract retains all 24 expanded leader gaps instead of serializing collapsed one-space gaps.',
+            JSON.stringify({
+                payload_text: payloadText,
+                multi_space_leader_gap_count: multiSpaceLeaderGaps.length,
+                rich_text_runs: payloadRuns,
+            }),
+        );
+        addCheck(
+            'downloaded_pdf_created',
+            downloaded.pdf.length > 1000,
+            'The resized dot-leader annotation produced a non-empty PDF result.',
+            `bytes=${downloaded.pdf.length}`,
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            source_spacing: sourceSpacing,
+            initial_state: initialState,
+            before_state: beforeState,
+            pointer_down_state: pointerDownState,
+            pointer_held_state: duringState,
+            after_state: afterState,
+            baseline_comparison: beforeComparison,
+            pointer_down_comparison: pointerDownComparison,
+            pointer_held_comparison: duringComparison,
+            after_comparison: afterComparison,
+            payload_annotation: payloadAnnotation,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Page 1 :101 before resize', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 :101 immediately after pointerdown', kind: 'image', filename: artifactNames.pointerDown },
+                { label: 'Page 1 :101 pointer held during resize', kind: 'image', filename: artifactNames.during },
+                { label: 'Page 1 :101 after pointerup', kind: 'image', filename: artifactNames.after },
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloaded.pdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                source_spacing: sourceSpacing,
+                initial_state: initialState,
+                before_state: beforeState,
+                pointer_down_state: pointerDownState,
+                pointer_held_state: duringState,
+                after_state: afterState,
+                baseline_comparison: beforeComparison,
+                pointer_down_comparison: pointerDownComparison,
+                pointer_held_comparison: duringComparison,
+                after_comparison: afterComparison,
+                payload_annotation: payloadAnnotation,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (pointerHeld) {
+            try { await page.mouse.up(); } catch (_) {}
+        }
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadF1040ScrollPreservesEditedSpacingFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_23_before_scroll'),
+        after: buildArtifactName(testKey, runToken, 'page1_23_after_scroll'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let editedState = null;
+    let committedState = null;
+    let afterState = null;
+    let scrollProbe = null;
+    let sourceSpacing = null;
+    let editedSpacingComparison = null;
+    let committedSpacingComparison = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const suffix = String(
+            config.f1040_scroll_spacing_suffix
+            || config.f1040_scroll_edited_spacing_suffix
+            || '0_0:23'
+        );
+        const expectedSourceText = String(
+            config.f1040_scroll_spacing_expected_text
+            || config.f1040_scroll_edited_spacing_expected_text
+            || 'Education credits from Form 8863, line 19'
+        );
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedSourceText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        const exactSourceText = String(beforeState?.editor_text_exact || '');
+        const expectedEditedPrefix = expectedSourceText.replace('8863', '8763');
+        if (expectedEditedPrefix === expectedSourceText) {
+            throw new Error(`The :23 source text does not contain “8863”: ${expectedSourceText}`);
+        }
+        const sourceDotCount = (exactSourceText.match(/\./g) || []).length;
+        sourceSpacing = pdfUploadSourceDotLeaderMetrics(beforeState, {
+            anchorText: expectedSourceText,
+        });
+        addCheck(
+            'exact_23_education_credit_target_resolved',
+            annotationId.endsWith(`_${suffix}`)
+                && normalize(exactSourceText).startsWith(normalize(expectedSourceText))
+                && sourceDotCount === 20
+                && sourceSpacing.valid === true,
+            'The disposable f1040s3 clone resolves the exact :23 education-credit row and all 20 distributed leader dots.',
+            JSON.stringify({
+                annotation_id: annotationId,
+                exact_source_text: exactSourceText,
+                source_dot_count: sourceDotCount,
+                source_spacing: sourceSpacing,
+                before_state: beforeState,
+            }),
+        );
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, annotationId, { timeout: 30000 });
+        const editOffset = exactSourceText.indexOf('8863') + 1;
+        await selectPdfUploadTextOffsets(page, annotationId, editOffset, editOffset + 1);
+        await page.keyboard.type('7');
+        await page.waitForTimeout(250);
+        editedState = await readPdfUploadF1040BoxState(page, annotationId);
+        editedSpacingComparison = comparePdfUploadDotLeaderSpacing(
+            sourceSpacing,
+            pdfUploadRenderedDotLeaderMetrics(editedState, {
+                anchorText: expectedEditedPrefix,
+            }),
+            {
+                dotCount: 20,
+                visiblePrefix: expectedEditedPrefix,
+            },
+        );
+        addCheck(
+            'single_digit_edit_keeps_source_row_spacing',
+            normalize(editedState?.editor_text).startsWith(normalize(expectedEditedPrefix))
+                && (String(editedState?.editor_text_exact || '').match(/\./g) || []).length === 20
+                && editedSpacingComparison.passed === true,
+            'Replacing only the 8 in “8863” retains all 20 dots and their captured visual spacing.',
+            JSON.stringify({
+                expected_prefix: expectedEditedPrefix,
+                spacing_comparison: editedSpacingComparison,
+                edited_state: editedState,
+            }),
+        );
+
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(({ id, expectedPrefix }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            const text = String(box?.querySelector('.enpv-text-content')?.textContent || '');
+            return box
+                && !box.classList.contains('is-editing')
+                && box.classList.contains('is-persisted-overlay')
+                && text.replace(/\s+/g, ' ').trim().startsWith(expectedPrefix)
+                && (text.match(/\./g) || []).length === 20;
+        }, {
+            id: annotationId,
+            expectedPrefix: normalize(expectedEditedPrefix),
+        }, { timeout: 30000 });
+        await page.waitForTimeout(250);
+        committedState = await readPdfUploadF1040BoxState(page, annotationId);
+        committedSpacingComparison = comparePdfUploadDotLeaderSpacing(
+            sourceSpacing,
+            pdfUploadRenderedDotLeaderMetrics(committedState, {
+                anchorText: expectedEditedPrefix,
+            }),
+            {
+                dotCount: 20,
+                visiblePrefix: expectedEditedPrefix,
+            },
+        );
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+        scrollProbe = await runPdfUploadNearViewportScrollProbe(page, annotationId, {
+            cycles: 10,
+            distance: 160,
+        });
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.after });
+
+        const horizontalDrift = Math.max(
+            Number(scrollProbe?.max_drift_px?.box_left),
+            Number(scrollProbe?.max_drift_px?.box_width),
+            Number(scrollProbe?.max_drift_px?.text_left),
+            Number(scrollProbe?.max_drift_px?.text_width),
+            Number(scrollProbe?.max_drift_px?.text_range_left),
+            Number(scrollProbe?.max_drift_px?.text_range_width),
+            Number(scrollProbe?.max_drift_px?.word_left),
+            Number(scrollProbe?.max_drift_px?.word_right),
+            Number(scrollProbe?.max_drift_px?.word_width),
+        );
+        addCheck(
+            'scroll_samples_keep_horizontal_box_and_glyph_layout',
+            scrollProbe?.completed === true
+                && scrollProbe?.all_samples_found === true
+                && scrollProbe?.all_text_exact === true
+                && Number.isFinite(horizontalDrift)
+                && horizontalDrift <= 0.5
+                && normalize(committedState?.editor_text).startsWith(normalize(expectedEditedPrefix))
+                && normalize(afterState?.editor_text).startsWith(normalize(expectedEditedPrefix))
+                && committedSpacingComparison.passed === true,
+            'Every synchronous and animation-frame sample during repeated vertical scrolling retains identical local x geometry and word spacing.',
+            JSON.stringify({
+                expected_prefix: expectedEditedPrefix,
+                committed_spacing_comparison: committedSpacingComparison,
+                horizontal_max_drift_px: horizontalDrift,
+                max_drift_px: scrollProbe?.max_drift_px,
+                sample_count: scrollProbe?.sample_count,
+            }),
+        );
+        addCheck(
+            'near_viewport_scroll_does_not_rebuild_edited_overlay',
+            scrollProbe?.all_same_box === true
+                && scrollProbe?.all_same_layer === true
+                && scrollProbe?.target_rebuild_count === 0
+                && scrollProbe?.layer_child_list_mutation_count === 0,
+            'Near-viewport scrolling keeps the edited box and annotation layer nodes alive without child-list rebuilds.',
+            JSON.stringify({
+                target_rebuild_count: scrollProbe?.target_rebuild_count,
+                layer_child_list_mutation_count: scrollProbe?.layer_child_list_mutation_count,
+                mutations: scrollProbe?.mutation_records,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            edited_state: editedState,
+            committed_state: committedState,
+            after_state: afterState,
+            source_spacing: sourceSpacing,
+            edited_spacing_comparison: editedSpacingComparison,
+            committed_spacing_comparison: committedSpacingComparison,
+            scroll_probe: scrollProbe,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Page 1 :23 before scrolling', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 :23 after scrolling', kind: 'image', filename: artifactNames.after },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                edited_state: editedState,
+                committed_state: committedState,
+                after_state: afterState,
+                source_spacing: sourceSpacing,
+                edited_spacing_comparison: editedSpacingComparison,
+                committed_spacing_comparison: committedSpacingComparison,
+                scroll_probe: scrollProbe,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadF1040DateEditPreservesMixedWeightFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        after: buildArtifactName(testKey, runToken, 'page1_119_after_date_edit'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let editedState = null;
+    let committedState = null;
+    let rehydratedState = null;
+    let farScroll = null;
+    let payloadAnnotation = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const suffix = String(
+            config.f1040_date_weight_suffix
+            || config.f1040_date_edit_suffix
+            || '0_0:119'
+        );
+        const expectedSourceText = String(
+            config.f1040_date_weight_expected_text
+            || config.f1040_date_edit_expected_text
+            || 'Schedule 3 (Form 1040) 2025 Created 11/17/25'
+        );
+        const expectedEditedText = expectedSourceText.replace(/5$/, '6');
+        const titleText = 'Schedule 3 (Form 1040) 2025';
+        const createdSourceText = 'Created 11/17/25';
+        const createdEditedText = 'Created 11/17/26';
+        if (expectedEditedText === expectedSourceText) {
+            throw new Error(`The :119 source text does not end in “5”: ${expectedSourceText}`);
+        }
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedSourceText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        const sourceRuns = (beforeState?.source_span_runs || []).filter(
+            (run) => String(run?.text || '').trim()
+        );
+        const sourceTitleRuns = sourceRuns.filter((run) => (
+            titleText.includes(String(run?.text || '').trim())
+        ));
+        const sourceCreatedRuns = sourceRuns.filter((run) => (
+            createdSourceText.includes(String(run?.text || '').trim())
+        ));
+        addCheck(
+            'exact_119_mixed_weight_target_resolved',
+            annotationId.endsWith(`_${suffix}`)
+                && beforeState?.editor_text === expectedSourceText
+                && sourceTitleRuns.length > 0
+                && sourceCreatedRuns.length > 0
+                && sourceTitleRuns.every((run) => pdfUploadTextRunWeight(run) >= 600)
+                && sourceCreatedRuns.every((run) => pdfUploadTextRunWeight(run) < 600),
+            'The fresh :119 footer resolves with the Schedule title bold and the Created timestamp regular.',
+            JSON.stringify({ annotation_id: annotationId, source_runs: sourceRuns }),
+        );
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelectorAll('[data-source-span-run="1"]').length >= 2;
+        }, annotationId, { timeout: 30000 });
+        await selectPdfUploadTextOffsets(
+            page,
+            annotationId,
+            expectedSourceText.length - 1,
+            expectedSourceText.length,
+        );
+        await page.keyboard.type('6');
+        await page.waitForFunction(({ id, expected }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.querySelector('.enpv-text-content')?.textContent === expected
+                && box.dataset.editorMode === 'rich';
+        }, { id: annotationId, expected: expectedEditedText }, { timeout: 30000 });
+        editedState = await readPdfUploadF1040BoxState(page, annotationId);
+        const editedRuns = (editedState?.rich_dom_runs || []).filter(
+            (run) => String(run?.text || '').trim()
+        );
+        addCheck(
+            'date_edit_immediately_keeps_two_weight_runs',
+            editedState?.editor_text_exact === expectedEditedText
+                && editedRuns.length === 2
+                && editedRuns.map((run) => String(run.text || '')).join('') === expectedEditedText
+                && editedRuns[0].text.trim() === titleText
+                && pdfUploadTextRunWeight(editedRuns[0]) >= 600
+                && editedRuns[1].text.trim() === createdEditedText
+                && pdfUploadTextRunWeight(editedRuns[1]) < 600,
+            'Replacing the final date digit immediately retains exactly one bold title run and one regular Created run.',
+            JSON.stringify({ expected: expectedEditedText, edited_runs: editedRuns, edited_state: editedState }),
+        );
+
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(({ id, expected }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box
+                && !box.classList.contains('is-editing')
+                && box.classList.contains('is-persisted-overlay')
+                && box.querySelector('.enpv-text-content')?.textContent === expected;
+        }, { id: annotationId, expected: expectedEditedText }, { timeout: 30000 });
+        committedState = await readPdfUploadF1040BoxState(page, annotationId);
+        const committedRuns = (committedState?.rich_dom_runs || []).filter(
+            (run) => String(run?.text || '').trim()
+        );
+        addCheck(
+            'date_edit_commit_keeps_created_regular',
+            committedRuns.length === 2
+                && committedRuns.map((run) => String(run.text || '')).join('') === expectedEditedText
+                && committedRuns[0].text.trim() === titleText
+                && pdfUploadTextRunWeight(committedRuns[0]) >= 600
+                && committedRuns[1].text.trim() === createdEditedText
+                && pdfUploadTextRunWeight(committedRuns[1]) < 600,
+            'Committing the edited footer does not spread the title’s bold style into the Created timestamp.',
+            JSON.stringify({ committed_runs: committedRuns, committed_state: committedState }),
+        );
+
+        farScroll = await runPdfUploadFarScrollRoundTrip(page, annotationId);
+        rehydratedState = await readPdfUploadF1040BoxState(page, annotationId);
+        const rehydratedRuns = (rehydratedState?.rich_dom_runs || []).filter(
+            (run) => String(run?.text || '').trim()
+        );
+        await opened.pageLocator.screenshot({ path: artifactPaths.after });
+        addCheck(
+            'scroll_round_trip_preserves_mixed_weights',
+            rehydratedState?.editor_text_exact === expectedEditedText
+                && rehydratedRuns.length === 2
+                && rehydratedRuns.map((run) => String(run.text || '')).join('') === expectedEditedText
+                && pdfUploadTextRunWeight(rehydratedRuns[0]) >= 600
+                && pdfUploadTextRunWeight(rehydratedRuns[1]) < 600,
+            'After scrolling away and back, the rendered footer still has bold Schedule text and regular Created text.',
+            JSON.stringify({ far_scroll: farScroll, rehydrated_runs: rehydratedRuns }),
+        );
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        const annotations = Array.isArray(downloaded.payload?.session_annotations)
+            ? downloaded.payload.session_annotations
+            : [];
+        payloadAnnotation = annotations.find(
+            (annotation) => String(annotation?.id || '') === annotationId
+        ) || null;
+        const payloadRuns = Array.isArray(payloadAnnotation?.richTextRuns)
+            ? payloadAnnotation.richTextRuns.filter((run) => run?.type === 'text')
+            : [];
+        addCheck(
+            'serialized_date_edit_retains_two_weight_runs',
+            payloadAnnotation?.text === expectedEditedText
+                && payloadRuns.length === 2
+                && payloadRuns.map((run) => String(run.text || '')).join('') === expectedEditedText
+                && payloadRuns[0].text.trim() === titleText
+                && pdfUploadTextRunWeight(payloadRuns[0]) >= 600
+                && payloadRuns[1].text.trim() === createdEditedText
+                && pdfUploadTextRunWeight(payloadRuns[1]) < 600,
+            'The download session payload retains the exact date edit and its two distinct font weights.',
+            JSON.stringify({ expected: expectedEditedText, payload_annotation: payloadAnnotation }),
+        );
+        addCheck(
+            'downloaded_pdf_created',
+            downloaded.pdf.length > 1000,
+            'The mixed-weight date edit produced a non-empty PDF result.',
+            `bytes=${downloaded.pdf.length}`,
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            edited_state: editedState,
+            committed_state: committedState,
+            far_scroll: farScroll,
+            rehydrated_state: rehydratedState,
+            payload_annotation: payloadAnnotation,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Page 1 :119 after date edit', kind: 'image', filename: artifactNames.after },
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloaded.pdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                edited_state: editedState,
+                committed_state: committedState,
+                far_scroll: farScroll,
+                rehydrated_state: rehydratedState,
+                payload_annotation: payloadAnnotation,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadF1040ScrollPreservesUserSizedGeometryFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_34_before_scroll'),
+        after: buildArtifactName(testKey, runToken, 'page1_34_after_scroll'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let initialState = null;
+    let editedState = null;
+    let resizedState = null;
+    let afterState = null;
+    let scrollProbe = null;
+    let pointerHeld = false;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const suffix = String(
+            config.f1040_scroll_geometry_suffix
+            || config.f1040_user_sized_geometry_suffix
+            || '0_0:34'
+        );
+        const expectedSourceText = String(
+            config.f1040_scroll_geometry_expected_text
+            || config.f1040_user_sized_geometry_expected_text
+            || 'a'
+        );
+        const expectedEditedText = 'z';
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedSourceText);
+        annotationId = resolved.annotationId;
+        initialState = await readPdfUploadF1040BoxState(page, annotationId);
+        addCheck(
+            'exact_34_single_glyph_target_resolved',
+            annotationId.endsWith(`_${suffix}`)
+                && initialState?.editor_text === expectedSourceText,
+            'The disposable f1040s3 clone resolves the exact :34 single-glyph source annotation.',
+            JSON.stringify({ annotation_id: annotationId, initial_state: initialState }),
+        );
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, annotationId, { timeout: 30000 });
+        await selectPdfUploadTextOffsets(page, annotationId, 0, expectedSourceText.length);
+        await page.keyboard.type(expectedEditedText);
+        await page.waitForFunction(({ id, expected }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.querySelector('.enpv-text-content')?.textContent === expected;
+        }, { id: annotationId, expected: expectedEditedText }, { timeout: 30000 });
+        await page.locator('#afb-valign').selectOption('bottom');
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.dataset?.verticalAlign === 'bottom';
+        }, annotationId, { timeout: 30000 });
+        editedState = await readPdfUploadF1040BoxState(page, annotationId);
+        addCheck(
+            'single_glyph_edit_promotes_to_bottom_aligned_rich_text',
+            editedState?.editor_text_exact === expectedEditedText
+                && editedState?.editor_mode === 'rich',
+            'Changing a to z promotes :34 to rich text before the user-sized geometry is exercised.',
+            JSON.stringify({ edited_state: editedState }),
+        );
+
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(({ id, expected }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box
+                && !box.classList.contains('is-editing')
+                && box.classList.contains('is-persisted-overlay')
+                && box.querySelector('.enpv-text-content')?.textContent === expected;
+        }, { id: annotationId, expected: expectedEditedText }, { timeout: 30000 });
+        const liveLocator = page.locator(
+            `.enpv-annotation-box.is-persisted-overlay[data-annotation-id="${annotationId}"]`
+        ).first();
+        await liveLocator.waitFor({ state: 'visible', timeout: 30000 });
+        await selectPdfUploadEditorBox(page, liveLocator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.dataset.editorMode === 'rich';
+        }, annotationId, { timeout: 30000 });
+        const beforeResizeState = await readPdfUploadF1040BoxState(page, annotationId);
+        const rightHandle = liveLocator.locator(':scope > .enpv-resize-handle.r');
+        const handleRect = await rightHandle.boundingBox();
+        if (!handleRect) throw new Error('Could not resolve the :34 right resize handle.');
+        const startX = handleRect.x + (handleRect.width / 2);
+        const startY = handleRect.y + (handleRect.height / 2);
+        await page.mouse.move(startX, startY);
+        await page.mouse.down();
+        pointerHeld = true;
+        await page.mouse.move(startX + 42, startY, { steps: 12 });
+        await page.mouse.up();
+        pointerHeld = false;
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.dataset?.userSizedTextBox === '1'
+                && box.classList.contains('is-persisted-overlay');
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(300);
+        resizedState = await readPdfUploadF1040BoxState(page, annotationId);
+        const widthDelta = Number(resizedState?.browser_rect?.width)
+            - Number(beforeResizeState?.browser_rect?.width);
+        addCheck(
+            'real_right_handle_resize_marks_34_user_sized',
+            resizedState?.editor_text_exact === expectedEditedText
+                && resizedState?.user_sized_text_box === '1'
+                && widthDelta > 25,
+            'A real right-handle drag creates the user-sized z box used by the scrolling regression.',
+            JSON.stringify({
+                width_delta: widthDelta,
+                before_resize_state: beforeResizeState,
+                resized_state: resizedState,
+            }),
+        );
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+
+        scrollProbe = await runPdfUploadNearViewportScrollProbe(page, annotationId, {
+            cycles: 12,
+            distance: 180,
+        });
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.after });
+        const geometryDrift = Math.max(
+            Number(scrollProbe?.max_drift_px?.box_left),
+            Number(scrollProbe?.max_drift_px?.box_top),
+            Number(scrollProbe?.max_drift_px?.box_width),
+            Number(scrollProbe?.max_drift_px?.box_height),
+        );
+        addCheck(
+            'repeated_scroll_keeps_user_sized_geometry_fixed',
+            scrollProbe?.completed === true
+                && scrollProbe?.all_samples_found === true
+                && scrollProbe?.all_text_exact === true
+                && Number.isFinite(geometryDrift)
+                && geometryDrift <= 0.5
+                && afterState?.editor_text_exact === expectedEditedText
+                && afterState?.user_sized_text_box === '1',
+            'Across every scroll sample, :34 keeps the same local left, top, width, and height instead of growing.',
+            JSON.stringify({
+                geometry_max_drift_px: geometryDrift,
+                max_drift_px: scrollProbe?.max_drift_px,
+                resized_state: resizedState,
+                after_state: afterState,
+            }),
+        );
+        addCheck(
+            'scroll_keeps_same_nodes_without_runaway_rebuild_work',
+            scrollProbe?.all_same_box === true
+                && scrollProbe?.all_same_layer === true
+                && scrollProbe?.target_rebuild_count === 0
+                && scrollProbe?.layer_child_list_mutation_count === 0
+                && scrollProbe?.sample_count === (1 + (12 * 2 * 5 * 3) + 1),
+            'The repeated scroll completes with the same overlay nodes and zero layer rebuilds, structurally guarding the laggy-scroll regression.',
+            JSON.stringify({
+                duration_ms_diagnostic_only: scrollProbe?.duration_ms,
+                scroll_event_count: scrollProbe?.scroll_event_count,
+                sample_count: scrollProbe?.sample_count,
+                target_rebuild_count: scrollProbe?.target_rebuild_count,
+                layer_child_list_mutation_count: scrollProbe?.layer_child_list_mutation_count,
+                mutations: scrollProbe?.mutation_records,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            initial_state: initialState,
+            edited_state: editedState,
+            resized_state: resizedState,
+            after_state: afterState,
+            scroll_probe: scrollProbe,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Page 1 :34 before scrolling', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 :34 after scrolling', kind: 'image', filename: artifactNames.after },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                initial_state: initialState,
+                edited_state: editedState,
+                resized_state: resizedState,
+                after_state: afterState,
+                scroll_probe: scrollProbe,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (pointerHeld) {
+            try { await page.mouse.up(); } catch (_) {}
+        }
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadF1040MoveWithoutFalseUnderlineFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_before_move'),
+        after: buildArtifactName(testKey, runToken, 'page1_after_move'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        originalPage: buildArtifactName(testKey, runToken, 'page1_original'),
+        resultPage: buildArtifactName(testKey, runToken, 'page1_result'),
+        diffPage: buildArtifactName(testKey, runToken, 'page1_diff'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let afterState = null;
+    let move = null;
+    let downloadPayload = null;
+    let analysis = null;
+    let raster = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const pageLocator = opened.pageLocator;
+        addCheck(
+            'disposable_clone_created',
+            documentId > 0 && documentId !== Number(config.source_document_id),
+            'The database original was opened through a disposable PDF.js editor clone.',
+            `source_document=${config.source_document_id} disposable_document=${documentId}`,
+        );
+
+        const suffix = String(config.f1040_move_suffix || '0_0:115');
+        const expectedText = String(
+            config.f1040_move_expected_text
+            || '15 Add lines 9 through 12 and 14. Enter here and on Form 1040'
+        );
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        addCheck(
+            'saved_move_target_resolved',
+            Boolean(beforeState)
+                && annotationId.endsWith(`_${suffix}`)
+                && (
+                    normalize(beforeState.text).startsWith(normalize(expectedText))
+                    || normalize(beforeState.text).startsWith(normalize(expectedText).replace(/^15\s+/, ''))
+                ),
+            'The saved f1040s3 move test resolves the exact PDF.js :115 row.',
+            JSON.stringify(beforeState),
+        );
+        addCheck(
+            'source_annotation_has_no_underline',
+            beforeState?.root_underline === false
+                && (beforeState?.underline_metadata || []).length === 0
+                && (beforeState?.decorated_nodes || []).length === 0,
+            'The source :115 annotation begins without root, run, segment, or computed-CSS underline state.',
+            JSON.stringify({
+                root_underline: beforeState?.root_underline,
+                underline_metadata: beforeState?.underline_metadata,
+                decorated_nodes: beforeState?.decorated_nodes,
+                source_underline_segments: beforeState?.source_underline_segments,
+            }),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.before });
+
+        // Move beneath the footer into an otherwise blank part of the page.
+        // Schedule 3 has horizontal form rules on nearly every row; using a
+        // blank destination keeps an original table rule from visually
+        // masquerading as the false underline this regression guards.
+        move = await movePdfUploadEditorBox(page, resolved.locator, 37, 70);
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        await pageLocator.screenshot({ path: artifactPaths.after });
+        const browserDx = move?.before && move?.after ? move.after.x - move.before.x : 0;
+        const browserDy = move?.before && move?.after ? move.after.y - move.before.y : 0;
+        addCheck(
+            'editor_moved_target',
+            afterState?.moved_text_overlay === '1'
+                && Math.hypot(browserDx, browserDy) >= 20
+                && Math.hypot(Number(afterState?.dx_pts || 0), Number(afterState?.dy_pts || 0)) >= 5,
+            'The real PDF.js move control promotes and moves :115 by a material distance.',
+            JSON.stringify({ move, browser_dx: browserDx, browser_dy: browserDy, after_state: afterState }),
+        );
+        addCheck(
+            'move_does_not_create_dom_underline',
+            afterState?.root_underline === false
+                && (afterState?.underline_metadata || []).length === 0
+                && (afterState?.decorated_nodes || []).length === 0
+                && (afterState?.source_underline_segments || []).length === 0,
+            'Dragging :115 leaves root CSS, per-run metadata, and source underline segments empty.',
+            JSON.stringify({
+                root_underline: afterState?.root_underline,
+                underline_metadata: afterState?.underline_metadata,
+                decorated_nodes: afterState?.decorated_nodes,
+                source_underline_segments: afterState?.source_underline_segments,
+            }),
+        );
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        downloadPayload = downloaded.payload;
+        const sessionAnnotations = Array.isArray(downloadPayload.session_annotations)
+            ? downloadPayload.session_annotations
+            : [];
+        const targetAnnotations = sessionAnnotations.filter((annotation) => (
+            String(annotation?.id || '') === annotationId
+        ));
+        const payloadUnderlineMetadata = targetAnnotations.flatMap(
+            (annotation) => pdfUploadAnnotationUnderlineMetadata(annotation)
+        );
+        addCheck(
+            'download_payload_contains_clean_move',
+            targetAnnotations.length === 1
+                && (
+                    targetAnnotations[0]?.movedTextOverlay === true
+                    || targetAnnotations[0]?.movedTextOverlay === 1
+                    || targetAnnotations[0]?.movedTextOverlay === '1'
+                )
+                && payloadUnderlineMetadata.length === 0,
+            'The real downloadAnnotatedPdf() payload contains one moved :115 annotation with no underline state.',
+            JSON.stringify({
+                target_annotation_count: targetAnnotations.length,
+                underline_metadata: payloadUnderlineMetadata,
+                target_annotations: targetAnnotations,
+            }),
+        );
+        addCheck(
+            'download_uses_pdfjs_visible_export',
+            downloadPayload.use_exact_download_path === true
+                && downloadPayload.use_pdfjs_visible_export === true
+                && downloadPayload.use_conversion_safe_export === true,
+            'The request used the editor’s exact visible conversion-safe download path.',
+            JSON.stringify({
+                use_exact_download_path: downloadPayload.use_exact_download_path,
+                use_pdfjs_visible_export: downloadPayload.use_pdfjs_visible_export,
+                use_conversion_safe_export: downloadPayload.use_conversion_safe_export,
+            }),
+        );
+        addCheck(
+            'downloaded_pdf_created',
+            downloaded.pdf.length > 1000,
+            'downloadAnnotatedPdf() returned a non-empty PDF.',
+            `bytes=${downloaded.pdf.length}`,
+        );
+
+        analysis = analyzePdfUploadF1040Move({
+            sourcePdfPath,
+            resultPdfPath: artifactPaths.pdf,
+            pageIndex: Number(config.page_index || 0),
+            expectedText,
+            originalPagePath: artifactPaths.originalPage,
+            resultPagePath: artifactPaths.resultPage,
+        });
+        raster = comparePdfUploadOperationPages(
+            artifactPaths.originalPage,
+            artifactPaths.resultPage,
+            artifactPaths.diffPage,
+        );
+        const sourceRect = analysis?.source_rect;
+        const resultRect = analysis?.result_rect;
+        const pdfDisplacement = Array.isArray(sourceRect) && Array.isArray(resultRect)
+            ? Math.hypot(
+                Number(resultRect[0]) - Number(sourceRect[0]),
+                Number(resultRect[1]) - Number(sourceRect[1]),
+            )
+            : 0;
+        addCheck(
+            'downloaded_pdf_contains_moved_text_once',
+            analysis?.source_count === 1
+                && analysis?.result_count === 1
+                && pdfDisplacement >= 5,
+            'The downloaded PDF retains the :115 text exactly once at its moved coordinates.',
+            JSON.stringify({
+                source_count: analysis?.source_count,
+                result_count: analysis?.result_count,
+                source_rect: sourceRect,
+                result_rect: resultRect,
+                displacement_pts: pdfDisplacement,
+            }),
+        );
+        addCheck(
+            'downloaded_pdf_has_no_new_baseline_stroke',
+            Array.isArray(analysis?.new_baseline_strokes)
+                && analysis.new_baseline_strokes.length === 0,
+            'No new horizontal drawing is added along the moved :115 text baseline.',
+            JSON.stringify({
+                new_baseline_strokes: analysis?.new_baseline_strokes,
+                new_horizontal_segments: analysis?.new_horizontal_segments,
+            }),
+        );
+        addCheck(
+            'downloaded_pdf_preserves_original_form_rule',
+            Array.isArray(analysis?.source_form_rule_segments)
+                && analysis.source_form_rule_segments.length >= 1
+                && Array.isArray(analysis?.missing_source_form_rule_segments)
+                && analysis.missing_source_form_rule_segments.length === 0,
+            'The original horizontal Schedule 3 form-rule segments beneath row 15 remain at their exact coordinates.',
+            JSON.stringify({
+                source_form_rule_segments: analysis?.source_form_rule_segments,
+                missing_source_form_rule_segments: analysis?.missing_source_form_rule_segments,
+            }),
+        );
+        addCheck(
+            'downloaded_page_visibly_changed',
+            Number(raster?.ratio || 0) > 0,
+            'The downloaded page raster reflects the requested move.',
+            JSON.stringify(raster),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            after_state: afterState,
+            move,
+            download_payload: downloadPayload,
+            pdf_analysis: analysis,
+            raster_analysis: raster,
+            checks,
+        }, null, 2)}\n`);
+        const result = buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Page 1 before move', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 after move', kind: 'image', filename: artifactNames.after },
+                { label: 'Original page 1 raster', kind: 'image', filename: artifactNames.originalPage },
+                { label: 'Result page 1 raster', kind: 'image', filename: artifactNames.resultPage },
+                { label: 'Page 1 raster diff', kind: 'image', filename: artifactNames.diffPage },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloaded.pdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                pdf_displacement_pts: pdfDisplacement,
+                raster,
+            },
+        });
+        result.page_count = Number(analysis?.page_count) || 0;
+        return result;
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                after_state: afterState,
+                move,
+                download_payload: downloadPayload,
+                pdf_analysis: analysis,
+                raster_analysis: raster,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadF1040DeleteNamePreservesFormArtworkFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_before_delete_name'),
+        after: buildArtifactName(testKey, runToken, 'page1_after_delete_name'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        originalPage: buildArtifactName(testKey, runToken, 'page1_original'),
+        resultPage: buildArtifactName(testKey, runToken, 'page1_result'),
+        diffPage: buildArtifactName(testKey, runToken, 'page1_diff'),
+        ruleOriginal: buildArtifactName(testKey, runToken, 'top_form_rule_original'),
+        ruleResult: buildArtifactName(testKey, runToken, 'top_form_rule_result'),
+        ruleDiff: buildArtifactName(testKey, runToken, 'top_form_rule_diff'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let neighborId = '';
+    let beforeState = null;
+    let neighborBeforeState = null;
+    let neighborAfterState = null;
+    let downloadPayload = null;
+    let analysis = null;
+    let raster = null;
+    let downloadedBytes = 0;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const pageLocator = opened.pageLocator;
+        addCheck(
+            'disposable_clone_created',
+            documentId > 0 && documentId !== Number(config.source_document_id),
+            'The database original was opened through a disposable PDF.js editor clone.',
+            `source_document=${config.source_document_id} disposable_document=${documentId}`,
+        );
+
+        const suffix = String(config.f1040_delete_name_suffix || '0_0:12');
+        const targetText = String(
+            config.f1040_delete_name_expected_text
+            || 'Name(s) shown on Form 1040, 1040-SR, or 1040-NR'
+        );
+        const neighborText = 'Your social security number';
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, targetText);
+        const neighbor = await resolvePdfUploadF1040Box(page, '0_0:13', neighborText);
+        annotationId = resolved.annotationId;
+        neighborId = neighbor.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        neighborBeforeState = await readPdfUploadF1040BoxState(page, neighborId);
+        addCheck(
+            'saved_delete_target_resolved',
+            Boolean(beforeState)
+                && annotationId.endsWith(`_${suffix}`)
+                && normalize(beforeState.text) === normalize(targetText)
+                && beforeState.page_index === Number(config.page_index || 0),
+            'The saved test resolves exactly the PDF.js :12 Name label on page 1.',
+            JSON.stringify({ target: beforeState, neighbor: neighborBeforeState }),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.before });
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="delete"]').click();
+        await page.waitForFunction((id) => !Array.from(
+            document.querySelectorAll('.enpv-annotation-box')
+        ).some((box) => String(box.dataset.annotationId || '') === id), annotationId, {
+            timeout: 30000,
+        });
+        neighborAfterState = await readPdfUploadF1040BoxState(page, neighborId);
+        await pageLocator.screenshot({ path: artifactPaths.after });
+        addCheck(
+            'editor_deleted_only_name_label',
+            !await page.locator(
+                `.enpv-annotation-box[data-annotation-id="${annotationId}"]`
+            ).count()
+                && Boolean(neighborAfterState)
+                && normalize(neighborAfterState.text) === normalize(neighborText),
+            'The real menu Delete action removes only :12 and leaves :13 selectable.',
+            JSON.stringify({ neighbor_before: neighborBeforeState, neighbor_after: neighborAfterState }),
+        );
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        downloadPayload = downloaded.payload;
+        downloadedBytes = downloaded.pdf.length;
+        const sessionAnnotations = Array.isArray(downloadPayload.session_annotations)
+            ? downloadPayload.session_annotations
+            : [];
+        const deletedAnnotations = sessionAnnotations.filter((annotation) => (
+            annotation?.pdfjsDeleted === true
+            || annotation?.pdfjsDeleted === 1
+            || annotation?.pdfjsDeleted === '1'
+        ));
+        const deletedSourceIds = deletedAnnotations.map((annotation) => String(
+            annotation?.pdfjsDeletedAnnotationId || annotation?.id || ''
+        ));
+        addCheck(
+            'download_payload_deletes_exact_target',
+            deletedSourceIds.length === 1 && deletedSourceIds[0] === annotationId,
+            'The real downloadAnnotatedPdf() payload marks exactly the resolved :12 source ID as deleted.',
+            JSON.stringify({ annotation_id: annotationId, deleted_source_ids: deletedSourceIds }),
+        );
+        addCheck(
+            'download_uses_pdfjs_visible_export',
+            downloadPayload.use_exact_download_path === true
+                && downloadPayload.use_pdfjs_visible_export === true
+                && downloadPayload.use_conversion_safe_export === true,
+            'The request used the editor’s exact visible conversion-safe download path.',
+            JSON.stringify({
+                use_exact_download_path: downloadPayload.use_exact_download_path,
+                use_pdfjs_visible_export: downloadPayload.use_pdfjs_visible_export,
+                use_conversion_safe_export: downloadPayload.use_conversion_safe_export,
+            }),
+        );
+        addCheck(
+            'downloaded_pdf_created',
+            downloadedBytes > 1000,
+            'downloadAnnotatedPdf() returned a non-empty PDF.',
+            `bytes=${downloadedBytes}`,
+        );
+
+        analysis = analyzePdfUploadF1040NameDeletion({
+            sourcePdfPath,
+            resultPdfPath: artifactPaths.pdf,
+            pageIndex: Number(config.page_index || 0),
+            targetText,
+            neighborText,
+            originalPagePath: artifactPaths.originalPage,
+            resultPagePath: artifactPaths.resultPage,
+        });
+        raster = comparePdfUploadRasterRegions({
+            originalPagePath: artifactPaths.originalPage,
+            resultPagePath: artifactPaths.resultPage,
+            diffPagePath: artifactPaths.diffPage,
+            pageWidth: analysis.page_width,
+            pageHeight: analysis.page_height,
+            regions: {
+                top_rule: { rect: [35.5, 82.75, 576.5, 84.75] },
+            },
+            cropPaths: {
+                top_rule: {
+                    original: artifactPaths.ruleOriginal,
+                    result: artifactPaths.ruleResult,
+                    diff: artifactPaths.ruleDiff,
+                },
+            },
+        });
+        addCheck(
+            'downloaded_pdf_deletes_name_text_only',
+            analysis.source_target_count === 1 && analysis.result_target_count === 0,
+            'The source contains the :12 Name label once and the downloaded PDF no longer contains it.',
+            JSON.stringify({
+                source_count: analysis.source_target_count,
+                result_count: analysis.result_target_count,
+                source_matches: analysis.source_target_matches,
+                result_matches: analysis.result_target_matches,
+            }),
+        );
+        const neighborDelta = pdfUploadRectMaxDelta(
+            analysis.source_neighbor_rect,
+            analysis.result_neighbor_rect,
+        );
+        addCheck(
+            'downloaded_pdf_preserves_neighbor_13',
+            analysis.source_neighbor_count === 1
+                && analysis.result_neighbor_count === 1
+                && neighborDelta <= 0.75,
+            'The :13 social-security-number label remains once at its original coordinates.',
+            JSON.stringify({
+                source_count: analysis.source_neighbor_count,
+                result_count: analysis.result_neighbor_count,
+                source_rect: analysis.source_neighbor_rect,
+                result_rect: analysis.result_neighbor_rect,
+                max_delta_pts: neighborDelta,
+            }),
+        );
+        addCheck(
+            'downloaded_pdf_preserves_y84_form_rules',
+            Array.isArray(analysis.source_rule_segments)
+                && analysis.source_rule_segments.length >= 3
+                && Array.isArray(analysis.missing_rule_segments)
+                && analysis.missing_rule_segments.length === 0,
+            'Every source form-rule segment at y≈84 remains at the same coordinate and stroke width.',
+            JSON.stringify({
+                source_rule_segments: analysis.source_rule_segments,
+                result_rule_segments: analysis.result_rule_segments,
+                missing_rule_segments: analysis.missing_rule_segments,
+            }),
+        );
+        const ruleRaster = raster?.regions?.top_rule;
+        addCheck(
+            'downloaded_pdf_rule_is_visually_unmasked',
+            Number(ruleRaster?.original?.dark_pixels || 0) > 100
+                && Number(ruleRaster?.result?.dark_pixels || 0)
+                    >= Number(ruleRaster?.original?.dark_pixels || 0) * 0.97
+                && Number(ruleRaster?.ratio ?? 1) <= 0.01,
+            'The downloaded raster keeps the y≈84 rule dark and unmasked above the deleted text.',
+            JSON.stringify(ruleRaster),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            resolved_neighbor_id: neighborId,
+            before_state: beforeState,
+            neighbor_before_state: neighborBeforeState,
+            neighbor_after_state: neighborAfterState,
+            download_payload: downloadPayload,
+            pdf_analysis: analysis,
+            raster_analysis: raster,
+            checks,
+        }, null, 2)}\n`);
+        const result = buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Page 1 before deleting :12', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 after deleting :12', kind: 'image', filename: artifactNames.after },
+                { label: 'Original page 1 raster', kind: 'image', filename: artifactNames.originalPage },
+                { label: 'Result page 1 raster', kind: 'image', filename: artifactNames.resultPage },
+                { label: 'Page 1 raster diff', kind: 'image', filename: artifactNames.diffPage },
+                { label: 'Original y≈84 form rule', kind: 'image', filename: artifactNames.ruleOriginal },
+                { label: 'Result y≈84 form rule', kind: 'image', filename: artifactNames.ruleResult },
+                { label: 'y≈84 form-rule diff', kind: 'image', filename: artifactNames.ruleDiff },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloadedBytes,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                resolved_neighbor_id: neighborId,
+                raster,
+            },
+        });
+        result.page_count = Number(analysis.page_count) || 0;
+        return result;
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                resolved_neighbor_id: neighborId,
+                before_state: beforeState,
+                neighbor_before_state: neighborBeforeState,
+                neighbor_after_state: neighborAfterState,
+                download_payload: downloadPayload,
+                pdf_analysis: analysis,
+                raster_analysis: raster,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadF1040PartHeaderPreservesSourceTileFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page1_before_move_part_header'),
+        after: buildArtifactName(testKey, runToken, 'page1_after_move_part_header'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        originalPage: buildArtifactName(testKey, runToken, 'page1_original'),
+        resultPage: buildArtifactName(testKey, runToken, 'page1_result'),
+        diffPage: buildArtifactName(testKey, runToken, 'page1_diff'),
+        tileOriginal: buildArtifactName(testKey, runToken, 'source_tile_original'),
+        tileResult: buildArtifactName(testKey, runToken, 'source_tile_result'),
+        tileDiff: buildArtifactName(testKey, runToken, 'source_tile_diff'),
+        editorTileAfter: buildArtifactName(testKey, runToken, 'editor_source_tile_after_move'),
+        destinationOriginal: buildArtifactName(testKey, runToken, 'destination_original'),
+        destinationResult: buildArtifactName(testKey, runToken, 'destination_result'),
+        destinationDiff: buildArtifactName(testKey, runToken, 'destination_diff'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let neighborId = '';
+    let beforeState = null;
+    let afterState = null;
+    let neighborBeforeState = null;
+    let neighborAfterState = null;
+    let moveDelta = null;
+    let move = null;
+    let downloadPayload = null;
+    let analysis = null;
+    let raster = null;
+    let editorTileStats = null;
+    let downloadedBytes = 0;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const pageLocator = opened.pageLocator;
+        addCheck(
+            'disposable_clone_created',
+            documentId > 0 && documentId !== Number(config.source_document_id),
+            'The database original was opened through a disposable PDF.js editor clone.',
+            `source_document=${config.source_document_id} disposable_document=${documentId}`,
+        );
+
+        const suffix = String(config.f1040_part_header_suffix || '0_0:14');
+        const targetText = String(config.f1040_part_header_expected_text || 'Part I');
+        const neighborText = 'Nonrefundable Credits';
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, targetText);
+        const neighbor = await resolvePdfUploadF1040Box(page, '0_0:15', neighborText);
+        annotationId = resolved.annotationId;
+        neighborId = neighbor.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        neighborBeforeState = await readPdfUploadF1040BoxState(page, neighborId);
+        addCheck(
+            'saved_part_header_target_resolved',
+            Boolean(beforeState)
+                && annotationId.endsWith(`_${suffix}`)
+                && normalize(beforeState.text) === normalize(targetText)
+                && beforeState.page_index === Number(config.page_index || 0),
+            'The saved test resolves exactly the PDF.js :14 Part I header on page 1.',
+            JSON.stringify({ target: beforeState, neighbor: neighborBeforeState }),
+        );
+        await pageLocator.screenshot({ path: artifactPaths.before });
+
+        // The empty Name entry field is white in the PDF and contains no
+        // source glyphs at this point. Move only the Part I text there; the
+        // original black form tile is static artwork and must stay in place.
+        moveDelta = await pdfUploadMoveDeltaToTopLeftPdfPoint(resolved.locator, 115, 96);
+        move = await movePdfUploadEditorBox(
+            page,
+            resolved.locator,
+            Number(moveDelta.x),
+            Number(moveDelta.y),
+        );
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        neighborAfterState = await readPdfUploadF1040BoxState(page, neighborId);
+        await pageLocator.screenshot({ path: artifactPaths.after });
+        const browserDx = move?.before && move?.after ? move.after.x - move.before.x : 0;
+        const browserDy = move?.before && move?.after ? move.after.y - move.before.y : 0;
+        addCheck(
+            'editor_moves_exact_part_header',
+            afterState?.moved_text_overlay === '1'
+                && Math.hypot(browserDx, browserDy) >= 20
+                && Math.hypot(Number(afterState?.dx_pts || 0), Number(afterState?.dy_pts || 0)) >= 5,
+            'The real PDF.js move grip promotes and moves :14 by a material distance.',
+            JSON.stringify({ move_delta: moveDelta, move, after_state: afterState }),
+        );
+        const editorTextColor = afterState?.computed_text_fill_color
+            || afterState?.computed_text_color
+            || afterState?.css_text_color;
+        const visibleRenderedRuns = (afterState?.rendered_source_runs || []).filter((run) => (
+            run
+            && run.visibility !== 'hidden'
+            && run.display !== 'none'
+            && Number(run.opacity ?? 1) > 0
+            && pdfUploadColorIsDark(run.text_fill_color || run.color)
+        ));
+        addCheck(
+            'editor_moved_text_is_dark_and_visible',
+            pdfUploadColorIsDark(editorTextColor)
+                && (
+                    afterState?.transparent_text_paint === false
+                    || visibleRenderedRuns.length > 0
+                ),
+            'The moved Part I annotation is rendered as visible dark text at its white destination.',
+            JSON.stringify({
+                computed_text_color: afterState?.computed_text_color,
+                computed_text_fill_color: afterState?.computed_text_fill_color,
+                css_text_color: afterState?.css_text_color,
+                transparent_text_paint: afterState?.transparent_text_paint,
+                visible_rendered_runs: visibleRenderedRuns,
+            }),
+        );
+        addCheck(
+            'editor_preserves_neighbor_credits_header',
+            Boolean(neighborAfterState)
+                && normalize(neighborAfterState.text) === normalize(neighborText),
+            'Moving :14 leaves the adjacent Nonrefundable Credits annotation intact.',
+            JSON.stringify({
+                neighbor_before: neighborBeforeState,
+                neighbor_after: neighborAfterState,
+            }),
+        );
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        downloadPayload = downloaded.payload;
+        downloadedBytes = downloaded.pdf.length;
+        const sessionAnnotations = Array.isArray(downloadPayload.session_annotations)
+            ? downloadPayload.session_annotations
+            : [];
+        const targetAnnotations = sessionAnnotations.filter((annotation) => (
+            String(annotation?.id || '') === annotationId
+        ));
+        const targetAnnotation = targetAnnotations[0] || null;
+        const payloadText = String(
+            targetAnnotation?.pdfjsSourceText
+            || targetAnnotation?.originalText
+            || targetAnnotation?.text
+            || ''
+        );
+        const payloadTextColor = targetAnnotation?.textColor || targetAnnotation?.color || '';
+        addCheck(
+            'download_payload_contains_exact_dark_move',
+            targetAnnotations.length === 1
+                && normalize(payloadText) === normalize(targetText)
+                && (
+                    targetAnnotation?.movedTextOverlay === true
+                    || targetAnnotation?.movedTextOverlay === 1
+                    || targetAnnotation?.movedTextOverlay === '1'
+                )
+                && pdfUploadColorIsDark(payloadTextColor),
+            'The downloadAnnotatedPdf() payload contains exactly :14 as a moved annotation with dark output text.',
+            JSON.stringify({
+                annotation_id: annotationId,
+                target_annotation_count: targetAnnotations.length,
+                payload_text: payloadText,
+                payload_text_color: payloadTextColor,
+                target_annotation: targetAnnotation,
+            }),
+        );
+        addCheck(
+            'download_uses_pdfjs_visible_export',
+            downloadPayload.use_exact_download_path === true
+                && downloadPayload.use_pdfjs_visible_export === true
+                && downloadPayload.use_conversion_safe_export === true,
+            'The request used the editor’s exact visible conversion-safe download path.',
+            JSON.stringify({
+                use_exact_download_path: downloadPayload.use_exact_download_path,
+                use_pdfjs_visible_export: downloadPayload.use_pdfjs_visible_export,
+                use_conversion_safe_export: downloadPayload.use_conversion_safe_export,
+            }),
+        );
+        addCheck(
+            'downloaded_pdf_created',
+            downloadedBytes > 1000,
+            'downloadAnnotatedPdf() returned a non-empty PDF.',
+            `bytes=${downloadedBytes}`,
+        );
+
+        analysis = analyzePdfUploadF1040PartHeaderMove({
+            sourcePdfPath,
+            resultPdfPath: artifactPaths.pdf,
+            pageIndex: Number(config.page_index || 0),
+            targetText,
+            neighborText,
+            originalPagePath: artifactPaths.originalPage,
+            resultPagePath: artifactPaths.resultPage,
+        });
+        const destinationRect = analysis.result_target_rect;
+        raster = comparePdfUploadRasterRegions({
+            originalPagePath: artifactPaths.originalPage,
+            resultPagePath: artifactPaths.resultPage,
+            diffPagePath: artifactPaths.diffPage,
+            pageWidth: analysis.page_width,
+            pageHeight: analysis.page_height,
+            regions: {
+                source_tile: { rect: analysis.source_tile_rect },
+                destination: { rect: destinationRect, padding_points: 2 },
+            },
+            cropPaths: {
+                source_tile: {
+                    original: artifactPaths.tileOriginal,
+                    result: artifactPaths.tileResult,
+                    diff: artifactPaths.tileDiff,
+                },
+                destination: {
+                    original: artifactPaths.destinationOriginal,
+                    result: artifactPaths.destinationResult,
+                    diff: artifactPaths.destinationDiff,
+                },
+            },
+        });
+        editorTileStats = measurePdfUploadRasterRegion({
+            imagePath: artifactPaths.after,
+            pageWidth: analysis.page_width,
+            pageHeight: analysis.page_height,
+            rect: analysis.source_tile_rect,
+            outputPath: artifactPaths.editorTileAfter,
+        });
+        const sourceRect = analysis.source_target_rect;
+        const resultRect = analysis.result_target_rect;
+        const pdfDisplacement = Array.isArray(sourceRect) && Array.isArray(resultRect)
+            ? Math.hypot(
+                Number(resultRect[0]) - Number(sourceRect[0]),
+                Number(resultRect[1]) - Number(sourceRect[1]),
+            )
+            : 0;
+        const resultSpanColors = (analysis.result_target_spans || [])
+            .map((span) => span?.color_rgb)
+            .filter(Array.isArray);
+        addCheck(
+            'downloaded_pdf_contains_one_dark_moved_part_header',
+            analysis.source_target_count === 1
+                && analysis.result_target_count === 1
+                && pdfDisplacement >= 5
+                && resultSpanColors.length === 1
+                && resultSpanColors[0].every((channel) => Number(channel) <= 96),
+            'The exported PDF contains Part I exactly once at the moved position using dark text.',
+            JSON.stringify({
+                source_count: analysis.source_target_count,
+                result_count: analysis.result_target_count,
+                source_rect: sourceRect,
+                result_rect: resultRect,
+                displacement_pts: pdfDisplacement,
+                source_spans: analysis.source_target_spans,
+                result_spans: analysis.result_target_spans,
+            }),
+        );
+        const neighborDelta = pdfUploadRectMaxDelta(
+            analysis.source_neighbor_rect,
+            analysis.result_neighbor_rect,
+        );
+        addCheck(
+            'downloaded_pdf_preserves_credits_neighbor',
+            analysis.source_neighbor_count >= 1
+                && analysis.result_neighbor_count === analysis.source_neighbor_count
+                && neighborDelta <= 0.75,
+            'The adjacent Nonrefundable Credits label remains at its original coordinates.',
+            JSON.stringify({
+                source_count: analysis.source_neighbor_count,
+                result_count: analysis.result_neighbor_count,
+                source_rect: analysis.source_neighbor_rect,
+                result_rect: analysis.result_neighbor_rect,
+                source_matches: analysis.source_neighbor_matches,
+                result_matches: analysis.result_neighbor_matches,
+                max_delta_pts: neighborDelta,
+            }),
+        );
+        const tileRaster = raster?.regions?.source_tile;
+        addCheck(
+            'editor_original_black_tile_has_no_white_cutout',
+            Number(editorTileStats?.dark_ratio || 0) >= 0.65
+                && Number(editorTileStats?.light_ratio ?? 1) <= 0.3,
+            'After the live drag, the original Part I tile remains dark instead of receiving a white source-mask cutout.',
+            JSON.stringify(editorTileStats),
+        );
+        addCheck(
+            'downloaded_pdf_preserves_original_black_tile',
+            (analysis.source_dark_tile_fills || []).length >= 1
+                && (analysis.result_dark_tile_fills || []).length >= 1
+                && Number(tileRaster?.result?.dark_ratio || 0) >= 0.65
+                && Number(tileRaster?.result?.dark_ratio || 0)
+                    >= Number(tileRaster?.original?.dark_ratio || 0) - 0.08
+                && Number(tileRaster?.result?.light_ratio ?? 1) <= 0.3,
+            'The original black source tile remains dark and present in the downloaded PDF.',
+            JSON.stringify({
+                source_dark_fills: analysis.source_dark_tile_fills,
+                result_dark_fills: analysis.result_dark_tile_fills,
+                raster: tileRaster,
+            }),
+        );
+        const destinationRaster = raster?.regions?.destination;
+        addCheck(
+            'downloaded_pdf_destination_is_white_with_visible_dark_text',
+            Number(destinationRaster?.original?.light_ratio || 0) >= 0.75
+                && Number(destinationRaster?.result?.light_ratio || 0) >= 0.55
+                && Number(destinationRaster?.result?.dark_pixels || 0) >= 20
+                && Number(destinationRaster?.ratio || 0) >= 0.01,
+            'The destination remains a light field while visibly gaining dark Part I glyphs; no black tile is copied there.',
+            JSON.stringify(destinationRaster),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            resolved_neighbor_id: neighborId,
+            before_state: beforeState,
+            after_state: afterState,
+            neighbor_before_state: neighborBeforeState,
+            neighbor_after_state: neighborAfterState,
+            move_delta: moveDelta,
+            move,
+            download_payload: downloadPayload,
+            pdf_analysis: analysis,
+            raster_analysis: raster,
+            editor_source_tile_stats: editorTileStats,
+            checks,
+        }, null, 2)}\n`);
+        const result = buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Page 1 before moving Part I', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 after moving Part I', kind: 'image', filename: artifactNames.after },
+                { label: 'Original page 1 raster', kind: 'image', filename: artifactNames.originalPage },
+                { label: 'Result page 1 raster', kind: 'image', filename: artifactNames.resultPage },
+                { label: 'Page 1 raster diff', kind: 'image', filename: artifactNames.diffPage },
+                { label: 'Editor source tile after move', kind: 'image', filename: artifactNames.editorTileAfter },
+                { label: 'Original source tile', kind: 'image', filename: artifactNames.tileOriginal },
+                { label: 'Result source tile', kind: 'image', filename: artifactNames.tileResult },
+                { label: 'Source tile diff', kind: 'image', filename: artifactNames.tileDiff },
+                { label: 'Original destination', kind: 'image', filename: artifactNames.destinationOriginal },
+                { label: 'Result destination', kind: 'image', filename: artifactNames.destinationResult },
+                { label: 'Destination diff', kind: 'image', filename: artifactNames.destinationDiff },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloadedBytes,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                resolved_neighbor_id: neighborId,
+                pdf_displacement_pts: pdfDisplacement,
+                raster,
+            },
+        });
+        result.page_count = Number(analysis.page_count) || 0;
+        return result;
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                resolved_neighbor_id: neighborId,
+                before_state: beforeState,
+                after_state: afterState,
+                neighbor_before_state: neighborBeforeState,
+                neighbor_after_state: neighborAfterState,
+                move_delta: moveDelta,
+                move,
+                download_payload: downloadPayload,
+                pdf_analysis: analysis,
+                raster_analysis: raster,
+                editor_source_tile_stats: editorTileStats,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadMoveDownPreservesFontSizeFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'before_move_down'),
+        after: buildArtifactName(testKey, runToken, 'after_move_down'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let afterState = null;
+    let move = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const suffix = String(config.move_down_suffix || '');
+        const targetText = String(config.target_text || '');
+        const requestedPixels = Number(config.move_down_pixels || 0);
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, targetText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        addCheck(
+            'saved_move_target_resolved',
+            Boolean(beforeState)
+                && annotationId.endsWith(`_${suffix}`)
+                && normalize(beforeState.text).startsWith(normalize(targetText)),
+            'The saved f1040s3 annotation resolves by its source suffix and target text.',
+            JSON.stringify({ annotation_id: annotationId, target: beforeState }),
+        );
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+
+        move = await movePdfUploadEditorBox(page, resolved.locator, 0, requestedPixels);
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.after });
+        const actualDelta = {
+            x: Number(move?.after?.x) - Number(move?.before?.x),
+            y: Number(move?.after?.y) - Number(move?.before?.y),
+        };
+        addCheck(
+            'annotation_dragged_requested_distance',
+            Math.abs(actualDelta.x) <= 2
+                && Math.abs(actualDelta.y - requestedPixels) <= 3
+                && afterState?.moved_text_overlay === '1',
+            `The production move grip drags the annotation down ${requestedPixels}px without horizontal drift.`,
+            JSON.stringify({ requested_pixels: requestedPixels, actual_delta: actualDelta, move }),
+        );
+        const fontMetrics = [
+            ['computed_font_size_px', beforeState?.computed_font_size_px, afterState?.computed_font_size_px],
+            ['font_size_pts', beforeState?.font_size_pts, afterState?.font_size_pts],
+            ['source_font_size_px', beforeState?.source_font_size_px, afterState?.source_font_size_px],
+        ].filter(([, before, after]) => Number.isFinite(Number(before)) && Number.isFinite(Number(after)));
+        addCheck(
+            'move_preserves_font_size',
+            fontMetrics.length >= 2
+                && fontMetrics.every(([, before, after]) => Math.abs(Number(after) - Number(before)) <= 0.05),
+            'Moving changes annotation position only; computed, point, and captured source font sizes stay fixed.',
+            JSON.stringify(Object.fromEntries(fontMetrics.map(([name, before, after]) => [
+                name,
+                { before, after, delta: Number(after) - Number(before) },
+            ]))),
+        );
+        const sizeDelta = {
+            width: Number(afterState?.browser_rect?.width) - Number(beforeState?.browser_rect?.width),
+            height: Number(afterState?.browser_rect?.height) - Number(beforeState?.browser_rect?.height),
+        };
+        addCheck(
+            'move_preserves_box_and_text',
+            Math.abs(sizeDelta.width) <= 0.5
+                && Math.abs(sizeDelta.height) <= 0.5
+                && normalize(afterState?.editor_text) === normalize(beforeState?.editor_text),
+            'The drag preserves the annotation bounding-box dimensions and text.',
+            JSON.stringify({ size_delta: sizeDelta, before: beforeState, after: afterState }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            after_state: afterState,
+            move,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Before moving annotation', kind: 'image', filename: artifactNames.before },
+                { label: 'After moving annotation', kind: 'image', filename: artifactNames.after },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                requested_move_down_pixels: requestedPixels,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                after_state: afterState,
+                move,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+function analyzePdfUploadDrylabTitleMove({
+    sourcePdfPath,
+    resultPdfPath,
+    pageIndex,
+    originalPagePath,
+    resultPagePath,
+}) {
+    const pythonCode = String.raw`
+import fitz
+import json
+import re
+import sys
+
+source_path, result_path = sys.argv[1], sys.argv[2]
+page_index = int(sys.argv[3])
+original_png, result_png = sys.argv[4], sys.argv[5]
+
+def compact(value):
+    return re.sub(r'\s+', '', str(value or '')).lower()
+
+def rect_values(rect):
+    return [float(rect.x0), float(rect.y0), float(rect.x1), float(rect.y1)]
+
+def text_blocks(page):
+    output = []
+    for block in page.get_text('dict', sort=True).get('blocks', []):
+        if block.get('type') != 0:
+            continue
+        spans = [
+            span
+            for line in block.get('lines', []) or []
+            for span in line.get('spans', []) or []
+            if str(span.get('text', '')).strip()
+        ]
+        if not spans:
+            continue
+        text = ''.join(str(span.get('text', '')) for span in spans)
+        output.append({
+            'text': text,
+            'compact': compact(text),
+            'bbox': list(map(float, block.get('bbox', [0, 0, 0, 0]))),
+            'spans': [{
+                'text': str(span.get('text', '')),
+                'bbox': list(map(float, span.get('bbox', [0, 0, 0, 0]))),
+                'size': float(span.get('size', 0) or 0),
+            } for span in spans],
+        })
+    return output
+
+def nonwhite_pixels(page, bbox):
+    rect = (fitz.Rect(bbox) + (-1, -1, 1, 1)) & page.rect
+    pix = page.get_pixmap(matrix=fitz.Matrix(4, 4), clip=rect, alpha=False)
+    samples = pix.samples
+    channels = max(1, int(pix.n or 3))
+    count = 0
+    for offset in range(0, len(samples), channels):
+        if offset + 2 >= len(samples):
+            continue
+        if not all(samples[offset + channel] > 245 for channel in range(3)):
+            count += 1
+    total = max(1, pix.width * pix.height)
+    return {'count': count, 'ratio': count / total, 'pixels': total}
+
+source_doc = fitz.open(source_path)
+result_doc = fitz.open(result_path)
+source_page = source_doc[page_index]
+result_page = result_doc[page_index]
+source_blocks = text_blocks(source_page)
+result_blocks = text_blocks(result_page)
+source_titles = [block for block in source_blocks if block['compact'] == 'drylabnews']
+result_titles = [block for block in result_blocks if block['compact'] == 'drylabnews']
+source_title = source_titles[0] if source_titles else None
+result_title = result_titles[0] if result_titles else None
+footer_blocks = [
+    block for block in result_blocks
+    if 'forinvestors&friends' in block['compact'] and 'may2017' in block['compact']
+]
+source_footer_blocks = [
+    block for block in source_blocks
+    if 'forinvestors&friends' in block['compact'] and 'may2017' in block['compact']
+]
+source_rect = fitz.Rect(source_title['bbox']) if source_title else None
+source_fragments = []
+if source_rect:
+    for word in result_page.get_text('words', sort=True):
+        word_rect = fitz.Rect(word[:4])
+        text = compact(word[4])
+        if word_rect.intersects(source_rect + (-2, -2, 2, 2)) and text in {'drylab', 'news', 'drylabnews'}:
+            source_fragments.append({'text': word[4], 'bbox': list(map(float, word[:4]))})
+
+matrix = fitz.Matrix(2, 2)
+source_page.get_pixmap(matrix=matrix, alpha=False).save(original_png)
+result_page.get_pixmap(matrix=matrix, alpha=False).save(result_png)
+
+print(json.dumps({
+    'page_count': len(result_doc),
+    'source_titles': source_titles,
+    'result_titles': result_titles,
+    'source_title': source_title,
+    'result_title': result_title,
+    'source_fragments_at_original_title': source_fragments,
+    'source_footer_blocks': source_footer_blocks,
+    'result_footer_blocks': footer_blocks,
+    'result_footer_pixels': nonwhite_pixels(result_page, footer_blocks[0]['bbox']) if footer_blocks else None,
+}))
+`;
+    const raw = execFileSync(PYTHON_BIN, [
+        '-c',
+        pythonCode,
+        sourcePdfPath,
+        resultPdfPath,
+        String(pageIndex),
+        originalPagePath,
+        resultPagePath,
+    ], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+async function readPdfUploadEditorTextRegion(page, expectedText) {
+    const compactExpected = String(expectedText || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '');
+    if (!compactExpected) return null;
+    return page.evaluate((wanted) => {
+        const compact = (value) => String(value || '')
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, '');
+        const pageDiv = document.querySelector('.pdfViewer .page[data-page-number="1"]');
+        const pageRect = pageDiv?.getBoundingClientRect?.();
+        if (!pageDiv || !pageRect) return null;
+        const candidates = [
+            ...Array.from(pageDiv.querySelectorAll('.enpv-annotation-box')),
+            ...Array.from(pageDiv.querySelectorAll('.textLayer span')),
+        ];
+        const target = candidates.find((candidate) => (
+            compact(candidate.dataset?.baseText
+                || candidate.dataset?.originalText
+                || candidate.textContent
+                || '').includes(wanted)
+        ));
+        if (!target) return null;
+        const textNode = target.querySelector?.('.enpv-text-content') || target;
+        let measured = textNode.getBoundingClientRect?.() || target.getBoundingClientRect();
+        try {
+            const range = document.createRange();
+            range.selectNodeContents(textNode);
+            const rangeRect = range.getBoundingClientRect();
+            range.detach?.();
+            if (rangeRect.width > 0 && rangeRect.height > 0) measured = rangeRect;
+        } catch (_) {}
+        if (!measured || measured.width <= 0 || measured.height <= 0) return null;
+        return {
+            left: measured.left - pageRect.left,
+            top: measured.top - pageRect.top,
+            right: measured.right - pageRect.left,
+            bottom: measured.bottom - pageRect.top,
+            width: measured.width,
+            height: measured.height,
+            text: String(target.textContent || '').replace(/\s+/g, ' ').trim(),
+        };
+    }, compactExpected);
+}
+
+function pdfUploadViewportRectToPageScreenshotRect(rect, pageRect) {
+    if (!rect || !pageRect) return null;
+    const left = Number(rect.left) - Number(pageRect.left);
+    const top = Number(rect.top) - Number(pageRect.top);
+    const right = Number(rect.right ?? (Number(rect.left) + Number(rect.width)))
+        - Number(pageRect.left);
+    const bottom = Number(rect.bottom ?? (Number(rect.top) + Number(rect.height)))
+        - Number(pageRect.top);
+    if (![left, top, right, bottom].every(Number.isFinite)
+        || right <= left || bottom <= top) {
+        return null;
+    }
+    return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+function measurePdfUploadEditorOrangePixels(imagePath, region, excludedRects = []) {
+    if (!imagePath || !region) return null;
+    const { PNG } = getPixelDiffLibs();
+    const png = PNG.sync.read(fs.readFileSync(imagePath));
+    const left = Math.max(0, Math.floor(Number(region.left)));
+    const top = Math.max(0, Math.floor(Number(region.top)));
+    const right = Math.min(png.width, Math.ceil(Number(region.right)));
+    const bottom = Math.min(png.height, Math.ceil(Number(region.bottom)));
+    if (![left, top, right, bottom].every(Number.isFinite)
+        || right <= left || bottom <= top) {
+        return null;
+    }
+    const exclusions = (excludedRects || []).map((rect) => ({
+        left: Number(rect?.left),
+        top: Number(rect?.top),
+        right: Number(rect?.right ?? (Number(rect?.left) + Number(rect?.width))),
+        bottom: Number(rect?.bottom ?? (Number(rect?.top) + Number(rect?.height))),
+    })).filter((rect) => Object.values(rect).every(Number.isFinite));
+    let orangePixels = 0;
+    let scannedPixels = 0;
+    let orangeLeft = Number.POSITIVE_INFINITY;
+    let orangeTop = Number.POSITIVE_INFINITY;
+    let orangeRight = Number.NEGATIVE_INFINITY;
+    let orangeBottom = Number.NEGATIVE_INFINITY;
+    for (let y = top; y < bottom; y += 1) {
+        for (let x = left; x < right; x += 1) {
+            if (exclusions.some((rect) => (
+                x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+            ))) {
+                continue;
+            }
+            scannedPixels += 1;
+            const offset = ((y * png.width) + x) * 4;
+            const red = png.data[offset];
+            const green = png.data[offset + 1];
+            const blue = png.data[offset + 2];
+            const alpha = png.data[offset + 3];
+            // Includes the antialiased edge shades around the source #ffa838
+            // Drylab glyphs while excluding black text and the white page.
+            const isOrange = alpha > 127
+                && red >= 210
+                && green >= 80
+                && green <= 215
+                && blue <= 150
+                && red - green >= 30
+                && green - blue >= 25;
+            if (!isOrange) continue;
+            orangePixels += 1;
+            orangeLeft = Math.min(orangeLeft, x);
+            orangeTop = Math.min(orangeTop, y);
+            orangeRight = Math.max(orangeRight, x + 1);
+            orangeBottom = Math.max(orangeBottom, y + 1);
+        }
+    }
+    return {
+        region: { left, top, right, bottom, width: right - left, height: bottom - top },
+        excluded_rects: exclusions,
+        scanned_pixels: scannedPixels,
+        orange_pixels: orangePixels,
+        orange_ratio: orangePixels / Math.max(1, scannedPixels),
+        orange_bbox: orangePixels > 0
+            ? {
+                left: orangeLeft,
+                top: orangeTop,
+                right: orangeRight,
+                bottom: orangeBottom,
+                width: orangeRight - orangeLeft,
+                height: orangeBottom - orangeTop,
+            }
+            : null,
+    };
+}
+
+function measurePdfUploadEditorNeutralRuleRows(imagePath, region) {
+    if (!imagePath || !region) return null;
+    const { PNG } = getPixelDiffLibs();
+    const png = PNG.sync.read(fs.readFileSync(imagePath));
+    const left = Math.max(0, Math.floor(Number(region.left)));
+    const top = Math.max(0, Math.floor(Number(region.top)));
+    const right = Math.min(png.width, Math.ceil(Number(region.right)));
+    const bottom = Math.min(png.height, Math.ceil(Number(region.bottom)));
+    if (![left, top, right, bottom].every(Number.isFinite)
+        || right <= left || bottom <= top) {
+        return null;
+    }
+    const width = right - left;
+    const rows = [];
+    for (let y = top; y < bottom; y += 1) {
+        let neutralDarkPixels = 0;
+        for (let x = left; x < right; x += 1) {
+            const offset = ((y * png.width) + x) * 4;
+            const red = png.data[offset];
+            const green = png.data[offset + 1];
+            const blue = png.data[offset + 2];
+            const alpha = png.data[offset + 3];
+            const maximum = Math.max(red, green, blue);
+            const minimum = Math.min(red, green, blue);
+            // The table artwork is neutral black/gray. Excluding saturated
+            // colors prevents the blue Header 2 glyphs and selection outline
+            // from being mistaken for a preserved table rule.
+            if (alpha > 127 && maximum <= 150 && maximum - minimum <= 28) {
+                neutralDarkPixels += 1;
+            }
+        }
+        rows.push({
+            y,
+            neutral_dark_pixels: neutralDarkPixels,
+            neutral_dark_ratio: neutralDarkPixels / Math.max(1, width),
+        });
+    }
+    const candidateRows = rows.filter((row) => row.neutral_dark_ratio >= 0.55);
+    const bands = [];
+    for (const row of candidateRows) {
+        const previous = bands.at(-1);
+        if (previous && row.y <= previous.bottom + 1) {
+            previous.bottom = row.y + 1;
+            previous.rows.push(row);
+            previous.maximum_neutral_dark_ratio = Math.max(
+                previous.maximum_neutral_dark_ratio,
+                row.neutral_dark_ratio,
+            );
+            previous.maximum_neutral_dark_pixels = Math.max(
+                previous.maximum_neutral_dark_pixels,
+                row.neutral_dark_pixels,
+            );
+            continue;
+        }
+        bands.push({
+            top: row.y,
+            bottom: row.y + 1,
+            rows: [row],
+            maximum_neutral_dark_ratio: row.neutral_dark_ratio,
+            maximum_neutral_dark_pixels: row.neutral_dark_pixels,
+        });
+    }
+    return {
+        region: { left, top, right, bottom, width, height: bottom - top },
+        rows,
+        bands,
+    };
+}
+
+function comparePdfUploadEditorRuleBands(beforeMeasurement, afterMeasurement) {
+    if (!beforeMeasurement || !afterMeasurement) return [];
+    return beforeMeasurement.bands.map((band) => {
+        const afterRows = afterMeasurement.rows.filter((row) => (
+            row.y >= band.top - 1 && row.y < band.bottom + 1
+        ));
+        const bestAfterRow = afterRows.reduce((best, row) => (
+            !best || row.neutral_dark_ratio > best.neutral_dark_ratio ? row : best
+        ), null);
+        const beforeRatio = Number(band.maximum_neutral_dark_ratio || 0);
+        const afterRatio = Number(bestAfterRow?.neutral_dark_ratio || 0);
+        return {
+            top: band.top,
+            bottom: band.bottom,
+            before_maximum_neutral_dark_ratio: beforeRatio,
+            after_maximum_neutral_dark_ratio: afterRatio,
+            retained_ratio: afterRatio / Math.max(0.0001, beforeRatio),
+            preserved: afterRatio >= 0.55 && afterRatio >= beforeRatio * 0.8,
+        };
+    });
+}
+
+async function runPdfUploadTableHeaderMoveEditorFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'before_header_move'),
+        after: buildArtifactName(testKey, runToken, 'after_header_move'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let afterState = null;
+    let move = null;
+    let editorRuleAnalysis = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const suffix = String(config.table_header_suffix || '0_0:6');
+        const targetText = String(config.table_header_expected_text || config.target_text || 'Header 2');
+        const requestedPixels = Number(config.table_move_up_pixels || 200);
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, targetText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        addCheck(
+            'table_header_2_resolved',
+            Boolean(beforeState)
+                && annotationId.endsWith(`_${suffix}`)
+                && normalize(beforeState.text) === normalize(targetText),
+            'The saved Header 2 annotation resolves on page 1.',
+            JSON.stringify(beforeState),
+        );
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+
+        move = await movePdfUploadEditorBox(page, resolved.locator, 0, -requestedPixels);
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.after });
+        const actualDeltaY = Number(move?.after?.y) - Number(move?.before?.y);
+        addCheck(
+            'table_header_2_moved_up_200_pixels',
+            Math.abs(actualDeltaY + requestedPixels) <= 3
+                && Math.abs(Number(move?.after?.x) - Number(move?.before?.x)) <= 2
+                && afterState?.moved_text_overlay === '1',
+            'The production move grip moves Header 2 up 200px without horizontal drift.',
+            JSON.stringify({ requested_pixels: requestedPixels, actual_delta_y: actualDeltaY, move }),
+        );
+
+        const sourceGlyphRegion = pdfUploadViewportRectToPageScreenshotRect(
+            beforeState?.source_glyph_rect,
+            beforeState?.page_rect,
+        );
+        const tableRuleRegion = sourceGlyphRegion
+            ? {
+                left: sourceGlyphRegion.left - 2,
+                top: sourceGlyphRegion.top - 4,
+                right: sourceGlyphRegion.right + 2,
+                bottom: sourceGlyphRegion.bottom + 4,
+            }
+            : null;
+        const beforeRules = measurePdfUploadEditorNeutralRuleRows(
+            artifactPaths.before,
+            tableRuleRegion,
+        );
+        const afterRules = measurePdfUploadEditorNeutralRuleRows(
+            artifactPaths.after,
+            tableRuleRegion,
+        );
+        const comparisons = comparePdfUploadEditorRuleBands(beforeRules, afterRules);
+        editorRuleAnalysis = {
+            source_glyph_region: sourceGlyphRegion,
+            table_rule_region: tableRuleRegion,
+            before_rules: beforeRules,
+            after_rules: afterRules,
+            comparisons,
+            download_invoked: false,
+        };
+        addCheck(
+            'source_region_contains_table_rules',
+            Number(beforeRules?.bands?.length || 0) >= 2,
+            'The original Header 2 region contains both horizontal table borders required by this regression.',
+            JSON.stringify(beforeRules?.bands || []),
+        );
+        addCheck(
+            'active_editor_preserves_table_rules_after_move',
+            comparisons.length >= 2 && comparisons.every((comparison) => comparison.preserved),
+            'After Header 2 moves, the active editor preserves every table-rule band crossing its original position.',
+            JSON.stringify(comparisons),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            after_state: afterState,
+            move,
+            editor_rule_analysis: editorRuleAnalysis,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Page 1 before moving Header 2', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 after moving Header 2', kind: 'image', filename: artifactNames.after },
+                { label: 'Editor-only assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                editor_only: true,
+                download_invoked: false,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                after_state: afterState,
+                move,
+                editor_rule_analysis: editorRuleAnalysis,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                editor_only: true,
+                download_invoked: false,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function readPdfUploadPromotedEditEntryState(page, annotationId) {
+    return page.evaluate((id) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+            .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+        const text = box?.querySelector('.enpv-text-content');
+        if (!box || !text) return null;
+        const round = (value) => Math.round(Number(value) * 1000) / 1000;
+        const rectJson = (rect) => rect
+            ? {
+                left: round(rect.left),
+                top: round(rect.top),
+                right: round(rect.right),
+                bottom: round(rect.bottom),
+                width: round(rect.width),
+                height: round(rect.height),
+            }
+            : null;
+        const glyphRects = [];
+        const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            const value = String(node.nodeValue || '');
+            for (let index = 0; index < value.length; index += 1) {
+                if (/\s/u.test(value[index])) continue;
+                const range = document.createRange();
+                range.setStart(node, index);
+                range.setEnd(node, index + 1);
+                for (const rect of Array.from(range.getClientRects())) {
+                    if (rect.width > 0 && rect.height > 0) {
+                        glyphRects.push(rectJson(rect));
+                    }
+                }
+            }
+        }
+        glyphRects.sort((a, b) => (
+            Math.abs(a.top - b.top) > 1 ? a.top - b.top : a.left - b.left
+        ));
+        const glyphLines = [];
+        for (const rect of glyphRects) {
+            let line = glyphLines.find((candidate) => (
+                Math.abs(candidate.top - rect.top) <= Math.max(1, rect.height * 0.2)
+            ));
+            if (!line) {
+                line = { ...rect, glyph_count: 0 };
+                glyphLines.push(line);
+            }
+            line.left = Math.min(line.left, rect.left);
+            line.top = Math.min(line.top, rect.top);
+            line.right = Math.max(line.right, rect.right);
+            line.bottom = Math.max(line.bottom, rect.bottom);
+            line.width = line.right - line.left;
+            line.height = line.bottom - line.top;
+            line.glyph_count += 1;
+        }
+        glyphLines.sort((a, b) => a.top - b.top);
+        const glyphBounds = glyphRects.length
+            ? {
+                left: Math.min(...glyphRects.map((rect) => rect.left)),
+                top: Math.min(...glyphRects.map((rect) => rect.top)),
+                right: Math.max(...glyphRects.map((rect) => rect.right)),
+                bottom: Math.max(...glyphRects.map((rect) => rect.bottom)),
+            }
+            : null;
+        if (glyphBounds) {
+            glyphBounds.width = glyphBounds.right - glyphBounds.left;
+            glyphBounds.height = glyphBounds.bottom - glyphBounds.top;
+        }
+        const style = getComputedStyle(text);
+        return {
+            annotation_id: String(box.dataset.annotationId || ''),
+            text: String(text.textContent || ''),
+            html: String(text.innerHTML || ''),
+            classes: Array.from(box.classList),
+            is_editing: box.classList.contains('is-editing'),
+            is_persisted_overlay: box.classList.contains('is-persisted-overlay'),
+            pending_edit: String(box.dataset.pendingEdit || ''),
+            promoted_dirty: String(box.dataset.promotedDirty || ''),
+            source_top_inset_px: round(Number.parseFloat(box.dataset.sourceBoundingBoxSnapY || '0') || 0),
+            box_rect: rectJson(box.getBoundingClientRect()),
+            text_rect: rectJson(text.getBoundingClientRect()),
+            glyph_bounds: glyphBounds ? Object.fromEntries(
+                Object.entries(glyphBounds).map(([key, value]) => [key, round(value)])
+            ) : null,
+            glyph_lines: glyphLines.map((line) => Object.fromEntries(
+                Object.entries(line).map(([key, value]) => [
+                    key,
+                    typeof value === 'number' ? round(value) : value,
+                ])
+            )),
+            padding_top_px: round(Number.parseFloat(style.paddingTop || '0') || 0),
+            padding_left_px: round(Number.parseFloat(style.paddingLeft || '0') || 0),
+            line_height_px: round(Number.parseFloat(style.lineHeight || '0') || 0),
+        };
+    }, annotationId);
+}
+
+async function runPdfUploadTablePromotedEditEntryStableFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'before_second_edit_entry'),
+        after: buildArtifactName(testKey, runToken, 'after_second_edit_entry'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let afterState = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1, {
+            seedAnnotations: config.saved_target_annotation
+                ? [config.saved_target_annotation]
+                : [],
+        });
+        documentId = opened.documentId;
+        const savedId = String(
+            config.promoted_edit_annotation_id
+            || config.saved_runtime_annotation_id
+            || config.saved_annotation_id
+            || 'promoted_1_0'
+        );
+        const expectedPrefix = normalize(
+            String(config.promoted_edit_expected_text || config.target_text || '')
+        ).slice(0, 72);
+        await page.waitForFunction(({ id, prefix }) => (
+            Array.from(document.querySelectorAll('.enpv-annotation-box')).some((box) => {
+                const candidateText = String(
+                    box.querySelector('.enpv-text-content')?.textContent
+                    || box.dataset.baseText
+                    || box.dataset.originalText
+                    || ''
+                ).replace(/\s+/g, ' ').trim();
+                return String(box.dataset.annotationId || '') === id
+                    || candidateText.startsWith(prefix);
+            })
+        ), { id: savedId, prefix: expectedPrefix }, { timeout: 90000 });
+        annotationId = await page.evaluate(({ id, prefix }) => {
+            const boxes = Array.from(document.querySelectorAll('.enpv-annotation-box'));
+            const exact = boxes.find((box) => String(box.dataset.annotationId || '') === id);
+            const byText = boxes.find((box) => String(
+                box.querySelector('.enpv-text-content')?.textContent
+                || box.dataset.baseText
+                || box.dataset.originalText
+                || ''
+            ).replace(/\s+/g, ' ').trim().startsWith(prefix));
+            return String((exact || byText)?.dataset?.annotationId || '');
+        }, { id: savedId, prefix: expectedPrefix });
+        if (!annotationId) throw new Error('Could not resolve promoted_1_0 on page 1.');
+        const locator = page.locator(
+            `.enpv-annotation-box[data-annotation-id="${annotationId}"]`
+        ).first();
+        await locator.scrollIntoViewIfNeeded();
+
+        // First perform a real edit and commit it. The reported jump occurs
+        // when this now-visible persisted overlay enters edit mode again.
+        await selectPdfUploadEditorBox(page, locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForSelector(
+            `.enpv-annotation-box[data-annotation-id="${annotationId}"].is-editing`,
+            { timeout: 30000 },
+        );
+        const appendText = ' 2324';
+        const currentText = await locator.locator('.enpv-text-content').textContent();
+        if (!String(currentText || '').endsWith(appendText)) {
+            await locator.locator('.enpv-text-content').evaluate((root) => {
+                root.focus();
+                const range = document.createRange();
+                range.selectNodeContents(root);
+                range.collapse(false);
+                const selection = window.getSelection();
+                selection.removeAllRanges();
+                selection.addRange(range);
+            });
+            await page.keyboard.type(appendText);
+        }
+        await page.waitForFunction(({ id, suffix }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return String(box?.querySelector('.enpv-text-content')?.textContent || '').endsWith(suffix)
+                && box?.dataset?.pendingEdit === '1';
+        }, { id: annotationId, suffix: appendText }, { timeout: 30000 });
+        await page.keyboard.press('Escape');
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box && !box.classList.contains('is-editing');
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(350);
+
+        beforeState = await readPdfUploadPromotedEditEntryState(page, annotationId);
+        addCheck(
+            'promoted_overlay_precondition',
+            Boolean(beforeState)
+                && beforeState.is_editing === false
+                && beforeState.is_persisted_overlay === true
+                && normalize(beforeState.text).endsWith('2324')
+                && Number(beforeState.glyph_lines?.length || 0) >= 2,
+            'promoted_1_0 is a visible multi-line persisted overlay after the first real edit.',
+            JSON.stringify(beforeState),
+        );
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+
+        await selectPdfUploadEditorBox(page, locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForSelector(
+            `.enpv-annotation-box[data-annotation-id="${annotationId}"].is-editing`,
+            { timeout: 30000 },
+        );
+        await page.evaluate(() => new Promise((resolve) => (
+            requestAnimationFrame(() => requestAnimationFrame(resolve))
+        )));
+        afterState = await readPdfUploadPromotedEditEntryState(page, annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.after });
+
+        const beforeLines = Array.isArray(beforeState?.glyph_lines)
+            ? beforeState.glyph_lines
+            : [];
+        const afterLines = Array.isArray(afterState?.glyph_lines)
+            ? afterState.glyph_lines
+            : [];
+        const lineDeltas = beforeLines.map((line, index) => ({
+            index,
+            top_px: Number(afterLines[index]?.top) - Number(line.top),
+            left_px: Number(afterLines[index]?.left) - Number(line.left),
+        }));
+        const maximumVerticalDelta = lineDeltas.reduce(
+            (maximum, delta) => Math.max(maximum, Math.abs(delta.top_px)),
+            0,
+        );
+        const maximumHorizontalDelta = lineDeltas.reduce(
+            (maximum, delta) => Math.max(maximum, Math.abs(delta.left_px)),
+            0,
+        );
+        const boxDelta = {
+            left_px: Number(afterState?.box_rect?.left) - Number(beforeState?.box_rect?.left),
+            top_px: Number(afterState?.box_rect?.top) - Number(beforeState?.box_rect?.top),
+            width_px: Number(afterState?.box_rect?.width) - Number(beforeState?.box_rect?.width),
+            height_px: Number(afterState?.box_rect?.height) - Number(beforeState?.box_rect?.height),
+        };
+        addCheck(
+            'edit_entry_preserves_annotation_box',
+            Object.values(boxDelta).every((delta) => Math.abs(delta) <= 0.75),
+            'Clicking Edit text does not move or resize the promoted annotation box.',
+            JSON.stringify(boxDelta),
+        );
+        addCheck(
+            'edit_entry_preserves_painted_line_positions',
+            beforeLines.length === afterLines.length
+                && beforeLines.length >= 2
+                && maximumVerticalDelta <= 0.75
+                && maximumHorizontalDelta <= 0.75,
+            'Every painted line retains its top and left position when edit mode opens.',
+            JSON.stringify({
+                line_deltas: lineDeltas,
+                maximum_vertical_delta_px: maximumVerticalDelta,
+                maximum_horizontal_delta_px: maximumHorizontalDelta,
+            }),
+        );
+        addCheck(
+            'edit_entry_does_not_add_top_padding',
+            Math.abs(
+                Number(afterState?.padding_top_px) - Number(beforeState?.padding_top_px)
+            ) <= 0.25,
+            'Edit mode does not add a source-capture top inset to the visible persisted overlay.',
+            JSON.stringify({
+                before_padding_top_px: beforeState?.padding_top_px,
+                after_padding_top_px: afterState?.padding_top_px,
+            }),
+        );
+        addCheck(
+            'edit_entry_preserves_text',
+            afterState?.is_editing === true
+                && normalize(afterState?.text) === normalize(beforeState?.text),
+            'Opening Edit text preserves the complete mixed-style paragraph.',
+            JSON.stringify({ before: beforeState?.text, after: afterState?.text }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            after_state: afterState,
+            line_deltas: lineDeltas,
+            box_delta: boxDelta,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Page 1 before second Edit text entry', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 after second Edit text entry', kind: 'image', filename: artifactNames.after },
+                { label: 'Promoted edit-entry diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                editor_only: true,
+                download_invoked: false,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                after_state: afterState,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                editor_only: true,
+                download_invoked: false,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+function analyzePdfUploadEdgeTightHeaderExport({
+    resultPdfPath,
+    pageIndex,
+    targetText,
+    annotation,
+    resultPagePath,
+}) {
+    const pythonCode = String.raw`
+import fitz
+import json
+import re
+import sys
+
+pdf_path, page_index, target_text, annotation_json, result_png = sys.argv[1:6]
+page_index = int(page_index)
+annotation = json.loads(annotation_json)
+
+def compact(value):
+    return re.sub(r'\s+', '', str(value or '')).lower()
+
+doc = fitz.open(pdf_path)
+page = doc[page_index]
+x = float(annotation.get('pdfX', 0))
+y = float(annotation.get('pdfY', 0))
+w = float(annotation.get('pdfWidth', 0))
+h = float(annotation.get('pdfHeight', 0))
+top = float(page.rect.height) - (y + h)
+target_rect = fitz.Rect(x, top, x + w, top + h)
+# Inspect below the saved box as well: the regression used to place the final
+# glyph on a second baseline in the next table row.
+inspection_rect = fitz.Rect(
+    target_rect.x0 - 2,
+    target_rect.y0 - 2,
+    target_rect.x1 + 2,
+    target_rect.y1 + max(10.0, target_rect.height * 1.5),
+)
+target_compact = compact(target_text)
+lines = []
+for block in page.get_text('dict', sort=True).get('blocks', []):
+    if block.get('type') != 0:
+        continue
+    for line in block.get('lines', []) or []:
+        spans = []
+        for span in line.get('spans', []) or []:
+            text = str(span.get('text', ''))
+            if not text.strip():
+                continue
+            bbox = fitz.Rect(span.get('bbox', [0, 0, 0, 0]))
+            if bbox.intersects(inspection_rect):
+                spans.append({
+                    'text': text,
+                    'bbox': [float(v) for v in bbox],
+                    'size': float(span.get('size', 0) or 0),
+                    'font': str(span.get('font', '') or ''),
+                })
+        if not spans:
+            continue
+        text = ''.join(span['text'] for span in spans)
+        bbox = [
+            min(span['bbox'][0] for span in spans),
+            min(span['bbox'][1] for span in spans),
+            max(span['bbox'][2] for span in spans),
+            max(span['bbox'][3] for span in spans),
+        ]
+        lines.append({
+            'text': text,
+            'compact': compact(text),
+            'bbox': bbox,
+            'spans': spans,
+        })
+
+exact_lines = [line for line in lines if line['compact'] == target_compact]
+fragment_lines = [
+    line for line in lines
+    if line['compact']
+    and (
+        line['compact'] in target_compact
+        or target_compact in line['compact']
+    )
+]
+rendered_bbox = exact_lines[0]['bbox'] if len(exact_lines) == 1 else None
+horizontal_inside = bool(
+    rendered_bbox
+    and rendered_bbox[0] >= float(target_rect.x0) - 1.5
+    and rendered_bbox[2] <= float(target_rect.x1) + 1.5
+)
+page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False).save(result_png)
+print(json.dumps({
+    'page_count': len(doc),
+    'target_rect': [float(v) for v in target_rect],
+    'inspection_rect': [float(v) for v in inspection_rect],
+    'target_text': target_text,
+    'lines': lines,
+    'exact_lines': exact_lines,
+    'fragment_lines': fragment_lines,
+    'rendered_bbox': rendered_bbox,
+    'horizontal_inside': horizontal_inside,
+    'single_export_line': len(exact_lines) == 1 and len(fragment_lines) == 1,
+}))
+`;
+    const raw = execFileSync(PYTHON_BIN, [
+        '-c',
+        pythonCode,
+        resultPdfPath,
+        String(pageIndex),
+        targetText,
+        JSON.stringify(annotation),
+        resultPagePath,
+    ], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+async function readPdfUploadEdgeTightLineState(page, annotationId) {
+    return page.evaluate((id) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+            .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+        const text = box?.querySelector('.enpv-text-content');
+        if (!box || !text) return null;
+        const boxRect = box.getBoundingClientRect();
+        const glyphRects = [];
+        const walker = document.createTreeWalker(text, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            const value = String(node.nodeValue || '');
+            for (let offset = 0; offset < value.length; offset += 1) {
+                if (!/\S/.test(value[offset])) continue;
+                try {
+                    const range = document.createRange();
+                    range.setStart(node, offset);
+                    range.setEnd(node, offset + 1);
+                    const rect = range.getBoundingClientRect();
+                    range.detach?.();
+                    if (rect.width > 0 && rect.height > 0) {
+                        glyphRects.push({
+                            left: rect.left,
+                            top: rect.top,
+                            right: rect.right,
+                            bottom: rect.bottom,
+                        });
+                    }
+                } catch (_) {}
+            }
+        }
+        const lineTops = [];
+        const lineTolerance = Math.max(
+            2,
+            (Number.parseFloat(window.getComputedStyle(text).fontSize || '') || 12) * 0.4,
+        );
+        glyphRects
+            .sort((left, right) => left.top - right.top || left.left - right.left)
+            .forEach((rect) => {
+                // Different fonts on one baseline can have different ascender
+                // boxes. Only count a second visual row when the vertical
+                // separation approaches a real line-height.
+                if (!lineTops.some((top) => Math.abs(top - rect.top) <= lineTolerance)) {
+                    lineTops.push(rect.top);
+                }
+            });
+        const glyphRight = glyphRects.length
+            ? Math.max(...glyphRects.map((rect) => rect.right))
+            : Number.NaN;
+        return {
+            text: String(text.textContent || '').replace(/\s+/g, ' ').trim(),
+            line_count: lineTops.length,
+            right_inset_px: Number.isFinite(glyphRight) ? boxRect.right - glyphRight : null,
+            box_width: boxRect.width,
+            style_dirty: box.dataset.styleDirty || '',
+            pending_edit: box.dataset.pendingEdit || '',
+            editor_mode: box.dataset.editorMode || '',
+            user_forced_rich_text: box.dataset.userForcedRichText || '',
+            user_sized_text_box: box.dataset.userSizedTextBox || '',
+            rich_run_count: text.querySelectorAll('span').length,
+        };
+    }, annotationId);
+}
+
+async function runPdfUploadTableEdgeTightHeaderExportFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const pageNumber = Math.max(1, Number(config.table_export_page_number || 1));
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'before_trailing_font_change'),
+        after: buildArtifactName(testKey, runToken, 'after_trailing_font_change'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        resultPage: buildArtifactName(testKey, runToken, 'downloaded_page'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let afterState = null;
+    let downloadPayload = null;
+    let payloadAnnotation = null;
+    let analysis = null;
+    let styleMutation = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, pageNumber);
+        documentId = opened.documentId;
+        const suffix = String(config.table_export_suffix || '0_0:6');
+        const targetText = String(config.table_export_expected_text || config.target_text || 'Header 3');
+        const fontFamily = String(config.table_export_font_family || 'Helvetica');
+        // PDF.js runtime IDs include the disposable document id and their
+        // extraction sequence can change as grouping heuristics improve. The
+        // saved id remains the scenario key; resolve the cloned document's
+        // unique Header 3 handle by its exact source text.
+        const resolved = await resolvePdfUploadBoxByExactText(page, targetText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadEdgeTightLineState(page, annotationId);
+        const beforeSourceState = await readPdfUploadF1040BoxState(page, annotationId);
+        const sourceBoxRight = Number(beforeSourceState?.browser_rect?.left)
+            + Number(beforeSourceState?.browser_rect?.width);
+        const sourceGlyphRight = Number(beforeSourceState?.source_glyph_rect?.right);
+        beforeState.source_right_inset_px = Number.isFinite(sourceBoxRight)
+            && Number.isFinite(sourceGlyphRight)
+            ? sourceBoxRight - sourceGlyphRight
+            : null;
+        addCheck(
+            'edge_tight_header_resolved',
+            Boolean(beforeState)
+                && normalize(beforeState.text) === normalize(targetText)
+                && beforeSourceState?.page_index === 0,
+            'The exact Header 3 source annotation resolves as one line on page 1.',
+            JSON.stringify({ line: beforeState, source: beforeSourceState }),
+        );
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, annotationId, { timeout: 30000 });
+        styleMutation = await page.evaluate(({ id, value, start, end }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            const root = box?.querySelector('.enpv-text-content');
+            if (!box || !root) throw new Error(`Editable text root is missing for ${id}.`);
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            const nodes = [];
+            let total = 0;
+            while (walker.nextNode()) {
+                const node = walker.currentNode;
+                const length = String(node.nodeValue || '').length;
+                nodes.push({ node, start: total, end: total + length });
+                total += length;
+            }
+            const point = (offset) => {
+                const bounded = Math.max(0, Math.min(offset, total));
+                const entry = nodes.find((item) => bounded >= item.start && bounded <= item.end)
+                    || nodes.at(-1);
+                if (!entry) throw new Error(`Editable text is empty for ${id}.`);
+                return {
+                    node: entry.node,
+                    offset: Math.max(0, Math.min(bounded - entry.start, entry.end - entry.start)),
+                };
+            };
+            const from = point(start);
+            const to = point(end);
+            const range = document.createRange();
+            range.setStart(from.node, from.offset);
+            range.setEnd(to.node, to.offset);
+            root.focus();
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            const select = document.getElementById('afb-font');
+            if (!select) throw new Error('The annotation font selector is missing.');
+            select.value = value;
+            if (select.value !== value) throw new Error(`Font option ${value} is unavailable.`);
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+            return {
+                selected_text: selection.toString(),
+                classes: Array.from(box.classList),
+                style_dirty: box.dataset.styleDirty || '',
+                pending_edit: box.dataset.pendingEdit || '',
+                editor_mode: box.dataset.editorMode || '',
+                html: root.innerHTML,
+            };
+        }, {
+            id: annotationId,
+            value: fontFamily,
+            start: Math.max(0, targetText.length - 1),
+            end: targetText.length,
+        });
+        if (
+            styleMutation.selected_text !== targetText.slice(-1)
+            || styleMutation.style_dirty !== '1'
+        ) {
+            throw new Error(`The trailing-glyph font mutation did not apply: ${JSON.stringify(styleMutation)}`);
+        }
+        await page.waitForTimeout(250);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(350);
+        afterState = await readPdfUploadEdgeTightLineState(page, annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.after });
+        addCheck(
+            'editor_recreates_tight_multi_run_export_case',
+            afterState?.style_dirty === '1'
+                && afterState?.editor_mode === 'rich'
+                && afterState?.user_forced_rich_text === '1'
+                && afterState?.user_sized_text_box !== '1'
+                && Number(afterState?.rich_run_count || 0) >= 2
+                && Math.abs(Number(afterState?.box_width) - Number(beforeState?.box_width)) <= 0.75
+                && Number(beforeState?.source_right_inset_px) <= 10,
+            'Changing only the trailing glyph creates a multi-run annotation while retaining the original edge-tight source box.',
+            JSON.stringify({ before: beforeState, after: afterState, font_family: fontFamily }),
+        );
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        downloadPayload = downloaded.payload;
+        const payloadAnnotations = [
+            ...(Array.isArray(downloadPayload.annotations) ? downloadPayload.annotations : []),
+            ...(Array.isArray(downloadPayload.session_annotations) ? downloadPayload.session_annotations : []),
+        ];
+        payloadAnnotation = payloadAnnotations.find(
+            (annotation) => String(annotation?.id || '') === annotationId
+        );
+        if (!payloadAnnotation) {
+            throw new Error('The edge-tight Header 3 annotation is missing from the download payload.');
+        }
+        analysis = analyzePdfUploadEdgeTightHeaderExport({
+            resultPdfPath: artifactPaths.pdf,
+            pageIndex: Number(config.page_index || 0),
+            targetText,
+            annotation: payloadAnnotation,
+            resultPagePath: artifactPaths.resultPage,
+        });
+        addCheck(
+            'download_keeps_header_3_on_one_line',
+            analysis?.single_export_line === true
+                && Number(analysis?.exact_lines?.length || 0) === 1
+                && Number(analysis?.fragment_lines?.length || 0) === 1,
+            'The downloaded PDF contains “Header 3” on exactly one baseline, with no trailing 3 in the next table row.',
+            JSON.stringify(analysis),
+        );
+        addCheck(
+            'download_keeps_header_inside_tight_box',
+            analysis?.horizontal_inside === true,
+            'The complete exported header stays within the saved horizontal annotation bounds.',
+            JSON.stringify({
+                target_rect: analysis?.target_rect,
+                rendered_bbox: analysis?.rendered_bbox,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            after_state: afterState,
+            style_mutation: styleMutation,
+            payload_annotation: payloadAnnotation,
+            pdf_analysis: analysis,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Header 3 before font change', kind: 'image', filename: artifactNames.before },
+                { label: 'Header 3 after trailing glyph font change', kind: 'image', filename: artifactNames.after },
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Downloaded page rendering', kind: 'image', filename: artifactNames.resultPage },
+                { label: 'Export line diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloaded.pdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                download_invoked: true,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                after_state: afterState,
+                style_mutation: styleMutation,
+                payload_annotation: payloadAnnotation,
+                pdf_analysis: analysis,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadTableTextEditGeometryFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const pageNumber = Math.max(1, Number(config.table_edit_page_number || 2));
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, `page${pageNumber}_before_edit`),
+        active: buildArtifactName(testKey, runToken, `page${pageNumber}_active_after_append`),
+        deselected: buildArtifactName(testKey, runToken, `page${pageNumber}_after_deselect`),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    const rectEdges = (rect) => rect ? {
+        left: Number(rect.left),
+        top: Number(rect.top),
+        right: Number(rect.right ?? (Number(rect.left) + Number(rect.width))),
+        bottom: Number(rect.bottom ?? (Number(rect.top) + Number(rect.height))),
+        width: Number(rect.width),
+        height: Number(rect.height),
+    } : null;
+    const rectDelta = (before, after) => {
+        const first = rectEdges(before);
+        const second = rectEdges(after);
+        if (!first || !second) return null;
+        return Object.fromEntries(
+            ['left', 'top', 'right', 'bottom', 'width', 'height']
+                .map((key) => [key, second[key] - first[key]])
+        );
+    };
+    const textContainment = (state) => {
+        const boxRect = rectEdges(state?.browser_rect);
+        const textRect = rectEdges(state?.text_range_rect);
+        if (!boxRect || !textRect) return null;
+        return {
+            left_inset: textRect.left - boxRect.left,
+            right_inset: boxRect.right - textRect.right,
+            top_inset: textRect.top - boxRect.top,
+            bottom_inset: boxRect.bottom - textRect.bottom,
+            box_width: boxRect.width,
+            text_width: textRect.width,
+        };
+    };
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let activeState = null;
+    let deselectedState = null;
+    try {
+        const exactDocumentFont = config.require_exact_document_font === true;
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, pageNumber);
+        documentId = opened.documentId;
+        const suffix = String(
+            config.table_edit_suffix
+            || (pageNumber === 3 ? '2_2:35' : '1_1:31')
+        );
+        const expectedText = String(
+            config.table_edit_expected_text
+            || config.target_text
+            || (pageNumber === 3
+                ? 'Project 1'
+                : 'Best Practices: Separate two tables with header rows')
+        );
+        const appendedText = String(
+            config.table_edit_append_text
+            || (pageNumber === 3 ? '2' : '1')
+        );
+        const expectedEditedText = `${expectedText}${appendedText}`;
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        addCheck(
+            'table_page2_text_target_resolved',
+            Boolean(beforeState)
+                && annotationId.endsWith(`_${suffix}`)
+                && normalize(beforeState.text) === normalize(expectedText),
+            `The exact Table-Examples page ${pageNumber} source annotation resolves in the disposable editor.`,
+            JSON.stringify(beforeState),
+        );
+        if (exactDocumentFont) {
+            const requiredFonts = Array.isArray(config.expected_document_fonts)
+                ? config.expected_document_fonts.map((name) => String(name))
+                : [
+                    'ERBEYA+Calibri-Light',
+                    'FTKFMY+SegoeUI-BoldItalic',
+                    'HJLROU+SegoeUI',
+                    'QHUTKC+SegoeUI-Italic',
+                    'UHABOU+Calibri',
+                    'UXWWOU+Calibri-Bold',
+                    'YGTKSM+SegoeUI-Bold',
+                ];
+            const availableFonts = new Set(
+                (beforeState?.document_font_options || [])
+                    .map((option) => option.pdf_font_name || option.label)
+            );
+            addCheck(
+                'all_table_examples_document_fonts_available',
+                requiredFonts.every((font) => availableFonts.has(font)),
+                'The font menu lists every embedded Table-Examples subset face by its PDF document name.',
+                JSON.stringify({
+                    expected: requiredFonts,
+                    actual: Array.from(availableFonts),
+                }),
+            );
+        }
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').dispatchEvent('pointerdown');
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, annotationId, { timeout: 30000 });
+        await page.keyboard.type(appendedText);
+        await page.waitForFunction(({ id, editedText }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            const text = String(box?.querySelector('.enpv-text-content')?.textContent || '');
+            return box?.dataset?.pendingEdit === '1' && text === editedText;
+        }, { id: annotationId, editedText: expectedEditedText }, { timeout: 30000 });
+        await page.waitForTimeout(350);
+        activeState = await readPdfUploadF1040BoxState(page, annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.active });
+
+        const activeContainment = textContainment(activeState);
+        const editGeometryDelta = rectDelta(beforeState?.browser_rect, activeState?.browser_rect);
+        if (exactDocumentFont) {
+            const expectedPdfFont = String(config.expected_pdf_font_name || 'UHABOU+Calibri');
+            const activeRuns = Array.isArray(activeState?.source_span_runs)
+                ? activeState.source_span_runs
+                : [];
+            addCheck(
+                'active_edit_uses_exact_pdfjs_document_font',
+                activeState?.source_font_family === expectedPdfFont
+                    && String(activeState?.source_runtime_font_family || '').startsWith('g_d')
+                    && activeState?.font_family_value === expectedPdfFont
+                    && activeState?.selected_document_font_value === expectedPdfFont
+                    && String(activeState?.computed_font_family || '')
+                        .includes(activeState.source_runtime_font_family)
+                    && activeRuns.some((run) => (
+                        run?.pdfjsFontName === expectedPdfFont
+                        && run?.fontFamily === activeState.source_runtime_font_family
+                    )),
+                'The editable Project line uses PDF.js’s live Calibri subset face instead of generic sans-serif.',
+                JSON.stringify({
+                    expected_pdf_font: expectedPdfFont,
+                    source_font_family: activeState?.source_font_family,
+                    runtime_font_family: activeState?.source_runtime_font_family,
+                    computed_font_family: activeState?.computed_font_family,
+                    selected_document_font: activeState?.selected_document_font_value,
+                    source_runs: activeRuns,
+                }),
+            );
+        }
+        addCheck(
+            'appended_text_is_inside_active_bounding_box',
+            activeState?.is_editing === true
+                && activeState?.content_editable === true
+                && activeState?.editor_text === expectedEditedText
+                && activeContainment !== null
+                && activeContainment.left_inset >= -0.5
+                && activeContainment.right_inset >= 0.5
+                && activeContainment.box_width >= activeContainment.text_width + 1
+                && Number(editGeometryDelta?.width) > 0.5
+                && Math.abs(Number(editGeometryDelta?.left)) <= 0.5
+                && Math.abs(Number(editGeometryDelta?.top)) <= 0.5,
+            `After appending “${appendedText}”, the active blue box expands to contain the complete edited line without moving its origin.`,
+            JSON.stringify({
+                expected_text: expectedEditedText,
+                actual_text: activeState?.editor_text,
+                containment: activeContainment,
+                geometry_delta_from_source: editGeometryDelta,
+            }),
+        );
+
+        await page.keyboard.press('Escape');
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box
+                && !box.classList.contains('is-editing')
+                && !box.classList.contains('is-selected')
+                && !box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(350);
+        deselectedState = await readPdfUploadF1040BoxState(page, annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.deselected });
+
+        const deselectedContainment = textContainment(deselectedState);
+        const boxDeselectDelta = rectDelta(activeState?.browser_rect, deselectedState?.browser_rect);
+        const textDeselectDelta = rectDelta(activeState?.text_range_rect, deselectedState?.text_range_rect);
+        const fontDeselectDelta = {
+            size_px: Number(deselectedState?.computed_font_size_px)
+                - Number(activeState?.computed_font_size_px),
+            family_before: activeState?.computed_font_family,
+            family_after: deselectedState?.computed_font_family,
+            weight_before: activeState?.computed_font_weight,
+            weight_after: deselectedState?.computed_font_weight,
+            transform_before: activeState?.computed_transform,
+            transform_after: deselectedState?.computed_transform,
+        };
+        if (exactDocumentFont) {
+            addCheck(
+                'deselect_keeps_exact_document_font',
+                deselectedState?.source_font_family === activeState?.source_font_family
+                    && deselectedState?.source_runtime_font_family === activeState?.source_runtime_font_family
+                    && deselectedState?.computed_font_family === activeState?.computed_font_family,
+                'Deselecting the edited Project line keeps the exact document font identity and live PDF.js face.',
+                JSON.stringify({
+                    active: {
+                        source: activeState?.source_font_family,
+                        runtime: activeState?.source_runtime_font_family,
+                        computed: activeState?.computed_font_family,
+                    },
+                    deselected: {
+                        source: deselectedState?.source_font_family,
+                        runtime: deselectedState?.source_runtime_font_family,
+                        computed: deselectedState?.computed_font_family,
+                    },
+                }),
+            );
+        }
+        addCheck(
+            'deselect_keeps_edited_text_and_geometry_stable',
+            deselectedState?.is_editing === false
+                && deselectedState?.editor_text === expectedEditedText
+                && deselectedContainment !== null
+                && deselectedContainment.left_inset >= -0.5
+                && deselectedContainment.right_inset >= 0.5
+                && boxDeselectDelta !== null
+                && ['left', 'top', 'width', 'height'].every(
+                    (key) => Math.abs(Number(boxDeselectDelta[key])) <= 0.5
+                )
+                && textDeselectDelta !== null
+                && ['left', 'top', 'right', 'bottom', 'width', 'height'].every(
+                    (key) => Math.abs(Number(textDeselectDelta[key])) <= 0.75
+                )
+                && Math.abs(fontDeselectDelta.size_px) <= 0.01
+                && fontDeselectDelta.family_before === fontDeselectDelta.family_after
+                && fontDeselectDelta.weight_before === fontDeselectDelta.weight_after
+                && fontDeselectDelta.transform_before === fontDeselectDelta.transform_after,
+            'Deselecting commits the appended character without changing the box, font metrics, transform, or painted text position.',
+            JSON.stringify({
+                expected_text: expectedEditedText,
+                actual_text: deselectedState?.editor_text,
+                containment: deselectedContainment,
+                box_delta_from_active: boxDeselectDelta,
+                text_delta_from_active: textDeselectDelta,
+                font_delta_from_active: fontDeselectDelta,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            active_after_append_state: activeState,
+            deselected_state: deselectedState,
+            comparisons: {
+                active_containment: activeContainment,
+                edit_geometry_delta: editGeometryDelta,
+                deselected_containment: deselectedContainment,
+                box_deselect_delta: boxDeselectDelta,
+                text_deselect_delta: textDeselectDelta,
+                font_deselect_delta: fontDeselectDelta,
+            },
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: `Page ${pageNumber} before edit`, kind: 'image', filename: artifactNames.before },
+                { label: `Page ${pageNumber} active after append`, kind: 'image', filename: artifactNames.active },
+                { label: `Page ${pageNumber} after deselection`, kind: 'image', filename: artifactNames.deselected },
+                { label: 'Editor geometry diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                editor_only: true,
+                download_invoked: false,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                active_after_append_state: activeState,
+                deselected_state: deselectedState,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                editor_only: true,
+                download_invoked: false,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadDrylabTitleMoveFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'before_title_move'),
+        after: buildArtifactName(testKey, runToken, 'after_title_move'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        originalPage: buildArtifactName(testKey, runToken, 'original_page'),
+        resultPage: buildArtifactName(testKey, runToken, 'result_page'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let afterState = null;
+    let move = null;
+    let downloadPayload = null;
+    let analysis = null;
+    let editorVisualAnalysis = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+        const suffix = String(config.drylab_title_suffix || '0_0:0');
+        const targetText = String(config.drylab_title_expected_text || config.target_text || 'DrylabNews');
+        const requestedPixels = Number(config.drylab_move_down_pixels || 400);
+        const resolved = await resolvePdfUploadF1040Box(page, suffix, targetText);
+        annotationId = resolved.annotationId;
+        beforeState = await readPdfUploadF1040BoxState(page, annotationId);
+        addCheck(
+            'drylab_title_resolved',
+            Boolean(beforeState)
+                && annotationId.endsWith(`_${suffix}`)
+                && normalize(beforeState.text) === normalize(targetText),
+            'The saved Drylab News title resolves on page 1.',
+            JSON.stringify(beforeState),
+        );
+        let footerRegion = await readPdfUploadEditorTextRegion(
+            page,
+            String(config.drylab_footer_expected_text || 'for investors & friends May 2017'),
+        );
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+
+        move = await movePdfUploadEditorBox(page, resolved.locator, 0, requestedPixels);
+        afterState = await readPdfUploadF1040BoxState(page, annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.after });
+        const actualDeltaY = Number(move?.after?.y) - Number(move?.before?.y);
+        addCheck(
+            'drylab_title_moved_down_400_pixels',
+            Math.abs(actualDeltaY - requestedPixels) <= 3
+                && Math.abs(Number(move?.after?.x) - Number(move?.before?.x)) <= 2
+                && afterState?.moved_text_overlay === '1',
+            'The production move grip moves the Drylab title down 400px.',
+            JSON.stringify({ requested_pixels: requestedPixels, actual_delta_y: actualDeltaY, move }),
+        );
+        const sourceGlyphRegion = pdfUploadViewportRectToPageScreenshotRect(
+            beforeState?.source_glyph_rect,
+            beforeState?.page_rect,
+        );
+        if (!footerRegion && sourceGlyphRegion) {
+            const protectedCandidates = (afterState?.source_masks || [])
+                .flatMap((mask) => mask?.diagnostics?.protected_rects || [])
+                .filter((rect) => (
+                    Number(rect?.width) > 0
+                    && Number(rect?.height) > 0
+                    && Number(rect.height) <= sourceGlyphRegion.height * 0.25
+                    && Number(rect.width) <= sourceGlyphRegion.width * 0.6
+                ))
+                .sort((left, right) => (
+                    (Number(right.width) * Number(right.height))
+                    - (Number(left.width) * Number(left.height))
+                ));
+            footerRegion = protectedCandidates[0] || null;
+        }
+        const sourceBeforePixels = measurePdfUploadEditorOrangePixels(
+            artifactPaths.before,
+            sourceGlyphRegion,
+            footerRegion ? [footerRegion] : [],
+        );
+        const sourceAfterPixels = measurePdfUploadEditorOrangePixels(
+            artifactPaths.after,
+            sourceGlyphRegion,
+            footerRegion ? [footerRegion] : [],
+        );
+        const footerBeforePixels = measurePdfUploadEditorOrangePixels(
+            artifactPaths.before,
+            footerRegion,
+        );
+        const footerAfterPixels = measurePdfUploadEditorOrangePixels(
+            artifactPaths.after,
+            footerRegion,
+        );
+        const maximumRemainingOrangePixels = Math.max(
+            12,
+            Math.floor(Number(sourceBeforePixels?.orange_pixels || 0) * 0.0005),
+        );
+        editorVisualAnalysis = {
+            source_glyph_region: sourceGlyphRegion,
+            footer_region: footerRegion,
+            maximum_remaining_orange_pixels: maximumRemainingOrangePixels,
+            source_before_pixels: sourceBeforePixels,
+            source_after_pixels: sourceAfterPixels,
+            footer_before_pixels: footerBeforePixels,
+            footer_after_pixels: footerAfterPixels,
+        };
+        addCheck(
+            'active_editor_leaves_no_old_title_glyphs',
+            Number(sourceBeforePixels?.orange_pixels || 0) >= 1000
+                && Number(sourceAfterPixels?.orange_pixels ?? Number.POSITIVE_INFINITY)
+                    <= maximumRemainingOrangePixels,
+            'After the move, the active editor leaves no visible orange Drylab News glyph fragments at the original position.',
+            JSON.stringify(editorVisualAnalysis),
+        );
+        addCheck(
+            'active_editor_preserves_footer_pixels',
+            Number(footerBeforePixels?.orange_pixels || 0) >= 100
+                && Number(footerAfterPixels?.orange_pixels || 0)
+                    >= Number(footerBeforePixels?.orange_pixels || 0) * 0.75,
+            'The active editor keeps the orange “for investors & friends · May 2017” footer visible after the title moves.',
+            JSON.stringify({
+                footer_region: footerRegion,
+                footer_before_pixels: footerBeforePixels,
+                footer_after_pixels: footerAfterPixels,
+            }),
+        );
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        downloadPayload = downloaded.payload;
+        analysis = analyzePdfUploadDrylabTitleMove({
+            sourcePdfPath,
+            resultPdfPath: artifactPaths.pdf,
+            pageIndex: Number(config.page_index || 0),
+            originalPagePath: artifactPaths.originalPage,
+            resultPagePath: artifactPaths.resultPage,
+        });
+        const sourceTop = Number(analysis?.source_title?.bbox?.[1]);
+        const resultTop = Number(analysis?.result_title?.bbox?.[1]);
+        const expectedPdfShift = requestedPixels / Math.max(0.01, Number(beforeState?.current_scale) || 1);
+        addCheck(
+            'download_contains_one_moved_title',
+            analysis?.source_titles?.length === 1
+                && analysis?.result_titles?.length === 1
+                && Number.isFinite(sourceTop)
+                && Number.isFinite(resultTop)
+                && Math.abs((resultTop - sourceTop) - expectedPdfShift) <= 15,
+            'The downloaded PDF contains Drylab News exactly once at the requested moved position.',
+            JSON.stringify({
+                source_title: analysis?.source_title,
+                result_title: analysis?.result_title,
+                expected_pdf_shift: expectedPdfShift,
+                actual_pdf_shift: resultTop - sourceTop,
+            }),
+        );
+        addCheck(
+            'download_leaves_no_title_fragments_at_source',
+            Array.isArray(analysis?.source_fragments_at_original_title)
+                && analysis.source_fragments_at_original_title.length === 0,
+            'No Drylab or News text fragments remain in the original title area.',
+            JSON.stringify(analysis?.source_fragments_at_original_title),
+        );
+        const sourceFooter = analysis?.source_footer_blocks?.[0];
+        const resultFooter = analysis?.result_footer_blocks?.[0];
+        addCheck(
+            'download_preserves_bottom_footer',
+            Boolean(sourceFooter)
+                && Boolean(resultFooter)
+                && pdfUploadRectMaxDelta(sourceFooter.bbox, resultFooter.bbox) <= 0.75
+                && Number(analysis?.result_footer_pixels?.count || 0) >= 100,
+            'The bottom “for investors & friends · May 2017” footer remains visible and at its source coordinates.',
+            JSON.stringify({
+                source_footer: sourceFooter,
+                result_footer: resultFooter,
+                result_footer_pixels: analysis?.result_footer_pixels,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            after_state: afterState,
+            move,
+            download_payload: downloadPayload,
+            editor_visual_analysis: editorVisualAnalysis,
+            pdf_analysis: analysis,
+            checks,
+        }, null, 2)}\n`);
+        const result = buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Page 1 before moving title', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 1 after moving title', kind: 'image', filename: artifactNames.after },
+                { label: 'Original page raster', kind: 'image', filename: artifactNames.originalPage },
+                { label: 'Downloaded page raster', kind: 'image', filename: artifactNames.resultPage },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloaded.pdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+            },
+        });
+        result.page_count = Number(analysis?.page_count) || 0;
+        return result;
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                after_state: afterState,
+                move,
+                download_payload: downloadPayload,
+                editor_visual_analysis: editorVisualAnalysis,
+                pdf_analysis: analysis,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function readPdfUploadParagraphResizeState(page, annotationId) {
+    return page.evaluate((id) => {
+        const box = document.querySelector(
+            `.enpv-annotation-box[data-annotation-id="${CSS.escape(id)}"]`
+        );
+        const text = box?.querySelector('.enpv-text-content');
+        if (!box || !text) return null;
+        const boxRect = box.getBoundingClientRect();
+        const textRect = text.getBoundingClientRect();
+        const style = getComputedStyle(text);
+        const range = document.createRange();
+        range.selectNodeContents(text);
+        const rects = Array.from(range.getClientRects())
+            .filter((rect) => rect.width > 0 && rect.height > 0);
+        range.detach?.();
+        const lineTops = [];
+        rects.sort((left, right) => left.top - right.top || left.left - right.left).forEach((rect) => {
+            if (!lineTops.some((top) => Math.abs(top - rect.top) <= 1)) lineTops.push(rect.top);
+        });
+        const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 1;
+        return {
+            annotation_id: id,
+            text: String(text.textContent || '').replace(/\s+/g, ' ').trim(),
+            browser_rect: {
+                left: boxRect.left,
+                top: boxRect.top,
+                width: boxRect.width,
+                height: boxRect.height,
+            },
+            pdf_rect: {
+                x: Number.parseFloat(box.style.left || '0') / scale,
+                y: Number.parseFloat(box.style.top || '0') / scale,
+                width: Number.parseFloat(box.style.width || '0') / scale,
+                height: Number.parseFloat(box.style.height || '0') / scale,
+            },
+            font_size_px: Number.parseFloat(style.fontSize || ''),
+            line_height_px: Number.parseFloat(style.lineHeight || ''),
+            text_rect: {
+                left: textRect.left,
+                top: textRect.top,
+                width: textRect.width,
+                height: textRect.height,
+            },
+            line_count: lineTops.length,
+            scroll_width: text.scrollWidth,
+            scroll_height: text.scrollHeight,
+            client_width: text.clientWidth,
+            client_height: text.clientHeight,
+            transform: style.transform,
+            user_sized_text_box: box.dataset.userSizedTextBox || '',
+            pending_resize: box.dataset.pendingResize || '',
+        };
+    }, annotationId);
+}
+
+function analyzePdfUploadParagraphResize({
+    resultPdfPath,
+    pageIndex,
+    targetText,
+    annotation,
+}) {
+    const pythonCode = String.raw`
+import fitz
+import json
+import re
+import sys
+
+pdf_path, page_index, target_text, annotation_json = sys.argv[1:5]
+page_index = int(page_index)
+annotation = json.loads(annotation_json)
+
+def compact(value):
+    return re.sub(r'\s+', '', str(value or '')).lower()
+
+doc = fitz.open(pdf_path)
+page = doc[page_index]
+x = float(annotation.get('pdfX', 0))
+y = float(annotation.get('pdfY', 0))
+w = float(annotation.get('pdfWidth', 0))
+h = float(annotation.get('pdfHeight', 0))
+top = float(page.rect.height) - (y + h)
+target_rect = fitz.Rect(x, top, x + w, top + h)
+expanded = target_rect + (-2, -2, 2, 2)
+spans = []
+for block in page.get_text('dict', sort=True).get('blocks', []):
+    for line in block.get('lines', []) or []:
+        for span in line.get('spans', []) or []:
+            text = str(span.get('text', ''))
+            bbox = fitz.Rect(span.get('bbox', [0, 0, 0, 0]))
+            center = fitz.Point((bbox.x0 + bbox.x1) / 2, (bbox.y0 + bbox.y1) / 2)
+            if text.strip() and expanded.contains(center):
+                spans.append({
+                    'text': text,
+                    'bbox': [float(v) for v in bbox],
+                    'size': float(span.get('size', 0) or 0),
+                })
+rendered_text = ''.join(span['text'] for span in spans)
+rendered_bbox = None
+if spans:
+    rendered_bbox = [
+        min(span['bbox'][0] for span in spans),
+        min(span['bbox'][1] for span in spans),
+        max(span['bbox'][2] for span in spans),
+        max(span['bbox'][3] for span in spans),
+    ]
+sizes = sorted(span['size'] for span in spans if span['size'] > 0)
+print(json.dumps({
+    'page_count': len(doc),
+    'target_rect': [float(v) for v in target_rect],
+    'rendered_text': rendered_text,
+    'target_text_present': compact(target_text) in compact(rendered_text),
+    'rendered_bbox': rendered_bbox,
+    'font_sizes': sizes,
+    'median_font_size': sizes[len(sizes) // 2] if sizes else None,
+    'spans': spans,
+}))
+`;
+    const raw = execFileSync(PYTHON_BIN, [
+        '-c',
+        pythonCode,
+        resultPdfPath,
+        String(pageIndex),
+        targetText,
+        JSON.stringify(annotation),
+    ], {
+        cwd: path.resolve(__dirname, '..', '..', '..'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return JSON.parse(raw);
+}
+
+async function runPdfUploadSs5ParagraphShrinkFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'before_paragraph_shrink'),
+        after: buildArtifactName(testKey, runToken, 'after_paragraph_shrink'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let afterState = null;
+    let downloadPayload = null;
+    let analysis = null;
+    try {
+        const pageNumber = Number(config.page_index || 0) + 1;
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, pageNumber, {
+            seedAnnotations: config.saved_target_annotation
+                ? [config.saved_target_annotation]
+                : [],
+        });
+        documentId = opened.documentId;
+        const savedId = String(config.saved_runtime_annotation_id || config.saved_annotation_id || 'promoted_3_9');
+        const targetText = String(config.target_text || '');
+        const targetPrefix = normalize(targetText).slice(0, 72);
+        await page.waitForFunction(({ id, expectedText }) => (
+            Array.from(document.querySelectorAll('.enpv-annotation-box')).some((box) => {
+                const text = String(
+                    box.dataset.baseText
+                    || box.dataset.originalText
+                    || box.querySelector('.enpv-text-content')?.textContent
+                    || ''
+                ).replace(/\s+/g, ' ').trim();
+                return String(box.dataset.annotationId || '') === id
+                    || text.startsWith(expectedText);
+            })
+        ), { id: savedId, expectedText: targetPrefix }, { timeout: 90000 });
+        annotationId = await page.evaluate(({ id, expectedText }) => {
+            const boxes = Array.from(document.querySelectorAll('.enpv-annotation-box'));
+            const exact = boxes.find((box) => String(box.dataset.annotationId || '') === id);
+            const byText = boxes.find((box) => String(
+                box.dataset.baseText
+                || box.dataset.originalText
+                || box.querySelector('.enpv-text-content')?.textContent
+                || ''
+            ).replace(/\s+/g, ' ').trim().startsWith(expectedText));
+            return String((exact || byText)?.dataset?.annotationId || '');
+        }, { id: savedId, expectedText: targetPrefix });
+        if (!annotationId) throw new Error('Could not resolve promoted_3_9 on page 3.');
+        const locator = page.locator(
+            `.enpv-annotation-box[data-annotation-id="${annotationId}"]`
+        ).first();
+        await locator.scrollIntoViewIfNeeded();
+        await selectPdfUploadEditorBox(page, locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').click();
+        await page.waitForSelector(
+            `.enpv-annotation-box[data-annotation-id="${annotationId}"].is-editing`,
+            { timeout: 30000 },
+        );
+        beforeState = await readPdfUploadParagraphResizeState(page, annotationId);
+        addCheck(
+            'saved_paragraph_target_resolved',
+            Boolean(beforeState)
+                && normalize(beforeState.text) === normalize(targetText),
+            'The saved promoted_3_9 paragraph resolves with its complete text.',
+            JSON.stringify(beforeState),
+        );
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+
+        const ratio = Number(config.paragraph_shrink_ratio || 0.5);
+        const handle = locator.locator(':scope > .enpv-resize-handle.r').first();
+        const handleRect = await handle.boundingBox();
+        if (!handleRect) throw new Error('The paragraph right resize handle is missing.');
+        const startX = handleRect.x + (handleRect.width / 2);
+        const startY = handleRect.y + (handleRect.height / 2);
+        const pointerId = 1701;
+        await handle.dispatchEvent('pointerdown', {
+            pointerId,
+            pointerType: 'mouse',
+            isPrimary: true,
+            button: 0,
+            buttons: 1,
+            clientX: startX,
+            clientY: startY,
+        });
+        await page.evaluate(({ x, y, id }) => {
+            window.dispatchEvent(new PointerEvent('pointermove', {
+                pointerId: id,
+                pointerType: 'mouse',
+                isPrimary: true,
+                button: -1,
+                buttons: 1,
+                clientX: x,
+                clientY: y,
+                bubbles: true,
+            }));
+            window.dispatchEvent(new PointerEvent('pointerup', {
+                pointerId: id,
+                pointerType: 'mouse',
+                isPrimary: true,
+                button: 0,
+                buttons: 0,
+                clientX: x,
+                clientY: y,
+                bubbles: true,
+            }));
+        }, {
+            x: startX - (beforeState.browser_rect.width * (1 - ratio)),
+            y: startY,
+            id: pointerId,
+        });
+        await page.waitForTimeout(500);
+        afterState = await readPdfUploadParagraphResizeState(page, annotationId);
+        await page.locator('.top-bar').click({ position: { x: 420, y: 20 } });
+        await page.waitForTimeout(300);
+        await opened.pageLocator.screenshot({ path: artifactPaths.after });
+        const widthRatio = afterState.browser_rect.width / beforeState.browser_rect.width;
+        const heightRatio = afterState.browser_rect.height / beforeState.browser_rect.height;
+        addCheck(
+            'paragraph_box_shrunk_by_half',
+            Math.abs(widthRatio - ratio) <= 0.04
+                && afterState.user_sized_text_box === '1',
+            'The paragraph width shrinks to 50% and its height follows the reflowed text.',
+            JSON.stringify({ ratio, width_ratio: widthRatio, height_ratio: heightRatio, before: beforeState, after: afterState }),
+        );
+        addCheck(
+            'paragraph_text_preserved_after_resize',
+            normalize(afterState.text) === normalize(beforeState.text)
+                && afterState.transform === 'none',
+            'The resize preserves the complete paragraph and does not stretch glyphs.',
+            JSON.stringify({ before_text: beforeState.text, after_text: afterState.text, transform: afterState.transform }),
+        );
+
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        downloadPayload = downloaded.payload;
+        const payloadAnnotations = [
+            ...(Array.isArray(downloadPayload.annotations) ? downloadPayload.annotations : []),
+            ...(Array.isArray(downloadPayload.session_annotations) ? downloadPayload.session_annotations : []),
+        ];
+        const payloadAnnotation = payloadAnnotations.find(
+            (annotation) => String(annotation?.id || '') === annotationId
+        );
+        if (!payloadAnnotation) throw new Error('The resized paragraph is missing from the download payload.');
+        analysis = analyzePdfUploadParagraphResize({
+            resultPdfPath: artifactPaths.pdf,
+            pageIndex: Number(config.page_index || 0),
+            targetText,
+            annotation: payloadAnnotation,
+        });
+        const renderedBox = analysis?.rendered_bbox;
+        const targetBox = analysis?.target_rect;
+        const renderedInside = Array.isArray(renderedBox)
+            && Array.isArray(targetBox)
+            && renderedBox[0] >= targetBox[0] - 2
+            && renderedBox[1] >= targetBox[1] - 2
+            && renderedBox[2] <= targetBox[2] + 2
+            && renderedBox[3] <= targetBox[3] + 2;
+        addCheck(
+            'download_contains_complete_resized_paragraph',
+            analysis?.target_text_present === true
+                && renderedInside
+                && Number(analysis?.median_font_size) > 0,
+            'The downloaded PDF contains the complete paragraph fitted inside the resized bounding box.',
+            JSON.stringify({ payload_annotation: payloadAnnotation, pdf_analysis: analysis }),
+        );
+        const editorScale = Number(beforeState?.browser_rect?.width)
+            / Math.max(0.01, Number(beforeState?.pdf_rect?.width));
+        const editorFontSizePoints = Number(beforeState?.font_size_px) / Math.max(0.01, editorScale);
+        addCheck(
+            'download_preserves_font_and_reflows_to_edge',
+            Math.abs(Number(analysis?.median_font_size) - editorFontSizePoints) <= 0.5
+                && Number(analysis?.spans?.length || 0) > Number(beforeState?.line_count || 0),
+            'The exported paragraph preserves its font size and reflows to the edge of the 50% width box.',
+            JSON.stringify({
+                editor_font_size_points: editorFontSizePoints,
+                exported_font_size_points: analysis?.median_font_size,
+                editor_line_count: beforeState?.line_count,
+                exported_line_count: analysis?.spans?.length,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            after_state: afterState,
+            download_payload: downloadPayload,
+            pdf_analysis: analysis,
+            checks,
+        }, null, 2)}\n`);
+        const result = buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Page 3 before paragraph resize', kind: 'image', filename: artifactNames.before },
+                { label: 'Page 3 after paragraph resize', kind: 'image', filename: artifactNames.after },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloaded.pdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+            },
+        });
+        result.page_count = Number(analysis?.page_count) || 0;
+        return result;
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                after_state: afterState,
+                download_payload: downloadPayload,
+                pdf_analysis: analysis,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadSavedTestFlow() {
+    const staticTest = TESTS.pdf_upload_saved_test;
+    ensureOutputDir();
+
+    let config = null;
+    try {
+        const configPath = String(process.env.PDF_UPLOAD_TEST_CONFIG || '').trim();
+        if (!configPath || !fs.existsSync(configPath)) {
+            throw new Error('PDF_UPLOAD_TEST_CONFIG is missing or unreadable.');
+        }
+        config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    } catch (error) {
+        return buildResult({
+            testKey: staticTest.key,
+            label: staticTest.label,
+            description: staticTest.description,
+            testCategory: staticTest.test_category,
+            status: 'error',
+            error: error.stack || String(error),
+        });
+    }
+
+    const testKey = String(
+        config.result_test_key
+        || `pdf_upload_test_${config.test_id || config.upload_test_case_id || 'unknown'}`
+    );
+    const scenarioLabels = {
+        ss5_page4_delete_underlined_neighbor: 'SS-5 Page 4 Underline Deletion',
+        ss5_page1_swap_annotations: 'SS-5 Page 1 Swap Annotations',
+        ss5_page1_delete_paragraph_sentence: 'SS-5 Page 1 Paragraph Sentence Deletion',
+        f1040s3_page1_bounding_box_snapping: 'f1040s3 Page 1 Bounding Box Snapping',
+        f1040s3_page1_drag_preview_spacing: 'f1040s3 Page 1 Drag Preview Spacing',
+        f1040s3_page1_move_preserves_glyph_inset: 'f1040s3 Page 1 Move Preserves Glyph Inset',
+        f1040s3_page1_mixed_style_edit_resize: 'f1040s3 Page 1 Mixed-Style Edit and Resize',
+        f1040s3_page1_resize_preserves_source_spacing: 'f1040s3 Page 1 Resize Preserves Source Spacing',
+        f1040s3_page1_scroll_preserves_edited_spacing: 'f1040s3 Page 1 Scroll Preserves Edited Spacing',
+        f1040s3_page1_date_edit_preserves_mixed_weight: 'f1040s3 Page 1 Date Edit Preserves Mixed Weight',
+        f1040s3_page1_scroll_preserves_user_sized_geometry: 'f1040s3 Page 1 Scroll Preserves User-Sized Geometry',
+        f1040s3_page1_move_without_false_underline: 'f1040s3 Page 1 Move Without False Underline',
+        f1040s3_page1_delete_name_preserves_form_artwork: 'f1040s3 Page 1 Delete Name / Preserve Form Artwork',
+        f1040s3_page1_move_part_header_preserves_source_tile: 'f1040s3 Page 1 Move Part I / Preserve Source Tile',
+        f1040s3_page1_move_down_preserves_font_size: 'f1040s3 Page 1 Move Down / Preserve Font Size',
+        drylab_page1_move_title_preserves_footer: 'Drylab Page 1 Move Title / Preserve Footer',
+        table_examples_page1_move_header_preserves_editor_table: 'Table Examples Page 1 Move Header / Preserve Editor Table',
+        table_examples_page1_edge_tight_header_export: 'Table Examples Page 1 Tight Header / Single-Line Export',
+        table_examples_page1_promoted_edit_entry_stable: 'Table Examples Page 1 Promoted Edit Entry / No Jump',
+        table_examples_page2_edit_text_preserves_geometry: 'Table Examples Page 2 Edit Text / Preserve Geometry',
+        table_examples_page3_exact_font_edit_preserves_geometry: 'Table Examples Page 3 Exact Font Edit / Preserve Geometry',
+        ss5_page3_shrink_paragraph_and_export: 'SS-5 Page 3 Shrink Paragraph / Export',
+    };
+    const label = `Uploaded PDF Test ${config.test_id || '?'}: ${scenarioLabels[config.scenario] || 'Unsupported Saved Instruction'}`;
+    const description = [
+        `Saved target: ${config.saved_runtime_annotation_id || config.saved_annotation_id || '(none)'}.`,
+        `Instruction: ${config.test_comment || '(none)'}`,
+        'The test runs against a disposable clone and never edits the uploaded source document.',
+    ].join(' ');
+
+    const supportedScenarios = new Set([
+        'ss5_page4_delete_underlined_neighbor',
+        'ss5_page1_swap_annotations',
+        'ss5_page1_delete_paragraph_sentence',
+        'f1040s3_page1_bounding_box_snapping',
+        'f1040s3_page1_drag_preview_spacing',
+        'f1040s3_page1_move_preserves_glyph_inset',
+        'f1040s3_page1_mixed_style_edit_resize',
+        'f1040s3_page1_resize_preserves_source_spacing',
+        'f1040s3_page1_scroll_preserves_edited_spacing',
+        'f1040s3_page1_date_edit_preserves_mixed_weight',
+        'f1040s3_page1_scroll_preserves_user_sized_geometry',
+        'f1040s3_page1_move_without_false_underline',
+        'f1040s3_page1_delete_name_preserves_form_artwork',
+        'f1040s3_page1_move_part_header_preserves_source_tile',
+        'f1040s3_page1_move_down_preserves_font_size',
+        'drylab_page1_move_title_preserves_footer',
+        'table_examples_page1_move_header_preserves_editor_table',
+        'table_examples_page1_edge_tight_header_export',
+        'table_examples_page1_promoted_edit_entry_stable',
+        'table_examples_page2_edit_text_preserves_geometry',
+        'table_examples_page3_exact_font_edit_preserves_geometry',
+        'ss5_page3_shrink_paragraph_and_export',
+    ]);
+    if (!supportedScenarios.has(config.scenario)) {
+        const unsupportedCheck = {
+            item: 'saved_instruction_supported',
+            result: 'FAIL',
+            description: 'The saved upload instruction maps to a JavaScript regression scenario.',
+            detail: 'This saved instruction does not match a supported uploaded-PDF JavaScript scenario.',
+        };
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks: [unsupportedCheck],
+            error: unsupportedCheck.detail,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                scenario: config.scenario,
+            },
+        });
+    }
+
+    const sourcePdfPath = String(config.source_pdf_path || '');
+    if (!sourcePdfPath || !fs.existsSync(sourcePdfPath)) {
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            error: `Database-retained source PDF not found: ${sourcePdfPath || '(missing path)'}`,
+        });
+    }
+
+    if (config.scenario === 'ss5_page1_swap_annotations') {
+        return runPdfUploadSs5SwapTestFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'ss5_page1_delete_paragraph_sentence') {
+        return runPdfUploadSs5SentenceDeletionFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_bounding_box_snapping') {
+        return runPdfUploadF1040BoundingBoxSnappingFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_drag_preview_spacing') {
+        return runPdfUploadF1040DragPreviewSpacingFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_move_preserves_glyph_inset') {
+        return runPdfUploadF1040MovePreservesGlyphInsetFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_mixed_style_edit_resize') {
+        return runPdfUploadF1040MixedStyleEditResizeFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_resize_preserves_source_spacing') {
+        return runPdfUploadF1040ResizePreservesSourceSpacingFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_scroll_preserves_edited_spacing') {
+        return runPdfUploadF1040ScrollPreservesEditedSpacingFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_date_edit_preserves_mixed_weight') {
+        return runPdfUploadF1040DateEditPreservesMixedWeightFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_scroll_preserves_user_sized_geometry') {
+        return runPdfUploadF1040ScrollPreservesUserSizedGeometryFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_move_without_false_underline') {
+        return runPdfUploadF1040MoveWithoutFalseUnderlineFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_delete_name_preserves_form_artwork') {
+        return runPdfUploadF1040DeleteNamePreservesFormArtworkFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_move_part_header_preserves_source_tile') {
+        return runPdfUploadF1040PartHeaderPreservesSourceTileFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'f1040s3_page1_move_down_preserves_font_size') {
+        return runPdfUploadMoveDownPreservesFontSizeFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'drylab_page1_move_title_preserves_footer') {
+        return runPdfUploadDrylabTitleMoveFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'table_examples_page1_move_header_preserves_editor_table') {
+        return runPdfUploadTableHeaderMoveEditorFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'table_examples_page1_edge_tight_header_export') {
+        return runPdfUploadTableEdgeTightHeaderExportFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'table_examples_page1_promoted_edit_entry_stable') {
+        return runPdfUploadTablePromotedEditEntryStableFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if ([
+        'table_examples_page2_edit_text_preserves_geometry',
+        'table_examples_page3_exact_font_edit_preserves_geometry',
+    ].includes(config.scenario)) {
+        return runPdfUploadTableTextEditGeometryFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'ss5_page3_shrink_paragraph_and_export') {
+        return runPdfUploadSs5ParagraphShrinkFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'page4_before_delete'),
+        after: buildArtifactName(testKey, runToken, 'page4_after_delete'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        originalPage: buildArtifactName(testKey, runToken, 'page4_original'),
+        resultPage: buildArtifactName(testKey, runToken, 'page4_result'),
+        diffPage: buildArtifactName(testKey, runToken, 'page4_diff'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const cropNames = {};
+    for (const [suffix, labelSuffix] of Object.entries({
+        '3_3:19': 'survivor_19',
+        '3_3:20': 'deleted_20',
+        '3_3:21': 'survivor_21',
+    })) {
+        cropNames[suffix] = {
+            original: buildArtifactName(testKey, runToken, `${labelSuffix}_original`),
+            result: buildArtifactName(testKey, runToken, `${labelSuffix}_result`),
+        };
+    }
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const cropPaths = Object.fromEntries(Object.entries(cropNames).map(([suffix, names]) => [
+        suffix,
+        {
+            original: path.join(OUTPUT_DIR, names.original),
+            result: path.join(OUTPUT_DIR, names.result),
+        },
+    ]));
+
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT, acceptDownloads: true });
+    const page = await context.newPage();
+    let documentId = null;
+    let sourceBoxes = {};
+    let downloadPayload = null;
+    let analysis = null;
+    let raster = null;
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => {
+        checks.push({
+            item,
+            result: passed ? 'PASS' : 'FAIL',
+            description: descriptionText,
+            detail,
+        });
+    };
+
+    try {
+        documentId = await createFixtureDocument(page, sourcePdfPath);
+        addCheck(
+            'disposable_clone_created',
+            Number.isFinite(documentId)
+                && documentId > 0
+                && documentId !== Number(config.source_document_id),
+            'The database original was uploaded as a disposable document instead of editing the saved source document.',
+            `source_document=${config.source_document_id} disposable_document=${documentId}`,
+        );
+
+        await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, {
+            waitUntil: 'domcontentloaded',
+            timeout: 90000,
+        });
+        await page.waitForSelector('body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]', {
+            timeout: 120000,
+        });
+        await page.evaluate(() => {
+            const toggle = document.getElementById('edit-mode-toggle') || document.getElementById('ftb-edit-mode');
+            if (toggle && !document.body.classList.contains('enpv-edit-on')) toggle.click();
+        });
+        await page.waitForSelector('body.enpv-edit-on', { timeout: 15000 });
+
+        const pageNumber = Number(config.page_index) + 1;
+        const pageLocator = page.locator(`.pdfViewer .page[data-page-number="${pageNumber}"]`);
+        await pageLocator.waitFor({ state: 'attached', timeout: 60000 });
+        await pageLocator.scrollIntoViewIfNeeded();
+        await page.waitForSelector(`.pdfViewer .page[data-page-number="${pageNumber}"] .textLayer`, {
+            state: 'attached',
+            timeout: 60000,
+        });
+        await page.waitForFunction((suffixes) => suffixes.every((suffix) => (
+            Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .some((box) => String(box.dataset.annotationId || '').endsWith(suffix))
+        )), ['_3_3:19', '_3_3:20', '_3_3:21'], { timeout: 90000 });
+
+        sourceBoxes = await page.evaluate((suffixes) => {
+            const output = {};
+            for (const suffix of suffixes) {
+                const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                    .find((candidate) => String(candidate.dataset.annotationId || '').endsWith(`_${suffix}`));
+                if (!box) continue;
+                const rect = box.getBoundingClientRect();
+                output[suffix] = {
+                    annotation_id: String(box.dataset.annotationId || ''),
+                    text: String(box.dataset.baseText || box.dataset.originalText || box.textContent || '').replace(/\s+/g, ' ').trim(),
+                    page_index: Number.parseInt(box.dataset.pageIndex || '-1', 10),
+                    pdf_rect_bottom_left: [
+                        Number.parseFloat(box.dataset.sourceBboxX || box.dataset.baseBboxX || 'NaN'),
+                        Number.parseFloat(box.dataset.sourceBboxY || box.dataset.baseBboxY || 'NaN'),
+                        Number.parseFloat(box.dataset.sourceBboxW || box.dataset.baseBboxW || 'NaN'),
+                        Number.parseFloat(box.dataset.sourceBboxH || box.dataset.baseBboxH || 'NaN'),
+                    ],
+                    browser_rect: {
+                        left: rect.left,
+                        top: rect.top,
+                        width: rect.width,
+                        height: rect.height,
+                    },
+                    classes: Array.from(box.classList),
+                };
+            }
+            return output;
+        }, ['3_3:19', '3_3:20', '3_3:21']);
+
+        const expectedText = config.expected_text || {};
+        const preconditionsPass = ['3_3:19', '3_3:20', '3_3:21'].every((suffix) => (
+            sourceBoxes[suffix]
+            && normalize(sourceBoxes[suffix].text) === normalize(expectedText[suffix])
+            && sourceBoxes[suffix].page_index === Number(config.page_index)
+        ));
+        addCheck(
+            'source_groups_resolved',
+            preconditionsPass,
+            'Page 4 resolves :19, :20, and :21 with the expected text before the operation.',
+            JSON.stringify(sourceBoxes),
+        );
+
+        await pageLocator.screenshot({ path: artifactPaths.before });
+        const targetSelector = '.enpv-annotation-box[data-annotation-id$="_3_3:20"]';
+        const target = page.locator(targetSelector).first();
+        await target.scrollIntoViewIfNeeded();
+        await target.click({ position: { x: 12, y: 8 } });
+        await page.locator('#enpv-ann-menu [data-action="delete"]').click();
+        await page.waitForFunction(() => !Array.from(document.querySelectorAll('.enpv-annotation-box'))
+            .some((box) => String(box.dataset.annotationId || '').endsWith('_3_3:20')), null, {
+            timeout: 30000,
+        });
+        await pageLocator.screenshot({ path: artifactPaths.after });
+
+        const survivingDom = await page.evaluate(() => ({
+            survivor19: Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .some((box) => String(box.dataset.annotationId || '').endsWith('_3_3:19')),
+            survivor21: Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .some((box) => String(box.dataset.annotationId || '').endsWith('_3_3:21')),
+            target20: Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .some((box) => String(box.dataset.annotationId || '').endsWith('_3_3:20')),
+        }));
+        addCheck(
+            'editor_deleted_only_target',
+            survivingDom.survivor19 && survivingDom.survivor21 && !survivingDom.target20,
+            'The PDF.js editor removes :20 while leaving :19 and :21 available.',
+            JSON.stringify(survivingDom),
+        );
+
+        const requestPromise = page.waitForRequest(
+            (request) => request.method() === 'POST'
+                && /\/(download-annotated-pdf|download-pdfjs|stamp(ed)?-pdf)/i.test(request.url()),
+            { timeout: 90000 },
+        );
+        await page.locator('#download-pdf-btn').click();
+        const downloadRequest = await requestPromise;
+        const requestBody = downloadRequest.postData() || '';
+        downloadPayload = JSON.parse(requestBody || '{}');
+        const requestHeaders = await downloadRequest.allHeaders();
+        const safeHeaders = {};
+        for (const [header, value] of Object.entries(requestHeaders)) {
+            const lower = header.toLowerCase();
+            if (lower.startsWith(':') || ['content-length', 'host', 'connection'].includes(lower)) continue;
+            safeHeaders[header] = value;
+        }
+        const replay = await page.context().request.post(downloadRequest.url(), {
+            data: requestBody,
+            headers: safeHeaders,
+            timeout: 180000,
+        });
+        if (!replay.ok()) {
+            const body = await replay.text().catch(() => '');
+            throw new Error(`Download PDF replay failed (${replay.status()}): ${body.slice(0, 500)}`);
+        }
+        const downloadedPdf = await replay.body();
+        fs.writeFileSync(artifactPaths.pdf, downloadedPdf);
+
+        const sessionAnnotations = Array.isArray(downloadPayload.session_annotations)
+            ? downloadPayload.session_annotations
+            : [];
+        const deletedAnnotations = sessionAnnotations.filter((annotation) => (
+            annotation?.pdfjsDeleted === true
+            || annotation?.pdfjsDeleted === 1
+            || annotation?.pdfjsDeleted === '1'
+        ));
+        const deletedSourceIds = deletedAnnotations.map((annotation) => String(
+            annotation.pdfjsDeletedAnnotationId || annotation.id || ''
+        ));
+        const targetOnlyDeleted = deletedSourceIds.length === 1
+            && deletedSourceIds[0].endsWith('_3_3:20');
+        addCheck(
+            'download_payload_deletes_only_20',
+            targetOnlyDeleted,
+            'The real Download PDF payload marks only :20 as a deleted PDF.js source annotation.',
+            JSON.stringify({ deleted_source_ids: deletedSourceIds }),
+        );
+
+        const flagsPass = downloadPayload.use_exact_download_path === true
+            && downloadPayload.use_pdfjs_visible_export === true
+            && downloadPayload.use_conversion_safe_export === true;
+        addCheck(
+            'download_uses_pdfjs_visible_export',
+            flagsPass,
+            'The request ran the same exact, visible, conversion-safe export path as downloadAnnotatedPdf().',
+            JSON.stringify({
+                use_exact_download_path: downloadPayload.use_exact_download_path,
+                use_pdfjs_visible_export: downloadPayload.use_pdfjs_visible_export,
+                use_conversion_safe_export: downloadPayload.use_conversion_safe_export,
+            }),
+        );
+        addCheck(
+            'downloaded_pdf_created',
+            downloadedPdf.length > 1000,
+            'downloadAnnotatedPdf() returned a non-empty PDF artifact.',
+            `bytes=${downloadedPdf.length}`,
+        );
+
+        analysis = analyzePdfUploadSs5Deletion({
+            sourcePdfPath,
+            resultPdfPath: artifactPaths.pdf,
+            pageIndex: Number(config.page_index),
+            expectedText,
+            sourceBoxes,
+            originalPagePath: artifactPaths.originalPage,
+            resultPagePath: artifactPaths.resultPage,
+        });
+        raster = comparePdfUploadSs5Rasters({
+            analysis,
+            originalPagePath: artifactPaths.originalPage,
+            resultPagePath: artifactPaths.resultPage,
+            diffPagePath: artifactPaths.diffPage,
+            cropPaths,
+        });
+
+        const expectedCompact = analysis.expected_compact || {};
+        const sourceCompact = String(analysis.source_text_compact || '');
+        const resultCompact = String(analysis.result_text_compact || '');
+        const sourceHasAll = ['3_3:19', '3_3:20', '3_3:21'].every((suffix) => (
+            sourceCompact.includes(String(expectedCompact[suffix] || ''))
+        ));
+        const targetAbsent = !resultCompact.includes(String(expectedCompact['3_3:20'] || ''))
+            && !resultCompact.includes(normalize(String(config.underlined_phrase || '')).replace(/\s+/g, ''));
+        addCheck(
+            'deleted_text_absent_from_pdf',
+            sourceHasAll && targetAbsent,
+            'The original contains :20, while the downloaded PDF contains neither its row text nor the underlined phrase.',
+            JSON.stringify({
+                source_has_all_expected_rows: sourceHasAll,
+                result_has_target_row: resultCompact.includes(String(expectedCompact['3_3:20'] || '')),
+                result_has_underlined_phrase: resultCompact.includes(normalize(String(config.underlined_phrase || '')).replace(/\s+/g, '')),
+            }),
+        );
+
+        addCheck(
+            'deleted_underline_absent_from_pdf',
+            (analysis.source_underlines || []).length > 0
+                && (analysis.result_underlines || []).length === 0,
+            'The source underline beneath “Paperwork Reduction Act of 1995” exists in the original and is absent from the downloaded PDF.',
+            JSON.stringify({
+                original_segments: analysis.source_underlines,
+                result_segments: analysis.result_underlines,
+            }),
+        );
+
+        const survivorTextPass = ['3_3:19', '3_3:21'].every((suffix) => (
+            resultCompact.includes(String(expectedCompact[suffix] || ''))
+        ));
+        addCheck(
+            'survivor_text_present',
+            survivorTextPass,
+            'The complete :19 and :21 text remains searchable in the downloaded PDF.',
+            JSON.stringify({
+                survivor_19_present: resultCompact.includes(String(expectedCompact['3_3:19'] || '')),
+                survivor_21_present: resultCompact.includes(String(expectedCompact['3_3:21'] || '')),
+            }),
+        );
+
+        const geometryDiffs = {};
+        const survivorGeometryPass = ['3_3:19', '3_3:21'].every((suffix) => {
+            const beforeRect = analysis.source_rects?.[suffix];
+            const afterRect = analysis.result_rects?.[suffix];
+            if (!Array.isArray(beforeRect) || !Array.isArray(afterRect)) return false;
+            const diffs = beforeRect.map((value, index) => Math.abs(Number(value) - Number(afterRect[index])));
+            geometryDiffs[suffix] = diffs;
+            return diffs.every((difference) => difference <= 0.75);
+        });
+        addCheck(
+            'survivor_geometry_unchanged',
+            survivorGeometryPass,
+            ':19 and :21 retain their original extracted text bounds within 0.75 PDF points.',
+            JSON.stringify(geometryDiffs),
+        );
+
+        const survivorRasterPass = ['3_3:19', '3_3:21'].every((suffix) => (
+            Number(raster.regions?.[suffix]?.ratio ?? 1) <= 0.002
+        ));
+        addCheck(
+            'survivor_raster_unchanged',
+            survivorRasterPass,
+            ':19 and :21 retain their original glyph raster with no visible masking.',
+            JSON.stringify({
+                survivor_19: raster.regions?.['3_3:19'],
+                survivor_21: raster.regions?.['3_3:21'],
+            }),
+        );
+
+        const noSurvivorFills = ['3_3:19', '3_3:21'].every((suffix) => (
+            Array.isArray(analysis.new_survivor_fills?.[suffix])
+            && analysis.new_survivor_fills[suffix].length === 0
+        ));
+        addCheck(
+            'no_opaque_shape_over_survivors',
+            noSurvivorFills,
+            'No newly-added opaque PDF drawing, rectangle, eraser, or source mask overlaps :19 or :21.',
+            JSON.stringify(analysis.new_survivor_fills),
+        );
+
+        const outsideTargetPass = Number(raster.outside_target_ratio) <= 0.0005;
+        const targetChanged = Number(raster.regions?.['3_3:20']?.ratio || 0) >= 0.01;
+        addCheck(
+            'page_change_confined_to_target',
+            outsideTargetPass && targetChanged,
+            'The page raster changes in the deleted :20 region and remains unchanged outside a 3-point target margin.',
+            JSON.stringify({
+                target: raster.regions?.['3_3:20'],
+                outside_target_ratio: raster.outside_target_ratio,
+                outside_target_mismatch: raster.outside_target_mismatch,
+            }),
+        );
+
+        const diagnostics = {
+            config: {
+                ...config,
+                source_pdf_path: path.basename(sourcePdfPath),
+            },
+            disposable_document_id: documentId,
+            source_boxes: sourceBoxes,
+            download_payload: downloadPayload,
+            pdf_analysis: analysis,
+            raster_analysis: raster,
+            checks,
+        };
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify(diagnostics, null, 2)}\n`);
+
+        const artifacts = [
+            { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+            { label: 'Page 4 before deleting :20', kind: 'image', filename: artifactNames.before },
+            { label: 'Page 4 after deleting :20', kind: 'image', filename: artifactNames.after },
+            { label: 'Original page 4 raster', kind: 'image', filename: artifactNames.originalPage },
+            { label: 'Result page 4 raster', kind: 'image', filename: artifactNames.resultPage },
+            { label: 'Page 4 raster diff', kind: 'image', filename: artifactNames.diffPage },
+            { label: 'Original :19 crop', kind: 'image', filename: cropNames['3_3:19'].original },
+            { label: 'Result :19 crop', kind: 'image', filename: cropNames['3_3:19'].result },
+            { label: 'Original :20 crop', kind: 'image', filename: cropNames['3_3:20'].original },
+            { label: 'Result :20 crop', kind: 'image', filename: cropNames['3_3:20'].result },
+            { label: 'Original :21 crop', kind: 'image', filename: cropNames['3_3:21'].original },
+            { label: 'Result :21 crop', kind: 'image', filename: cropNames['3_3:21'].result },
+            { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+        ];
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        const result = buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status,
+            checks,
+            artifacts,
+            fileSize: downloadedPdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                deleted_suffix: config.delete_suffix,
+                survivor_suffixes: config.survivor_suffixes,
+                raster,
+            },
+        });
+        result.page_count = Number(analysis.page_count) || 0;
+        return result;
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: {
+                    ...config,
+                    source_pdf_path: path.basename(sourcePdfPath),
+                },
+                disposable_document_id: documentId,
+                source_boxes: sourceBoxes,
+                download_payload: downloadPayload,
+                pdf_analysis: analysis,
+                raster_analysis: raster,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_diagnosticError) {
+            // Preserve the primary browser/PDF failure.
+        }
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+            },
+        });
+    } finally {
+        if (documentId) {
+            try {
+                await deleteDocument(page, documentId);
+            } catch (_cleanupError) {
+                // The primary regression result is more important than cleanup reporting.
+            }
+        }
+        await browser.close();
+    }
+}
+
 function listFiles() {
     // Classify each test by which editor URL it exercises so the admin Run
     // PDF Tests page can split them into /edit (legacy) and /edit-new tabs.
@@ -18572,6 +28957,7 @@ function listFiles() {
 
     const files = [
         ...Object.values(TESTS)
+            .filter((test) => test.key !== 'pdf_upload_saved_test')
             .filter((test) => !PARAGRAPH_TEST_KEYS.includes(test.key))
             .filter((test) => !TEXT_LAYOUT_SUITE_1_KEYS.includes(test.key))
             .map((test) => ({

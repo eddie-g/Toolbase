@@ -59,12 +59,21 @@ import {
     clampSourceMaskRectToCell,
     dominantSourceRunFontSize,
     naturalSourceLineSeparator,
+    pdfjsFontWeightFromFaceName,
     pdfjsPromotedOverlayShouldRenderAsPersistedOverlay,
     pdfjsSourceOverlayShouldUseSourceBoxInEditMode,
+    promotedTextEditFlags,
     reconcileRichTextRunWhitespace,
+    resolveRichTextRunFontIdentity,
     restoreExplicitSourceWhitespace,
     richTextViewportCssLength,
+    sourceRunDrawnUnderlineMetadata,
+    sourceNaturalizedGapText,
+    sourceRunTextsUseDistributedLeaderSpacing,
+    sourceSpanDrawnUnderlineSegments,
+    sourceSpanDrawnUnderlineRanges,
     sourceVisualLineSlots,
+    splitSourceRunsAtDrawnUnderlineRanges,
 } from './source-edit-contract.js';
 import {
     downloadImageExportFiles,
@@ -130,6 +139,7 @@ const floatingHighlightButton = document.getElementById('ftb-highlight');
 const floatingNotesButton = document.getElementById('ftb-notes');
 const floatingConvertButton = document.getElementById('ftb-convert');
 const floatingMergePdfButton = document.getElementById('ftb-merge-pdf');
+const floatingPasswordButton = document.getElementById('ftb-encrypt');
 const floatingGuidedConvertButton = document.getElementById('ftb-guided-convert');
 const saveStatus = document.getElementById('save-status');
 const saveToast = document.getElementById('save-toast');
@@ -240,6 +250,27 @@ const splitNameStatus = document.getElementById('enpv-split-name-status');
 const splitNameCancelButton = document.getElementById('enpv-split-name-cancel');
 const splitNameDownloadButton = document.getElementById('enpv-split-name-download');
 const splitNameOpenEditorButton = document.getElementById('enpv-split-name-open-editor');
+const passwordModal = document.getElementById('enpv-encrypt-modal');
+const passwordTitle = document.getElementById('enpv-encrypt-title');
+const passwordCloseButton = document.getElementById('enpv-encrypt-close');
+const passwordTabs = document.getElementById('enpv-encrypt-tabs');
+const passwordSetTab = document.getElementById('enpv-encrypt-set-tab');
+const passwordRemoveTab = document.getElementById('enpv-encrypt-remove-tab');
+const passwordSetPanel = document.getElementById('enpv-encrypt-set-panel');
+const passwordRemovePanel = document.getElementById('enpv-encrypt-remove-panel');
+const passwordUnlockPanel = document.getElementById('enpv-encrypt-unlock-panel');
+const passwordCurrentWrap = document.getElementById('enpv-encrypt-current-wrap');
+const passwordCurrentInput = document.getElementById('enpv-encrypt-current-password');
+const passwordNewInput = document.getElementById('enpv-encrypt-password');
+const passwordConfirmWrap = document.getElementById('enpv-encrypt-confirm-wrap');
+const passwordConfirmInput = document.getElementById('enpv-encrypt-confirm');
+const passwordRemoveInput = document.getElementById('enpv-encrypt-remove-password');
+const passwordUnlockInput = document.getElementById('enpv-encrypt-unlock-password');
+const passwordRemoveHelp = document.getElementById('enpv-encrypt-remove-help');
+const passwordError = document.getElementById('enpv-encrypt-error');
+const passwordStatus = document.getElementById('enpv-encrypt-status');
+const passwordSubmitButton = document.getElementById('enpv-encrypt-accept');
+const passwordSubmitLabel = document.getElementById('enpv-encrypt-accept-label');
 const layersOpenButton = document.getElementById('enpv-layers-open');
 const layersPanel = document.getElementById('enpv-layers-panel');
 const layersCloseButton = document.getElementById('enpv-layers-close');
@@ -325,8 +356,12 @@ const TEMPLATE_TYPE = String(root.dataset.templateType || '').trim();
 const TEMPLATE_SLUG = String(root.dataset.templateSlug || '').trim();
 const CSRF = root.dataset.csrf;
 const DOC_ID = root.dataset.docId;
+const IS_UPLOAD_TEST_REVIEW = root.dataset.uploadTestReview === '1';
+const UPLOAD_TEST_SAVE_URL = root.dataset.uploadTestSaveUrl || '';
 const INFO_URL = editNewRoot?.dataset?.infoUrl;
-const FONTS_URL = editNewRoot?.dataset?.fontsUrl || (DOC_ID ? `/documents/${encodeURIComponent(DOC_ID)}/fonts` : '');
+const FONTS_URL = IS_UPLOAD_TEST_REVIEW
+    ? ''
+    : (editNewRoot?.dataset?.fontsUrl || (DOC_ID ? `/documents/${encodeURIComponent(DOC_ID)}/fonts` : ''));
 const SAVE_URL = editNewRoot?.dataset?.saveUrl;
 const SAVE_ACRO_FORM_URL = editNewRoot?.dataset?.saveAcroFormUrl;
 const ANNOTATION_DEBUG_URL = editNewRoot?.dataset?.annotationDebugUrl;
@@ -338,11 +373,208 @@ const DOWNLOAD_URL = editNewRoot?.dataset?.downloadUrl;
 const CONVERT_TO_PDFA_URL = editNewRoot?.dataset?.convertToPdfaUrl || '';
 const CONVERT_TO_WORD_URL = editNewRoot?.dataset?.convertToWordUrl || '';
 const CONVERT_TO_EXCEL_URL = editNewRoot?.dataset?.convertToExcelUrl || '';
+const PASSWORD_PDF_URL = editNewRoot?.dataset?.encryptPdfUrl || '';
+const PASSWORD_UNLOCK_URL = root.dataset.passwordUnlockUrl || '';
 const DOWNLOAD_PDFA_URL = editNewRoot?.dataset?.downloadPdfaUrl || '';
 const DOWNLOAD_CONVERTED_URL = editNewRoot?.dataset?.downloadConvertedUrl;
 const DOCUMENT_CONVERSION_PRICE = Math.max(0, Number(editNewRoot?.dataset?.documentConversionPrice) || 0.10);
 const DOCUMENT_CONVERSION_PAGES_PER_TRANSACTION = Math.max(1, Number.parseInt(editNewRoot?.dataset?.documentConversionPagesPerTransaction || '50', 10));
 const LOG_EXPORT_URL = editNewRoot?.dataset?.logExportUrl || '';
+
+function installUploadTestReviewMode() {
+    if (!IS_UPLOAD_TEST_REVIEW) return;
+
+    const form = document.getElementById('putr-form');
+    const annotationIdInput = document.getElementById('putr-annotation-id');
+    const runtimeAnnotationIdInput = document.getElementById('putr-runtime-annotation-id');
+    const pageIndexInput = document.getElementById('putr-page-index');
+    const targetTextInput = document.getElementById('putr-target-text');
+    const testCommentInput = document.getElementById('putr-test-comment');
+    const pageLabel = document.getElementById('putr-page-label');
+    const targetLabel = document.getElementById('putr-target-label');
+    const runtimeLabel = document.getElementById('putr-runtime-label');
+    const status = document.getElementById('putr-status');
+    const saveButton = document.getElementById('putr-save');
+    const title = document.getElementById('putr-title');
+    const savedCasesElement = document.getElementById('putr-saved-cases');
+    const savedCasesByAnnotationId = new Map();
+    let selectedBox = null;
+
+    const registerSavedCase = (testCase) => {
+        if (!testCase || typeof testCase !== 'object') return;
+        const annotationId = String(testCase.annotation_id || '').trim();
+        const runtimeAnnotationId = String(testCase.runtime_annotation_id || '').trim();
+        if (annotationId) savedCasesByAnnotationId.set(annotationId, testCase);
+        if (runtimeAnnotationId) savedCasesByAnnotationId.set(runtimeAnnotationId, testCase);
+    };
+
+    try {
+        const savedCases = JSON.parse(savedCasesElement?.textContent || '[]');
+        if (Array.isArray(savedCases)) savedCases.forEach(registerSavedCase);
+    } catch (error) {
+        console.warn('Could not parse saved PDF upload test cases.', error);
+    }
+
+    const setStatusMessage = (message, kind = '') => {
+        if (!status) return;
+        status.textContent = String(message || '');
+        status.classList.toggle('is-error', kind === 'error');
+        status.classList.toggle('is-success', kind === 'success');
+    };
+
+    const textForBox = (box) => {
+        const raw = box?.querySelector?.('.enpv-text-content')?.textContent
+            || box?.dataset?.baseText
+            || box?.dataset?.originalText
+            || box?.dataset?.annotationType
+            || 'Selected PDF element';
+        return String(raw).replace(/\s+/g, ' ').trim().slice(0, 2000);
+    };
+
+    const selectReviewBox = (box, options = {}) => {
+        if (!(box instanceof HTMLElement)) return;
+        selectedBox?.classList?.remove('is-test-target');
+        document.querySelectorAll('.enpv-annotation-box.is-test-target').forEach((element) => {
+            if (element !== box) element.classList.remove('is-test-target');
+        });
+        selectedBox = box;
+        selectedBox.classList.add('is-test-target');
+
+        const runtimeId = String(box.dataset.annotationId || '').trim();
+        const persistentId = String(box.dataset.persistedAnnotationId || '').trim();
+        // The review surface reports the ID printed on the clicked PDF.js
+        // overlay itself. A promoted/persisted owner may exist behind it, but
+        // that internal ID is not what the reviewer selected.
+        const annotationId = runtimeId || persistentId;
+        const parsedPageIndex = Number.parseInt(box.dataset.pageIndex || '', 10);
+        const pageIndex = Number.isFinite(parsedPageIndex) && parsedPageIndex >= 0 ? parsedPageIndex : 0;
+        const targetText = textForBox(box);
+        const savedCase = savedCasesByAnnotationId.get(annotationId)
+            || savedCasesByAnnotationId.get(runtimeId)
+            || savedCasesByAnnotationId.get(persistentId)
+            || null;
+
+        if (annotationIdInput) annotationIdInput.value = annotationId;
+        if (runtimeAnnotationIdInput) runtimeAnnotationIdInput.value = runtimeId;
+        if (pageIndexInput) pageIndexInput.value = String(pageIndex);
+        if (targetTextInput) targetTextInput.value = targetText;
+        if (testCommentInput) testCommentInput.value = String(savedCase?.test_comment || '');
+        if (pageLabel) pageLabel.textContent = `Page ${pageIndex + 1}`;
+        if (targetLabel) targetLabel.textContent = targetText || 'Selected PDF element';
+        if (runtimeLabel) {
+            runtimeLabel.innerHTML = '';
+            runtimeLabel.hidden = true;
+        }
+        if (title) title.textContent = 'Annotation selected';
+        if (options.silent !== true) {
+            setStatusMessage(
+                savedCase
+                    ? 'Saved comment loaded for this annotation.'
+                    : 'New annotation target. Add its test instructions, then save.'
+            );
+        }
+    };
+
+    const interceptEditorPointer = (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const box = target?.closest?.('.enpv-annotation-box');
+        if (!box) return;
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        if (event.type === 'pointerdown' || event.type === 'mousedown') {
+            selectReviewBox(box);
+        }
+    };
+
+    // Capture before the editor's drag/edit handlers. The review screen
+    // intentionally permits only choosing a target box.
+    window.addEventListener('pointerdown', interceptEditorPointer, true);
+    window.addEventListener('mousedown', interceptEditorPointer, true);
+    window.addEventListener('click', interceptEditorPointer, true);
+    window.addEventListener('dblclick', interceptEditorPointer, true);
+    window.addEventListener('contextmenu', interceptEditorPointer, true);
+
+    const restoreSavedSelection = () => {
+        if (selectedBox?.isConnected) return;
+        const savedId = String(annotationIdInput?.value || '').trim();
+        const savedRuntimeId = String(runtimeAnnotationIdInput?.value || '').trim();
+        if (!savedId && !savedRuntimeId) return;
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((candidate) => {
+            const annotationId = String(candidate.dataset.annotationId || '').trim();
+            const persistedId = String(candidate.dataset.persistedAnnotationId || '').trim();
+            return [annotationId, persistedId].includes(savedId)
+                || (savedRuntimeId && annotationId === savedRuntimeId);
+        });
+        if (box) selectReviewBox(box, { silent: true });
+    };
+
+    if (viewerElement && typeof MutationObserver !== 'undefined') {
+        const observer = new MutationObserver(() => window.requestAnimationFrame(restoreSavedSelection));
+        observer.observe(viewerElement, { childList: true, subtree: true });
+    }
+
+    form?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const annotationId = String(annotationIdInput?.value || '').trim();
+        const pageIndex = Number.parseInt(pageIndexInput?.value || '', 10);
+        const testComment = String(testCommentInput?.value || '').trim();
+        if (!annotationId || !Number.isFinite(pageIndex)) {
+            setStatusMessage('Click an overlay box to choose the test target.', 'error');
+            return;
+        }
+        if (!testComment) {
+            setStatusMessage('Describe what the test should do.', 'error');
+            testCommentInput?.focus();
+            return;
+        }
+        if (!UPLOAD_TEST_SAVE_URL) {
+            setStatusMessage('The test save endpoint is unavailable.', 'error');
+            return;
+        }
+
+        if (saveButton) {
+            saveButton.disabled = true;
+            saveButton.textContent = 'Saving…';
+        }
+        setStatusMessage('Saving test…');
+        try {
+            const response = await fetch(UPLOAD_TEST_SAVE_URL, {
+                method: 'PATCH',
+                credentials: 'same-origin',
+                headers: {
+                    Accept: 'application/json',
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': CSRF,
+                },
+                body: JSON.stringify({
+                    annotation_id: annotationId,
+                    runtime_annotation_id: String(runtimeAnnotationIdInput?.value || '').trim() || null,
+                    page_index: pageIndex,
+                    target_text: String(targetTextInput?.value || '').trim() || null,
+                    test_comment: testComment,
+                }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || !data?.success) {
+                const firstValidationError = Object.values(data?.errors || {}).flat()[0];
+                throw new Error(firstValidationError || data?.message || `Save failed (${response.status})`);
+            }
+            registerSavedCase(data.case);
+            setStatusMessage('PDF test saved.', 'success');
+        } catch (error) {
+            console.error('PDF upload test save failed', error);
+            setStatusMessage(error?.message || 'PDF test could not be saved.', 'error');
+        } finally {
+            if (saveButton) {
+                saveButton.disabled = false;
+                saveButton.textContent = 'Save test';
+            }
+        }
+    });
+}
+
+installUploadTestReviewMode();
 
 function installDocumentRename() {
     const renameUrl = docNameWrap?.dataset?.renameUrl || '';
@@ -758,7 +990,7 @@ document.addEventListener('focusout', (event) => {
     });
 }, true);
 
-function flashSaveToast(message) {
+function flashSaveToast(message, durationMs = 1800) {
     if (!saveToast) return;
     saveToast.textContent = message;
     saveToast.classList.add('show');
@@ -766,7 +998,7 @@ function flashSaveToast(message) {
     saveToastTimer = window.setTimeout(() => {
         saveToast.classList.remove('show');
         saveToastTimer = null;
-    }, 1800);
+    }, Math.max(500, Number(durationMs) || 1800));
 }
 
 function normalizeComparableText(value) {
@@ -2699,6 +2931,380 @@ document.addEventListener('keydown', (event) => {
     else closeMergeModal();
 });
 
+let passwordActiveTab = 'set';
+let passwordRequestInFlight = false;
+let documentPasswordProtected = root.dataset.passwordProtected === '1';
+let documentUnlockToken = '';
+let activeDocumentPassword = '';
+let pendingPasswordUnlockResolve = null;
+
+function passwordProtectionIsActive() {
+    return documentPasswordProtected;
+}
+
+function setPasswordError(message = '') {
+    if (!passwordError) return;
+    passwordError.textContent = String(message || '');
+    passwordError.hidden = !message;
+}
+
+function setPasswordStatus(message = '') {
+    if (passwordStatus) passwordStatus.textContent = String(message || '');
+}
+
+function passwordFormIsComplete() {
+    if (passwordActiveTab === 'unlock') {
+        return Boolean(passwordUnlockInput?.value);
+    }
+    if (passwordActiveTab === 'remove') {
+        return passwordProtectionIsActive() && Boolean(passwordRemoveInput?.value);
+    }
+    const currentIsValid = !passwordProtectionIsActive() || Boolean(passwordCurrentInput?.value);
+    const nextPassword = String(passwordNewInput?.value || '');
+    const confirmationIsValid = passwordProtectionIsActive()
+        || nextPassword === String(passwordConfirmInput?.value || '');
+    return currentIsValid
+        && nextPassword.length > 0
+        && confirmationIsValid;
+}
+
+function updatePasswordUi() {
+    const protectedCopyExists = passwordProtectionIsActive();
+    const isUnlock = passwordActiveTab === 'unlock';
+    const isSet = passwordActiveTab === 'set';
+    const setLabel = protectedCopyExists ? 'Update password' : 'Set password';
+
+    if (passwordTitle) passwordTitle.textContent = isUnlock ? 'Unlock PDF' : 'Password';
+    if (passwordTabs) passwordTabs.hidden = isUnlock;
+    if (passwordSetTab) {
+        passwordSetTab.classList.toggle('is-active', isSet);
+        passwordSetTab.setAttribute('aria-selected', isSet ? 'true' : 'false');
+        passwordSetTab.tabIndex = isSet ? 0 : -1;
+    }
+    if (passwordRemoveTab) {
+        passwordRemoveTab.classList.toggle('is-active', passwordActiveTab === 'remove');
+        passwordRemoveTab.setAttribute('aria-selected', passwordActiveTab === 'remove' ? 'true' : 'false');
+        passwordRemoveTab.tabIndex = passwordActiveTab === 'remove' ? 0 : -1;
+    }
+    if (passwordSetPanel) passwordSetPanel.hidden = !isSet || isUnlock;
+    if (passwordRemovePanel) passwordRemovePanel.hidden = passwordActiveTab !== 'remove';
+    if (passwordUnlockPanel) passwordUnlockPanel.hidden = !isUnlock;
+    if (passwordCurrentWrap) passwordCurrentWrap.hidden = !protectedCopyExists;
+    if (passwordConfirmWrap) passwordConfirmWrap.hidden = protectedCopyExists;
+    if (passwordRemoveHelp) {
+        passwordRemoveHelp.textContent = protectedCopyExists
+            ? 'Enter the current password to remove protection from this PDF.'
+            : 'Set a password first.';
+    }
+    if (passwordSubmitLabel) {
+        passwordSubmitLabel.textContent = isUnlock
+            ? 'Open PDF'
+            : (isSet ? setLabel : 'Remove password');
+    }
+    if (passwordSubmitButton) {
+        passwordSubmitButton.disabled = passwordRequestInFlight || !passwordFormIsComplete();
+        passwordSubmitButton.classList.toggle('is-busy', passwordRequestInFlight);
+    }
+    for (const control of [
+        passwordCloseButton,
+        passwordSetTab,
+        passwordRemoveTab,
+        passwordCurrentInput,
+        passwordNewInput,
+        passwordConfirmInput,
+        passwordRemoveInput,
+        passwordUnlockInput,
+    ]) {
+        if (control) control.disabled = passwordRequestInFlight;
+    }
+}
+
+function setPasswordTab(tabName, { focus = true } = {}) {
+    passwordActiveTab = ['remove', 'unlock'].includes(tabName) ? tabName : 'set';
+    setPasswordError('');
+    setPasswordStatus('');
+    updatePasswordUi();
+    if (!focus) return;
+    window.setTimeout(() => {
+        if (passwordActiveTab === 'unlock') {
+            passwordUnlockInput?.focus?.({ preventScroll: true });
+        } else if (passwordActiveTab === 'remove') {
+            passwordRemoveInput?.focus?.({ preventScroll: true });
+        } else if (passwordProtectionIsActive()) {
+            passwordCurrentInput?.focus?.({ preventScroll: true });
+        } else {
+            passwordNewInput?.focus?.({ preventScroll: true });
+        }
+    }, 0);
+}
+
+function clearPasswordInputs() {
+    for (const input of [
+        passwordCurrentInput,
+        passwordNewInput,
+        passwordConfirmInput,
+        passwordRemoveInput,
+        passwordUnlockInput,
+    ]) {
+        if (input) input.value = '';
+    }
+}
+
+function openPasswordModal() {
+    if (!passwordModal) return;
+    clearPasswordInputs();
+    passwordRequestInFlight = false;
+    passwordModal.hidden = false;
+    floatingPasswordButton?.classList.add('active', 'is-active');
+    floatingPasswordButton?.setAttribute('aria-pressed', 'true');
+    setPasswordTab('set');
+}
+
+function closePasswordModal() {
+    if (!passwordModal || passwordRequestInFlight) return;
+    if (passwordActiveTab === 'unlock' && pendingPasswordUnlockResolve) {
+        window.location.assign('/pdf-editor');
+        return;
+    }
+    passwordModal.hidden = true;
+    clearPasswordInputs();
+    setPasswordError('');
+    setPasswordStatus('');
+    floatingPasswordButton?.classList.remove('active', 'is-active');
+    floatingPasswordButton?.setAttribute('aria-pressed', 'false');
+    floatingPasswordButton?.focus?.({ preventScroll: true });
+}
+
+function openPasswordUnlockModal() {
+    if (!passwordModal) {
+        return Promise.reject(new Error('The password dialog is unavailable.'));
+    }
+    clearPasswordInputs();
+    passwordRequestInFlight = false;
+    passwordModal.hidden = false;
+    setPasswordTab('unlock');
+
+    return new Promise((resolve) => {
+        pendingPasswordUnlockResolve = resolve;
+    });
+}
+
+function setPasswordBusy(busy, message = '') {
+    passwordRequestInFlight = Boolean(busy);
+    if (message) setPasswordStatus(message);
+    updatePasswordUi();
+}
+
+function passwordResponseError(data, fallback) {
+    const validationMessage = Object.values(data?.errors || {}).flat()[0];
+    return String(validationMessage || data?.message || fallback);
+}
+
+async function fetchPasswordResultBlob(data) {
+    if (!data?.download_token || !DOWNLOAD_CONVERTED_URL) {
+        throw new Error('The password-protected download is unavailable.');
+    }
+    const downloadUrl = buildConvertedDownloadUrl(DOWNLOAD_CONVERTED_URL, data.download_token);
+    const response = await fetch(downloadUrl, {
+        method: 'GET',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/pdf' },
+    });
+    if (!response.ok) {
+        throw new Error(`The secured PDF download failed (${response.status}).`);
+    }
+    const blob = await response.blob();
+    if (!blob.size) throw new Error('The secured PDF download was empty.');
+    return blob;
+}
+
+async function encryptEditedPdfBlob(blob) {
+    if (!PASSWORD_PDF_URL || !DOWNLOAD_CONVERTED_URL || !activeDocumentPassword) {
+        throw new Error('The PDF password is unavailable. Reopen the PDF and enter its password.');
+    }
+
+    const formData = new FormData();
+    formData.append('action', 'set');
+    formData.append('algorithm', 'aes-128');
+    formData.append('password', activeDocumentPassword);
+    formData.append('password_confirmation', activeDocumentPassword);
+    formData.append('pdf', blob, 'edited.pdf');
+
+    const response = await fetch(PASSWORD_PDF_URL, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+            Accept: 'application/json',
+            'X-CSRF-TOKEN': CSRF,
+        },
+        body: formData,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data?.success === false) {
+        throw new Error(passwordResponseError(data, 'The downloaded PDF could not be encrypted.'));
+    }
+
+    return fetchPasswordResultBlob(data);
+}
+
+async function submitPasswordAction() {
+    if (passwordRequestInFlight || !passwordFormIsComplete()) return;
+    if (passwordActiveTab === 'unlock' && !PASSWORD_UNLOCK_URL) {
+        setPasswordError('The PDF unlock endpoint is unavailable.');
+        return;
+    }
+    if (passwordActiveTab !== 'unlock' && !PASSWORD_PDF_URL) {
+        setPasswordError('The PDF password endpoint is unavailable.');
+        return;
+    }
+
+    if (passwordActiveTab === 'unlock') {
+        setPasswordError('');
+        setPasswordBusy(true, 'Checking password…');
+        try {
+            const enteredPassword = String(passwordUnlockInput?.value || '');
+            const response = await fetch(PASSWORD_UNLOCK_URL, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    'X-CSRF-TOKEN': CSRF,
+                },
+                body: JSON.stringify({ password: enteredPassword }),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data?.success === false || !data?.unlock_token) {
+                throw new Error(passwordResponseError(data, 'The PDF could not be unlocked.'));
+            }
+            documentUnlockToken = String(data.unlock_token);
+            activeDocumentPassword = enteredPassword;
+            const resolveUnlock = pendingPasswordUnlockResolve;
+            pendingPasswordUnlockResolve = null;
+            passwordModal.hidden = true;
+            clearPasswordInputs();
+            setPasswordError('');
+            setPasswordStatus('');
+            setPasswordBusy(false);
+            resolveUnlock?.();
+        } catch (error) {
+            setPasswordError(error?.message || 'The PDF could not be unlocked.');
+            setPasswordStatus('');
+            setPasswordBusy(false);
+        }
+        return;
+    }
+
+    const action = passwordActiveTab === 'remove' ? 'remove' : 'set';
+    const updatingPassword = action === 'set' && passwordProtectionIsActive();
+    setPasswordError('');
+    setPasswordBusy(true, action === 'remove'
+        ? 'Verifying the current password…'
+        : (updatingPassword ? 'Updating password…' : 'Setting password…'));
+
+    try {
+        const formData = new FormData();
+        formData.append('action', action);
+        formData.append('algorithm', 'aes-128');
+        formData.append('persist_protection', '1');
+        if (action === 'remove') {
+            formData.append('current_password', String(passwordRemoveInput?.value || ''));
+        } else {
+            const nextPassword = String(passwordNewInput?.value || '');
+            formData.append('password', nextPassword);
+            formData.append(
+                'password_confirmation',
+                updatingPassword ? nextPassword : String(passwordConfirmInput?.value || ''),
+            );
+            if (updatingPassword) {
+                formData.append('current_password', String(passwordCurrentInput?.value || ''));
+            }
+        }
+
+        setPasswordStatus(action === 'remove' ? 'Removing password…' : 'Saving password protection…');
+        const response = await fetch(PASSWORD_PDF_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': CSRF,
+            },
+            body: formData,
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || data?.success === false) {
+            throw new Error(passwordResponseError(
+                data,
+                action === 'remove' ? 'The password could not be removed.' : 'The PDF could not be encrypted.',
+            ));
+        }
+
+        if (action === 'remove') {
+            documentPasswordProtected = false;
+            documentUnlockToken = '';
+            activeDocumentPassword = '';
+            clearPasswordInputs();
+            setPasswordTab('set', { focus: false });
+            setPasswordStatus('Password removed. This PDF now opens without a password.');
+            setStatus('PDF password removed.');
+            flashSaveToast('Password removed');
+        } else {
+            documentPasswordProtected = true;
+            documentUnlockToken = String(data.unlock_token || '');
+            activeDocumentPassword = String(passwordNewInput?.value || '');
+            clearPasswordInputs();
+            setPasswordTab('set', { focus: false });
+            setPasswordStatus(updatingPassword
+                ? 'Password updated. Reopening and downloads now require it.'
+                : 'Password set. Reopening and downloads now require it.');
+            setStatus(updatingPassword ? 'PDF password updated.' : 'PDF password set.');
+            flashSaveToast(updatingPassword ? 'Password updated' : 'Password set');
+        }
+    } catch (error) {
+        console.error('PDF password action failed', error);
+        setPasswordError(error?.message || 'The PDF password action failed.');
+        setPasswordStatus('');
+    } finally {
+        setPasswordBusy(false);
+    }
+}
+
+floatingPasswordButton?.addEventListener('click', openPasswordModal);
+passwordCloseButton?.addEventListener('click', closePasswordModal);
+passwordSetTab?.addEventListener('click', () => setPasswordTab('set'));
+passwordRemoveTab?.addEventListener('click', () => setPasswordTab('remove'));
+passwordSubmitButton?.addEventListener('click', () => submitPasswordAction().catch(() => {}));
+for (const input of [
+    passwordCurrentInput,
+    passwordNewInput,
+    passwordConfirmInput,
+    passwordRemoveInput,
+    passwordUnlockInput,
+]) {
+    input?.addEventListener('input', () => {
+        setPasswordError('');
+        updatePasswordUi();
+    });
+    input?.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' || passwordSubmitButton?.disabled) return;
+        event.preventDefault();
+        submitPasswordAction().catch(() => {});
+    });
+}
+for (const tab of [passwordSetTab, passwordRemoveTab]) {
+    tab?.addEventListener('keydown', (event) => {
+        if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+        event.preventDefault();
+        setPasswordTab(passwordActiveTab === 'set' ? 'remove' : 'set');
+    });
+}
+passwordModal?.addEventListener('click', (event) => {
+    if (event.target === passwordModal) closePasswordModal();
+});
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && passwordModal?.hidden === false) closePasswordModal();
+});
+
 function isImageBox(box, existingAnnotation = null) {
     return String(box?.dataset?.annotationType || '').toLowerCase() === 'image'
         || isImageAnnotation(existingAnnotation);
@@ -3101,22 +3707,69 @@ function normalizedRichTextRunStyle(node, renderScale) {
     const lineHeightPx = Number.parseFloat(cs.lineHeight || '');
     const rawWeight = String(cs.fontWeight || element.style?.fontWeight || '400').trim().toLowerCase();
     const numericWeight = Number.parseInt(rawWeight, 10);
-    const fontWeight = Number.isFinite(numericWeight)
+    const computedFontWeight = Number.isFinite(numericWeight)
         ? String(Math.max(100, Math.min(900, Math.round(numericWeight / 100) * 100)))
         : (rawWeight === 'bold' ? '700' : '400');
     const rawStyle = String(cs.fontStyle || element.style?.fontStyle || 'normal').trim().toLowerCase();
-    const fontStyle = rawStyle === 'italic' || rawStyle === 'oblique' ? rawStyle : 'normal';
+    const computedFontStyle = rawStyle === 'italic' || rawStyle === 'oblique' ? rawStyle : 'normal';
     const decoration = String(
         cs.textDecorationLine
         || element.style?.textDecorationLine
         || element.style?.textDecoration
         || '',
     ).toLowerCase();
-    const fontFamily = parseCssFontFamily(cs.fontFamily || element.style?.fontFamily || '') || 'Helvetica';
-    const embedded = embeddedFontOptionForValue(fontFamily);
+    const box = element.closest?.('.enpv-annotation-box');
+    const computedFontFamily = parseCssFontFamily(cs.fontFamily || element.style?.fontFamily || '') || 'Helvetica';
+    const computedFontKey = normalizeFontKey(computedFontFamily);
+    const sourceRun = sourceSpanRunsForBox(box).find((run) => (
+        [
+            run?.pdfjsLoadedFontFamily,
+            run?.fontFamily,
+            run?.pdfjsFontName,
+        ].some((candidate) => normalizeFontKey(candidate) === computedFontKey)
+    ));
+    const sourcePdfFontName = String(
+        element.dataset?.sourcePdfFontName
+        || sourceRun?.pdfjsFontName
+        || '',
+    ).trim();
+    const styleDirty = box?.dataset?.styleDirty === '1';
+    const embedded = embeddedFontOptionForValue(
+        styleDirty
+            ? computedFontFamily
+            : (sourcePdfFontName || computedFontFamily),
+    );
+    const fontIdentity = resolveRichTextRunFontIdentity({
+        computedFontFamily,
+        sourcePdfFontName,
+        computedDocumentFont: embedded,
+        styleDirty,
+    });
+    const preserveDocumentFaceSemantics = !styleDirty && Boolean(
+        sourcePdfFontName
+        || (embedded?.source === 'pdfjs-runtime' && embedded?.pdfFontName),
+    );
+    const fontWeight = preserveDocumentFaceSemantics
+        ? String(
+            element.dataset?.sourceSemanticFontWeight
+            || sourceRun?.semanticFontWeight
+            || sourceRun?.fontWeight
+            || embedded?.weight
+            || computedFontWeight,
+        )
+        : computedFontWeight;
+    const fontStyle = preserveDocumentFaceSemantics
+        ? String(
+            element.dataset?.sourceSemanticFontStyle
+            || sourceRun?.semanticFontStyle
+            || sourceRun?.fontStyle
+            || embedded?.style
+            || computedFontStyle,
+        )
+        : computedFontStyle;
     return {
-        fontFamily,
-        fontSourceName: embedded?.cleanName || fontFamily,
+        fontFamily: fontIdentity.fontFamily,
+        fontSourceName: fontIdentity.fontSourceName,
         fontSize: Number.isFinite(fontSizePx) && fontSizePx > 0
             ? Math.round((fontSizePx / scale) * 1000) / 1000
             : 12,
@@ -3259,11 +3912,33 @@ function renderRichTextRunsIntoElement(root, runs, renderScale, expectedText = '
         if (run?.type !== 'text' || !String(run.text || '')) return;
         const span = document.createElement('span');
         span.textContent = String(run.text || '');
-        if (run.fontFamily) span.style.fontFamily = cssFontFamilyWithGenericFallback(String(run.fontFamily));
+        const documentFont = embeddedFontOptionForValue(run.fontSourceName || run.fontFamily);
+        if (run.fontFamily || documentFont?.cssFamily) {
+            span.style.fontFamily = cssFontFamilyWithGenericFallback(
+                String(documentFont?.cssFamily || run.fontFamily),
+            );
+        }
         if (Number(run.fontSize) > 0) span.style.fontSize = `${Number(run.fontSize) * scale}px`;
         if (Number(run.lineHeight) > 0) span.style.lineHeight = `${Number(run.lineHeight) * scale}px`;
-        if (run.fontWeight) span.style.fontWeight = String(run.fontWeight);
-        if (run.fontStyle) span.style.fontStyle = String(run.fontStyle);
+        if (run.fontWeight || documentFont?.renderWeight) {
+            span.style.fontWeight = String(
+                documentFont?.source === 'pdfjs-runtime'
+                    ? (documentFont.renderWeight || '400')
+                    : run.fontWeight,
+            );
+            span.dataset.sourceSemanticFontWeight = String(run.fontWeight || documentFont?.weight || '400');
+        }
+        if (run.fontStyle || documentFont?.renderStyle) {
+            span.style.fontStyle = String(
+                documentFont?.source === 'pdfjs-runtime'
+                    ? (documentFont.renderStyle || 'normal')
+                    : run.fontStyle,
+            );
+            span.dataset.sourceSemanticFontStyle = String(run.fontStyle || documentFont?.style || 'normal');
+        }
+        if (documentFont?.pdfFontName) {
+            span.dataset.sourcePdfFontName = documentFont.pdfFontName;
+        }
         if (run.color) span.style.color = cssColorToHex(run.color, '#000000');
         if (run.underline) span.style.textDecorationLine = 'underline';
         fragment.appendChild(span);
@@ -4103,6 +4778,12 @@ function buildAnnotationFromSpan(spanEl, nextText, existingAnnotation = null) {
         pdfjsSourceFontSizePx: immutableSourceString(existingAnnotation?.pdfjsSourceFontSizePx, Number.isFinite(fontSizePx) ? fontSizePx : height),
         pdfjsSourceLineHeightPx: immutableSourceString(existingAnnotation?.pdfjsSourceLineHeightPx, Number.isFinite(lineHeightPx) ? lineHeightPx : (Number.isFinite(fontSizePx) ? fontSizePx : height)),
         pdfjsSourceTextColor: immutableSourceString(existingAnnotation?.pdfjsSourceTextColor, textColor),
+        pdfjsSourceUnderlineSegments: existingAnnotation?.pdfjsSourceUnderlineSegments
+            ?? sourceStyle?.drawnUnderlineSegments
+            ?? undefined,
+        pdfjsSourceHasDrawnUnderline: existingAnnotation?.pdfjsSourceHasDrawnUnderline
+            ?? sourceStyle?.hasDrawnUnderline
+            ?? false,
         pdfjsSourceSpanRuns: immutableSourceString(
             existingAnnotation?.pdfjsSourceSpanRuns,
             (() => {
@@ -4133,7 +4814,14 @@ function buildAnnotationFromSpan(spanEl, nextText, existingAnnotation = null) {
                         })
                         .filter(Boolean)
                         .sort((a, b) => a.leftPx - b.leftPx);
-                    return items.length >= 2 ? JSON.stringify(items) : '';
+                    if (!items.length) return '';
+                    if (items.length === 1 && sourceStyle) {
+                        items[0].underlineRanges = sourceStyle.underlineRanges;
+                        items[0].sourceUnderlineSegments = sourceStyle.drawnUnderlineSegments;
+                        items[0].hasDrawnUnderline = sourceStyle.hasDrawnUnderline;
+                    }
+                    const styledItems = splitSourceRunsAtDrawnUnderlineRanges(items, measureSourceRunTextWidthPx);
+                    return styledItems.length ? JSON.stringify(styledItems) : '';
                 } catch (_) { return ''; }
             })(),
         ),
@@ -4383,6 +5071,21 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
             textValue = String(noOpSourceText || textValue);
         }
     }
+    const promotedSourceText = String(
+        existingAnnotation?.pdfjsSourceText
+        || existingAnnotation?.originalText
+        || box.dataset.originalText
+        || box.dataset.baseText
+        || sourceText
+        || '',
+    );
+    const promotedEditFlags = promotedTextEditFlags({
+        isPromoted: isPromotedSourceBox,
+        currentText: textValue,
+        sourceText: promotedSourceText,
+        promotedDirty: existingAnnotation?.promotedDirty,
+        preserveSourceTypography: existingAnnotation?.preserveSourceTypography,
+    });
     // Synthetic per-span display markup is rebuildable scaffolding, not user
     // rich-text authoring — never serialize it as richTextHtml or the reload
     // path would treat the block as user-formatted and lose source geometry.
@@ -4515,10 +5218,34 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
             : (Number.isFinite(lineHeightPx) && scale > 0 ? (lineHeightPx / scale) : (Number(existingAnnotation?.lineHeight) || undefined)),
         fontFamily: annotationFontFamily,
         fontSourceName: annotationFontSourceName || undefined,
-        forceEmbeddedFont: box.dataset.forceEmbeddedFont === '1' || Boolean(selectedEmbeddedFont) || boolish(existingAnnotation?.forceEmbeddedFont),
-        pdfjsForceEmbeddedFont: box.dataset.forceEmbeddedFont === '1' || Boolean(selectedEmbeddedFont) || boolish(existingAnnotation?.pdfjsForceEmbeddedFont),
-        fontWeight: String(styleFontWeight || selectedEmbeddedFont?.weight || existingAnnotation?.fontWeight || cs.fontWeight || 'normal'),
-        fontStyle: String(styleFontStyle || selectedEmbeddedFont?.style || existingAnnotation?.fontStyle || cs.fontStyle || 'normal'),
+        forceEmbeddedFont: box.dataset.forceEmbeddedFont === '1'
+            || Boolean(selectedEmbeddedFont)
+            || (Boolean(existingFontStillSelected) && boolish(existingAnnotation?.forceEmbeddedFont)),
+        pdfjsForceEmbeddedFont: box.dataset.forceEmbeddedFont === '1'
+            || Boolean(selectedEmbeddedFont)
+            || (Boolean(existingFontStillSelected) && boolish(existingAnnotation?.pdfjsForceEmbeddedFont)),
+        fontWeight: String(
+            box.dataset.styleDirty !== '1'
+                ? (box.dataset.fontSemanticWeight
+                    || box.dataset.sourceSemanticFontWeight
+                    || selectedEmbeddedFont?.weight
+                    || styleFontWeight
+                    || existingAnnotation?.fontWeight
+                    || cs.fontWeight
+                    || 'normal')
+                : (styleFontWeight || existingAnnotation?.fontWeight || cs.fontWeight || 'normal')
+        ),
+        fontStyle: String(
+            box.dataset.styleDirty !== '1'
+                ? (box.dataset.fontSemanticStyle
+                    || box.dataset.sourceSemanticFontStyle
+                    || selectedEmbeddedFont?.style
+                    || styleFontStyle
+                    || existingAnnotation?.fontStyle
+                    || cs.fontStyle
+                    || 'normal')
+                : (styleFontStyle || existingAnnotation?.fontStyle || cs.fontStyle || 'normal')
+        ),
         locked: box.dataset.locked != null ? box.dataset.locked === '1' : Boolean(existingAnnotation?.locked),
         zIndex: Number.parseInt(box.style.zIndex || box.dataset.zIndex || existingAnnotation?.zIndex || '2', 10) || 2,
         opacity,
@@ -4551,6 +5278,10 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
             && (box.dataset.promotedReflowEnabled === '1'
                 || box.dataset.naturalTextFlow === '1'
                 || boolish(existingAnnotation?.promotedReflowEnabled)),
+        promotedDirty: isPromotedSourceBox
+            && promotedEditFlags.promotedDirty,
+        preserveSourceTypography: isPromotedSourceBox
+            && promotedEditFlags.preserveSourceTypography,
         styleDirty: box.dataset.styleDirty === '1' || boolish(existingAnnotation?.styleDirty),
         movedTextOverlay: isStandaloneUserTextBox ? false : ((Math.abs(dxPts) > 0.01 || Math.abs(dyPts) > 0.01) || (existingAnnotation?.movedTextOverlay === true && sourceGeometryMoved)),
         richTextPromotionReason: box.dataset.richTextPromotionReason || existingAnnotation?.richTextPromotionReason || undefined,
@@ -4602,7 +5333,10 @@ function findPersistedAnnotationForSpan(pageIndex, currentRect, text, originalTe
         }
     }
 
-    if (!best) return null;
+    // The canvas was readable and no stroke-like run was present. Mark this
+    // run as a precise non-owner so the legacy annotation-level boolean does
+    // not underline every PDF.js fragment on the line.
+    if (!best) return [];
     if (bestScore > 96) return null;
     if (consume) best._renderMatched = true;
     return best;
@@ -4808,6 +5542,32 @@ function samplePageSurroundingBackgroundColor(pageDiv, rect, fallback = '') {
         }
     }
     return bestKey ? `rgb(${bestKey})` : fallback;
+}
+
+function samplePageMovedSourceMaskColor(pageDiv, rect, fallback = '#ffffff') {
+    const local = samplePageBackgroundColor(pageDiv, rect, '');
+    const surrounding = samplePageSurroundingBackgroundColor(pageDiv, rect, '');
+    const localRgb = parseCssRgb(local);
+    const surroundingRgb = parseCssRgb(surrounding);
+    if (localRgb && surroundingRgb) {
+        const luminance = (color) => (
+            (0.299 * color.r)
+            + (0.587 * color.g)
+            + (0.114 * color.b)
+        );
+        const localLuminance = luminance(localRgb);
+        const surroundingLuminance = luminance(surroundingRgb);
+        // White source glyphs inside a dark form cell make the bands around
+        // their narrow run rect look like the surrounding white page. Using
+        // that band color cuts a white hole through the original dark tile
+        // when the annotation moves (f1040s3 :14, “Part I”). Mirror the PDF
+        // writer's rule: a strongly dark local fill wins over a much lighter
+        // surrounding sample.
+        if (localLuminance < 100 && surroundingLuminance > localLuminance + 80) {
+            return local;
+        }
+    }
+    return surrounding || local || fallback;
 }
 
 function samplePageForegroundColor(pageDiv, rect, fallback = '#000000') {
@@ -5193,9 +5953,63 @@ function movedSourceMaskCanvasRect(rect) {
     };
 }
 
-function movedSourceMaskCanvasRectFromTypography(rect, source = null) {
+function sourceSpanRunMaskItems(source = null, currentScale = 0) {
+    if (!source) return [];
+    const dataset = source.dataset || null;
+    const raw = dataset
+        ? dataset.sourceSpanRuns
+        : source.pdfjsSourceSpanRuns;
+    if (!raw) return [];
+    let items = null;
+    try { items = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch (_) { items = null; }
+    if (!Array.isArray(items)) return [];
+    const originalScale = Number.parseFloat(
+        dataset?.sourceSpanRunsScale
+        || source.pdfjsSourceSpanRunsScale
+        || '',
+    ) || Number(currentScale) || 1;
+    const ratio = Number(currentScale) > 0 && originalScale > 0
+        ? Number(currentScale) / originalScale
+        : 1;
+    return items.map((item) => {
+        const left = Number(item?.textLeftPx ?? item?.leftPx);
+        const right = Number(item?.textRightPx ?? item?.rightPx);
+        const top = Number(item?.textTopPx ?? item?.topPx);
+        const bottom = Number(item?.textBottomPx ?? item?.bottomPx);
+        if (![left, right, top, bottom].every(Number.isFinite)
+            || right <= left || bottom <= top) {
+            return null;
+        }
+        return {
+            leftPx: left * ratio,
+            rightPx: right * ratio,
+            topPx: top * ratio,
+            bottomPx: bottom * ratio,
+        };
+    }).filter(Boolean);
+}
+
+function movedSourceMaskCanvasRectFromTypography(rect, source = null, currentScale = 0) {
     if (!rect) return null;
-    return movedSourceMaskCanvasRect(rect);
+    const sourceItems = sourceSpanRunMaskItems(source, currentScale);
+    if (!sourceItems.length) return movedSourceMaskCanvasRect(rect);
+    const sourceBounds = {
+        left: Math.min(...sourceItems.map((item) => item.leftPx)),
+        top: Math.min(...sourceItems.map((item) => item.topPx)),
+        right: Math.max(...sourceItems.map((item) => item.rightPx)),
+        bottom: Math.max(...sourceItems.map((item) => item.bottomPx)),
+    };
+    const pad = MOVED_SOURCE_MASK_VISUAL_PADDING_PX;
+    const left = Math.min(rect.left, sourceBounds.left - pad);
+    const top = Math.min(rect.top, sourceBounds.top - pad);
+    const right = Math.max(rect.left + rect.width, sourceBounds.right + pad);
+    const bottom = Math.max(rect.top + rect.height, sourceBounds.bottom + pad);
+    return movedSourceMaskCanvasRect({
+        left,
+        top,
+        width: right - left,
+        height: bottom - top,
+    });
 }
 
 // Source bboxes captured from PDF text-stream metrics describe the
@@ -5272,16 +6086,30 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     }
 
     const fontFamily = String(annotation?.fontFamily || sourceStyle?.fontFamily || 'sans-serif');
+    const documentFont = embeddedFontOptionForValue(
+        annotation?.fontSourceName
+        || annotation?.fontFamily
+        || sourceStyle?.fontFamily,
+    );
     box.dataset.fontFamilyValue = fontFamily;
-    box.style.setProperty('--enpv-font-family', cssFontFamilyWithGenericFallback(fontFamily));
+    box.style.setProperty(
+        '--enpv-font-family',
+        cssFontFamilyWithGenericFallback(documentFont?.cssFamily || fontFamily),
+    );
     if (annotation?.fontSourceName) {
         box.dataset.fontSourceName = String(annotation.fontSourceName);
     }
     if (boolish(annotation?.forceEmbeddedFont) || boolish(annotation?.pdfjsForceEmbeddedFont)) {
         box.dataset.forceEmbeddedFont = '1';
     }
-    box.style.setProperty('--enpv-font-weight', String(annotation?.fontWeight || sourceStyle?.fontWeight || 'normal'));
-    box.style.setProperty('--enpv-font-style', String(annotation?.fontStyle || sourceStyle?.fontStyle || 'normal'));
+    const documentFontWeight = documentFont?.source === 'pdfjs-runtime'
+        ? (documentFont.renderWeight || '400')
+        : documentFont?.weight;
+    const documentFontStyle = documentFont?.source === 'pdfjs-runtime'
+        ? (documentFont.renderStyle || 'normal')
+        : documentFont?.style;
+    box.style.setProperty('--enpv-font-weight', String(documentFontWeight || annotation?.fontWeight || sourceStyle?.fontWeight || 'normal'));
+    box.style.setProperty('--enpv-font-style', String(documentFontStyle || annotation?.fontStyle || sourceStyle?.fontStyle || 'normal'));
     const preferSourceColor = !boolish(annotation?.styleDirty)
         && !boolish(annotation?.userForcedRichText)
         && String(annotation?.pdfjsEditorMode || '') !== 'rich';
@@ -5362,9 +6190,20 @@ function captureSourceSpanRunsForBox(box, group, layerEl) {
                 } catch (_) { /* use the span rect fallback below */ }
                 return {
                     text: trimmed,
-                    fontFamily: cs.fontFamily || '',
-                    fontWeight: cs.fontWeight || '',
-                    fontStyle: cs.fontStyle || '',
+                    fontFamily: span.dataset.enpvPdfjsLoadedFontFamily || cs.fontFamily || '',
+                    // PDF.js often exposes an embedded bold face as generic
+                    // `sans-serif`/400 CSS in the selectable text layer. The
+                    // text-item metadata hydrator records the real face on
+                    // the corresponding DOM span after textlayerrendered.
+                    fontWeight: span.dataset.enpvPdfjsFontWeight || cs.fontWeight || '',
+                    fontStyle: span.dataset.enpvPdfjsFontStyle || cs.fontStyle || '',
+                    renderFontWeight: span.dataset.enpvPdfjsLoadedFontFamily ? '400' : '',
+                    renderFontStyle: span.dataset.enpvPdfjsLoadedFontFamily ? 'normal' : '',
+                    pdfjsFontName: span.dataset.enpvPdfjsFontName || '',
+                    pdfjsLoadedFontFamily: span.dataset.enpvPdfjsLoadedFontFamily || '',
+                    semanticFontWeight: span.dataset.enpvPdfjsFontWeight || cs.fontWeight || '',
+                    semanticFontStyle: span.dataset.enpvPdfjsFontStyle || cs.fontStyle || '',
+                    pdfjsFontMetadataResolved: span.dataset.enpvPdfjsFontMetadataResolved === '1',
                     fontSizePx: Number.parseFloat(cs.fontSize || '') || 0,
                     leftPx: clientRect.left - layerRect.left,
                     rightPx: clientRect.right - layerRect.left,
@@ -5383,7 +6222,7 @@ function captureSourceSpanRunsForBox(box, group, layerEl) {
             })
             .filter(Boolean)
             .sort((a, b) => a.leftPx - b.leftPx);
-        if (items.length < 2) {
+        if (items.length < 1) {
             delete box.dataset.sourceSpanRuns;
             delete box.dataset.sourceSpanRunsScale;
             return;
@@ -5405,9 +6244,24 @@ function captureSourceSpanMetrics(box, spanEl, spanRect, scale, pageDiv = null, 
     const transform = cs.transform && cs.transform !== 'none' ? cs.transform : '';
     const transformScaleX = sourceTransformScaleX(transform);
     const transformRotation = sourceTransformRotationDegrees(transform);
-    box.dataset.sourceFontFamily = cs.fontFamily || '';
-    box.dataset.sourceFontWeight = sourceStyle?.fontWeight || cs.fontWeight || '';
-    box.dataset.sourceFontStyle = sourceStyle?.fontStyle || cs.fontStyle || '';
+    const runtimeFontFamily = String(spanEl.dataset.enpvPdfjsLoadedFontFamily || '').trim();
+    const pdfFontName = String(spanEl.dataset.enpvPdfjsFontName || '').trim();
+    box.dataset.sourceFontFamily = pdfFontName || cs.fontFamily || '';
+    if (runtimeFontFamily) box.dataset.sourceRuntimeFontFamily = runtimeFontFamily;
+    box.dataset.sourceFontWeight = sourceStyle?.fontWeight
+            || spanEl.dataset.enpvPdfjsFontWeight
+            || cs.fontWeight
+            || '';
+    box.dataset.sourceFontStyle = sourceStyle?.fontStyle
+            || spanEl.dataset.enpvPdfjsFontStyle
+            || cs.fontStyle
+            || '';
+    if (runtimeFontFamily) {
+        box.dataset.sourceRenderFontWeight = '400';
+        box.dataset.sourceRenderFontStyle = 'normal';
+    }
+    box.dataset.sourceSemanticFontWeight = spanEl.dataset.enpvPdfjsFontWeight || box.dataset.sourceFontWeight || '400';
+    box.dataset.sourceSemanticFontStyle = spanEl.dataset.enpvPdfjsFontStyle || box.dataset.sourceFontStyle || 'normal';
     box.dataset.sourceLetterSpacing = cs.letterSpacing || 'normal';
     box.dataset.sourceTransform = transform;
     box.dataset.sourceTransformScaleX = String(transformScaleX);
@@ -5416,6 +6270,15 @@ function captureSourceSpanMetrics(box, spanEl, spanRect, scale, pageDiv = null, 
     box.dataset.sourceTransformOrigin = cs.transformOrigin || '0 0';
     box.dataset.sourceFontSizePx = String(fontSizePx);
     box.dataset.sourceLineHeightPx = `${fontSizePx}px`;
+    if (sourceStyle?.hasDrawnUnderline) {
+        box.dataset.sourceHasDrawnUnderline = '1';
+    }
+    if (Array.isArray(sourceStyle?.drawnUnderlineSegments)
+        && sourceStyle.drawnUnderlineSegments.length) {
+        try {
+            box.dataset.sourceUnderlineSegments = JSON.stringify(sourceStyle.drawnUnderlineSegments);
+        } catch (_) { /* noop */ }
+    }
     const pageRect = pageDiv?.getBoundingClientRect?.();
     const sourceColor = pageRect
         ? samplePageForegroundColor(pageDiv, inflatedCanvasRect({
@@ -5428,7 +6291,11 @@ function captureSourceSpanMetrics(box, spanEl, spanRect, scale, pageDiv = null, 
     const textColor = cssColorToHex(sourceColor || cs.color || '#000000');
     box.dataset.sourceTextColor = textColor;
     box.dataset.fontSizePts = String(fontSizePx / (scale || 1));
-    box.style.setProperty('--enpv-font-family', box.dataset.sourceFontFamily || 'sans-serif');
+    if (pdfFontName) box.dataset.fontFamilyValue = pdfFontName;
+    box.style.setProperty(
+        '--enpv-font-family',
+        cssFontFamilyWithGenericFallback(runtimeFontFamily || box.dataset.sourceFontFamily || 'sans-serif'),
+    );
     box.style.setProperty('--enpv-font-size', `${fontSizePx}px`);
     box.style.setProperty('--enpv-font-weight', box.dataset.sourceFontWeight || 'normal');
     box.style.setProperty('--enpv-font-style', box.dataset.sourceFontStyle || 'normal');
@@ -5464,6 +6331,17 @@ function restoreSourceSpanMetricsFromAnnotation(box, annotation) {
             box.dataset[datasetKey] = String(value);
             restoredKeys.add(datasetKey);
         }
+    }
+    if (boolish(annotation.pdfjsSourceHasDrawnUnderline)) {
+        box.dataset.sourceHasDrawnUnderline = '1';
+    }
+    const sourceUnderlineSegments = annotation.pdfjsSourceUnderlineSegments;
+    if (Array.isArray(sourceUnderlineSegments) && sourceUnderlineSegments.length) {
+        try {
+            box.dataset.sourceUnderlineSegments = JSON.stringify(sourceUnderlineSegments);
+        } catch (_) { /* noop */ }
+    } else if (typeof sourceUnderlineSegments === 'string' && sourceUnderlineSegments.trim()) {
+        box.dataset.sourceUnderlineSegments = sourceUnderlineSegments;
     }
     normalizeRestoredSourceMetricsToRenderScale(box, annotation, restoredKeys);
     normalizeRestoredSourceSpanRunsToRenderScale(box, annotation);
@@ -5686,6 +6564,23 @@ function fontStyleFromPromotedSourceSpan(sourceSpan) {
     return /italic|oblique/.test(fontName) ? 'italic' : '';
 }
 
+function drawnUnderlineSegmentsFromPromotedSourceSpan(sourceSpan) {
+    return sourceSpanDrawnUnderlineSegments(sourceSpan);
+}
+
+function drawnUnderlineRangesForSourceRunRect(segments, runRect, fallbackSpan = null) {
+    const x = Number(runRect?.x);
+    const width = Number(runRect?.w);
+    if (Array.isArray(segments) && segments.length
+        && Number.isFinite(x) && Number.isFinite(width) && width > 0) {
+        return sourceSpanDrawnUnderlineRanges({
+            bbox: [x, 0, x + width, 1],
+            drawnUnderlineSegments: segments,
+        });
+    }
+    return fallbackSpan ? sourceSpanDrawnUnderlineRanges(fallbackSpan) : [];
+}
+
 function promotedSourceStyleForPdfjsSource(pageIndex, sourceRect, sourceText, pageHeight) {
     if (!sourceRect || !(pageHeight > 0)) return null;
     const targetText = normalizeComparableText(sourceText);
@@ -5710,10 +6605,46 @@ function promotedSourceStyleForPdfjsSource(pageIndex, sourceRect, sourceText, pa
         }
     }
     if (!best) return null;
+    const drawnUnderlineSegments = drawnUnderlineSegmentsFromPromotedSourceSpan(best);
+    const spanUnderlineRanges = sourceSpanDrawnUnderlineRanges(best);
     return {
         fontWeight: fontWeightFromPromotedSourceSpan(best),
         fontStyle: fontStyleFromPromotedSourceSpan(best),
+        underlineRanges: drawnUnderlineRangesForSourceRunRect(
+            drawnUnderlineSegments,
+            sourceRect,
+            best,
+        ),
+        underlineRangesPrecise: drawnUnderlineSegments.length > 0,
+        drawnUnderlineSegments,
+        hasDrawnUnderline: spanUnderlineRanges.length > 0,
     };
+}
+
+function capturedSourceSpanGlyphWidthPx(box) {
+    const runs = sourceSpanRunsForBox(box)
+        .map((run) => ({
+            left: Number(run.textLeftPx),
+            right: Number(run.textRightPx),
+        }))
+        .filter((run) => (
+            Number.isFinite(run.left)
+            && Number.isFinite(run.right)
+            && run.right > run.left
+        ));
+    if (!runs.length) return 0;
+    const currentScale = Number.parseFloat(box?.parentElement?.dataset?.scale || '')
+        || Number.parseFloat(box?.dataset?.renderScale || '')
+        || 1;
+    const capturedScale = Number.parseFloat(box?.dataset?.sourceSpanRunsScale || '')
+        || currentScale;
+    const ratio = currentScale > 0 && capturedScale > 0
+        ? currentScale / capturedScale
+        : 1;
+    return (
+        Math.max(...runs.map((run) => run.right))
+        - Math.min(...runs.map((run) => run.left))
+    ) * ratio;
 }
 
 function applySourceFidelityTextFit(box, tc) {
@@ -5741,16 +6672,52 @@ function applySourceFidelityTextFit(box, tc) {
         range.detach?.();
         tc.style.transform = previousTransform;
     }
-    const measuredContentWidth = Math.max(
-        rangeContentWidth,
-        Number(tc.scrollWidth) || 0,
-        sourceLayoutWidth,
+    const currentComparableText = normalizeComparableText(tc.textContent || '');
+    const sourceComparableText = normalizeComparableText(
+        box.dataset.baseText
+        || box.dataset.originalText
+        || '',
     );
+    const hasCapturedSpanMarkup = !isVertical
+        && (
+        box.dataset.sourceSpanEditActive === '1'
+        || box.dataset.sourceSpanDisplayActive === '1'
+        )
+        && (!sourceComparableText || currentComparableText === sourceComparableText)
+        && !tc.querySelector('[data-source-span-line="1"]');
+    const capturedSpanGlyphWidth = hasCapturedSpanMarkup
+        ? capturedSourceSpanGlyphWidthPx(box)
+        : 0;
+    // A reconstructed multi-span row already encodes the PDF.js gaps in its
+    // child markup. `sourceTransformScaleX` belongs only to the anchor span;
+    // applying it again to the whole composite row compresses every gap and
+    // dot leader during live drag (f1040s3 :71 was 784.55px -> 664.94px).
+    // Fit the complete DOM Range directly to the captured glyph union instead.
+    const capturedSpanFitScale = capturedSpanGlyphWidth > 0 && rangeContentWidth > 0
+        ? capturedSpanGlyphWidth / rangeContentWidth
+        : 0;
+    const usesCapturedSpanFit = hasCapturedSpanMarkup
+        && capturedSpanFitScale >= 0.75
+        && capturedSpanFitScale <= 1.25;
+    const measuredContentWidth = usesCapturedSpanFit
+        ? rangeContentWidth
+        : Math.max(
+            rangeContentWidth,
+            Number(tc.scrollWidth) || 0,
+            sourceLayoutWidth,
+        );
     if (!(targetWidth > 0) || !(measuredContentWidth > 0)) return;
-    if (sourceLayoutWidth > 0 && measuredContentWidth > sourceLayoutWidth * 1.35) return;
-    let fitScaleX = Math.min(sourceScaleX, targetWidth / measuredContentWidth);
+    if (!usesCapturedSpanFit
+        && sourceLayoutWidth > 0
+        && measuredContentWidth > sourceLayoutWidth * 1.35) return;
+    let fitScaleX = usesCapturedSpanFit
+        ? capturedSpanFitScale
+        : Math.min(sourceScaleX, targetWidth / measuredContentWidth);
     if (!(fitScaleX > 0) || !Number.isFinite(fitScaleX)) return;
-    if (box.dataset.sourceFidelityEditing === '1' && fitScaleX > 0.98 && fitScaleX <= 1.02) {
+    if (!usesCapturedSpanFit
+        && box.dataset.sourceFidelityEditing === '1'
+        && fitScaleX > 0.98
+        && fitScaleX <= 1.02) {
         fitScaleX = 1;
     }
     tc.style.width = `${measuredContentWidth}px`;
@@ -5765,15 +6732,168 @@ function applySourceFidelityTextFit(box, tc) {
     }
 }
 
+function clearSourceFidelityBoundingBoxSnap(box, tc = null) {
+    if (!box) return;
+    const text = tc || selectedBoxTextElement(box);
+    if (text && box.dataset.sourceBoundingBoxSnapped === '1') {
+        text.style.position = '';
+        text.style.left = '';
+        text.style.top = '';
+    }
+    delete box.dataset.sourceBoundingBoxSnapped;
+    delete box.dataset.sourceBoundingBoxSnapX;
+    delete box.dataset.sourceBoundingBoxSnapY;
+}
+
+// A source handle's selection box is intentionally a little larger than the
+// painted glyph Range so masks and drag handles cover the whole PDF.js run.
+// Keep that immutable glyph inset both while editing at the source and after
+// the box becomes a moved overlay; otherwise the first drag frame exposes the
+// DOM text at the expanded box's raw (0, 0), snapping it upward.
+function snapSourceFidelityEditorToCapturedBoundingBox(box, tc) {
+    const isSourceEdit = box?.dataset?.sourceFidelityEditing === '1'
+        && box?.classList?.contains('is-source-handle')
+        && !box?.classList?.contains('is-persisted-overlay')
+        && box?.dataset?.movedTextOverlay !== '1';
+    const isMovedSourceOverlay = box?.classList?.contains('is-source-fidelity')
+        && box?.classList?.contains('is-persisted-overlay')
+        && box?.dataset?.movedTextOverlay === '1'
+        && editorModeForBox(box) === 'source'
+        && box?.dataset?.userSizedTextBox !== '1'
+        && box?.dataset?.userForcedRichText !== '1'
+        && box?.dataset?.naturalTextFlow !== '1';
+    if (!box || !tc
+        || (!isSourceEdit && !isMovedSourceOverlay)
+        || sourceFidelityTextIsVertical(box)
+        || tc.querySelector('[data-source-span-line="1"]')) {
+        clearSourceFidelityBoundingBoxSnap(box, tc);
+        return false;
+    }
+
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    const pageView = Number.isFinite(pageIndex) && pageIndex >= 0
+        ? pdfViewer?.getPageView?.(pageIndex)
+        : null;
+    const viewport = pageView?.viewport;
+    const layerEl = pageView?.textLayer?.div || pageView?.textLayer?.textLayerDiv;
+    const layerRect = layerEl?.getBoundingClientRect?.();
+    const runs = sourceSpanRunsForBox(box);
+    const glyphLefts = runs.map((run) => Number(run.textLeftPx)).filter(Number.isFinite);
+    const glyphTops = runs.map((run) => Number(run.textTopPx)).filter(Number.isFinite);
+    if (!layerRect
+        || !glyphLefts.length
+        || !glyphTops.length) {
+        clearSourceFidelityBoundingBoxSnap(box, tc);
+        return false;
+    }
+
+    const currentScale = Number.parseFloat(box.parentElement?.dataset?.scale || '')
+        || Number.parseFloat(box.dataset.renderScale || '')
+        || 1;
+    const capturedScale = Number.parseFloat(box.dataset.sourceSpanRunsScale || '')
+        || currentScale;
+    const ratio = currentScale > 0 && capturedScale > 0
+        ? currentScale / capturedScale
+        : 1;
+    const glyphOrigin = {
+        left: layerRect.left + (Math.min(...glyphLefts) * ratio),
+        top: layerRect.top + (Math.min(...glyphTops) * ratio),
+    };
+    const boxRect = box.getBoundingClientRect();
+    let target = glyphOrigin;
+    if (isMovedSourceOverlay) {
+        const annotationLayerRect = box.parentElement?.getBoundingClientRect?.();
+        const sourcePdfRect = {
+            x: Number.parseFloat(box.dataset.sourceBboxX || ''),
+            y: Number.parseFloat(box.dataset.sourceBboxY || ''),
+            w: Number.parseFloat(box.dataset.sourceBboxW || ''),
+            h: Number.parseFloat(box.dataset.sourceBboxH || ''),
+        };
+        if (!annotationLayerRect
+            || !viewport
+            || !Object.values(sourcePdfRect).every(Number.isFinite)
+            || sourcePdfRect.w <= 0
+            || sourcePdfRect.h <= 0) {
+            clearSourceFidelityBoundingBoxSnap(box, tc);
+            return false;
+        }
+        const sourceCanvasRect = pdfRectToCanvasRect(sourcePdfRect, viewport, currentScale);
+        if (!sourceCanvasRect) {
+            clearSourceFidelityBoundingBoxSnap(box, tc);
+            return false;
+        }
+        const sourceOrigin = {
+            left: annotationLayerRect.left + sourceCanvasRect.left,
+            top: annotationLayerRect.top + sourceCanvasRect.top,
+        };
+        target = {
+            left: boxRect.left + (glyphOrigin.left - sourceOrigin.left),
+            top: boxRect.top + (glyphOrigin.top - sourceOrigin.top),
+        };
+    }
+
+    // Remove the previous relative nudge before measuring so repeated font-fit
+    // refreshes cannot accumulate the same translation.
+    clearSourceFidelityBoundingBoxSnap(box, tc);
+    let current = null;
+    try {
+        const range = document.createRange();
+        range.selectNodeContents(tc);
+        const rect = range.getBoundingClientRect();
+        range.detach?.();
+        if (rect.width > 0 && rect.height > 0) current = rect;
+    } catch (_) { /* an unmeasurable editor cannot be snapped */ }
+    if (!current) return false;
+
+    const dx = target.left - current.left;
+    const dy = target.top - current.top;
+    const maxDx = Math.max(12, (Number(boxRect.width) || 0) * 0.2);
+    const maxDy = Math.max(12, (Number(boxRect.height) || 0) * 0.2);
+    if (![dx, dy].every(Number.isFinite)
+        || Math.abs(dx) > maxDx
+        || Math.abs(dy) > maxDy) {
+        return false;
+    }
+
+    tc.style.position = 'relative';
+    tc.style.left = `${dx.toFixed(3)}px`;
+    tc.style.top = `${dy.toFixed(3)}px`;
+    box.dataset.sourceBoundingBoxSnapped = '1';
+    box.dataset.sourceBoundingBoxSnapX = dx.toFixed(3);
+    box.dataset.sourceBoundingBoxSnapY = dy.toFixed(3);
+    return true;
+}
+
 function refreshAttachedSourceFidelityTextFit(box) {
     if (!box?.classList?.contains('is-source-fidelity')) return;
     const tc = selectedBoxTextElement(box);
     if (!tc) return;
     applySourceFidelityTextFit(box, tc);
+    snapSourceFidelityEditorToCapturedBoundingBox(box, tc);
     requestAnimationFrame?.(() => {
         if (!box.isConnected) return;
         applySourceFidelityTextFit(box, tc);
+        snapSourceFidelityEditorToCapturedBoundingBox(box, tc);
     });
+}
+
+function resetSourceFidelityTextLayoutWidth(box, tc) {
+    if (!box || !tc) return;
+    const sourceTextWidthPx = Number.parseFloat(box.dataset.sourceTextWidthPx || '');
+    if (!(Number.isFinite(sourceTextWidthPx) && sourceTextWidthPx > 0)) return;
+    const sourceFontSizePx = Number.parseFloat(box.dataset.sourceFontSizePx || '');
+    const currentFontSizePx = Number.parseFloat(
+        box.style.getPropertyValue('--enpv-font-size')
+            || tc.style.fontSize
+            || '',
+    );
+    const fontScale = Number.isFinite(sourceFontSizePx)
+        && sourceFontSizePx > 0
+        && Number.isFinite(currentFontSizePx)
+        && currentFontSizePx > 0
+        ? currentFontSizePx / sourceFontSizePx
+        : 1;
+    tc.style.width = `${sourceTextWidthPx * fontScale}px`;
 }
 
 function copySourceSpanMetricsToAnnotation(annotation, box, options = {}) {
@@ -5805,6 +6925,41 @@ function copySourceSpanMetricsToAnnotation(annotation, box, options = {}) {
     fillMetric('pdfjsSourceTextColor', 'sourceTextColor');
     const runsBefore = String(annotation.pdfjsSourceSpanRuns ?? '');
     fillMetric('pdfjsSourceSpanRuns', 'sourceSpanRuns');
+    if (box.dataset.sourceHasDrawnUnderline === '1') {
+        annotation.pdfjsSourceHasDrawnUnderline = true;
+    }
+    if ((!Array.isArray(annotation.pdfjsSourceUnderlineSegments)
+            || annotation.pdfjsSourceUnderlineSegments.length === 0)
+        && box.dataset.sourceUnderlineSegments) {
+        try {
+            const sourceUnderlineSegments = JSON.parse(box.dataset.sourceUnderlineSegments);
+            if (Array.isArray(sourceUnderlineSegments) && sourceUnderlineSegments.length) {
+                annotation.pdfjsSourceUnderlineSegments = sourceUnderlineSegments;
+            }
+        } catch (_) { /* noop */ }
+    }
+    // Drawn underlines originate as PDF vector paths. Source-run enrichment
+    // records which fragments own those paths; also lift that metadata onto
+    // the annotation so the export writer can remove the original vector
+    // stroke before it redraws the moved underlined fragment.
+    let sourceRuns = null;
+    try {
+        const rawRuns = box.dataset.sourceSpanRuns;
+        sourceRuns = rawRuns ? JSON.parse(rawRuns) : null;
+    } catch (_) {
+        sourceRuns = null;
+    }
+    if (Array.isArray(sourceRuns) && sourceRuns.length) {
+        const underlineMetadata = sourceRunDrawnUnderlineMetadata(sourceRuns);
+        if ((!Array.isArray(annotation.pdfjsSourceUnderlineSegments)
+                || annotation.pdfjsSourceUnderlineSegments.length === 0)
+            && underlineMetadata.segments.length) {
+            annotation.pdfjsSourceUnderlineSegments = underlineMetadata.segments;
+        }
+        if (underlineMetadata.hasDrawnUnderline) {
+            annotation.pdfjsSourceHasDrawnUnderline = true;
+        }
+    }
     // Record the scale the persisted runs are expressed in so reloads at a
     // different zoom can normalize them (see
     // normalizeRestoredSourceSpanRunsToRenderScale). Only stamp when the
@@ -5828,8 +6983,13 @@ function applySourceFidelityTypography(box, options = {}) {
     if (!box) return;
     const tc = selectedBoxTextElement(box);
     if (!tc) return;
+    const runtimeFont = applyPdfjsRuntimeFontToSourceBox(box);
     box.classList.add('is-source-fidelity');
-    const fontFamily = box.dataset.sourceFontFamily || box.style.getPropertyValue('--enpv-font-family') || 'sans-serif';
+    const fontFamily = runtimeFont?.cssFamily
+        || box.dataset.sourceRuntimeFontFamily
+        || box.dataset.sourceFontFamily
+        || box.style.getPropertyValue('--enpv-font-family')
+        || 'sans-serif';
     const scale = Number.parseFloat(options.scale ?? '')
         || Number.parseFloat(box.parentElement?.dataset?.scale || '')
         || Number.parseFloat(box.dataset.renderScale || '')
@@ -5848,10 +7008,24 @@ function applySourceFidelityTypography(box, options = {}) {
         ? `${originalLineHeightPx * sourceRatio}px`
         : `${fontSizePx}px`;
     const sourceTextWidthPx = Number.parseFloat(box.dataset.sourceTextWidthPx || '');
-    box.style.setProperty('--enpv-font-family', fontFamily);
+    box.style.setProperty('--enpv-font-family', cssFontFamilyWithGenericFallback(fontFamily));
     box.style.setProperty('--enpv-font-size', `${fontSizePx}px`);
-    box.style.setProperty('--enpv-font-weight', box.dataset.sourceFontWeight || box.style.getPropertyValue('--enpv-font-weight') || 'normal');
-    box.style.setProperty('--enpv-font-style', box.dataset.sourceFontStyle || box.style.getPropertyValue('--enpv-font-style') || 'normal');
+    box.style.setProperty(
+        '--enpv-font-weight',
+        runtimeFont?.renderWeight
+            || box.dataset.sourceRenderFontWeight
+            || box.dataset.sourceFontWeight
+            || box.style.getPropertyValue('--enpv-font-weight')
+            || 'normal',
+    );
+    box.style.setProperty(
+        '--enpv-font-style',
+        runtimeFont?.renderStyle
+            || box.dataset.sourceRenderFontStyle
+            || box.dataset.sourceFontStyle
+            || box.style.getPropertyValue('--enpv-font-style')
+            || 'normal',
+    );
     box.style.setProperty('--enpv-line-height', lineHeightPx);
     const textColor = cssColorToHex(box.dataset.sourceTextColor || box.style.getPropertyValue('--enpv-text-color') || '#000000');
     box.style.setProperty('--enpv-text-color', textColor);
@@ -5958,6 +7132,19 @@ function measureStandardSpaceWidthPx(fontFamily, fontWeight, fontStyle, fontSize
     return metrics?.width || size * 0.27;
 }
 
+function measureSourceRunTextWidthPx(value, item = {}) {
+    const canvas = measureSourceRunTextWidthPx._canvas
+        || (measureSourceRunTextWidthPx._canvas = document.createElement('canvas'));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return 0;
+    const family = item?.fontFamily || 'sans-serif';
+    const weight = sourceRunRenderFontWeight(item);
+    const style = sourceRunRenderFontStyle(item);
+    const size = Number(item?.fontSizePx) > 0 ? Number(item.fontSizePx) : 12;
+    ctx.font = `${style} ${weight} ${size}px ${family}`;
+    return ctx.measureText(String(value || ''))?.width || 0;
+}
+
 function cssQuoteFontFamily(value) {
     const raw = String(value || '').trim();
     if (!raw) return '';
@@ -5994,6 +7181,14 @@ function cssFontFamilyWithGenericFallback(value) {
     return `${cssQuoteFontFamily(raw)}, ${generic}`;
 }
 
+function sourceRunRenderFontWeight(item) {
+    return String(item?.renderFontWeight || item?.fontWeight || 'normal');
+}
+
+function sourceRunRenderFontStyle(item) {
+    return String(item?.renderFontStyle || item?.fontStyle || 'normal');
+}
+
 function normalizeSourceRunText(value) {
     return String(value || '').replace(/\s+/g, ' ').trim();
 }
@@ -6017,8 +7212,8 @@ function sourceRunTextWithSyntheticGaps(items, start = 0, end = items.length) {
             const gapPx = Math.max(0, Number(item.leftPx) - Number(prev.rightPx));
             const standardSpacePx = measureStandardSpaceWidthPx(
                 item.fontFamily,
-                item.fontWeight,
-                item.fontStyle,
+                sourceRunRenderFontWeight(item),
+                sourceRunRenderFontStyle(item),
                 item.fontSizePx,
             );
             if (gapPx > Math.max(1, standardSpacePx * 0.45)) output += ' ';
@@ -6177,9 +7372,16 @@ function buildSourceEditSpanItems(group, layerEl) {
         const bottomPx = layerRect && clientRect ? (clientRect.bottom - layerRect.top) : (item.rect.top + item.rect.height);
         return {
             text: trimmed,
-            fontFamily: cs?.fontFamily || '',
-            fontWeight: cs?.fontWeight || '',
-            fontStyle: cs?.fontStyle || '',
+            fontFamily: span?.dataset?.enpvPdfjsLoadedFontFamily || cs?.fontFamily || '',
+            fontWeight: span?.dataset?.enpvPdfjsFontWeight || cs?.fontWeight || '',
+            fontStyle: span?.dataset?.enpvPdfjsFontStyle || cs?.fontStyle || '',
+            renderFontWeight: span?.dataset?.enpvPdfjsLoadedFontFamily ? '400' : '',
+            renderFontStyle: span?.dataset?.enpvPdfjsLoadedFontFamily ? 'normal' : '',
+            pdfjsFontName: span?.dataset?.enpvPdfjsFontName || '',
+            pdfjsLoadedFontFamily: span?.dataset?.enpvPdfjsLoadedFontFamily || '',
+            semanticFontWeight: span?.dataset?.enpvPdfjsFontWeight || cs?.fontWeight || '',
+            semanticFontStyle: span?.dataset?.enpvPdfjsFontStyle || cs?.fontStyle || '',
+            pdfjsFontMetadataResolved: span?.dataset?.enpvPdfjsFontMetadataResolved === '1',
             fontSizePx: Number.parseFloat(cs?.fontSize || '') || 0,
             leftPx,
             rightPx,
@@ -6242,11 +7444,17 @@ function buildSourceSpanItemsFromAnnotation(annotation, scale = 1) {
                 ? String(parsedWeight)
                 : (boolish(span?.bold) ? '700' : '400');
             const fontStyle = boolish(span?.italic) ? 'italic' : 'normal';
+            const sourceUnderlineSegments = drawnUnderlineSegmentsFromPromotedSourceSpan(span);
+            const underlineRanges = sourceSpanDrawnUnderlineRanges(span);
             return {
                 text,
                 fontFamily: String(span?.embedded_font_name || span?.font || span?.embedded_font_family || ''),
                 fontWeight,
                 fontStyle,
+                underlineRanges,
+                sourceUnderlineSegments,
+                underlineRangesPrecise: sourceUnderlineSegments.length > 0,
+                hasDrawnUnderline: underlineRanges.length > 0,
                 fontSizePx: (Number(span?.fontSize || span?.font_size) || 0) * (Number(scale) || 1),
                 leftPx: x0 * (Number(scale) || 1),
                 rightPx: x1 * (Number(scale) || 1),
@@ -6265,17 +7473,22 @@ function buildSourceSpanItemsFromAnnotation(annotation, scale = 1) {
 // style from the annotation's extraction `sourceSpans` by matching run text.
 function enrichSourceRunItemsFromAnnotationSpans(box, items) {
     if (!Array.isArray(items) || !items.length) return items;
+    applyPdfjsRuntimeFontsToSourceRunItems(items);
     const genericFamilies = new Set(['', 'sans-serif', 'serif', 'monospace']);
     const allGeneric = items.every((item) => genericFamilies.has(String(item.fontFamily || '').trim().toLowerCase()));
-    if (!allGeneric) return items;
     const annotation = persistedAnnotationsById.get(String(box?.dataset?.annotationId || '')) || null;
     const sourceSpans = Array.isArray(annotation?.sourceSpans) ? annotation.sourceSpans : [];
     if (!sourceSpans.length) return enrichSourceRunItemsFromPromotedPageSpans(box, items);
+    const sourceRunsScale = Number.parseFloat(box?.dataset?.sourceSpanRunsScale || '')
+        || Number.parseFloat(box?.dataset?.renderScale || '')
+        || 0;
     const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
     const rawNorm = (value) => String(value || '').replace(/\s+/g, ' ').trim();
     const spans = sourceSpans
         .map((span) => {
             const explicitWeight = Number.parseInt(String(span?.fontWeight || span?.font_weight || '').trim(), 10);
+            const sourceUnderlineSegments = drawnUnderlineSegmentsFromPromotedSourceSpan(span);
+            const underlineRanges = sourceSpanDrawnUnderlineRanges(span);
             return {
                 text: norm(span?.text || span?.rawText || ''),
                 rawText: rawNorm(span?.text || span?.rawText || ''),
@@ -6284,6 +7497,10 @@ function enrichSourceRunItemsFromAnnotationSpans(box, items) {
                     ? String(explicitWeight)
                     : (boolish(span?.bold) ? '700' : '400'),
                 fontStyle: boolish(span?.italic) ? 'italic' : 'normal',
+                underlineRanges,
+                sourceUnderlineSegments,
+                underlineRangesPrecise: sourceUnderlineSegments.length > 0,
+                hasDrawnUnderline: underlineRanges.length > 0,
             };
         })
         .filter((span) => span.text);
@@ -6309,9 +7526,31 @@ function enrichSourceRunItemsFromAnnotationSpans(box, items) {
             || ordered.find((span) => text.length >= 8 && span.text.includes(text));
         if (!match) continue;
         cursor = Math.max(cursor, spans.indexOf(match));
-        if (match.fontFamily) item.fontFamily = match.fontFamily;
-        if (match.fontWeight) item.fontWeight = match.fontWeight;
-        if (match.fontStyle) item.fontStyle = match.fontStyle;
+        // PDF.js metadata resolves face weight/style, but its selectable DOM
+        // can still expose only a generic CSS family. Let extraction replace
+        // that generic family without overwriting authoritative PDF.js
+        // weight/style metadata.
+        if (allGeneric && match.fontFamily) item.fontFamily = match.fontFamily;
+        if (allGeneric && match.fontWeight && !item.pdfjsFontMetadataResolved) item.fontWeight = match.fontWeight;
+        if (allGeneric && match.fontStyle && !item.pdfjsFontMetadataResolved) item.fontStyle = match.fontStyle;
+        const itemLeft = Number(item.leftPx);
+        const itemRight = Number(item.rightPx);
+        item.underlineRanges = match.underlineRangesPrecise
+            && sourceRunsScale > 0
+            && Number.isFinite(itemLeft)
+            && Number.isFinite(itemRight)
+            && itemRight > itemLeft
+            ? drawnUnderlineRangesForSourceRunRect(
+                match.sourceUnderlineSegments,
+                {
+                    x: itemLeft / sourceRunsScale,
+                    w: (itemRight - itemLeft) / sourceRunsScale,
+                },
+            )
+            : match.underlineRanges;
+        item.sourceUnderlineSegments = match.sourceUnderlineSegments;
+        item.underlineRangesPrecise = match.underlineRangesPrecise;
+        item.hasDrawnUnderline = match.hasDrawnUnderline;
     }
     return items;
 }
@@ -6344,10 +7583,112 @@ function enrichSourceRunItemsFromPromotedPageSpans(box, items) {
         };
         const style = promotedSourceStyleForPdfjsSource(pageIndex, runRect, item.text, pageHeight);
         if (!style) continue;
-        if (style.fontWeight) item.fontWeight = style.fontWeight;
-        if (style.fontStyle) item.fontStyle = style.fontStyle;
+        if (style.fontWeight && !item.pdfjsFontMetadataResolved) item.fontWeight = style.fontWeight;
+        if (style.fontStyle && !item.pdfjsFontMetadataResolved) item.fontStyle = style.fontStyle;
+        item.underlineRanges = style.underlineRanges;
+        item.sourceUnderlineSegments = style.drawnUnderlineSegments;
+        item.underlineRangesPrecise = style.underlineRangesPrecise;
+        item.hasDrawnUnderline = style.hasDrawnUnderline;
     }
     return items;
+}
+
+function detectedCanvasUnderlineRangesForSourceRun(box, item) {
+    if (!box || !item?.hasDrawnUnderline || item?.underlineRangesPrecise) return null;
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    const pageView = Number.isFinite(pageIndex) && pageIndex >= 0
+        ? pdfViewer?.getPageView?.(pageIndex)
+        : null;
+    const canvas = pageView?.canvas || pageView?.div?.querySelector?.('.canvasWrapper canvas, canvas');
+    const layerEl = pageView?.textLayer?.div || pageView?.textLayer?.textLayerDiv;
+    const canvasRect = canvas?.getBoundingClientRect?.();
+    const layerRect = layerEl?.getBoundingClientRect?.();
+    if (!canvas || !canvasRect || !layerRect || canvasRect.width <= 0 || canvasRect.height <= 0) return null;
+
+    const left = layerRect.left + Number(item.leftPx);
+    const right = layerRect.left + Number(item.rightPx);
+    const top = layerRect.top + Number(item.topPx);
+    const bottom = layerRect.top + Number(item.bottomPx);
+    if (![left, right, top, bottom].every(Number.isFinite) || right - left <= 2 || bottom - top <= 2) return null;
+
+    const scaleX = Number(canvas.width) / canvasRect.width;
+    const scaleY = Number(canvas.height) / canvasRect.height;
+    const x0 = Math.max(0, Math.floor((left - canvasRect.left) * scaleX));
+    const x1 = Math.min(Number(canvas.width), Math.ceil((right - canvasRect.left) * scaleX));
+    const scanTop = Math.max(0, Math.floor(((top + ((bottom - top) * 0.52)) - canvasRect.top) * scaleY));
+    const scanBottom = Math.min(
+        Number(canvas.height),
+        Math.ceil(((bottom + ((bottom - top) * 0.12)) - canvasRect.top) * scaleY),
+    );
+    if (x1 - x0 <= 4 || scanBottom - scanTop <= 1) return null;
+
+    let pixels;
+    try {
+        pixels = canvas.getContext('2d', { willReadFrequently: true })
+            ?.getImageData(x0, scanTop, x1 - x0, scanBottom - scanTop);
+    } catch (_) {
+        pixels = null;
+    }
+    if (!pixels?.data?.length) return null;
+    const luminances = [];
+    for (let index = 0; index < pixels.data.length; index += 4) {
+        luminances.push(
+            (pixels.data[index] * 0.2126)
+            + (pixels.data[index + 1] * 0.7152)
+            + (pixels.data[index + 2] * 0.0722),
+        );
+    }
+    const sortedLuminances = luminances.slice().sort((a, b) => a - b);
+    const background = sortedLuminances[Math.floor(sortedLuminances.length / 2)] ?? 255;
+    const width = pixels.width;
+    const height = pixels.height;
+    const minimumRun = Math.max(12, Math.round(width * 0.06));
+    let best = null;
+
+    for (let y = 0; y < height; y += 1) {
+        let runStart = -1;
+        let lastInk = -1;
+        const commit = () => {
+            if (runStart < 0 || lastInk < runStart) return;
+            const runWidth = lastInk - runStart + 1;
+            if (runWidth >= minimumRun && (!best || runWidth > best.width)) {
+                best = { start: runStart, end: lastInk + 1, width: runWidth };
+            }
+        };
+        for (let x = 0; x < width; x += 1) {
+            const luminance = luminances[(y * width) + x];
+            const isInk = Math.abs(luminance - background) >= 42;
+            if (isInk) {
+                if (runStart < 0 || x - lastInk > 2) {
+                    commit();
+                    runStart = x;
+                }
+                lastInk = x;
+            } else if (runStart >= 0 && x - lastInk > 2) {
+                commit();
+                runStart = -1;
+                lastInk = -1;
+            }
+        }
+        commit();
+    }
+    if (!best) return null;
+    return [{
+        start: Math.max(0, Math.min(1, (best.start - 1) / width)),
+        end: Math.max(0, Math.min(1, (best.end + 1) / width)),
+    }];
+}
+
+function recoverLegacyDrawnUnderlineRangesFromCanvas(box, items) {
+    return Array.from(items || []).map((item) => {
+        const detected = detectedCanvasUnderlineRangesForSourceRun(box, item);
+        if (!Array.isArray(detected)) return item;
+        return {
+            ...item,
+            underlineRanges: detected,
+            underlineRangesPrecise: true,
+        };
+    });
 }
 
 function applySourceFidelitySpanEditMarkup(box, options = {}) {
@@ -6362,14 +7703,14 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
     if (raw) {
         try { items = JSON.parse(raw); } catch (_) { items = null; }
     }
-    if (!Array.isArray(items) || items.length < 2) {
+    if (!Array.isArray(items) || items.length < 1) {
         // Fallback: try to recompute from the live pdf.js text layer if it
         // is currently in the DOM. Persisted overlays saved before per-span
         // capture was added will hit this path on first edit.
         const lookup = sourceGroupForBox(box);
         if (lookup) {
             items = buildSourceEditSpanItems(lookup.group, lookup.layerEl);
-            if (Array.isArray(items) && items.length >= 2) {
+            if (Array.isArray(items) && items.length >= 1) {
                 try {
                     box.dataset.sourceSpanRuns = JSON.stringify(items);
                     const liveScale = Number.parseFloat(box.parentElement?.dataset?.scale || '')
@@ -6379,20 +7720,20 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
             }
         }
     }
-    if ((!Array.isArray(items) || items.length < 2) && box.dataset.annotationId) {
+    if ((!Array.isArray(items) || items.length < 1) && box.dataset.annotationId) {
         const annotation = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
         const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '')
             || Number.parseFloat(box.dataset.renderScale || '')
             || 1;
         items = buildSourceSpanItemsFromAnnotation(annotation, scale);
-        if (Array.isArray(items) && items.length >= 2) {
+        if (Array.isArray(items) && items.length >= 1) {
             try {
                 box.dataset.sourceSpanRuns = JSON.stringify(items);
                 box.dataset.sourceSpanRunsScale = String(scale);
             } catch (_) { /* noop */ }
         }
     }
-    if (!Array.isArray(items) || items.length < 2) return false;
+    if (!Array.isArray(items) || items.length < 1) return false;
 
     // Group runs into visual lines. Two runs share a line only when their
     // vertical overlap covers the majority of the shorter band: a merely
@@ -6440,6 +7781,9 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
     // sourceSpans with a forward cursor, which only works when the runs
     // arrive in reading order.
     items = enrichSourceRunItemsFromAnnotationSpans(box, items);
+    items = recoverLegacyDrawnUnderlineRangesFromCanvas(box, items);
+    items = splitSourceRunsAtDrawnUnderlineRanges(items, measureSourceRunTextWidthPx);
+    if (!items.length) return false;
 
     // Persist the enriched per-run weights/styles on the box: once a moved
     // overlay claims its promoted extraction block (deleting the block's
@@ -6477,8 +7821,8 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
                 const gapPx = Math.max(0, Number(item.leftPx) - Number(previousItem.rightPx));
                 const standardSpacePx = measureStandardSpaceWidthPx(
                     item.fontFamily,
-                    item.fontWeight,
-                    item.fontStyle,
+                    sourceRunRenderFontWeight(item),
+                    sourceRunRenderFontStyle(item),
                     item.fontSizePx,
                 );
                 if (gapPx > Math.max(1, standardSpacePx * 0.45)) reconstructed += ' ';
@@ -6495,7 +7839,7 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
         if (!whitespaceOnlySourceDifference) {
             items = remapSourceRunItemsForCurrentText(items, currentText)
                 || remapSourceRunItemsForCurrentTextLines(items, rawCurrentText, groupSourceRunItemsIntoLines);
-            if (!Array.isArray(items) || items.length < 2) return false;
+            if (!Array.isArray(items) || items.length < 1) return false;
         } else {
             // Whitespace-only differences: line-grouped reconstruction joins
             // visual rows with a space the committed text may lack, but run
@@ -6521,8 +7865,8 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
     const buildGapSpan = (gapPx, item) => {
         const standardSpacePx = measureStandardSpaceWidthPx(
             item.fontFamily,
-            item.fontWeight,
-            item.fontStyle,
+            sourceRunRenderFontWeight(item),
+            sourceRunRenderFontStyle(item),
             item.fontSizePx,
         );
         if (gapPx <= Math.max(1, standardSpacePx * 0.45)) return '';
@@ -6591,10 +7935,14 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
             if (fontFamily) {
                 styleParts.push(`font-family:${cssFontFamilyWithGenericFallback(fontFamily)}`);
             }
-            if (item.fontWeight) styleParts.push(`font-weight:${item.fontWeight}`);
+            styleParts.push(`font-weight:${sourceRunRenderFontWeight(item)}`);
             // Always emit font-style: a run that is upright must override an
             // italic box-level --enpv-font-style, not inherit it.
-            styleParts.push(`font-style:${item.fontStyle || 'normal'}`);
+            styleParts.push(`font-style:${sourceRunRenderFontStyle(item)}`);
+            // Drawn PDF underlines are vector artwork, not a CSS property on
+            // the text layer. Enriched source runs explicitly restore the
+            // decoration on only the matching words.
+            styleParts.push(`text-decoration-line:${item.underline ? 'underline' : 'none'}`);
             const itemFontSizePx = Number(item.fontSizePx) || 0;
             const itemTopPx = Number(item.topPx);
             if (itemFontSizePx > 0 && referenceFontSizePx > 0 && Math.abs(itemFontSizePx - referenceFontSizePx) > 0.25) {
@@ -6610,7 +7958,14 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
                 }
             }
             const styleAttr = styleParts.length ? ` style="${styleParts.join(';')}"` : '';
-            html += `<span class="enpv-edit-run" data-source-span-run="1"${styleAttr}>${escapeHtmlForSpanEdit(String(item.text || ''))}</span>`;
+            const semanticWeight = escapeHtmlForSpanEdit(
+                String(item.semanticFontWeight || item.fontWeight || '400'),
+            );
+            const semanticStyle = escapeHtmlForSpanEdit(
+                String(item.semanticFontStyle || item.fontStyle || 'normal'),
+            );
+            const pdfFontName = escapeHtmlForSpanEdit(String(item.pdfjsFontName || ''));
+            html += `<span class="enpv-edit-run" data-source-span-run="1" data-source-semantic-font-weight="${semanticWeight}" data-source-semantic-font-style="${semanticStyle}" data-source-pdf-font-name="${pdfFontName}"${styleAttr}>${escapeHtmlForSpanEdit(String(item.text || ''))}</span>`;
             prev = item;
         }
         if (wrapCapturedLines) html += '</span>';
@@ -6750,7 +8105,53 @@ function collapsePromotedExtractionVisualBreaks(box, annotationOverride = null) 
     return true;
 }
 
-function normalizeSourceSpanMarkupForNaturalFlow(box) {
+function preserveCollapsedCaretThroughMutation(container, mutate) {
+    if (!container || typeof mutate !== 'function') return undefined;
+    const selection = window.getSelection?.();
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range
+        || !range.collapsed
+        || !container.contains(range.startContainer)) {
+        return mutate();
+    }
+
+    // A contenteditable caret at the root is represented as a child offset.
+    // Removing source-fidelity gap / line siblings before that offset makes
+    // Chromium move the caret left of the character just inserted. Anchor it
+    // to a real node while the scaffold is naturalized, then restore the
+    // collapsed range at that exact DOM position.
+    const marker = document.createElement('span');
+    marker.setAttribute('data-enpv-caret-marker', '1');
+    marker.setAttribute('aria-hidden', 'true');
+    range.insertNode(marker);
+
+    let result;
+    try {
+        result = mutate();
+    } finally {
+        const markerParent = marker.parentNode;
+        if (markerParent) {
+            const markerOffset = Array.prototype.indexOf.call(
+                markerParent.childNodes,
+                marker,
+            );
+            marker.remove();
+            if (markerOffset >= 0) {
+                const restoredRange = document.createRange();
+                restoredRange.setStart(
+                    markerParent,
+                    Math.min(markerOffset, markerParent.childNodes.length),
+                );
+                restoredRange.collapse(true);
+                selection.removeAllRanges();
+                selection.addRange(restoredRange);
+            }
+        }
+    }
+    return result;
+}
+
+function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
     if (!box) return;
     box.dataset.naturalTextFlow = '1';
     box.dataset.sourceSpanNaturalized = '1';
@@ -6759,9 +8160,21 @@ function normalizeSourceSpanMarkupForNaturalFlow(box) {
     const hasScaffold = box.dataset.sourceSpanEditActive === '1'
         || box.dataset.sourceSpanDisplayActive === '1'
         || Boolean(tc.querySelector('[data-source-span-run="1"], [data-source-span-gap="1"]'));
+    const distributedLeaderRunTexts = hasScaffold
+        ? Array.from(tc.querySelectorAll('[data-source-span-run="1"]'))
+            .map((run) => run.textContent || '')
+        : String(tc.textContent || '').trim().split(/\s+/u);
+    const preservesDistributedLeaderSpacing = options.preserveCapturedGapSpacing === true
+        && sourceRunTextsUseDistributedLeaderSpacing(distributedLeaderRunTexts);
+    if (preservesDistributedLeaderSpacing) {
+        box.dataset.preserveDistributedLeaderSpacing = '1';
+    } else {
+        delete box.dataset.preserveDistributedLeaderSpacing;
+    }
     if (hasScaffold) {
         tc.querySelectorAll('[data-source-span-gap="1"]').forEach((gap) => {
             const prev = gap.previousSibling;
+            const next = gap.nextSibling;
             const atLineStart = !prev
                 || (prev.nodeType === Node.TEXT_NODE && /\n\s*$/.test(prev.nodeValue || ''));
             const originalSpaceCount = Math.max(
@@ -6771,12 +8184,34 @@ function normalizeSourceSpanMarkupForNaturalFlow(box) {
             const originalScaffoldText = ' '.repeat(originalSpaceCount);
             const currentGapText = String(gap.textContent || '');
             const userMutatedGap = currentGapText !== originalScaffoldText;
+            const naturalizedGapText = sourceNaturalizedGapText({
+                atLineStart,
+                currentText: currentGapText,
+                originalSpaceCount,
+                preserveCapturedSpacing: preservesDistributedLeaderSpacing
+                    && /^[.…·•]+$/u.test(String(next?.textContent || '').trim()),
+                userMutated: userMutatedGap,
+            });
             // Keep the node in place while an input event is completing. Replacing
             // or removing a selection-adjacent node can move Chromium's caret to
             // the contenteditable root. If this input landed inside the synthetic
             // gap itself, its text now differs from the captured scaffold; retain
             // it verbatim so the user's first character is never overwritten.
-            if (!userMutatedGap) gap.textContent = atLineStart ? '' : ' ';
+            if (!userMutatedGap
+                && !atLineStart
+                && options.attachCanonicalGapsToFollowingRun === true
+                && next?.nodeType === Node.ELEMENT_NODE
+                && next.getAttribute?.('data-source-span-run') === '1') {
+                // Make the canonical separator part of the following styled
+                // run. A standalone whitespace node can be omitted when the
+                // DOM is serialized after a resize, yielding `13Other...`.
+                // Inserting a sibling text node before the run's existing
+                // text keeps a live caret anchored in that existing node.
+                next.insertBefore(document.createTextNode(naturalizedGapText), next.firstChild);
+                gap.remove();
+                return;
+            }
+            if (!userMutatedGap) gap.textContent = naturalizedGapText;
             gap.removeAttribute('data-source-span-gap');
             gap.removeAttribute('data-source-span-gap-spaces');
             gap.classList.remove('enpv-edit-gap');
@@ -6813,8 +8248,14 @@ function normalizeSourceSpanMarkupForNaturalFlow(box) {
         collapsePromotedExtractionVisualBreaks(box);
     }
     clearPromotedSourceBlockEditHorizontalFit(box);
-    tc.style.whiteSpace = 'pre-wrap';
-    tc.style.overflowWrap = 'break-word';
+    // A distributed PDF leader is one fixed visual row. Allowing it to wrap
+    // during the source-to-rich transition moves the final dot to a second
+    // line before the handle has moved, even though every gap was retained.
+    // Keep that row intact; a deliberately narrower box may clip it, but its
+    // captured spacing must never be compressed or reflowed. Ordinary prose
+    // continues to use natural wrapping.
+    tc.style.whiteSpace = preservesDistributedLeaderSpacing ? 'pre' : 'pre-wrap';
+    tc.style.overflowWrap = preservesDistributedLeaderSpacing ? 'normal' : 'break-word';
     tc.style.wordBreak = 'normal';
 }
 
@@ -6865,6 +8306,26 @@ function sourceSpanRunsForBox(box) {
     } catch (_) {
         return [];
     }
+}
+
+function sourceSpanRunsHaveMixedTypography(box) {
+    const keys = sourceSpanRunsForBox(box)
+        .filter((run) => String(run?.text || '').trim())
+        .map((run) => {
+            const rawWeight = String(run?.fontWeight || '400').trim().toLowerCase();
+            const parsedWeight = Number.parseInt(rawWeight, 10);
+            const weight = Number.isFinite(parsedWeight)
+                ? String(Math.max(100, Math.min(900, Math.round(parsedWeight / 100) * 100)))
+                : (rawWeight === 'bold' ? '700' : '400');
+            return [
+                String(run?.fontFamily || '').trim().toLowerCase(),
+                weight,
+                String(run?.fontStyle || 'normal').trim().toLowerCase(),
+                Number(run?.fontSizePx || 0).toFixed(2),
+                run?.underline ? '1' : '0',
+            ].join('|');
+        });
+    return new Set(keys).size > 1;
 }
 
 function sourceSpanRunLineMetrics(box) {
@@ -6961,15 +8422,6 @@ function computedElementLineHeightPx(element) {
     if (Number.isFinite(lineHeight) && lineHeight > 0) return lineHeight;
     const fontSize = Number.parseFloat(cs.fontSize || '');
     return Number.isFinite(fontSize) && fontSize > 0 ? fontSize * 1.2 : 0;
-}
-
-function promotedSourceBlockExactEditLayoutWouldInflate(box, displayLineHeightPx) {
-    const metrics = sourceSpanRunLineMetrics(box);
-    const displayLineHeight = Number(displayLineHeightPx) || 0;
-    return Boolean(metrics
-        && metrics.lineStepPx > 0
-        && displayLineHeight > 0
-        && metrics.lineStepPx > displayLineHeight * 1.25);
 }
 
 function applyPromotedSourceBlockEditLayout(box, options = {}) {
@@ -7171,14 +8623,16 @@ function applyPromotedSourceBlockEditHorizontalFit(box, options = {}) {
 function clearPromotedSourceBlockEditHorizontalFit(box) {
     if (!box) return;
     const restoreEntryBounds = box.dataset.promotedSourceBlockEditEntryBoundsFit === '1';
+    const hasHorizontalFit = Boolean(box.dataset.promotedSourceBlockEditHorizontalFit);
+    const hasEntryLayout = box.dataset.promotedSourceBlockEditEntryLayout === '1';
     const tc = selectedBoxTextElement(box);
-    if (tc) {
+    if (tc && (hasHorizontalFit || hasEntryLayout || restoreEntryBounds)) {
         tc.style.transform = '';
         tc.style.transformOrigin = '';
-        if (box.dataset.promotedSourceBlockEditHorizontalFit) {
+        if (hasHorizontalFit) {
             tc.style.width = '100%';
         }
-        if (box.dataset.promotedSourceBlockEditEntryLayout === '1') {
+        if (hasEntryLayout) {
             tc.style.whiteSpace = '';
             tc.style.overflowWrap = '';
             tc.style.wordBreak = '';
@@ -7262,6 +8716,7 @@ function editorModeForBox(box) {
 function resetSourceFidelityInlineStyles(box) {
     const tc = selectedBoxTextElement(box);
     if (!tc) return;
+    clearSourceFidelityBoundingBoxSnap(box, tc);
     tc.style.letterSpacing = '';
     tc.style.whiteSpace = '';
     tc.style.wordBreak = '';
@@ -7713,10 +9168,81 @@ function fitEditingRichTextBoxToContent(box) {
     return changed || clamped;
 }
 
+function fitEditingSourceTextBoxToContent(box) {
+    if (!box || !box.classList.contains('is-editing')) return false;
+    if (editorModeForBox(box) !== 'source') return false;
+    if (box.dataset.userSizedTextBox === '1' || sourceFidelityTextIsVertical(box)) return false;
+    const tc = selectedBoxTextElement(box);
+    const layer = box.parentElement;
+    if (!tc || !layer) return false;
+
+    // Measure with the transform already visible when the user typed. Fitting
+    // against the old box first would compress the appended glyph back into
+    // the source width, defeating the auto-grow behavior.
+    snapSourceFidelityEditorToCapturedBoundingBox(box, tc);
+
+    let textRect = null;
+    try {
+        const range = document.createRange();
+        range.selectNodeContents(tc);
+        const measured = range.getBoundingClientRect();
+        range.detach?.();
+        if (measured.width > 0 && measured.height > 0) textRect = measured;
+    } catch (_) { /* an unmeasurable source editor cannot be fitted */ }
+    if (!textRect) return false;
+
+    const boxRect = box.getBoundingClientRect();
+    const currentWidth = Number.parseFloat(box.style.width || '')
+        || boxRect.width
+        || box.offsetWidth
+        || 0;
+    const layerRect = layer.getBoundingClientRect();
+    const currentLeft = Number.parseFloat(box.style.left || '') || 0;
+    const maxWidth = Math.max(1, layerRect.width - currentLeft);
+    const leftInset = Math.max(0, textRect.left - boxRect.left);
+    const desiredRightInset = Math.max(1.5, Math.min(8, leftInset));
+    const textOverflow = textRect.right - boxRect.right;
+    let activeScaleX = 1;
+    try {
+        const transform = window.getComputedStyle(tc).transform;
+        if (transform && transform !== 'none') {
+            activeScaleX = new DOMMatrixReadOnly(transform).a;
+        }
+    } catch (_) { /* use the unscaled fallback */ }
+    // A materially compressed substitute font must not be compressed even
+    // further just to keep a newly appended glyph inside the immutable source
+    // width. Near-natural source rows retain their stable captured geometry
+    // for small first-keystroke drift (the f1040 :113 contract).
+    const minimumOverflowToGrow = activeScaleX < 0.98
+        ? 0.5
+        : Math.max(4, boxRect.width * 0.015);
+    if (!(textOverflow > minimumOverflowToGrow)) return false;
+    const requiredGrowth = textOverflow + desiredRightInset;
+    if (!(requiredGrowth > 0.5) || !(currentWidth > 0)) return false;
+
+    const nextWidth = Math.min(maxWidth, currentWidth + requiredGrowth);
+    if (!(nextWidth > currentWidth + 0.5)) return false;
+    box.style.width = `${nextWidth}px`;
+    box.dataset.pendingResize = '1';
+    // The source fit is bounded by the captured horizontal scale, so growing
+    // the box only exposes the appended glyph; it does not stretch the font.
+    applySourceFidelityTextFit(box, tc);
+    snapSourceFidelityEditorToCapturedBoundingBox(box, tc);
+    return true;
+}
+
 function fitPersistedRichOverlayBoxesToContent(layer) {
     if (!layer) return;
     layer.querySelectorAll('.enpv-annotation-box.is-persisted-overlay.is-rich-editor').forEach((box) => {
         const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+        // Explicitly user-sized boxes own their saved geometry. Re-measuring
+        // them while a page is merely being painted makes the render path
+        // stateful: sub-pixel scrollHeight rounding can add a few pixels,
+        // which used to be written back and compounded on every scroll-time
+        // layer rebuild.
+        if (box.dataset.userSizedTextBox === '1' || boolish(existing?.userSizedTextBox)) {
+            return;
+        }
         // Once a promoted paragraph has been resized or explicitly styled it
         // is an ordinary flowing textbox. Its source rows are no longer hard
         // line breaks: width controls soft wrapping and height follows the
@@ -7731,15 +9257,9 @@ function fitPersistedRichOverlayBoxesToContent(layer) {
                 allowShrink: true,
                 fitWidth: false,
             })) return;
-            const annotation = buildAnnotationFromBox(box, existing);
-            if (annotation) upsertPersistedAnnotation(annotation);
             return;
         }
-        if (!fitRichTextBoxToContent(box)) return;
-        const annotation = buildAnnotationFromBox(box, existing);
-        if (annotation) {
-            upsertPersistedAnnotation(annotation);
-        }
+        fitRichTextBoxToContent(box);
     });
 }
 
@@ -7764,12 +9284,19 @@ function prepareBoxForLiveResize(box) {
     }
     box.dataset.naturalTextFlow = '1';
     box.classList.add('is-user-sized-text');
-    normalizeSourceSpanMarkupForNaturalFlow(box);
+    // Rich-mode promotion clears source-fidelity inline whitespace styles.
+    // Do it before naturalizing the captured spans so the flow decision made
+    // below (including fixed-row dot leaders) remains in force for the first
+    // resize frame.
     if (editorModeForBox(box) === 'source') {
         promoteBoxToRichTextMode(box, 'manual-resize');
     } else {
         setBoxEditorMode(box, 'rich');
     }
+    normalizeSourceSpanMarkupForNaturalFlow(box, {
+        attachCanonicalGapsToFollowingRun: true,
+        preserveCapturedGapSpacing: true,
+    });
     fitRichTextBoxToContent(box);
 }
 
@@ -8978,6 +10505,50 @@ function deletedSourceRedactionBbox(annotation) {
     return { x: sourceX, y: sourceY, w: sourceW, h: sourceH };
 }
 
+function deletedSourceUnderlineMetadata(source) {
+    const dataset = source?.dataset || null;
+    const directValue = dataset
+        ? dataset.sourceUnderlineSegments
+        : source?.pdfjsSourceUnderlineSegments;
+    if (directValue != null
+        && (Array.isArray(directValue) || String(directValue).trim() !== '')) {
+        try {
+            const segments = Array.isArray(directValue)
+                ? directValue
+                : JSON.parse(String(directValue));
+            if (Array.isArray(segments)) {
+                return {
+                    segments,
+                    hasDrawnUnderline: segments.length > 0
+                        || dataset?.sourceHasDrawnUnderline === '1'
+                        || boolish(source?.pdfjsSourceHasDrawnUnderline),
+                };
+            }
+        } catch (_) { /* fall through to source-run metadata */ }
+    }
+
+    const rawRuns = dataset
+        ? dataset.sourceSpanRuns
+        : source?.pdfjsSourceSpanRuns;
+    let runs = rawRuns;
+    if (typeof runs === 'string') {
+        try { runs = JSON.parse(runs); } catch (_) { runs = null; }
+    }
+    if (!Array.isArray(runs) || !runs.length) return null;
+    // `splitSourceRunsAtDrawnUnderlineRanges` gives ordinary runs an
+    // `underline:false` presentation flag. That flag alone does not prove a
+    // vector-underline scan completed, so it must not suppress the exporter's
+    // legacy source-page detection. Only page-space segment metadata is an
+    // authoritative run-level result (including an explicit empty array).
+    const hasAuthoritativeRunMetadata = runs.some((run) => (
+        run
+        && typeof run === 'object'
+        && Object.prototype.hasOwnProperty.call(run, 'sourceUnderlineSegments')
+    ));
+    if (!hasAuthoritativeRunMetadata) return null;
+    return sourceRunDrawnUnderlineMetadata(runs);
+}
+
 function applyDeletedAcroWidgetVisibility(pageIndex) {
     const pageView = pdfViewer.getPageView(pageIndex);
     const pageDiv = pageView?.div;
@@ -9017,7 +10588,8 @@ function deletedMaskAnnotationFromBox(box) {
     }
     const originalId = String(box.dataset.annotationId || box.dataset.uid || generateUuidV4()).replace(/[^a-zA-Z0-9:_-]/g, '_');
     const text = sourceText.trim();
-    return {
+    const underlineMetadata = deletedSourceUnderlineMetadata(box);
+    const deletion = {
         id: `pdfjs_deleted_${originalId}`,
         type: 'text',
         pageIndex,
@@ -9040,6 +10612,14 @@ function deletedMaskAnnotationFromBox(box) {
         pdfjsAnchorUid: String(box.dataset.uid || ''),
         pdfjsSourceOccurrence: String(box.dataset.occurrence || '0'),
     };
+    if (underlineMetadata) {
+        // An explicit empty collection is authoritative: it prevents the PDF
+        // writer from guessing that a neighboring form rule is an underline.
+        // Real underlined source runs carry their precise owned segments here.
+        deletion.pdfjsSourceUnderlineSegments = underlineMetadata.segments;
+        deletion.pdfjsSourceHasDrawnUnderline = underlineMetadata.hasDrawnUnderline;
+    }
+    return deletion;
 }
 
 function deletedMaskAnnotationFromAnnotation(annotation) {
@@ -9052,7 +10632,8 @@ function deletedMaskAnnotationFromAnnotation(annotation) {
     const pageIndex = annotationPageIndex(annotation);
     if (!Number.isFinite(pageIndex) || pageIndex < 0) return null;
     const originalId = String(annotation.id || annotation.pdfjsAnchorUid || generateUuidV4()).replace(/[^a-zA-Z0-9:_-]/g, '_');
-    return {
+    const underlineMetadata = deletedSourceUnderlineMetadata(annotation);
+    const deletion = {
         id: `pdfjs_deleted_${originalId}`,
         type: 'text',
         pageIndex,
@@ -9075,6 +10656,11 @@ function deletedMaskAnnotationFromAnnotation(annotation) {
         pdfjsAnchorUid: String(annotation.pdfjsAnchorUid || annotation.id || ''),
         pdfjsSourceOccurrence: String(annotation.pdfjsSourceOccurrence || '0'),
     };
+    if (underlineMetadata) {
+        deletion.pdfjsSourceUnderlineSegments = underlineMetadata.segments;
+        deletion.pdfjsSourceHasDrawnUnderline = underlineMetadata.hasDrawnUnderline;
+    }
+    return deletion;
 }
 
 function normalizedPdfRectFromArray(rect) {
@@ -9240,10 +10826,14 @@ function sourceMaskRectForBox(box) {
     const explicitMaskRect = boxSourceMaskPdfBox(box);
     if (explicitMaskRect) {
         const rect = pdfRectToCanvasRect(explicitMaskRect, viewport, scale);
+        const hasStoredGlyphBounds = box.dataset.movedTextOverlay === '1'
+            && sourceSpanRunMaskItems(box, scale).length > 0;
         const maskRect = box.dataset.movedTextOverlay === '1'
-            ? movedSourceMaskCanvasRectFromTypography(rect, box)
+            ? movedSourceMaskCanvasRectFromTypography(rect, box, scale)
             : rect;
-        return clampSourceMaskCanvasRectToSourceCell(maskRect, { box, pageIndex });
+        return hasStoredGlyphBounds
+            ? maskRect
+            : clampSourceMaskCanvasRectToSourceCell(maskRect, { box, pageIndex });
     }
     if (box.dataset.movedTextOverlay === '1'
         && [sourceRect.x, sourceRect.y, sourceRect.w, sourceRect.h].every(Number.isFinite)
@@ -9270,10 +10860,14 @@ function sourceMaskCanvasRectForAnnotation(annotation, viewport, scale, pageInde
     const explicitMaskRect = annotationSourceMaskPdfBox(annotation);
     if (explicitMaskRect) {
         const rect = pdfRectToCanvasRect(explicitMaskRect, viewport, scale);
+        const hasStoredGlyphBounds = moved
+            && sourceSpanRunMaskItems(annotation, scale).length > 0;
         const maskRect = moved
-            ? movedSourceMaskCanvasRectFromTypography(rect, annotation)
+            ? movedSourceMaskCanvasRectFromTypography(rect, annotation, scale)
             : rect;
-        return clampSourceMaskCanvasRectToSourceCell(maskRect, { annotation, pageIndex });
+        return hasStoredGlyphBounds
+            ? maskRect
+            : clampSourceMaskCanvasRectToSourceCell(maskRect, { annotation, pageIndex });
     }
     if (moved && sourceRect) {
         const maskRect = movedSourceMaskCanvasRect(pdfRectToCanvasRect(sourceRect, viewport, scale));
@@ -9479,11 +11073,22 @@ function removeSourceMasksOverlappingAcroWidgets(layer, pageDiv) {
 }
 
 function detectHorizontalCanvasRuleGaps(pageDiv, rect, options = {}) {
-    if (!pageDiv || !rect || rect.width <= 0 || rect.height <= 0) return [];
+    if (!pageDiv || !rect) return [];
+    const rectWidth = Number.isFinite(Number(rect.width))
+        ? Number(rect.width)
+        : Number(rect.right) - Number(rect.left);
+    const rectHeight = Number.isFinite(Number(rect.height))
+        ? Number(rect.height)
+        : Number(rect.bottom) - Number(rect.top);
+    if (!(rectWidth > 0) || !(rectHeight > 0)) return [];
     const minRectWidth = Number(options.minRectWidth ?? 0) || 0;
-    if (rect.width < minRectWidth) return [];
+    if (rectWidth < minRectWidth) return [];
     const minDarkRatio = Number(options.minDarkRatio ?? 0.72) || 0.72;
     const minContiguousDarkRatio = Number(options.minContiguousDarkRatio ?? 0) || 0;
+    const verticalProbePaddingPx = Math.max(
+        0,
+        Number(options.verticalProbePaddingPx ?? 0) || 0,
+    );
     const canvas = pageDiv.querySelector(':scope canvas');
     if (!canvas) return [];
     let ctx = null;
@@ -9500,11 +11105,14 @@ function detectHorizontalCanvasRuleGaps(pageDiv, rect, options = {}) {
     const scaleX = canvas.width / canvasBounds.width;
     const scaleY = canvas.height / canvasBounds.height;
     const canvasLeft = rect.left - (canvasBounds.left - pageBounds.left);
-    const canvasTop = rect.top - (canvasBounds.top - pageBounds.top);
+    const canvasTop = rect.top
+        - verticalProbePaddingPx
+        - (canvasBounds.top - pageBounds.top);
     const sx = Math.max(0, Math.floor(canvasLeft * scaleX));
     const sy = Math.max(0, Math.floor(canvasTop * scaleY));
-    const sw = Math.max(1, Math.min(canvas.width - sx, Math.ceil(rect.width * scaleX)));
-    const sh = Math.max(1, Math.min(canvas.height - sy, Math.ceil(rect.height * scaleY)));
+    const sw = Math.max(1, Math.min(canvas.width - sx, Math.ceil(rectWidth * scaleX)));
+    const probeHeight = rectHeight + (verticalProbePaddingPx * 2);
+    const sh = Math.max(1, Math.min(canvas.height - sy, Math.ceil(probeHeight * scaleY)));
     if (sw <= 0 || sh <= 0) return [];
 
     let data;
@@ -9564,10 +11172,13 @@ function detectHorizontalCanvasRuleGaps(pageDiv, rect, options = {}) {
     const maxRuleHeightPx = Number(options.maxRuleHeightPx)
         || (layerScale > 0 ? Math.max(4, 3 * layerScale) : 4);
     return groups
-        .map(([a, b]) => ({
-            top: Math.max(0, (a / scaleY) - 0.5),
-            height: Math.min(rect.height, ((b - a + 1) / scaleY) + 1.0),
-        }))
+        .map(([a, b]) => {
+            const rawTop = (a / scaleY) - verticalProbePaddingPx - 0.5;
+            const rawBottom = ((b + 1) / scaleY) - verticalProbePaddingPx + 0.5;
+            const top = Math.max(0, rawTop);
+            const bottom = Math.min(rectHeight, rawBottom);
+            return { top, height: bottom - top };
+        })
         .filter((gap) => gap.height > 0 && gap.height <= maxRuleHeightPx);
 }
 
@@ -9661,6 +11272,9 @@ function createDeletedEraseElement(rect, pageDiv = null) {
 
 function movedOverlayRunItemsForBox(box, pageDiv = null) {
     if (!box) return [];
+    const currentScale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 0;
+    const storedItems = sourceSpanRunMaskItems(box, currentScale);
+    if (storedItems.length) return storedItems;
     const groupLookup = sourceGroupForBox(box);
     if (groupLookup?.group && groupLookup?.layerEl) {
         const group = groupLookup.group;
@@ -9711,7 +11325,6 @@ function movedOverlayRunItemsForBox(box, pageDiv = null) {
     try { items = JSON.parse(raw); } catch (_) { items = null; }
     if (!Array.isArray(items)) return [];
     const layer = box.parentElement;
-    const currentScale = Number.parseFloat(layer?.dataset?.scale || '') || 0;
     const originalScale = Number.parseFloat(box.dataset.renderScale || '') || currentScale || 0;
     const ratio = currentScale > 0 && originalScale > 0 ? currentScale / originalScale : 1;
     return items.map((item) => ({
@@ -9884,10 +11497,10 @@ function movedOverlayProtectedRectsForBox(box, maskRect) {
     }
     const protectedRects = [];
     const seen = new Set();
-    const pushRect = (candidate) => {
+    const pushRect = (candidate, options = {}) => {
         if (!candidate || !rectsOverlap(maskRect, candidate, 0.25)) return;
         if (shouldSkipTallNeighborProtectionForMask(maskRect, candidate)) return;
-        const pieces = ownGlyphRects.length
+        const pieces = ownGlyphRects.length && options.preserveOwnOverlap !== true
             ? subtractRects([candidate], ownGlyphRects)
             : [rectToEdges(candidate)].filter(Boolean);
         for (const piece of pieces) {
@@ -9905,20 +11518,66 @@ function movedOverlayProtectedRectsForBox(box, maskRect) {
     // "Date and Place of marriage: ______"), protect only the non-underscore
     // text segments. The drawn rule itself is preserved by the rule-gap
     // detector, never by neighbour protection.
-    const pushRectWithoutUnderlineRules = (candidate, text) => {
+    const pushRectWithoutUnderlineRules = (candidate, text, options = {}) => {
         const raw = String(text || '');
         if (isSourceUnderlineRuleText(raw)) return;
         const segments = sourceTextSegmentsWithoutUnderlineRules(raw, candidate);
         if (Array.isArray(segments)) {
-            for (const segment of segments) pushRect(expandCanvasRect(segment.rect, 0.75));
+            for (const segment of segments) pushRect(expandCanvasRect(segment.rect, 0.75), options);
             return;
         }
-        pushRect(expandCanvasRect(candidate, 0.75));
+        pushRect(expandCanvasRect(candidate, 0.75), options);
     };
+    // A PDF.js text-layer span's DOM box can be much shorter than the glyph
+    // bounds captured from its text-run metrics. That happens when a nearby
+    // run has a very tall font box (for example a full-width dotted leader):
+    // protecting only the neighbouring span rect still lets the moved
+    // source mask paint over the bottom of the preceding line. Prefer the
+    // sibling source handles' captured glyph bounds when they are available.
+    // These are the same bounds used to build moved-run masks, so the mask
+    // can never visibly clip another editable source line.
+    const siblingSourceBoxes = box.parentElement?.querySelectorAll?.(
+        '.enpv-annotation-box.is-source-handle',
+    ) || [];
+    for (const siblingBox of siblingSourceBoxes) {
+        if (!siblingBox || siblingBox === box) continue;
+        if (siblingBox.dataset.movedTextOverlay === '1') continue;
+        if (String(siblingBox.dataset.annotationId || '') === annotationId) continue;
+        const siblingText = String(
+            siblingBox.dataset.baseText
+            || siblingBox.dataset.originalText
+            || siblingBox.textContent
+            || '',
+        );
+        for (const item of sourceSpanRunMaskItems(siblingBox, scale)) {
+            pushRectWithoutUnderlineRules({
+                left: item.leftPx,
+                top: item.topPx,
+                right: item.rightPx,
+                bottom: item.bottomPx,
+                width: item.rightPx - item.leftPx,
+                height: item.bottomPx - item.topPx,
+            }, siblingText, { preserveOwnOverlap: true });
+        }
+    }
     for (const group of groups) {
         if (!group || String(group.index) === ownIndex) continue;
         if (sourceGroupIsHiddenForMovedOverlay(group, movedSourceAnnotationIds)) continue;
         if (!group.rect) continue;
+        const groupSpans = Array.from(new Set([
+            ...(group.spans || []),
+            ...(group.relatedSpans || []),
+        ]));
+        const liveItems = layerEl
+            ? liveSourceGroupItems({ ...group, spans: groupSpans }, layerEl)
+            : [];
+        if (liveItems.length) {
+            for (const item of liveItems) {
+                if (matchesOwnSourceCanvasRect(item.rect, item.text || '')) continue;
+                pushRectWithoutUnderlineRules(item.rect, item.text || '');
+            }
+            continue;
+        }
         const groupRect = {
             left: group.rect.left,
             top: group.rect.top,
@@ -9999,15 +11658,21 @@ function movedOverlayProtectedRectsForBox(box, maskRect) {
 
 function movedOverlayRuleGapRectsForMask(rect, pageDiv = null) {
     if (!rect || !pageDiv) return [];
-    return detectHorizontalCanvasRuleGaps(pageDiv, rect, {
+    const edges = rectToEdges(rect);
+    if (!edges) return [];
+    return detectHorizontalCanvasRuleGaps(pageDiv, edges, {
         minRectWidth: 18,
         minDarkRatio: 0.55,
         minContiguousDarkRatio: 0.65,
+        // Table borders often sit exactly on the text cell's typographic
+        // edge. Probe just outside the mask so a half-pixel-antialiased rule
+        // is still discovered and carved out instead of painted white.
+        verticalProbePaddingPx: 2.5,
     }).map((gap) => rectToEdges({
-        left: rect.left,
-        top: rect.top + gap.top,
-        right: rect.left + rect.width,
-        bottom: rect.top + gap.top + gap.height,
+        left: edges.left,
+        top: edges.top + gap.top,
+        right: edges.right,
+        bottom: edges.top + gap.top + gap.height,
     })).filter(Boolean);
 }
 
@@ -10051,9 +11716,7 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
             seg.style.top = `${piece.top - rect.top}px`;
             seg.style.width = `${piece.width}px`;
             seg.style.height = `${piece.height}px`;
-            seg.style.background = samplePageSurroundingBackgroundColor(pageDiv, piece, '')
-                || samplePageBackgroundColor(pageDiv, piece)
-                || '#ffffff';
+            seg.style.background = samplePageMovedSourceMaskColor(pageDiv, piece);
             seg.style.pointerEvents = 'none';
             return seg;
         }));
@@ -10085,6 +11748,9 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
         ...protectedRects,
         ...runRects.flatMap((runRect) => movedOverlayRuleGapRectsForMask(runRect, pageDiv)),
     ];
+    mask.dataset.enpvMaskRunRects = JSON.stringify(runRects);
+    mask.dataset.enpvMaskProtectedRects = JSON.stringify(protectedRects);
+    mask.dataset.enpvMaskCutRects = JSON.stringify(cutRects);
     const protectedRunRects = subtractRects(runRects, cutRects);
     const runUnion = unionRects(protectedRunRects.map((runRect) => ({
         left: runRect.left,
@@ -10122,17 +11788,13 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
             width: runRect.right - runRect.left,
             height: runRect.bottom - runRect.top,
         };
-        seg.style.background = samplePageSurroundingBackgroundColor(pageDiv, segmentPageRect, '')
-            || samplePageBackgroundColor(pageDiv, segmentPageRect)
-            || '#ffffff';
+        seg.style.background = samplePageMovedSourceMaskColor(pageDiv, segmentPageRect);
         seg.style.pointerEvents = 'none';
         children.push(seg);
     }
     if (!children.length) {
         mask.replaceChildren();
-        mask.style.background = samplePageSurroundingBackgroundColor(pageDiv, runUnion, '')
-            || samplePageBackgroundColor(pageDiv, runUnion)
-            || '#ffffff';
+        mask.style.background = samplePageMovedSourceMaskColor(pageDiv, runUnion);
         return false;
     }
     mask.replaceChildren(...children);
@@ -10154,7 +11816,6 @@ function clearCanvasBackedEditPreview(box) {
 
 function shouldUseCanvasBackedEditPreview(box, annotation = null) {
     if (!box?.classList?.contains('is-source-handle')) return false;
-    if (!box.classList.contains('is-promoted-source-block')) return false;
     if (box.classList.contains('is-persisted-overlay')) return false;
     if (box.dataset.movedTextOverlay === '1') return false;
     if (box.dataset.styleDirty === '1'
@@ -10166,7 +11827,7 @@ function shouldUseCanvasBackedEditPreview(box, annotation = null) {
         || boolish(annotation?.promotedReflowEnabled)
         || boolish(annotation?.pdfjsDeleted)
         || annotation?._pdfjsCanvasRewritten === true) return false;
-    return isPromotedSourceTextBox(box, annotation);
+    return true;
 }
 
 function revealCanvasBackedEditorForMutation(box) {
@@ -14156,6 +15817,13 @@ function syncAnnotationBoxToPersistedAnnotations(box, options = {}) {
         applyPromotedOverlayDisplayHorizontalFit(box);
         const refreshed = buildAnnotationFromBox(box, annotation);
         if (refreshed) upsertPersistedAnnotation(refreshed);
+        // The live box already reflects both upserts above. Keep its page
+        // layer on the same revision so the next passive scroll does not
+        // discard and reconstruct the DOM that the user just edited.
+        const liveLayer = box.closest('.enpv-annotation-box-layer');
+        if (liveLayer) {
+            liveLayer.dataset.annotationRevision = String(persistedAnnotationsRevision);
+        }
     } else if (box.dataset.annotationId) {
         deletePersistedAnnotation(box.dataset.annotationId);
         box.classList.remove('is-persisted-overlay');
@@ -14233,6 +15901,12 @@ function syncRenderedPersistedOverlayBoxesToPersistedAnnotations() {
         const annotation = buildAnnotationFromBox(box, existing);
         if (annotation) upsertPersistedAnnotation(annotation);
     });
+    // This sweep serializes the already-rendered DOM; every mounted layer is
+    // therefore current at the resulting revision and must not be rebuilt by
+    // the next scroll frame.
+    document.querySelectorAll('.enpv-annotation-box-layer').forEach((layer) => {
+        layer.dataset.annotationRevision = String(persistedAnnotationsRevision);
+    });
 }
 
 function buildBakedPdfUrl() {
@@ -14242,6 +15916,14 @@ function buildBakedPdfUrl() {
     if (sessionId) url.searchParams.set('session_id', sessionId);
     url.searchParams.set('v', String(Date.now()));
     return url.toString();
+}
+
+function appendDocumentUnlockToken(url) {
+    if (!documentPasswordProtected || !documentUnlockToken) return url;
+    const parsed = new URL(url, window.location.origin);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return url;
+    parsed.searchParams.set('pdf_unlock_token', documentUnlockToken);
+    return parsed.toString();
 }
 
 async function loadInitialPdf() {
@@ -14285,6 +15967,7 @@ linkService.setViewer(pdfViewer);
 const pageOccurrenceCounts = new Map();
 const MAX_SOURCE_SPAN_BOXES_PER_PAGE = 2500;
 const sourceGroupsByPage = new Map();
+const pdfjsTextLayerFontMetadataPromises = new WeakMap();
 const suppressedStalePdfjsOverlayIds = new Set();
 
 function medianNumber(values, fallback = 0) {
@@ -15288,23 +16971,194 @@ function sourceInfoForSpan(spanEl) {
     };
 }
 
+function pdfjsFontStyleFromFaceName(faceName, fontObject = null) {
+    if (fontObject?.italic) return 'italic';
+    return /italic|oblique/.test(String(faceName || '').toLowerCase()) ? 'italic' : 'normal';
+}
+
+function resolvePdfjsCommonObject(commonObjects, objectId, timeoutMs = 500) {
+    if (!commonObjects?.get || !objectId) return Promise.resolve(null);
+    try {
+        return Promise.resolve(commonObjects.get(objectId));
+    } catch (_) {
+        // PDFObjects.get(id, callback) resolves the same face once the page's
+        // canvas operator list has supplied it.
+    }
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = (value) => {
+            if (settled) return;
+            settled = true;
+            window.clearTimeout(timer);
+            resolve(value || null);
+        };
+        const timer = window.setTimeout(() => finish(null), timeoutMs);
+        try {
+            commonObjects.get(objectId, finish);
+        } catch (_) {
+            finish(null);
+        }
+    });
+}
+
+function refreshTransientSourceRunTypographyForPage(pageIndex) {
+    const pageView = pdfViewer.getPageView(pageIndex);
+    const layerEl = pageView?.textLayer?.div || pageView?.textLayer?.textLayerDiv;
+    const annotationLayer = pageView?.div?.querySelector?.(':scope > .enpv-annotation-box-layer');
+    if (!layerEl || !annotationLayer) return;
+    annotationLayer.querySelectorAll(
+        '.enpv-annotation-box.is-source-handle:not(.is-persisted-overlay), '
+        + '.enpv-annotation-box.is-on-demand:not(.is-persisted-overlay)',
+    ).forEach((box) => {
+        const lookup = sourceGroupForBox(box);
+        if (!lookup?.group) return;
+        captureSourceSpanRunsForBox(box, lookup.group, lookup.layerEl || layerEl);
+        const anchor = lookup.group.anchor;
+        if (anchor?.dataset?.enpvPdfjsFontMetadataResolved === '1') {
+            const runtimeFamily = String(anchor.dataset.enpvPdfjsLoadedFontFamily || '').trim();
+            const pdfFontName = String(anchor.dataset.enpvPdfjsFontName || '').trim();
+            if (runtimeFamily) {
+                box.dataset.sourceRuntimeFontFamily = runtimeFamily;
+                box.dataset.sourceFontFamily = pdfFontName || runtimeFamily;
+                box.dataset.fontFamilyValue = pdfFontName || runtimeFamily;
+                box.style.setProperty('--enpv-font-family', cssFontFamilyWithGenericFallback(runtimeFamily));
+                box.dataset.sourceFontWeight = anchor.dataset.enpvPdfjsFontWeight || '400';
+                box.dataset.sourceFontStyle = anchor.dataset.enpvPdfjsFontStyle || 'normal';
+                box.dataset.sourceRenderFontWeight = '400';
+                box.dataset.sourceRenderFontStyle = 'normal';
+            } else {
+                box.dataset.sourceFontWeight = anchor.dataset.enpvPdfjsFontWeight || '400';
+                box.dataset.sourceFontStyle = anchor.dataset.enpvPdfjsFontStyle || 'normal';
+            }
+            box.dataset.sourceSemanticFontWeight = anchor.dataset.enpvPdfjsFontWeight || '400';
+            box.dataset.sourceSemanticFontStyle = anchor.dataset.enpvPdfjsFontStyle || 'normal';
+        }
+    });
+}
+
+function hydratePdfjsTextLayerFontMetadata(pageIndex, pageView, layerEl) {
+    if (!pageView?.pdfPage || !layerEl) return Promise.resolve(false);
+    const cached = pdfjsTextLayerFontMetadataPromises.get(layerEl);
+    if (cached) return cached;
+    const promise = (async () => {
+        const textContent = await pageView.pdfPage.getTextContent({
+            includeMarkedContent: true,
+            disableNormalization: true,
+        });
+        const textItems = Array.from(textContent?.items || [])
+            .filter((item) => item && typeof item.str === 'string');
+        const textDivs = Array.from(
+            pageView?._textHighlighter?.textDivs
+            || pageView?.textLayer?.highlighter?.textDivs
+            || [],
+        );
+        if (!textItems.length || !textDivs.length) return false;
+
+        const fontObjects = new Map(await Promise.all(
+            Array.from(new Set(textItems.map((item) => item.fontName).filter(Boolean)))
+                .map(async (fontName) => [
+                    fontName,
+                    await resolvePdfjsCommonObject(pageView.pdfPage.commonObjs, fontName),
+                ]),
+        ));
+        let hydrated = 0;
+        const itemCount = Math.min(textItems.length, textDivs.length);
+        for (let index = 0; index < itemCount; index += 1) {
+            const item = textItems[index];
+            const textDiv = textDivs[index] || null;
+            if (!(textDiv instanceof HTMLElement)) continue;
+
+            const fontObject = fontObjects.get(item.fontName) || null;
+            const faceName = String(
+                fontObject?.name
+                || fontObject?.fontFamily
+                || '',
+            ).trim();
+            if (!faceName) continue;
+            const runtimeFont = registerPdfjsRuntimeFontMetadata(fontObject, faceName);
+            textDiv.dataset.enpvPdfjsFontName = faceName;
+            textDiv.dataset.enpvPdfjsFontWeight = pdfjsFontWeightFromFaceName(faceName, fontObject);
+            textDiv.dataset.enpvPdfjsFontStyle = pdfjsFontStyleFromFaceName(faceName, fontObject);
+            if (runtimeFont?.cssFamily) {
+                textDiv.dataset.enpvPdfjsLoadedFontFamily = runtimeFont.cssFamily;
+            }
+            textDiv.dataset.enpvPdfjsFontMetadataResolved = '1';
+            hydrated += 1;
+        }
+        if (hydrated > 0) renderDocumentFontsInPicker();
+        if (hydrated > 0 && layerEl.isConnected) {
+            refreshTransientSourceRunTypographyForPage(pageIndex);
+        }
+        // A partial result is useful, but must remain retryable: commonObjs
+        // can still be resolving individual faces when textlayerrendered
+        // first fires.
+        return hydrated > 0 && hydrated === itemCount;
+    })().catch((error) => {
+        console.warn('Failed to hydrate PDF.js text-layer font metadata', error);
+        return false;
+    });
+    pdfjsTextLayerFontMetadataPromises.set(layerEl, promise);
+    promise.then((complete) => {
+        if (!complete && pdfjsTextLayerFontMetadataPromises.get(layerEl) === promise) {
+            pdfjsTextLayerFontMetadataPromises.delete(layerEl);
+        }
+    });
+    return promise;
+}
+
+async function ensurePdfjsTextLayerFontMetadata(pageIndex, pageView, layerEl) {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        if (await hydratePdfjsTextLayerFontMetadata(pageIndex, pageView, layerEl)) return true;
+        if (!layerEl?.isConnected) return false;
+        await nextAnimationFrame();
+    }
+    return false;
+}
+
+async function hydrateRenderedPdfjsTextLayerFontMetadata() {
+    const pageCount = Number(pdfViewer?.pagesCount || currentPdfDoc?.numPages || 0);
+    const pending = [];
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+        const pageView = pdfViewer?.getPageView?.(pageIndex);
+        const layerEl = pageView?.textLayer?.div || pageView?.textLayer?.textLayerDiv;
+        if (pageView?.pdfPage && layerEl) {
+            pending.push(ensurePdfjsTextLayerFontMetadata(pageIndex, pageView, layerEl));
+        }
+    }
+    await Promise.all(pending);
+}
+
 eventBus.on('textlayerrendered', (evt) => {
     const pageIndex = evt.pageNumber - 1;
     const pageView = pdfViewer.getPageView(pageIndex);
     if (!pageView || !pageView.textLayer) return;
     const layerEl = pageView.textLayer.div || pageView.textLayer.textLayerDiv;
     if (!layerEl) return;
-    wireTextLayerClicks(layerEl, pageIndex);
-    renderAnnotationBoxLayer(pageIndex);
+    // Do not expose source edit handles until their PDF.js face metadata has
+    // had a chance to resolve. Otherwise a fast first edit can scaffold a
+    // mixed bold/regular row as generic 400/400 and permanently flatten it.
+    pdfjsTextLayerFontMetadataPromises.delete(layerEl);
+    ensurePdfjsTextLayerFontMetadata(pageIndex, pageView, layerEl).finally(() => {
+        const currentLayer = pageView.textLayer?.div || pageView.textLayer?.textLayerDiv;
+        if (!layerEl.isConnected || currentLayer !== layerEl) return;
+        wireTextLayerClicks(layerEl, pageIndex);
+        renderAnnotationBoxLayer(pageIndex);
+    });
 });
 
 // AcroForm widgets render in pdf.js's annotationLayer, which can finish
 // after textlayerrendered. Re-render our overlay so widget rects are
 // available for the suppress-overlap pass below.
 eventBus.on('annotationlayerrendered', (evt) => {
-    applyAcroFormEntriesToDom(evt.pageNumber - 1);
-    enhanceGuidedDateFields(evt.pageNumber - 1);
-    renderAnnotationBoxLayer(evt.pageNumber - 1);
+    const pageIndex = evt.pageNumber - 1;
+    applyAcroFormEntriesToDom(pageIndex);
+    enhanceGuidedDateFields(pageIndex);
+    const pageView = pdfViewer.getPageView(pageIndex);
+    const layerEl = pageView?.textLayer?.div || pageView?.textLayer?.textLayerDiv;
+    const ready = layerEl
+        ? ensurePdfjsTextLayerFontMetadata(pageIndex, pageView, layerEl)
+        : Promise.resolve(false);
+    ready.finally(() => renderAnnotationBoxLayer(pageIndex));
 });
 
 function wireTextLayerClicks(layerEl, pageIndex) {
@@ -18649,7 +20503,10 @@ function formatBarAvailableOptions(select) {
 }
 
 const embeddedFontRegistry = new Map();
+const documentFontPickerMetadata = new Map();
 let embeddedFontsLoadPromise = null;
+let pdfjsRuntimeFontsLoadPromise = null;
+let pdfjsRuntimeFontsDocument = null;
 
 function normalizeFontKey(value) {
     return String(value || '')
@@ -18664,19 +20521,27 @@ function embeddedFontOptionForValue(value) {
     return embeddedFontRegistry.get(key) || null;
 }
 
+function stripPdfFontSubsetPrefix(value) {
+    return String(value || '').trim().replace(/^[A-Z]{6}\+/i, '');
+}
+
 function registerEmbeddedFontMetadata(font) {
     const cleanName = String(font?.clean_name || font?.name || '').trim();
     const filePath = String(font?.file_path || '').trim();
     if (!cleanName || !filePath) return null;
     const metadata = {
         cleanName,
+        cssFamily: cleanName,
+        displayName: String(font?.pdf_font_name || cleanName).trim() || cleanName,
         family: String(font?.family || cleanName).trim() || cleanName,
         pdfFontName: String(font?.pdf_font_name || '').trim(),
+        pickerValue: String(font?.pdf_font_name || cleanName).trim() || cleanName,
         filePath,
         weight: String(font?.css_weight || '400').trim() || '400',
         style: String(font?.css_style || 'normal').trim() || 'normal',
         stretch: String(font?.css_stretch || 'normal').trim() || 'normal',
         xref: font?.xref ?? null,
+        source: 'extracted',
     };
     [
         metadata.cleanName,
@@ -18688,6 +20553,114 @@ function registerEmbeddedFontMetadata(font) {
         if (key && !embeddedFontRegistry.has(key)) embeddedFontRegistry.set(key, metadata);
     });
     embeddedFontRegistry.set(normalizeFontKey(metadata.cleanName), metadata);
+    return metadata;
+}
+
+function registerPdfjsRuntimeFontMetadata(fontObject, faceName = '') {
+    const pdfFontName = String(
+        faceName
+        || fontObject?.name
+        || fontObject?.fontFamily
+        || '',
+    ).trim();
+    const loadedName = String(
+        fontObject?.cssFontInfo?.fontFamily
+        || fontObject?.loadedName
+        || '',
+    ).trim();
+    if (!pdfFontName || !loadedName || fontObject?.disableFontFace === true) return null;
+    const cleanName = stripPdfFontSubsetPrefix(pdfFontName) || pdfFontName;
+    const metadata = {
+        cleanName,
+        cssFamily: loadedName,
+        displayName: pdfFontName,
+        family: cleanName.split(/[-_,]/, 1)[0] || cleanName,
+        pdfFontName,
+        pickerValue: pdfFontName,
+        filePath: '',
+        // PDF.js registers every unique loadedName as a normal face; bold and
+        // italic are already baked into that face's outlines. Requesting 700
+        // or italic again would synthetically style an already-styled subset.
+        renderWeight: '400',
+        renderStyle: 'normal',
+        weight: pdfjsFontWeightFromFaceName(pdfFontName, fontObject),
+        style: pdfjsFontStyleFromFaceName(pdfFontName, fontObject),
+        stretch: 'normal',
+        xref: null,
+        source: 'pdfjs-runtime',
+    };
+    [
+        metadata.cssFamily,
+        metadata.cleanName,
+        metadata.family,
+        metadata.pdfFontName,
+        stripPdfFontSubsetPrefix(metadata.pdfFontName),
+    ].forEach((candidate, index) => {
+        const key = normalizeFontKey(candidate);
+        if (!key) return;
+        // The exact PDF and loaded-family identities must select the live
+        // PDF.js face. Keep a valid extracted family as the generic fallback
+        // when only a broad family name was supplied.
+        if (index < 2 || !embeddedFontRegistry.has(key)) {
+            embeddedFontRegistry.set(key, metadata);
+        }
+    });
+    const pickerKey = normalizeFontKey(metadata.pdfFontName || metadata.cssFamily);
+    if (pickerKey) documentFontPickerMetadata.set(pickerKey, metadata);
+    return metadata;
+}
+
+function applyPdfjsRuntimeFontsToSourceRunItems(items) {
+    if (!Array.isArray(items)) return items;
+    for (const item of items) {
+        const metadata = embeddedFontOptionForValue(
+            item?.pdfjsFontName
+            || item?.pdfjsLoadedFontFamily
+            || item?.fontFamily,
+        );
+        if (!metadata || metadata.source !== 'pdfjs-runtime') continue;
+        item.fontFamily = metadata.cssFamily;
+        item.pdfjsLoadedFontFamily = metadata.cssFamily;
+        item.semanticFontWeight = item.semanticFontWeight || metadata.weight;
+        item.semanticFontStyle = item.semanticFontStyle || metadata.style;
+        item.fontWeight = item.semanticFontWeight || metadata.weight || '400';
+        item.fontStyle = item.semanticFontStyle || metadata.style || 'normal';
+        item.renderFontWeight = metadata.renderWeight || '400';
+        item.renderFontStyle = metadata.renderStyle || 'normal';
+    }
+    return items;
+}
+
+function applyPdfjsRuntimeFontToSourceBox(box) {
+    if (!box || box.dataset.styleDirty === '1' || box.dataset.userForcedRichText === '1') return null;
+    const runs = applyPdfjsRuntimeFontsToSourceRunItems(sourceSpanRunsForBox(box));
+    const metadata = runs
+        .map((item) => embeddedFontOptionForValue(item?.pdfjsFontName || item?.pdfjsLoadedFontFamily))
+        .find((item) => item?.source === 'pdfjs-runtime')
+        || embeddedFontOptionForValue(box.dataset.sourceFontFamily || box.dataset.fontFamilyValue);
+    if (!metadata || metadata.source !== 'pdfjs-runtime') return null;
+    box.dataset.sourceRuntimeFontFamily = metadata.cssFamily;
+    box.dataset.sourceFontFamily = metadata.pdfFontName || metadata.cleanName;
+    box.dataset.sourceFontWeight = metadata.weight || '400';
+    box.dataset.sourceFontStyle = metadata.style || 'normal';
+    box.dataset.sourceRenderFontWeight = metadata.renderWeight || '400';
+    box.dataset.sourceRenderFontStyle = metadata.renderStyle || 'normal';
+    box.dataset.sourceSemanticFontWeight = metadata.weight || '400';
+    box.dataset.sourceSemanticFontStyle = metadata.style || 'normal';
+    // Merely moving a source handle must not turn a display-only PDF.js face
+    // into authored font metadata. That changes export baselines for untouched
+    // text (the Drylab title regression). Adopt the document face as the
+    // annotation's chosen font only when the user actually enters text edit.
+    if (box.classList.contains('is-editing')) {
+        box.dataset.fontFamilyValue = metadata.pdfFontName || metadata.cleanName;
+        box.dataset.fontSourceName = metadata.cleanName;
+    }
+    box.style.setProperty('--enpv-font-family', cssFontFamilyWithGenericFallback(metadata.cssFamily));
+    box.style.setProperty('--enpv-font-weight', metadata.renderWeight || '400');
+    box.style.setProperty('--enpv-font-style', metadata.renderStyle || 'normal');
+    if (runs.length) {
+        try { box.dataset.sourceSpanRuns = JSON.stringify(runs); } catch (_) { /* noop */ }
+    }
     return metadata;
 }
 
@@ -18715,33 +20688,49 @@ async function loadEmbeddedFontFace(metadata) {
     }
 }
 
-function insertEmbeddedFontsIntoPicker(fonts) {
-    if (!afbFont || !Array.isArray(fonts) || !fonts.length) return;
+function renderDocumentFontsInPicker() {
+    if (!afbFont) return;
+    const fonts = Array.from(documentFontPickerMetadata.values())
+        .sort((left, right) => String(left.displayName || '').localeCompare(String(right.displayName || '')));
     afbFont.querySelectorAll('[data-pdfjs-embedded-font]').forEach((node) => node.remove());
+    if (!fonts.length) return;
 
     const header = document.createElement('option');
     header.disabled = true;
-    header.textContent = '───── PDF Embedded Fonts ─────';
+    header.textContent = '───── Document Fonts ─────';
     header.dataset.pdfjsEmbeddedFont = 'header';
     afbFont.insertBefore(header, afbFont.firstChild);
 
     let insertionAnchor = header;
     fonts.forEach((metadata) => {
         const option = document.createElement('option');
-        option.value = metadata.cleanName;
-        option.textContent = metadata.cleanName;
+        option.value = metadata.pickerValue || metadata.pdfFontName || metadata.cleanName;
+        option.textContent = metadata.displayName || metadata.pdfFontName || metadata.cleanName;
         option.dataset.pdfjsEmbeddedFont = '1';
+        if (metadata.source === 'pdfjs-runtime') option.dataset.pdfjsRuntimeFont = '1';
         option.dataset.fontSourceName = metadata.cleanName;
         option.dataset.pdfFontName = metadata.pdfFontName || '';
         option.dataset.fontFamily = metadata.family || metadata.cleanName;
         option.dataset.fontWeight = metadata.weight || '400';
         option.dataset.fontStyle = metadata.style || 'normal';
-        option.style.fontFamily = 'system-ui, sans-serif';
-        option.style.fontWeight = metadata.weight || '400';
-        option.style.fontStyle = metadata.style || 'normal';
+        option.style.fontFamily = cssFontFamilyWithGenericFallback(metadata.cssFamily || metadata.cleanName);
+        option.style.fontWeight = metadata.renderWeight || metadata.weight || '400';
+        option.style.fontStyle = metadata.renderStyle || metadata.style || 'normal';
         afbFont.insertBefore(option, insertionAnchor.nextSibling);
         insertionAnchor = option;
     });
+}
+
+function insertEmbeddedFontsIntoPicker(fonts) {
+    if (!Array.isArray(fonts) || !fonts.length) return;
+    fonts.forEach((metadata) => {
+        if (!metadata) return;
+        const key = normalizeFontKey(metadata.pdfFontName || metadata.cleanName);
+        if (key && !documentFontPickerMetadata.has(key)) {
+            documentFontPickerMetadata.set(key, metadata);
+        }
+    });
+    renderDocumentFontsInPicker();
 }
 
 async function loadEmbeddedFontsForDocument() {
@@ -18770,6 +20759,58 @@ async function loadEmbeddedFontsForDocument() {
         }
     })();
     return embeddedFontsLoadPromise;
+}
+
+function resetPdfjsRuntimeFontMetadata(pdfDocument = null) {
+    if (pdfjsRuntimeFontsDocument === pdfDocument) return;
+    pdfjsRuntimeFontsDocument = pdfDocument;
+    pdfjsRuntimeFontsLoadPromise = null;
+    for (const [key, metadata] of Array.from(embeddedFontRegistry.entries())) {
+        if (metadata?.source === 'pdfjs-runtime') embeddedFontRegistry.delete(key);
+    }
+    for (const [key, metadata] of Array.from(documentFontPickerMetadata.entries())) {
+        if (metadata?.source === 'pdfjs-runtime') documentFontPickerMetadata.delete(key);
+    }
+    renderDocumentFontsInPicker();
+}
+
+async function loadPdfjsRuntimeFontsForDocument(pdfDocument = currentPdfDoc) {
+    if (!pdfDocument) return [];
+    resetPdfjsRuntimeFontMetadata(pdfDocument);
+    if (pdfjsRuntimeFontsLoadPromise) return pdfjsRuntimeFontsLoadPromise;
+    pdfjsRuntimeFontsLoadPromise = (async () => {
+        const found = new Map();
+        const pageCount = Math.max(0, Number(pdfDocument.numPages || 0));
+        for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+            if (pdfjsRuntimeFontsDocument !== pdfDocument) return Array.from(found.values());
+            try {
+                const pdfPage = await pdfDocument.getPage(pageNumber);
+                // The operator list is what delivers embedded FontFaceObjects
+                // into commonObjs. Text content alone exposes only generic
+                // `sans-serif` styles and cannot provide the live CSS family.
+                await pdfPage.getOperatorList();
+                const textContent = await pdfPage.getTextContent({
+                    includeMarkedContent: true,
+                    disableNormalization: true,
+                });
+                const fontNames = Array.from(new Set(
+                    Array.from(textContent?.items || [])
+                        .map((item) => item?.fontName)
+                        .filter(Boolean),
+                ));
+                for (const fontName of fontNames) {
+                    const fontObject = await resolvePdfjsCommonObject(pdfPage.commonObjs, fontName, 1500);
+                    const metadata = registerPdfjsRuntimeFontMetadata(fontObject);
+                    if (metadata) found.set(normalizeFontKey(metadata.pdfFontName), metadata);
+                }
+                if (found.size) renderDocumentFontsInPicker();
+            } catch (error) {
+                console.warn(`Failed to inspect PDF.js document fonts on page ${pageNumber}`, error);
+            }
+        }
+        return Array.from(found.values());
+    })();
+    return pdfjsRuntimeFontsLoadPromise;
 }
 
 function ensureFormatBarFontOption(value) {
@@ -18803,14 +20844,24 @@ function positionAnnotationFormatBarUnderMenu(box = null) {
 function selectedBoxFontFamily(box) {
     if (!box) return '';
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
-    return String(
-        box.style.getPropertyValue('--enpv-font-family')
+    let value = String(
+        box.dataset.fontFamilyValue
         || box.dataset.fontSourceName
         || existing?.fontFamily
         || existing?.fontSourceName
         || box.dataset.sourceFontFamily
+        || box.style.getPropertyValue('--enpv-font-family')
         || 'Helvetica'
     ).trim();
+    if (box.dataset.styleDirty !== '1'
+        && ['', 'sans-serif', 'serif', 'monospace'].includes(normalizeFontKey(value))) {
+        const sourceRunFont = sourceSpanRunsForBox(box)
+            .map((run) => run?.pdfjsFontName)
+            .find(Boolean);
+        if (sourceRunFont) value = String(sourceRunFont);
+    }
+    const documentFont = embeddedFontOptionForValue(value);
+    return documentFont?.pickerValue || value;
 }
 
 function selectedBoxComputedStyle(box) {
@@ -18905,10 +20956,30 @@ function updateAnnotationFormatBarForBox(box) {
         afbBgColor.value = cssColorToHex(bg, '#ffffff');
     }
     setFormatBarOpacityValue(box.dataset.opacity || box.style.opacity || existing?.opacity || 1);
-    const weight = String(box.style.getPropertyValue('--enpv-font-weight') || existing?.fontWeight || cs?.fontWeight || 'normal');
+    const selectedDocumentFont = embeddedFontOptionForValue(selectedBoxFontFamily(box));
+    const weight = String(
+        box.dataset.styleDirty !== '1'
+            ? (box.dataset.fontSemanticWeight
+                || box.dataset.sourceSemanticFontWeight
+                || selectedDocumentFont?.weight
+                || box.style.getPropertyValue('--enpv-font-weight')
+                || existing?.fontWeight
+                || cs?.fontWeight
+                || 'normal')
+            : (box.style.getPropertyValue('--enpv-font-weight') || existing?.fontWeight || cs?.fontWeight || 'normal')
+    );
     const isBold = weight === '700' || weight.toLowerCase() === 'bold' || Number.parseInt(weight, 10) >= 600;
     setToggleControl(afbBold, isBold);
-    const isItalic = String(box.style.getPropertyValue('--enpv-font-style') || existing?.fontStyle || cs?.fontStyle || 'normal').toLowerCase() === 'italic';
+    const italicValue = box.dataset.styleDirty !== '1'
+        ? (box.dataset.fontSemanticStyle
+            || box.dataset.sourceSemanticFontStyle
+            || selectedDocumentFont?.style
+            || box.style.getPropertyValue('--enpv-font-style')
+            || existing?.fontStyle
+            || cs?.fontStyle
+            || 'normal')
+        : (box.style.getPropertyValue('--enpv-font-style') || existing?.fontStyle || cs?.fontStyle || 'normal');
+    const isItalic = String(italicValue).toLowerCase() === 'italic';
     setToggleControl(afbItalic, isItalic);
     const isUnderline = box.dataset.underline != null
         ? box.dataset.underline === '1'
@@ -18968,6 +21039,10 @@ function stripInlineStylePropertiesFromBox(box, properties) {
             while (element.firstChild) parent.insertBefore(element.firstChild, element);
             parent.removeChild(element);
         });
+        [tc, ...Array.from(tc.querySelectorAll('[data-source-pdf-font-name]'))]
+            .forEach((element) => {
+                delete element.dataset.sourcePdfFontName;
+            });
     }
     if (propSet.has('color')) {
         tc.querySelectorAll('font[color]').forEach((element) => {
@@ -19047,26 +21122,42 @@ function applyFontFamilyToSelectedBox(fontFamily) {
     const normalized = String(fontFamily || '').trim();
     if (!normalized) return;
     const embedded = embeddedFontOptionForValue(normalized);
+    const cssFamily = embedded?.cssFamily || normalized;
+    const renderWeight = embedded?.source === 'pdfjs-runtime'
+        ? (embedded.renderWeight || '400')
+        : (embedded?.weight || '400');
+    const renderStyle = embedded?.source === 'pdfjs-runtime'
+        ? (embedded.renderStyle || 'normal')
+        : (embedded?.style || 'normal');
     if (applyInlineStyleToSelectedText('change selected text font', (span, box) => {
-        span.style.fontFamily = normalized;
+        span.style.fontFamily = cssFamily;
         if (embedded && box) {
+            if (embedded.pdfFontName) {
+                span.dataset.sourcePdfFontName = embedded.pdfFontName;
+            }
+            box.dataset.fontFamilyValue = embedded.pickerValue || normalized;
             box.dataset.fontSourceName = embedded.cleanName;
             box.dataset.forceEmbeddedFont = '1';
-            box.dataset.fontWeight = embedded.weight || box.dataset.fontWeight || '400';
-            box.dataset.fontStyle = embedded.style || box.dataset.fontStyle || 'normal';
+            box.dataset.fontWeight = renderWeight;
+            box.dataset.fontStyle = renderStyle;
+            box.dataset.fontSemanticWeight = embedded.weight || renderWeight;
+            box.dataset.fontSemanticStyle = embedded.style || renderStyle;
         } else if (box) {
+            delete span.dataset.sourcePdfFontName;
             delete box.dataset.fontSourceName;
             delete box.dataset.forceEmbeddedFont;
         }
     }, { reason: 'font-family' })) return;
     applyStyleToSelectedBox('change annotation font', (box) => {
-        box.dataset.fontFamilyValue = normalized;
-        box.style.setProperty('--enpv-font-family', cssFontFamilyWithGenericFallback(normalized));
+        box.dataset.fontFamilyValue = embedded?.pickerValue || normalized;
+        box.style.setProperty('--enpv-font-family', cssFontFamilyWithGenericFallback(cssFamily));
         if (embedded) {
             box.dataset.fontSourceName = embedded.cleanName;
             box.dataset.forceEmbeddedFont = '1';
-            box.style.setProperty('--enpv-font-weight', embedded.weight || '400');
-            box.style.setProperty('--enpv-font-style', embedded.style || 'normal');
+            box.dataset.fontSemanticWeight = embedded.weight || renderWeight;
+            box.dataset.fontSemanticStyle = embedded.style || renderStyle;
+            box.style.setProperty('--enpv-font-weight', renderWeight);
+            box.style.setProperty('--enpv-font-style', renderStyle);
         } else {
             delete box.dataset.fontSourceName;
             delete box.dataset.forceEmbeddedFont;
@@ -20204,15 +22295,42 @@ function onTextContentInput(ev) {
     const tc = ev.currentTarget;
     const box = tc.closest('.enpv-annotation-box');
     if (box) {
+        if (box.dataset.preserveDistributedLeaderSpacing === '1') {
+            const currentText = String(tc.textContent || '');
+            const stillDistributedLeader = !/[\r\n]/.test(currentText)
+                && sourceRunTextsUseDistributedLeaderSpacing(
+                    currentText.trim().split(/\s+/u),
+                );
+            if (!stillDistributedLeader) {
+                delete box.dataset.preserveDistributedLeaderSpacing;
+                tc.style.whiteSpace = 'pre-wrap';
+                tc.style.overflowWrap = 'break-word';
+            }
+        }
         revealCanvasBackedEditorForMutation(box);
+        const promoteMixedSourceEdit = box.dataset.sourceSpanEditActive === '1'
+            && editorModeForBox(box) === 'source'
+            && sourceSpanRunsHaveMixedTypography(box);
         if (box.dataset.promotedSourceBlockEditEntryLayout === '1'
             || (box.classList.contains('is-promoted-source-block')
-                && box.dataset.naturalTextFlow !== '1')) {
+                && box.dataset.naturalTextFlow !== '1')
+            || promoteMixedSourceEdit) {
             // The browser has applied the user's first mutation inside the
             // source-faithful line scaffold. Release it in place before
             // measuring natural rich-text flow; this preserves the caret and
             // prevents edit entry itself from being treated as a reflow.
-            normalizeSourceSpanMarkupForNaturalFlow(box);
+            preserveCollapsedCaretThroughMutation(tc, () => {
+                normalizeSourceSpanMarkupForNaturalFlow(box, {
+                    attachCanonicalGapsToFollowingRun: promoteMixedSourceEdit,
+                });
+            });
+        }
+        if (promoteMixedSourceEdit) {
+            // A plain source commit deliberately flattens its temporary span
+            // scaffold. Mixed source rows cannot take that path after a real
+            // edit: it would turn bold `13` plus regular body text into one
+            // box-level style. Promote once, retaining the live styled runs.
+            promoteBoxToRichTextMode(box, 'mixed-source-edit');
         }
         const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
         if (isUserCreatedTextBox(box, existing)) {
@@ -20222,7 +22340,10 @@ function onTextContentInput(ev) {
             }
         } else {
             attachSourceMaskForBox(box);
-            if (fitEditingRichTextBoxToContent(box)) {
+            const fitted = editorModeForBox(box) === 'source'
+                ? fitEditingSourceTextBoxToContent(box)
+                : fitEditingRichTextBoxToContent(box);
+            if (fitted) {
                 positionAnnMenuOver(box);
                 updateAnnotationFormatBarForBox(box);
             }
@@ -20329,8 +22450,11 @@ function beginEditMode(box) {
         const hasNewline = /\r|\n/.test(editingText);
         const hasSourceMetrics = Boolean(box.dataset.sourceFontFamily || box.dataset.sourceTransform || box.dataset.sourceFontSizePx);
         const mode = isLogicalParagraphFlow ? 'rich' : editorModeForBox(box);
+        const hasMultilineSourceRuns = Number(
+            sourceSpanRunLineMetrics(box)?.lineStepPx || 0
+        ) > 0;
         const isPromotedMultilineText = isPromotedSourceTextBox(box, existing)
-            && (hasNewline || isLogicalParagraphFlow);
+            && (hasNewline || isLogicalParagraphFlow || hasMultilineSourceRuns);
         setBoxEditorMode(box, mode);
         if (mode === 'rich') {
             // A source handle's text element is display:none before editing;
@@ -20339,9 +22463,15 @@ function beginEditMode(box) {
             // pre-edit line-height when an overlay was genuinely rendered.
             // Clean source paragraphs must use their captured source-run pitch
             // so their size does not jump when edit mode reveals the editor.
-            const skipInflatingPromotedSourceLayout = preEditTextWasRendered
-                && isPromotedMultilineText
-                && promotedSourceBlockExactEditLayoutWouldInflate(box, preEditDisplayLineHeightPx);
+            // A visible persisted overlay is already the editor's canonical
+            // painted layout. Reapplying the original text-layer capture
+            // insets here adds source-only padding and line pitch a second
+            // time, so the text jumps as soon as the pencil is clicked. Keep
+            // the rendered overlay's line-height/padding on every subsequent
+            // edit entry. Canvas-backed source handles are hidden before their
+            // first edit and still take the captured-source layout below.
+            const preserveRenderedPromotedSourceLayout = preEditTextWasRendered
+                && isPromotedMultilineText;
             // Multi-line promoted source blocks: rebuild the captured per-span
             // typography (mixed font weights, marker gaps, per-line indents)
             // so edit mode shows the same spacing as the canvas/selection
@@ -20373,13 +22503,12 @@ function beginEditMode(box) {
                 // when the user actually typed.
                 tc.dataset.preEditFlattened = flattenedTextFromSourceSpanMarkup(box);
             }
-            if (!skipInflatingPromotedSourceLayout) {
+            if (!preserveRenderedPromotedSourceLayout) {
                 applyPromotedSourceBlockEditLayout(box, { suppressHangingIndent: editSpanMarkupActive });
             } else if (preEditDisplayLineHeightPx > 0) {
-                // Display mode may be the compact rich overlay while the
-                // captured pdf.js source runs still carry a much taller
-                // selection-grid pitch. Preserve the visible line spacing on
-                // edit entry instead of reintroducing those source metrics.
+                // Preserve the exact line pitch that was visible immediately
+                // before edit mode. The current padding/indent styles remain
+                // untouched, so switching modes cannot introduce an inset.
                 tc.style.lineHeight = `${preEditDisplayLineHeightPx}px`;
             }
             if (editSpanMarkupActive) {
@@ -20393,7 +22522,16 @@ function beginEditMode(box) {
             // Per-span edit markup: preserve mixed font-weights and visible
             // inter-span gaps from the underlying pdf.js text layer so the
             // user sees the same typography they're used to in the PDF.
-            applySourceFidelitySpanEditMarkup(box);
+            const spanMarkupApplied = applySourceFidelitySpanEditMarkup(box);
+            if (spanMarkupApplied) {
+                // The initial plain-text fit can expand tc.style.width because
+                // captured PDF.js gaps are represented as synthetic spaces.
+                // Once the real per-run markup is installed, restart from the
+                // immutable source advance width rather than treating that
+                // stale plain-text width as a lower bound. Otherwise entering
+                // edit mode visibly compresses an untouched source row.
+                resetSourceFidelityTextLayoutWidth(box, tc);
+            }
             // Per-run fonts/gaps can measure differently from the plain text
             // used by applySourceFidelityTypography. Refit the final edit DOM,
             // otherwise the last word of an originally single-line source row
@@ -20816,7 +22954,10 @@ function onResizePointerUp() {
         box.dataset.userSizedTextBox = '1';
         box.dataset.naturalTextFlow = '1';
         box.classList.add('is-user-sized-text');
-        normalizeSourceSpanMarkupForNaturalFlow(box);
+        normalizeSourceSpanMarkupForNaturalFlow(box, {
+            attachCanonicalGapsToFollowingRun: true,
+            preserveCapturedGapSpacing: true,
+        });
     }
     box.dataset.pendingResize = '1';
     box.dataset.preResizeLeft = String(startLeft);
@@ -21497,9 +23638,34 @@ function deleteMultiSelectedAnnBoxes() {
     return true;
 }
 
+function sourceBoxHasIncompleteGlyphMapping(box) {
+    if (!box) return false;
+    const sourceText = String(
+        box.dataset.baseText
+        || box.dataset.originalText
+        || selectedBoxTextElement(box)?.textContent
+        || '',
+    );
+    // U+FFFD is PDF.js's explicit signal that the embedded font program has
+    // glyph outlines but the PDF does not provide a complete character map.
+    // The canvas can still paint the original outlines, while a moved DOM
+    // overlay can only reproduce these replacement characters.
+    return sourceText.includes('\uFFFD');
+}
+
+function warnBeforeMovingIncompleteGlyphMapping(box) {
+    if (!sourceBoxHasIncompleteGlyphMapping(box)) return false;
+    flashSaveToast(
+        'Full glyph mapping is unavailable; moving this text may display incorrect glyphs.',
+        4500,
+    );
+    return true;
+}
+
 function beginAnnBoxDrag(box, ev) {
     const layer = box.parentElement;
     if (!layer) return;
+    warnBeforeMovingIncompleteGlyphMapping(box);
     const scale = parseFloat(layer.dataset.scale || '1') || 1;
     const existingAnnotation = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     const isFreeBox = isFreePositionedAnnotationBox(box, existingAnnotation);
@@ -22604,6 +24770,7 @@ async function requestEditedPdfBlob() {
             'Content-Type': 'application/json',
             Accept: 'application/pdf, application/json',
             'X-CSRF-TOKEN': CSRF,
+            ...(documentUnlockToken ? { 'X-PDF-Unlock-Token': documentUnlockToken } : {}),
         },
         body: JSON.stringify(payload),
     });
@@ -22633,7 +24800,12 @@ async function downloadStampedPdf() {
         setDownloadButtonsDisabled(true, 'Preparing PDF...');
         setStatus('Preparing PDF...');
         const { blob, payload } = await requestEditedPdfBlob();
-        const url = URL.createObjectURL(blob);
+        let downloadBlob = blob;
+        if (passwordProtectionIsActive()) {
+            setStatus('Encrypting PDF…');
+            downloadBlob = await encryptEditedPdfBlob(blob);
+        }
+        const url = URL.createObjectURL(downloadBlob);
         if (popup && !popup.closed) {
             popup.location.replace(url);
         } else if (!window.open(url, '_blank', 'noopener')) {
@@ -22646,8 +24818,8 @@ async function downloadStampedPdf() {
         pendingAcroFormClearRegions = [];
         pendingDeletedAnnotationIds.clear();
         setSaveStatus(payload.annotations.length ? 'Saved' : 'No changes');
-        setStatus('PDF ready.');
-        flashSaveToast('PDF ready');
+        setStatus(passwordProtectionIsActive() ? 'Password-protected PDF ready.' : 'PDF ready.');
+        flashSaveToast(passwordProtectionIsActive() ? 'Protected PDF ready' : 'PDF ready');
     } catch (err) {
         if (popup && !popup.closed) popup.close();
         console.error(err);
@@ -23229,8 +25401,12 @@ async function attachLoadedPdfDocument(loadingRecord, loadGeneration, nextPdfByt
     attachedPdfGeneration = loadGeneration;
     currentPdfLoadingTask = loadingRecord;
     activePdfLoadingTask = loadingRecord;
+    resetPdfjsRuntimeFontMetadata(pdfDoc);
     pdfViewer.setDocument(pdfDoc);
     linkService.setDocument(pdfDoc, null);
+    loadPdfjsRuntimeFontsForDocument(pdfDoc).catch((error) => {
+        console.warn('PDF.js document font discovery failed', error);
+    });
     if (previousLoadingTask && previousLoadingTask !== loadingRecord) {
         Promise.resolve(previousLoadingTask.task?.destroy?.()).catch(() => {});
     } else if (previousPdfDocument && previousPdfDocument !== pdfDoc) {
@@ -23276,7 +25452,7 @@ async function loadPdfFromUrl(url, options = {}) {
         // ranges for large/linearized files. Keep setup inside this guarded
         // path so even a synchronous PDF.js error restores the prior viewer.
         const loadingTask = pdfjsLib.getDocument({
-            url,
+            url: appendDocumentUnlockToken(url),
             withCredentials: true,
             isEvalSupported: false,
         });
@@ -23347,13 +25523,21 @@ async function revealWhenEditedDocumentReady(loadGeneration) {
     revealingLoadGeneration = loadGeneration;
     try {
         setStatus('Loading saved edits...');
-        const [pagesReady, firstPageReady, , annotationsLoaded] = await Promise.all([
+        const [pagesReady, firstPageReady, , , annotationsLoaded] = await Promise.all([
             waitForViewerPagesReady(loadGeneration),
             waitForFirstPageRendered(loadGeneration),
             loadEmbeddedFontsForDocument(),
+            loadPdfjsRuntimeFontsForDocument(currentPdfDoc),
             loadAnnotationBoxes(loadGeneration),
         ]);
         if (!pagesReady || !firstPageReady || !annotationsLoaded || !isCurrentViewerLoad(loadGeneration)) return;
+
+        // textlayerrendered may have started the async face lookup while the
+        // remaining document state was loading. Join those lookups before the
+        // global render/reveal pass so a user cannot beat mixed typography
+        // hydration to the first edit.
+        await hydrateRenderedPdfjsTextLayerFontMetadata();
+        if (!isCurrentViewerLoad(loadGeneration)) return;
 
         // Reuse an event-rendered layer only when its scale, edit mode and
         // annotation snapshot revision all match the freshly hydrated state.
@@ -23570,7 +25754,7 @@ for (const button of editModeButtons) {
         setEditMode(!document.body.classList.contains('enpv-edit-on'));
     });
 }
-setEditMode(false);
+setEditMode(IS_UPLOAD_TEST_REVIEW);
 
 if (floatingGuidedConvertButton) {
     floatingGuidedConvertButton.addEventListener('click', async () => {
@@ -24297,6 +26481,9 @@ if (window.__enpvPdfjsInitialLoadStarted) {
     window.__enpvPdfjsInitialLoadStarted = true;
     (async () => {
         try {
+            if (passwordProtectionIsActive()) {
+                await openPasswordUnlockModal();
+            }
             await loadInitialPdf();
             window.__enpv = { pdfViewer, eventBus, linkService };
         } catch (err) {

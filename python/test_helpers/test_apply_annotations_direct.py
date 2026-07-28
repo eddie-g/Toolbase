@@ -623,6 +623,35 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         rect, _kwargs = page.draw_rect_calls[0]
         self.assertLessEqual(rect.y1, 141.2 - self.module.PDFJS_SOURCE_MASK_NEIGHBOR_GAP_PTS + 0.001)
 
+    def test_search_safe_drylab_title_redaction_preserves_overlapping_footer_line(self):
+        fixture = pathlib.Path(__file__).resolve().parents[2] / "public" / "drylab_page_1.pdf"
+        doc = fitz.open(fixture)
+        try:
+            page = doc[0]
+            annotation = {
+                "id": "pdfjs_drylab_title",
+                "type": "text",
+                "pageIndex": 0,
+                "text": "DrylabNews",
+                "originalText": "DrylabNews",
+                "savedTextOverlay": True,
+                "movedTextOverlay": True,
+                "pdfjsSourceText": "DrylabNews",
+                "pdfjsSourceMaskX": 58.676314014976754,
+                "pdfjsSourceMaskY": 688.9513056118703,
+                "pdfjsSourceMaskW": 492.53301729670096,
+                "pdfjsSourceMaskH": 100.31595394736843,
+                "pdfjsSourcePageHeight": float(page.rect.height),
+            }
+
+            self.assertTrue(self.module.redact_pdfjs_source_text_for_export(page, annotation))
+            compact = "".join(page.get_text("text").split()).lower()
+
+            self.assertNotIn("drylabnews", compact)
+            self.assertIn("forinvestors&friends·may2017", compact)
+        finally:
+            doc.close()
+
     def test_pdfjs_moved_source_mask_ignores_other_moved_source_rects(self):
         page = self.FakePage()
         page.get_text = lambda mode: {
@@ -1173,7 +1202,7 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(len(page.draw_rect_calls), 0)
         self.assertEqual(len(page.shape_draw_rect_calls), 0)
 
-    def test_pdfjs_dirty_promoted_mask_prepass_erases_original_source_lines(self):
+    def test_pdfjs_dirty_promoted_mask_prepass_does_not_erase_source_twice(self):
         annotation = {
             "type": "text",
             "text": "Replacement text",
@@ -1202,17 +1231,18 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
 
         with (
             patch.object(self.module, "draw_pdfjs_source_mask"),
+            patch.object(
+                self.module,
+                "redact_pdfjs_source_text_for_export",
+                return_value=True,
+            ) as redact_source,
             patch.object(self.module, "normalize_exact_source_line_layout", return_value=[]),
             patch.object(self.module, "erase_promoted_source_text_region") as erase_source,
         ):
             self.module.draw_text(page, annotation, mask_only=True)
 
-        erase_source.assert_called_once()
-        erased_lines = erase_source.call_args.args[3]
-        self.assertEqual(
-            [list(line["rect"]) for line in erased_lines],
-            annotation["sourceLineBBoxes"],
-        )
+        redact_source.assert_called_once_with(page, annotation)
+        erase_source.assert_not_called()
 
     def test_promoted_source_erase_uses_redaction_when_background_is_transparent(self):
         annotation = {
@@ -2355,6 +2385,96 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
 
         self.assertEqual([call[1] for call in page.insert_text_calls], ["New capital:"])
 
+    def test_edge_tight_multi_run_pdfjs_source_label_stays_on_one_export_line(self):
+        annotation = {
+            "id": "pdfjs_4799_0_0:6",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "Header 3",
+            "originalText": "Header 3",
+            "pdfX": 5,
+            "pdfY": 700,
+            "pdfWidth": 72,
+            "pdfHeight": 24,
+            "fontFamily": "Helvetica",
+            "fontSize": 18,
+            "fontWeight": "700",
+            "fontStyle": "normal",
+            "lineHeight": 21.6,
+            "textColor": "#0068b5",
+            "richTextRuns": [
+                {
+                    "type": "text",
+                    "text": "Header ",
+                    "fontFamily": "Helvetica",
+                    "fontSize": 18,
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                    "color": "#0068b5",
+                },
+                {
+                    "type": "text",
+                    "text": "3",
+                    "fontFamily": "Helvetica",
+                    "fontSize": 18,
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                    "color": "#0068b5",
+                },
+            ],
+            "richTextVersion": 2,
+            "styleDirty": True,
+            "userForcedRichText": True,
+            "pdfjsEditorMode": "rich",
+            "savedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceText": "Header 3",
+            "pdfjsSourceX": 5,
+            "pdfjsSourceY": 700,
+            "pdfjsSourceW": 72,
+            "pdfjsSourceH": 24,
+        }
+
+        self.assertTrue(
+            self.module.should_preserve_pdfjs_source_inline_flow(
+                annotation,
+                annotation["text"],
+            )
+        )
+        moved_annotation = {
+            **annotation,
+            "movedTextOverlay": True,
+            "pdfjsMoved": True,
+            "pdfjsDx": 24,
+        }
+        self.assertTrue(
+            self.module.should_preserve_pdfjs_source_inline_flow(
+                moved_annotation,
+                moved_annotation["text"],
+            )
+        )
+        multiline_annotation = {
+            **annotation,
+            "sourceLineBBoxes": [
+                [5, 68, 77, 86],
+                [5, 88, 24, 106],
+            ],
+        }
+        self.assertFalse(
+            self.module.should_preserve_pdfjs_source_inline_flow(
+                multiline_annotation,
+                multiline_annotation["text"],
+            )
+        )
+
+        page = self.FakePage()
+        self.module.draw_text(page, annotation, source_masks_already_drawn=True)
+
+        calls = page.insert_text_calls
+        self.assertEqual([call[1] for call in calls], ["Header ", "3"])
+        self.assertAlmostEqual(calls[0][0].y, calls[1][0].y, places=5)
+        self.assertGreater(calls[1][0].x, calls[0][0].x)
+
     def test_normalize_exact_source_line_layout_preserves_line_style_metadata(self):
         annotation = {
             "promotedFromExtraction": True,
@@ -2476,7 +2596,12 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
                 "fontSourceName": "TimesNewRomanPS-BoldMT",
                 "fontWeight": "700",
                 "fontStyle": "normal",
-            }),
+            }, self.module.resolve_text_fontfile_with_coverage({
+                "fontFamily": "TimesNewRomanPS-BoldMT",
+                "fontSourceName": "TimesNewRomanPS-BoldMT",
+                "fontWeight": "700",
+                "fontStyle": "normal",
+            }, "Large")),
         )
         self.assertEqual(
             page.insert_text_calls[1][2]["fontname"],
@@ -2485,7 +2610,12 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
                 "fontSourceName": "TimesNewRomanPSMT",
                 "fontWeight": "400",
                 "fontStyle": "normal",
-            }),
+            }, self.module.resolve_text_fontfile_with_coverage({
+                "fontFamily": "TimesNewRomanPSMT",
+                "fontSourceName": "TimesNewRomanPSMT",
+                "fontWeight": "400",
+                "fontStyle": "normal",
+            }, "Small")),
         )
 
     def test_draw_text_using_exact_source_lines_scales_wide_line_to_fit_source_rect(self):

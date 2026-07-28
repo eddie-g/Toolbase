@@ -194,7 +194,9 @@ class SavedPdfSessionLoadingTest extends TestCase
             'size_bytes' => 0,
         ]);
 
-        $response = $this->postJson(route('documents.saveAnnotations', $document), [
+        $response = $this
+            ->withSession(['pdf_editor_accessible_document_ids' => [$document->id]])
+            ->postJson(route('documents.saveAnnotations', $document), [
             'session_id' => 'guest-session',
             'annotations' => [
                 [

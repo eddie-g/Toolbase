@@ -13,6 +13,282 @@ function textWithoutWhitespace(value) {
         .join('');
 }
 
+function normalizedUnderlineRange(value) {
+    if (!value) return null;
+    const start = Number(value.start ?? value.x0 ?? value.left ?? value[0]);
+    const end = Number(value.end ?? value.x1 ?? value.right ?? value[1]);
+    if (![start, end].every(Number.isFinite)) return null;
+    const left = Math.max(0, Math.min(1, Math.min(start, end)));
+    const right = Math.max(0, Math.min(1, Math.max(start, end)));
+    return right - left > 0.0001 ? { start: left, end: right } : null;
+}
+
+function mergeUnderlineRanges(values) {
+    const sorted = Array.from(values || [])
+        .map(normalizedUnderlineRange)
+        .filter(Boolean)
+        .sort((left, right) => left.start - right.start || left.end - right.end);
+    const merged = [];
+    for (const range of sorted) {
+        const previous = merged[merged.length - 1];
+        if (previous && range.start <= previous.end + 0.001) {
+            previous.end = Math.max(previous.end, range.end);
+        } else {
+            merged.push({ ...range });
+        }
+    }
+    return merged;
+}
+
+function sourceSpanUnderlineMetrics(sourceSpan) {
+    const bbox = Array.isArray(sourceSpan?.bbox) ? sourceSpan.bbox : null;
+    const bboxTop = Number(bbox?.[1]);
+    const bboxBottom = Number(bbox?.[3]);
+    const origin = sourceSpan?.origin;
+    const baseline = Number(
+        Array.isArray(origin)
+            ? origin[1]
+            : (origin?.y ?? sourceSpan?.baseline ?? sourceSpan?.baseline_y),
+    );
+    const fontSize = Number(
+        sourceSpan?.fontSize
+            ?? sourceSpan?.font_size
+            ?? sourceSpan?.size,
+    );
+    return {
+        bboxTop,
+        bboxBottom,
+        baseline,
+        fontSize,
+    };
+}
+
+function sourceSpanOwnsDrawnUnderlineY(sourceSpan, y) {
+    const lineY = Number(y);
+    if (!Number.isFinite(lineY)) return false;
+    const {
+        bboxTop,
+        bboxBottom,
+        baseline,
+        fontSize,
+    } = sourceSpanUnderlineMetrics(sourceSpan);
+
+    // PyMuPDF coordinates increase down the page. A typographic underline
+    // lives in the glyph descender band: just below the text baseline and no
+    // lower than the glyph bbox. Form/table rules sit farther below (or above)
+    // the baseline and must never become text decoration when a source run is
+    // moved. Keep a small tolerance for floating-point/rendering differences.
+    if (Number.isFinite(baseline)) {
+        const maximumBaselineGap = Math.max(
+            1.5,
+            Number.isFinite(fontSize) && fontSize > 0 ? fontSize * 0.22 : 0,
+        );
+        if (lineY < baseline + 0.1 || lineY > baseline + maximumBaselineGap) {
+            return false;
+        }
+    }
+    if (Number.isFinite(bboxTop) && lineY < bboxTop - 2) return false;
+    if (Number.isFinite(bboxBottom) && lineY > bboxBottom + 0.25) return false;
+    return true;
+}
+
+// Normalize and validate PDF-drawn underline segments against their owning
+// text span. This also protects documents extracted before the stricter
+// server-side classifier was introduced.
+export function sourceSpanDrawnUnderlineSegments(sourceSpan) {
+    const segments = sourceSpan?.drawnUnderlineSegments
+        ?? sourceSpan?.drawn_underline_segments;
+    if (!Array.isArray(segments)) return [];
+    return segments.map((segment) => {
+        const x0 = Number(segment?.x0 ?? segment?.left ?? segment?.[0]);
+        const x1 = Number(segment?.x1 ?? segment?.right ?? segment?.[1]);
+        const y = Number(segment?.y ?? segment?.top ?? segment?.[2]);
+        const width = Number(segment?.width ?? segment?.line_width ?? segment?.[3] ?? 0);
+        if (![x0, x1, y].every(Number.isFinite)
+            || Math.abs(x1 - x0) <= 0.01
+            || !sourceSpanOwnsDrawnUnderlineY(sourceSpan, y)) {
+            return null;
+        }
+        return {
+            x0: Math.min(x0, x1),
+            x1: Math.max(x0, x1),
+            y,
+            width: Number.isFinite(width) ? Math.max(0, width) : 0,
+        };
+    }).filter(Boolean);
+}
+
+// Extraction records PDF-drawn underlines as absolute page-space line
+// segments. Convert them to span-relative horizontal ranges so the browser can
+// split a single PDF.js text run around only the underlined words.
+export function sourceSpanDrawnUnderlineRanges(sourceSpan) {
+    const bbox = Array.isArray(sourceSpan?.bbox) ? sourceSpan.bbox : null;
+    const x0 = Number(bbox?.[0]);
+    const x1 = Number(bbox?.[2]);
+    const width = x1 - x0;
+    const directRanges = sourceSpan?.drawnUnderlineRanges
+        ?? sourceSpan?.drawn_underline_ranges;
+    if (Array.isArray(directRanges) && directRanges.length) {
+        return mergeUnderlineRanges(directRanges);
+    }
+
+    const rawSegments = sourceSpan?.drawnUnderlineSegments
+        ?? sourceSpan?.drawn_underline_segments;
+    if (Array.isArray(rawSegments)) {
+        const segments = sourceSpanDrawnUnderlineSegments(sourceSpan);
+        if (!(Number.isFinite(width) && width > 0)) return [];
+        const ranges = segments.map((segment) => {
+            const segmentX0 = Number(segment?.x0 ?? segment?.left ?? segment?.[0]);
+            const segmentX1 = Number(segment?.x1 ?? segment?.right ?? segment?.[1]);
+            if (![segmentX0, segmentX1].every(Number.isFinite)) return null;
+            return {
+                start: (Math.min(segmentX0, segmentX1) - x0) / width,
+                end: (Math.max(segmentX0, segmentX1) - x0) / width,
+            };
+        });
+        const normalized = mergeUnderlineRanges(ranges);
+        if (normalized.length) return normalized;
+        // Explicit segment metadata is authoritative. In particular, old
+        // records can carry a broad boolean plus a form rule that the stricter
+        // ownership check above rejects; falling through to the boolean would
+        // reintroduce a full-run underline.
+        return [];
+    }
+
+    return (
+        boolish(sourceSpan?.has_drawn_underline)
+        || boolish(sourceSpan?.suppress_drawn_underline)
+        || boolish(sourceSpan?.underline)
+    ) ? [{ start: 0, end: 1 }] : [];
+}
+
+function sourceRunBoundaryFractions(text, item, measureTextWidth) {
+    const characters = Array.from(String(text || ''));
+    if (!characters.length) return [0, 1];
+    const measure = typeof measureTextWidth === 'function'
+        ? (value) => Number(measureTextWidth(value, item))
+        : () => Number.NaN;
+    const total = measure(characters.join(''));
+    if (!Number.isFinite(total) || total <= 0) {
+        return characters.map((_, index) => index / characters.length).concat(1);
+    }
+    const fractions = [0];
+    for (let index = 1; index < characters.length; index += 1) {
+        const width = measure(characters.slice(0, index).join(''));
+        fractions.push(Number.isFinite(width) ? Math.max(0, Math.min(1, width / total)) : index / characters.length);
+    }
+    fractions.push(1);
+    return fractions;
+}
+
+// Split captured source runs at drawn-underline boundaries. Every returned
+// fragment explicitly carries underline true/false so a plain fragment does
+// not inherit a box-level decoration from a neighboring underlined fragment.
+export function splitSourceRunsAtDrawnUnderlineRanges(items, measureTextWidth = null) {
+    return Array.from(items || []).flatMap((item) => {
+        const text = String(item?.text || '');
+        const characters = Array.from(text);
+        if (!characters.length) return [];
+        const ranges = mergeUnderlineRanges(item?.underlineRanges || []);
+        if (!ranges.length) {
+            return [{
+                ...item,
+                underline: item?.underlineRangesPrecise
+                    ? false
+                    : (boolish(item?.underline) || boolish(item?.hasDrawnUnderline)),
+            }];
+        }
+
+        const fractions = sourceRunBoundaryFractions(text, item, measureTextWidth);
+        const closestBoundary = (target) => {
+            let bestIndex = 0;
+            let bestDistance = Number.POSITIVE_INFINITY;
+            fractions.forEach((fraction, index) => {
+                const distance = Math.abs(fraction - target);
+                if (distance < bestDistance) {
+                    bestIndex = index;
+                    bestDistance = distance;
+                }
+            });
+            return bestIndex;
+        };
+        const boundaries = new Set([0, characters.length]);
+        ranges.forEach((range) => {
+            let start = closestBoundary(range.start);
+            let end = closestBoundary(range.end);
+            if (end <= start) {
+                end = Math.min(characters.length, start + 1);
+                start = Math.max(0, Math.min(start, end - 1));
+            }
+            boundaries.add(start);
+            boundaries.add(end);
+        });
+        const ordered = Array.from(boundaries).sort((left, right) => left - right);
+        const leftPx = Number(item?.leftPx);
+        const rightPx = Number(item?.rightPx);
+        const widthPx = rightPx - leftPx;
+
+        return ordered.slice(0, -1).map((start, index) => {
+            const end = ordered[index + 1];
+            if (end <= start) return null;
+            const startFraction = fractions[start] ?? (start / characters.length);
+            const endFraction = fractions[end] ?? (end / characters.length);
+            const midpoint = (startFraction + endFraction) / 2;
+            const underline = ranges.some((range) => midpoint >= range.start && midpoint <= range.end);
+            return {
+                ...item,
+                text: characters.slice(start, end).join(''),
+                leftPx: Number.isFinite(leftPx) && Number.isFinite(widthPx)
+                    ? leftPx + (widthPx * startFraction)
+                    : item?.leftPx,
+                rightPx: Number.isFinite(leftPx) && Number.isFinite(widthPx)
+                    ? leftPx + (widthPx * endFraction)
+                    : item?.rightPx,
+                underline,
+                underlineRanges: undefined,
+            };
+        }).filter(Boolean);
+    });
+}
+
+// Lift per-run underline ownership into annotation-level export metadata.
+// The browser uses the run flags to draw the moved words; the PDF writer uses
+// the absolute segments (or the legacy boolean hint) to erase the old vector
+// stroke from the source location.
+export function sourceRunDrawnUnderlineMetadata(items) {
+    const segments = [];
+    const seen = new Set();
+    let hasDrawnUnderline = false;
+    for (const item of Array.from(items || [])) {
+        hasDrawnUnderline = hasDrawnUnderline
+            || boolish(item?.hasDrawnUnderline)
+            || boolish(item?.underline);
+        const rawSegments = item?.sourceUnderlineSegments;
+        if (!Array.isArray(rawSegments)) continue;
+        for (const value of rawSegments) {
+            const x0 = Number(value?.x0 ?? value?.left ?? value?.[0]);
+            const x1 = Number(value?.x1 ?? value?.right ?? value?.[1]);
+            const y = Number(value?.y ?? value?.top ?? value?.[2]);
+            const width = Number(value?.width ?? value?.line_width ?? value?.[3] ?? 0);
+            if (![x0, x1, y].every(Number.isFinite) || Math.abs(x1 - x0) <= 0.01) continue;
+            const segment = {
+                x0: Math.min(x0, x1),
+                x1: Math.max(x0, x1),
+                y,
+                width: Number.isFinite(width) ? Math.max(0, width) : 0,
+            };
+            const key = `${segment.x0.toFixed(3)}:${segment.x1.toFixed(3)}:${segment.y.toFixed(3)}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            segments.push(segment);
+        }
+    }
+    return {
+        hasDrawnUnderline: hasDrawnUnderline || segments.length > 0,
+        segments,
+    };
+}
+
 // PDF.js can represent a real word space as its own whitespace-only span.
 // Source grouping deliberately ignores that span's empty ink box, so use the
 // containing marked-content text as a whitespace authority only when its
@@ -254,6 +530,48 @@ function richTextRunsPlainText(runs) {
     )).join('');
 }
 
+// Source-fidelity spans retain the exact PDF face that originally painted
+// them. Once the user authors a different family, that immutable identity is
+// stale and must not override the computed family serialized for download.
+// A live PDF.js face resolved from the computed family is still valid (for
+// example when the user explicitly chooses another document font).
+export function resolveRichTextRunFontIdentity({
+    computedFontFamily = 'Helvetica',
+    sourcePdfFontName = '',
+    computedDocumentFont = null,
+    styleDirty = false,
+} = {}) {
+    const computedFamily = String(computedFontFamily || '').trim() || 'Helvetica';
+    const preservedSourceName = boolish(styleDirty)
+        ? ''
+        : String(sourcePdfFontName || '').trim();
+    const runtimePdfFontName = computedDocumentFont?.source === 'pdfjs-runtime'
+        ? String(computedDocumentFont?.pdfFontName || '').trim()
+        : '';
+    const exactPdfFontName = preservedSourceName || runtimePdfFontName;
+    const fontFamily = exactPdfFontName || computedFamily;
+    const fontSourceName = exactPdfFontName
+        ? (String(computedDocumentFont?.cleanName || '').trim()
+            || exactPdfFontName.replace(/^[A-Z]{6}\+/i, ''))
+        : (String(computedDocumentFont?.cleanName || '').trim() || fontFamily);
+    return { fontFamily, fontSourceName };
+}
+
+export function pdfjsFontWeightFromFaceName(faceName, fontObject = null) {
+    if (fontObject?.black || fontObject?.bold) return '700';
+    const name = String(faceName || '').toLowerCase();
+    if (
+        /bold|black|heavy|semibold|demibold|demi|extrabold|ultrabold/.test(name)
+        // Commercial PDF faces commonly abbreviate Bold Condensed as `BdCn`
+        // (HelveticaNeueLTStd-BdCn). Treat the complete suffix as a bold
+        // marker; requiring a separator immediately after `bd` misses it.
+        || /(?:^|[-_,])bd(?:cn|cond|it|italic|oblique)?(?:$|[-_,])/.test(name)
+    ) return '700';
+    if (/medium|(?:^|[-_,])med(?:$|[-_,])/.test(name)) return '500';
+    if (/light|thin/.test(name)) return '300';
+    return '400';
+}
+
 export function richTextViewportCssLength(value, options = {}) {
     const raw = String(value || '').trim();
     const pointScale = Number(options.pointScale) || 0;
@@ -330,6 +648,36 @@ export function reconcileRichTextRunWhitespace(runs, expectedText) {
     return normalizeRichPlainText(richTextRunsPlainText(rebuilt)) === expected ? rebuilt : [];
 }
 
+export function sourceNaturalizedGapText({
+    atLineStart = false,
+    currentText = '',
+    originalSpaceCount = 0,
+    preserveCapturedSpacing = false,
+    userMutated = false,
+} = {}) {
+    if (userMutated) return String(currentText || '');
+    if (atLineStart) return '';
+    const capturedCount = Math.max(
+        1,
+        Math.min(120, Number.parseInt(String(originalSpaceCount || 0), 10) || 1),
+    );
+    return ' '.repeat(preserveCapturedSpacing ? capturedCount : 1);
+}
+
+export function sourceRunTextsUseDistributedLeaderSpacing(runTexts, minimumRunCount = 3) {
+    const minimum = Math.max(2, Number.parseInt(String(minimumRunCount || 3), 10) || 3);
+    let consecutive = 0;
+    for (const value of Array.from(runTexts || [])) {
+        if (/^[.…·•]+$/u.test(String(value || '').trim())) {
+            consecutive += 1;
+            if (consecutive >= minimum) return true;
+        } else {
+            consecutive = 0;
+        }
+    }
+    return false;
+}
+
 function hasPdfjsImmutableSourceText(annotation) {
     if (!String(annotation?.pdfjsSourceText || '').trim()) return false;
     return annotation.pdfjsSourceX != null
@@ -353,6 +701,33 @@ export function isPdfjsPromotedExtractionAnnotation(annotation) {
     if (!annotation || String(annotation.type || '').toLowerCase() !== 'text') return false;
     return boolish(annotation.promotedFromExtraction)
         || String(annotation.id || '').startsWith('promoted_');
+}
+
+export function promotedTextEditFlags({
+    isPromoted = false,
+    currentText = '',
+    sourceText = '',
+    promotedDirty = false,
+    preserveSourceTypography = false,
+} = {}) {
+    const normalizedCurrent = normalizeComparableText(currentText);
+    const normalizedSource = normalizeComparableText(sourceText);
+    const textChanged = Boolean(
+        isPromoted
+        && normalizedSource
+        && normalizedCurrent !== normalizedSource
+    );
+    return {
+        textChanged,
+        promotedDirty: Boolean(
+            isPromoted
+            && (boolish(promotedDirty) || textChanged)
+        ),
+        preserveSourceTypography: Boolean(
+            isPromoted
+            && (boolish(preserveSourceTypography) || textChanged)
+        ),
+    };
 }
 
 function promotedAnnotationIsMultiLine(annotation) {
@@ -402,5 +777,23 @@ export function pdfjsPromotedOverlayShouldRenderAsPersistedOverlay(annotation) {
 
 export function pdfjsSourceOverlayShouldUseSourceBoxInEditMode(annotation, editModeOn = false) {
     if (!editModeOn) return false;
-    return false;
+    if (!isPdfjsSourceBackedTextAnnotation(annotation)) return false;
+    if (isPdfjsPromotedExtractionAnnotation(annotation)) return false;
+    if (!boolish(annotation.savedTextOverlay)) return false;
+    if (
+        boolish(annotation.pdfjsDeleted)
+        || boolish(annotation.movedTextOverlay)
+        || boolish(annotation.styleDirty)
+        || boolish(annotation.userForcedRichText)
+        || String(annotation.pdfjsEditorMode || '').trim().toLowerCase() === 'rich'
+        || String(annotation.richTextHtml || '').trim() !== ''
+    ) {
+        return false;
+    }
+
+    const sourceText = normalizeComparableText(
+        annotation.pdfjsSourceText || annotation.originalText || ''
+    );
+    const savedText = normalizeComparableText(annotation.text);
+    return Boolean(sourceText) && savedText === sourceText;
 }

@@ -123,6 +123,19 @@
                     </svg>
                     <span>Merge / Split</span>
                 </button>
+                <button type="button"
+                        class="ftb-btn"
+                        id="ftb-encrypt"
+                        title="Password — protect or unlock a downloadable PDF copy"
+                        aria-label="Set or remove a PDF password"
+                        aria-haspopup="dialog"
+                        aria-controls="enpv-encrypt-modal">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <rect x="5" y="10" width="14" height="11" rx="2"></rect>
+                        <path d="M8 10V7a4 4 0 0 1 8 0v3"></path>
+                    </svg>
+                    <span>Password</span>
+                </button>
             @endunless
         @endif
     </div>

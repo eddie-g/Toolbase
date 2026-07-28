@@ -1561,62 +1561,241 @@ body.enpv-body .enpv-convert-size-estimate strong {
 }
 
 body.enpv-body .enpv-encrypt-card {
-    max-width: 620px;
+    width: min(390px, calc(100vw - 28px));
+    max-height: min(92vh, 620px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    border: 1px solid #e2e5ec;
+    border-radius: 14px;
+    background: #ffffff;
+    color: #1f2028;
+    box-shadow: 0 26px 80px rgba(15, 23, 42, 0.28);
+}
+
+body.enpv-body .enpv-encrypt-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 20px 22px 14px;
+}
+
+body.enpv-body .enpv-encrypt-header h2 {
+    margin: 0;
+    color: #1f2028;
+    font-size: 25px;
+    font-weight: 760;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+}
+
+body.enpv-body .enpv-encrypt-close {
+    width: 32px;
+    height: 32px;
+    display: grid;
+    place-items: center;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: #252631;
+    cursor: pointer;
+}
+
+body.enpv-body .enpv-encrypt-close:hover,
+body.enpv-body .enpv-encrypt-close:focus-visible {
+    background: #f1f2f6;
+    outline: none;
+}
+
+body.enpv-body .enpv-encrypt-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin: 0 22px;
+    padding: 2px;
+    border-radius: 9px;
+    background: #f0f0f3;
+}
+
+body.enpv-body .enpv-encrypt-tabs[hidden] {
+    display: none !important;
+}
+
+body.enpv-body .enpv-encrypt-tab {
+    min-height: 38px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    border: 0;
+    border-radius: 7px;
+    background: transparent;
+    color: #20212a;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+body.enpv-body .enpv-encrypt-tab.is-active {
+    background: #ffffff;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+}
+
+body.enpv-body .enpv-encrypt-tab:focus-visible {
+    outline: 2px solid #4b44ee;
+    outline-offset: 2px;
+}
+
+body.enpv-body .enpv-encrypt-notices {
+    display: grid;
+    gap: 12px;
+    padding: 20px 22px 10px;
+}
+
+body.enpv-body .enpv-encrypt-notices p {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 9px;
+    align-items: start;
+    margin: 0;
+    color: #252631;
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+body.enpv-body .enpv-encrypt-notices svg {
+    margin-top: 1px;
+    color: #242631;
+}
+
+body.enpv-body .enpv-encrypt-body {
+    overflow-y: auto;
+    padding: 8px 22px 0;
+}
+
+body.enpv-body .enpv-encrypt-body [role="tabpanel"] {
+    display: grid;
+    gap: 16px;
+}
+
+body.enpv-body .enpv-encrypt-body [role="tabpanel"][hidden],
+body.enpv-body .enpv-password-field[hidden] {
+    display: none !important;
 }
 
 body.enpv-body .enpv-password-field {
     display: grid;
-    gap: 8px;
-    color: #111827;
-    font-size: 13px;
-    font-weight: 750;
+    gap: 7px;
+    color: #22232c;
 }
 
-body.enpv-body .enpv-password-field span {
-    display: flex;
-    align-items: center;
-    overflow: hidden;
-    border: 1px solid #cfd8e5;
-    border-radius: 6px;
-    background: #fff;
+body.enpv-body .enpv-password-label {
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.3;
 }
 
 body.enpv-body .enpv-password-field input {
-    min-width: 0;
     width: 100%;
-    height: 38px;
-    border: 0;
-    padding: 0 10px;
+    height: 49px;
+    box-sizing: border-box;
+    border: 1px solid #d6d8df;
+    border-radius: 9px;
+    padding: 0 12px;
+    background: #ffffff;
+    color: #20212a;
     outline: 0;
     font: inherit;
-    font-weight: 600;
+    font-size: 16px;
+    font-weight: 500;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
-body.enpv-body .enpv-password-field button {
-    width: 42px;
-    height: 38px;
+body.enpv-body .enpv-password-field input::placeholder {
+    color: #b9bfce;
+}
+
+body.enpv-body .enpv-password-field input:focus {
+    border-color: #4b44ee;
+    box-shadow: 0 0 0 1px #4b44ee;
+}
+
+body.enpv-body .enpv-encrypt-remove-help {
+    margin: -5px 0 0;
+    color: #6a6e7c;
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+body.enpv-body .enpv-encrypt-message {
+    min-height: 18px;
+    margin: 12px 0 0;
+    color: #4b5563;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+body.enpv-body .enpv-encrypt-message:empty {
+    min-height: 0;
+    margin-top: 0;
+}
+
+body.enpv-body .enpv-encrypt-message.is-error {
+    color: #b42318;
+}
+
+body.enpv-body .enpv-encrypt-footer {
+    padding: 18px 22px 22px;
+}
+
+body.enpv-body .enpv-encrypt-submit {
+    width: 100%;
+    min-height: 46px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
     border: 0;
-    border-left: 1px solid #e2e8f0;
-    background: transparent;
-    color: #475569;
-    display: grid;
-    place-items: center;
+    border-radius: 7px;
+    background: #4b44ee;
+    color: #ffffff;
+    font-size: 14px;
+    font-weight: 760;
     cursor: pointer;
+    transition: background-color 0.15s ease, opacity 0.15s ease;
 }
 
-body.enpv-body #enpv-encrypt-icon,
-body.enpv-body #enpv-encrypt-accept {
-    background: #0f172a;
-    border-color: #0f172a;
+body.enpv-body .enpv-encrypt-submit:hover:not(:disabled) {
+    background: #3931dc;
 }
 
-body.enpv-body #enpv-encrypt-accept {
-    box-shadow: 0 10px 22px rgba(15, 23, 42, 0.18);
+body.enpv-body .enpv-encrypt-submit:focus-visible {
+    outline: 3px solid rgba(75, 68, 238, 0.22);
+    outline-offset: 2px;
 }
 
-body.enpv-body #enpv-encrypt-accept:hover:not(:disabled) {
-    background: #111827;
-    border-color: #111827;
+body.enpv-body .enpv-encrypt-submit:disabled {
+    background: #e8eaf0;
+    color: #bdc4d2;
+    cursor: not-allowed;
+}
+
+body.enpv-body .enpv-encrypt-submit.is-busy {
+    cursor: wait;
+    opacity: 0.72;
+}
+
+@media (max-width: 480px) {
+    body.enpv-body .enpv-convert-modal.enpv-encrypt-modal {
+        align-items: flex-end;
+        padding: 0;
+    }
+
+    body.enpv-body .enpv-encrypt-card {
+        width: 100%;
+        max-height: 94vh;
+        border-radius: 14px 14px 0 0;
+    }
 }
 
 body.enpv-body .enpv-convert-two-col {
@@ -3702,6 +3881,13 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
     transform-origin: initial !important;
     width: 100% !important;
 }
+.enpv-annotation-box[data-preserve-distributed-leader-spacing="1"] .enpv-text-content {
+    /* PDF dot leaders are fixed single rows. Keep their captured gaps intact
+       even when rich-mode setup resets the element's inline flow styles. */
+    white-space: pre !important;
+    overflow-wrap: normal !important;
+    word-break: normal !important;
+}
 .enpv-annotation-box.is-editing.is-source-fidelity .enpv-text-content {
     display: block;
     align-items: initial;
@@ -5230,4 +5416,348 @@ body.enpv-guided .floating-tool-bar .ftb-sep:last-of-type {
 }
 body:not(.enpv-guided) #ftb-guided-convert {
     display: none !important;
+}
+
+/* ---------------------------------------------------------------------
+ * Persistent upload-test review.
+ *
+ * This is deliberately a viewer, not another editor surface. It keeps the
+ * PDF.js edit-mode overlay renderer so the rectangles and IDs are identical
+ * to ?pdfjs=1, while removing every mutation control and interaction.
+ * --------------------------------------------------------------------- */
+body.enpv-upload-test-review {
+    --putr-header-height: 72px;
+    --putr-panel-width: 380px;
+    overflow: hidden;
+    background: #374151;
+    color: #0f172a;
+}
+
+body.enpv-upload-test-review > .top-bar,
+body.enpv-upload-test-review #floating-tool-bar,
+body.enpv-upload-test-review #floating-zoom-bar,
+body.enpv-upload-test-review #ann-format-bar,
+body.enpv-upload-test-review #shape-tool-panel,
+body.enpv-upload-test-review #draw-tool-panel,
+body.enpv-upload-test-review #highlight-tool-panel,
+body.enpv-upload-test-review #enpv-page-manager-rail,
+body.enpv-upload-test-review #enpv-page-manager-modal,
+body.enpv-upload-test-review #enpv-layers-rail,
+body.enpv-upload-test-review #enpv-layers-panel,
+body.enpv-upload-test-review #enpv-notes-rail,
+body.enpv-upload-test-review #enpv-notes-panel,
+body.enpv-upload-test-review #enpv-guided-helper-open,
+body.enpv-upload-test-review #enpv-guided-helper-panel,
+body.enpv-upload-test-review #enpv-ann-menu,
+body.enpv-upload-test-review #enpv-edit-bar,
+body.enpv-upload-test-review #enpv-status,
+body.enpv-upload-test-review #enpv-download,
+body.enpv-upload-test-review #enpv-debug-panel,
+body.enpv-upload-test-review .markup-modal,
+body.enpv-upload-test-review .signature-modal,
+body.enpv-upload-test-review .image-modal,
+body.enpv-upload-test-review .enpv-convert-modal,
+body.enpv-upload-test-review .enpv-merge-modal,
+body.enpv-upload-test-review .enpv-encrypt-modal,
+body.enpv-upload-test-review #save-toast,
+body.enpv-upload-test-review #shape-constrain-tip {
+    display: none !important;
+}
+
+body.enpv-upload-test-review #pages-wrap {
+    top: var(--putr-header-height);
+    right: var(--putr-panel-width);
+}
+
+body.enpv-upload-test-review #viewerContainer,
+body.enpv-upload-test-review .enpv-loading-screen {
+    top: var(--putr-header-height);
+    right: var(--putr-panel-width);
+    bottom: 0;
+    left: 0;
+}
+
+body.enpv-upload-test-review .pdfViewer .page {
+    margin-top: 24px;
+}
+
+body.enpv-upload-test-review .pdfViewer .textLayer,
+body.enpv-upload-test-review .pdfViewer .annotationLayer {
+    pointer-events: none !important;
+    user-select: none !important;
+}
+
+body.enpv-upload-test-review .enpv-annotation-box {
+    pointer-events: auto !important;
+    cursor: pointer !important;
+}
+
+body.enpv-upload-test-review .enpv-annotation-box *,
+body.enpv-upload-test-review .enpv-resize-handle,
+body.enpv-upload-test-review .enpv-shape-rotate-handle,
+body.enpv-upload-test-review .enpv-shape-angle-badge {
+    pointer-events: none !important;
+}
+
+body.enpv-upload-test-review.enpv-edit-on .enpv-annotation-box.is-test-target {
+    outline: 2px solid #2563eb !important;
+    outline-offset: 1px;
+    background: rgba(37, 99, 235, 0.16) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+    z-index: 100001 !important;
+}
+
+.putr-header {
+    position: fixed;
+    inset: 0 0 auto 0;
+    z-index: 2147483600;
+    height: var(--putr-header-height);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 0 18px;
+    border-bottom: 1px solid #e2e8f0;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 1px 8px rgba(15, 23, 42, 0.12);
+}
+
+.putr-back,
+.putr-open-pdf {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 36px;
+    padding: 0 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    color: #334155;
+    background: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.putr-back:hover,
+.putr-open-pdf:hover {
+    border-color: #94a3b8;
+    background: #f8fafc;
+}
+
+.putr-document {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.putr-document strong,
+.putr-document span {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.putr-document strong {
+    color: #0f172a;
+    font-size: 15px;
+}
+
+.putr-document span {
+    margin-top: 2px;
+    color: #64748b;
+    font-size: 11px;
+}
+
+.putr-panel {
+    position: fixed;
+    z-index: 2147483590;
+    top: var(--putr-header-height);
+    right: 0;
+    bottom: 0;
+    width: var(--putr-panel-width);
+    box-sizing: border-box;
+    padding: 24px;
+    overflow-y: auto;
+    border-left: 1px solid #e2e8f0;
+    background: #ffffff;
+    box-shadow: -8px 0 24px rgba(15, 23, 42, 0.12);
+}
+
+.putr-eyebrow {
+    margin: 0 0 6px;
+    color: #2563eb;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.putr-panel h1 {
+    margin: 0;
+    color: #0f172a;
+    font-size: 22px;
+    line-height: 1.2;
+}
+
+.putr-help {
+    margin: 9px 0 22px;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.putr-field {
+    display: block;
+    margin-bottom: 16px;
+}
+
+.putr-field > span {
+    display: block;
+    margin-bottom: 7px;
+    color: #334155;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.putr-field input,
+.putr-field textarea {
+    box-sizing: border-box;
+    width: 100%;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    padding: 10px 11px;
+    color: #0f172a;
+    background: #ffffff;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+.putr-field input[readonly] {
+    color: #1d4ed8;
+    background: #eff6ff;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 12px;
+}
+
+.putr-field textarea {
+    min-height: 150px;
+    resize: vertical;
+}
+
+.putr-field textarea:focus {
+    border-color: #2563eb;
+    outline: 3px solid rgba(37, 99, 235, 0.14);
+}
+
+.putr-target-meta {
+    margin: -6px 0 18px;
+    padding: 11px 12px;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.putr-target-meta > span {
+    color: #475569;
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+}
+
+.putr-target-meta p {
+    margin: 5px 0 0;
+    color: #475569;
+    font-size: 12px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.putr-target-meta code {
+    color: #1d4ed8;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.putr-status {
+    min-height: 20px;
+    margin: 2px 0 11px;
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.putr-status.is-error {
+    color: #b91c1c;
+}
+
+.putr-status.is-success {
+    color: #15803d;
+    font-weight: 700;
+}
+
+.putr-save {
+    width: 100%;
+    min-height: 42px;
+    border: 0;
+    border-radius: 8px;
+    color: #ffffff;
+    background: #2563eb;
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.putr-save:hover {
+    background: #1d4ed8;
+}
+
+.putr-save:disabled {
+    cursor: wait;
+    opacity: 0.65;
+}
+
+@media (max-width: 820px) {
+    body.enpv-upload-test-review {
+        --putr-header-height: 64px;
+        --putr-panel-width: 0px;
+        --putr-panel-height: 330px;
+    }
+
+    body.enpv-upload-test-review #viewerContainer,
+    body.enpv-upload-test-review .enpv-loading-screen {
+        right: 0;
+        bottom: var(--putr-panel-height);
+    }
+
+    .putr-header {
+        gap: 8px;
+        padding: 0 10px;
+    }
+
+    .putr-back span:last-child {
+        display: none;
+    }
+
+    .putr-panel {
+        top: auto;
+        left: 0;
+        width: 100%;
+        height: var(--putr-panel-height);
+        padding: 16px;
+        border-top: 1px solid #e2e8f0;
+        border-left: 0;
+        box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.14);
+    }
+
+    .putr-panel > div:first-child {
+        display: none;
+    }
+
+    .putr-target-meta {
+        max-height: 82px;
+        overflow: auto;
+    }
+
+    .putr-comment-field textarea {
+        min-height: 82px;
+    }
 }

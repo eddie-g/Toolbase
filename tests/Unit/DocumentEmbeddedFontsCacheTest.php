@@ -95,6 +95,26 @@ class DocumentEmbeddedFontsCacheTest extends TestCase
         $this->assertSame(1, $controller->pythonResolverCalls);
     }
 
+    public function test_extraction_script_uses_literal_python_module_path(): void
+    {
+        $controller = new FontResolverTrackingDocumentController();
+        $script = $controller->fontExtractionScriptForTest(
+            '/tmp/source document.pdf',
+            4799,
+            '/tmp/embedded_fonts_4799.json',
+        );
+
+        $this->assertStringContainsString(
+            '"'.base_path('python/pdf-editor').'"',
+            $script,
+        );
+        $this->assertStringNotContainsString('python\\/pdf-editor', $script);
+        $this->assertStringContainsString(
+            'extract_embedded_fonts("/tmp/source document.pdf", 4799)',
+            $script,
+        );
+    }
+
     private function makeDocument(): Document
     {
         $document = new Document();
@@ -138,5 +158,17 @@ class FontResolverTrackingDocumentController extends DocumentController
         }
 
         return '/bin/false';
+    }
+
+    public function fontExtractionScriptForTest(
+        string $pdfPath,
+        int $documentId,
+        string $embeddedFontsPath
+    ): string {
+        return $this->buildEmbeddedFontsExtractionScript(
+            $pdfPath,
+            $documentId,
+            $embeddedFontsPath,
+        );
     }
 }

@@ -9,9 +9,6 @@
                     All pages rendered with annotations written by the Python writer.
                 </p>
             </div>
-            <a href="{{ route('filament.admin.pages.pdf-reconstruction') }}">
-                <x-filament::button color="gray" size="sm" icon="heroicon-o-arrow-left">Reconstruction</x-filament::button>
-            </a>
         </div>
 
         {{-- LOAD BAR --}}

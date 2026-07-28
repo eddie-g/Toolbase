@@ -1,4 +1,9 @@
 @php($editorCanUsePremiumFeatures = auth()->check() || auth('admin')->check())
+@php($isUploadTestReview = ($uploadTestReview ?? false) && isset($pdfUploadTest))
+@php($reviewPdfUrl = $isUploadTestReview
+    ? route('pdfTests.uploadTests.original', $pdfUploadTest)
+    : route('documents.file', $document))
+@php($selectedUploadTestCase = $selectedPdfUploadTestCase ?? null)
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,7 +11,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <title>{{ $document->original_name }} — Edit New (PDF.js viewer)</title>
+    <title>{{ $document->original_name }} — {{ $isUploadTestReview ? 'PDF Test Review' : 'Edit New (PDF.js viewer)' }}</title>
 
     {{-- The PDF.js editor bundles PDF.js itself. Loading a second copy from a
          CDN delayed the editor entry module and downloaded a duplicate worker. --}}
@@ -22,7 +27,86 @@
          can host the absolutely-positioned PDFViewer container. --}}
     @vite(['resources/css/edit-new-pdfjs/index.css'])
 </head>
-<body class="enpv-body{{ ($guided ?? false) ? ' enpv-guided' : '' }}">
+<body class="enpv-body{{ ($guided ?? false) ? ' enpv-guided' : '' }}{{ $isUploadTestReview ? ' enpv-upload-test-review' : '' }}">
+
+@if($isUploadTestReview)
+<header class="putr-header">
+    <a class="putr-back" href="{{ route('filament.admin.pages.run-pdf-tests', ['editor' => 'upload-tests']) }}">
+        <span aria-hidden="true">←</span>
+        <span>Uploaded PDFs</span>
+    </a>
+    <div class="putr-document">
+        <strong>{{ $document->original_name }}</strong>
+        <span>Read-only annotation review</span>
+    </div>
+</header>
+
+<aside class="putr-panel" aria-labelledby="putr-title">
+    <div>
+        <p class="putr-eyebrow">Annotation test</p>
+        <h1 id="putr-title">Select a blue box</h1>
+        <p class="putr-help">Click any blue PDF.js box to capture its annotation ID.</p>
+    </div>
+
+    <form id="putr-form">
+        <label class="putr-field">
+            <span>Annotation ID</span>
+            <input id="putr-annotation-id"
+                   name="annotation_id"
+                   type="text"
+                   value="{{ $selectedUploadTestCase?->annotation_id }}"
+                   placeholder="Click an overlay box"
+                   readonly>
+        </label>
+        <input id="putr-runtime-annotation-id"
+               name="runtime_annotation_id"
+               type="hidden"
+               value="{{ $selectedUploadTestCase?->runtime_annotation_id }}">
+        <input id="putr-page-index"
+               name="page_index"
+               type="hidden"
+               value="{{ $selectedUploadTestCase?->page_index }}">
+        <input id="putr-target-text"
+               name="target_text"
+               type="hidden"
+               value="{{ $selectedUploadTestCase?->target_text }}">
+
+        <div class="putr-target-meta">
+            <span id="putr-page-label">
+                {{ $selectedUploadTestCase?->page_index !== null ? 'Page '.($selectedUploadTestCase->page_index + 1) : 'No element selected' }}
+            </span>
+            <p id="putr-target-label">{{ $selectedUploadTestCase?->target_text ?: 'Click a blue box in the PDF.' }}</p>
+            <p id="putr-runtime-label"
+               hidden>
+            </p>
+        </div>
+
+        <label class="putr-field putr-comment-field">
+            <span>Test comment</span>
+            <textarea id="putr-test-comment"
+                      name="test_comment"
+                      rows="8"
+                      maxlength="5000"
+                      placeholder="For example: Delete this item, move it below the heading, rotate it 90°, or change it to red.">{{ $selectedUploadTestCase?->test_comment }}</textarea>
+        </label>
+
+        <div id="putr-status"
+             class="putr-status"
+             role="status"
+             aria-live="polite"
+             data-saved-at="{{ $selectedUploadTestCase?->test_saved_at?->toIso8601String() }}">
+            @if($selectedUploadTestCase?->test_saved_at)
+                Saved {{ $selectedUploadTestCase->test_saved_at->diffForHumans() }}
+            @else
+                Select an element and describe the test.
+            @endif
+        </div>
+
+        <button id="putr-save" class="putr-save" type="submit">Save test</button>
+    </form>
+</aside>
+<script id="putr-saved-cases" type="application/json">@json(($pdfUploadTestCases ?? collect())->values())</script>
+@endif
 
 {{-- Same root + data attrs as edit-new (kept so legacy partials read the
      same dataset shape). The new viewer JS reads the *-url attrs. --}}
@@ -74,12 +158,16 @@
      so the absolute child fills the available space). --}}
 <div id="enpv-root"
      data-doc-id="{{ $document->id }}"
+     data-password-protected="{{ !$isUploadTestReview && filled($document->pdf_password_hash) ? '1' : '0' }}"
+     data-password-unlock-url="{{ route('documents.unlockPdfPassword', $document) }}"
+     data-upload-test-review="{{ $isUploadTestReview ? '1' : '0' }}"
+     data-upload-test-save-url="{{ $isUploadTestReview ? route('pdfTests.uploadTests.update', $pdfUploadTest) : '' }}"
      data-guided="{{ ($guided ?? false) ? '1' : '0' }}"
      data-template-type="{{ $document->template_type ?? '' }}"
      data-template-slug="{{ $document->template_slug ?? '' }}"
      data-csrf="{{ csrf_token() }}"
-     data-pdf-url="{{ route('documents.file', $document) }}"
-     data-current-pdf-url="{{ route('documents.file', $document) }}"
+     data-pdf-url="{{ $reviewPdfUrl }}"
+     data-current-pdf-url="{{ $reviewPdfUrl }}"
      data-baked-url="{{ route('documents.bakedPdf', $document) }}"
      data-clean-url="{{ route('documents.cleanPdf', $document) }}"
      data-rewrite-url="{{ route('documents.editPdfjsRewriteTj', $document) }}"
@@ -105,7 +193,7 @@
      <div id="enpv-loading-screen" class="enpv-loading-screen" role="status" aria-live="polite">
           <div class="enpv-loading-card">
                <div class="enpv-loading-spinner" aria-hidden="true"></div>
-               <div class="enpv-loading-title">Loading editor...</div>
+               <div class="enpv-loading-title">{{ $isUploadTestReview ? 'Loading PDF review...' : 'Loading editor...' }}</div>
           </div>
      </div>
 

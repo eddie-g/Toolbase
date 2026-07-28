@@ -31,6 +31,57 @@ class ExtractPdfPyMuPdfTests(unittest.TestCase):
     def setUpClass(cls):
         cls.module = load_module()
 
+    def test_drawn_underline_segments_keep_partial_span_geometry(self):
+        bbox = (18.0, 346.84, 595.841, 357.29)
+        horizontal_lines = [
+            (159.26, 323.132, 355.905, 0.37),
+            # A short decorative stroke does not qualify as this span's
+            # underline and must not be attached to the moved annotation.
+            (25.0, 35.0, 355.9, 0.5),
+        ]
+
+        segments = self.module._span_drawn_underline_segments(
+            bbox,
+            horizontal_lines,
+            origin=(18.0, 354.892),
+            font_size=10.45,
+        )
+
+        self.assertEqual(len(segments), 1)
+        self.assertAlmostEqual(segments[0]["x0"], 159.26)
+        self.assertAlmostEqual(segments[0]["x1"], 323.132)
+        self.assertAlmostEqual(segments[0]["y"], 355.905)
+        self.assertAlmostEqual(segments[0]["width"], 0.37)
+        self.assertTrue(self.module._span_has_drawn_underline(
+            bbox,
+            horizontal_lines,
+            origin=(18.0, 354.892),
+            font_size=10.45,
+        ))
+
+    def test_drawn_underline_segments_reject_f1040_form_rule_below_text(self):
+        bbox = (64.799995, 601.57782, 434.952057, 610.57782)
+        horizontal_lines = [
+            (35.75, 302.65, 612.0, 1.0),
+            (302.15, 417.85, 612.0, 1.0),
+            (417.35, 576.25, 612.0, 1.0),
+        ]
+
+        segments = self.module._span_drawn_underline_segments(
+            bbox,
+            horizontal_lines,
+            origin=(64.799995, 608.926025),
+            font_size=9,
+        )
+
+        self.assertEqual(segments, [])
+        self.assertFalse(self.module._span_has_drawn_underline(
+            bbox,
+            horizontal_lines,
+            origin=(64.799995, 608.926025),
+            font_size=9,
+        ))
+
     def test_x_gap_split_keeps_stacked_same_column_lines_in_one_group(self):
         candidate = [
             {
