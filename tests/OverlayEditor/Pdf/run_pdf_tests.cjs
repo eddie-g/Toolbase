@@ -401,6 +401,15 @@ const BLANK_TEXT_BACKGROUND_TEST_TEXT = 'Blank PDF background regression';
 const BLANK_TEXT_BACKGROUND_COLOR = '#1f0909';
 const BLANK_TEXT_DRAWING_MATCH_TOLERANCE = 18;
 const DRYLAB_LOAD_FIXTURE_PATH = path.resolve(__dirname, '..', '..', '..', 'public', 'drylab_full.pdf');
+// The Drylab newsletter body copy used by the edit-mode spacing regression.
+// This is the same file the reported document was uploaded from, so the
+// promoted page-3 paragraph keeps its blank-line gap and bold lead-in run.
+const DRYLAB_EDIT_SPACING_FIXTURE_PATH = path.resolve(__dirname, '..', 'drylab.pdf');
+const DRYLAB_EDIT_SPACING_PAGE_NUMBER = 3;
+const DRYLAB_EDIT_SPACING_NEEDLE = 'WWDC and Silicon Valley';
+const DRYLAB_EDIT_SPACING_STEP_TOLERANCE_PX = 4;
+const DRYLAB_EDIT_SPACING_INDENT_TOLERANCE_PX = 2.5;
+const DRYLAB_EDIT_SPACING_MIN_GAP_RATIO = 1.2;
 const DRYLAB_LOAD_POSITION_TOLERANCE = 4;
 const DRYLAB_LOAD_SIZE_TOLERANCE = 6;
 const DRYLAB_LOAD_LINE_HEIGHT_TOLERANCE = 4;
@@ -827,6 +836,13 @@ const TESTS = {
         description: 'Regression for the user-reported bug where SS-4 row labels in the editor display missing-glyph boxes for apostrophe (\u2019), smart quotes (\u201C/\u201D), lowercase x and capital O. Upload tests/OverlayEditor/fixtures/fss4.pdf, open /edit-new?pdfjs=1, save (no edits), click the Download PDF toolbar button, and use PyMuPDF to extract page-1 text from the downloaded file. The extracted text MUST contain the literal SS-4 row labels "Don\u2019t enter a P.O. box.", "\u201Ccare of\u201D name", "Street address", "Executor, administrator, trustee" with the correct Unicode characters and zero replacement glyphs (U+FFFD, \u25A0, \u25A1, \u2610-\u2612). The same probe is also run a second time AFTER toggling Edit PDF mode on and saving, since the user\'s screenshot was captured in edit mode.',
         test_category: 'PDF JS Test Suite',
         run: runPdfJsSs4DownloadNoGlyphSubstitutionFlow,
+    },
+    pdf_js_drylab_edit_mode_paragraph_spacing: {
+        key: 'pdf_js_drylab_edit_mode_paragraph_spacing',
+        label: 'PDF.js Test Suite : Drylab Edit Mode Keeps Paragraph Spacing',
+        description: 'Regression for the reported bug where double-clicking a promoted PDF paragraph reflowed it into one browser-wrapped block and lost the source spacing. Upload tests/OverlayEditor/drylab.pdf, open /edit-new?pdfjs=1, enter Edit PDF mode, and double-click the page-3 body paragraph that starts the "WWDC and Silicon Valley:" section. Verify the edit scaffold keeps one element per captured PDF line, that every line-to-line step (including the taller blank-line gap before the "WWDC and Silicon Valley:" line) and every left indent match the PDF.js source text layer, that the text and its line breaks are unchanged and still selectable, that the bold source run keeps its own typography, and that leaving edit mode without typing restores the source text with no pending edit.',
+        test_category: 'PDF JS Test Suite',
+        run: runPdfJsDrylabEditModeParagraphSpacingFlow,
     },
     test_18_load_tests: {
         key: 'test_18_load_tests',
@@ -6437,6 +6453,346 @@ doc.close()
     } finally {
         if (documentId) {
             try { await cleanupDocument(page, documentId); } catch (_e) { /* ignore */ }
+        }
+        await context.close();
+        await browser.close();
+    }
+}
+
+// A promoted PDF paragraph must keep the document's own layout when it opens
+// for text editing: the captured line breaks, the taller blank-line gap in the
+// middle of the Drylab page-3 body copy, the left indents and the bold lead-in
+// run. The PDF.js text layer under the block is the source of truth, so every
+// edit-mode measurement is compared against it instead of a golden file.
+async function runPdfJsDrylabEditModeParagraphSpacingFlow() {
+    const test = TESTS.pdf_js_drylab_edit_mode_paragraph_spacing;
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const sourceName = buildArtifactName(test.key, runToken, 'source_paragraph');
+    const editName = buildArtifactName(test.key, runToken, 'edit_mode_paragraph');
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: { width: 1800, height: 1200 } });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, description, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description,
+        detail: typeof detail === 'string' ? detail : JSON.stringify(detail),
+    });
+    const artifacts = [];
+    let documentId = null;
+    let source = null;
+    let edit = null;
+    let after = null;
+
+    try {
+        documentId = await createFixtureDocument(page, DRYLAB_EDIT_SPACING_FIXTURE_PATH);
+        // The editor renders the extracted paragraph annotations into the page
+        // response, and the upload redirect can win the race against the
+        // extraction job. Reload the editor until the promoted paragraphs
+        // exist instead of testing the raw per-line PDF.js source handles.
+        let promotedParagraphReady = false;
+        for (let attempt = 0; attempt < 5 && !promotedParagraphReady; attempt += 1) {
+            await page.goto(`${BASE_URL}/documents/${documentId}/edit-new?pdfjs=1&t=${Date.now()}`, {
+                waitUntil: 'domcontentloaded',
+                timeout: 90000,
+            });
+            await page.waitForSelector(
+                'body.enpv-viewer-ready .pdfViewer .page[data-page-number="1"]',
+                { timeout: 120000 },
+            );
+            await page.evaluate(() => {
+                const toggle = document.getElementById('edit-mode-toggle')
+                    || document.getElementById('ftb-edit-mode');
+                if (!toggle) throw new Error('Missing PDF.js edit-mode toggle.');
+                if (!document.body.classList.contains('enpv-edit-on')) toggle.click();
+            });
+            await page.waitForSelector('body.enpv-edit-on', { timeout: 60000 });
+            await page.evaluate((pageNumber) => {
+                document
+                    .querySelector(`.pdfViewer .page[data-page-number="${pageNumber}"]`)
+                    ?.scrollIntoView({ block: 'start' });
+            }, DRYLAB_EDIT_SPACING_PAGE_NUMBER);
+            promotedParagraphReady = await page.waitForFunction(({ needle, pageNumber }) => {
+                const pageDiv = document.querySelector(`.pdfViewer .page[data-page-number="${pageNumber}"]`);
+                if (!pageDiv?.querySelector('.textLayer span')) return false;
+                return Array.from(pageDiv.querySelectorAll('.enpv-annotation-box.is-promoted-source-block'))
+                    .some((box) => String(box.textContent || '').includes(needle));
+            }, {
+                needle: DRYLAB_EDIT_SPACING_NEEDLE,
+                pageNumber: DRYLAB_EDIT_SPACING_PAGE_NUMBER,
+            }, { timeout: 30000 }).then(() => true).catch(() => false);
+        }
+        if (!promotedParagraphReady) {
+            throw new Error('The extracted Drylab page-3 paragraph never appeared as a promoted source block.');
+        }
+        await page.waitForTimeout(800);
+
+        source = await page.evaluate(({ needle, pageNumber }) => {
+            const pageDiv = document.querySelector(`.pdfViewer .page[data-page-number="${pageNumber}"]`);
+            const box = Array.from(pageDiv.querySelectorAll('.enpv-annotation-box.is-promoted-source-block'))
+                .find((el) => String(el.textContent || '').includes(needle));
+            if (!box) return { found: false };
+            const rect = box.getBoundingClientRect();
+            const spans = Array.from(pageDiv.querySelectorAll('.textLayer span')).filter((span) => {
+                const spanRect = span.getBoundingClientRect();
+                if (!spanRect.width || !spanRect.height) return false;
+                if (!String(span.textContent || '').trim()) return false;
+                return spanRect.left >= rect.left - 6
+                    && spanRect.right <= rect.right + 12
+                    && spanRect.top >= rect.top - 6
+                    && spanRect.bottom <= rect.bottom + 12;
+            });
+            // The text layer emits one span per drawn text run, so several
+            // spans can share a visual line. Fold them back into lines.
+            const lines = [];
+            spans.forEach((span) => {
+                const spanRect = span.getBoundingClientRect();
+                const top = spanRect.top - rect.top;
+                const left = spanRect.left - rect.left;
+                const line = lines.find((entry) => Math.abs(entry.top - top) <= 6);
+                if (line) {
+                    line.top = Math.min(line.top, top);
+                    line.left = Math.min(line.left, left);
+                    return;
+                }
+                lines.push({ top, left });
+            });
+            lines.sort((a, b) => a.top - b.top);
+            const text = String(box.querySelector('.enpv-text-content')?.textContent || '');
+            return {
+                found: true,
+                uid: box.dataset.uid || '',
+                annotationId: box.dataset.annotationId || '',
+                text,
+                newlineCount: (text.match(/\n/g) || []).length,
+                lines: lines.map((line) => ({
+                    top: Number(line.top.toFixed(2)),
+                    left: Number(line.left.toFixed(2)),
+                })),
+                boxRect: {
+                    left: rect.left,
+                    top: rect.top,
+                    width: rect.width,
+                    height: rect.height,
+                },
+            };
+        }, {
+            needle: DRYLAB_EDIT_SPACING_NEEDLE,
+            pageNumber: DRYLAB_EDIT_SPACING_PAGE_NUMBER,
+        });
+        if (!source.found) throw new Error('Could not locate the Drylab page-3 promoted paragraph.');
+
+        const target = page.locator(`.enpv-annotation-box[data-uid="${source.uid}"]`).first();
+        const clip = {
+            x: Math.max(0, source.boxRect.left - 12),
+            y: Math.max(0, source.boxRect.top - 12),
+            width: Math.min(1780, source.boxRect.width + 24),
+            height: Math.min(1180, source.boxRect.height + 24),
+        };
+        await page.screenshot({ path: path.join(OUTPUT_DIR, sourceName), clip });
+        artifacts.push({ label: 'Source paragraph before edit mode', kind: 'image', filename: sourceName });
+
+        await target.dblclick();
+        await page.waitForFunction((uid) => document
+            .querySelector(`.enpv-annotation-box[data-uid="${CSS.escape(uid)}"]`)
+            ?.classList.contains('is-editing'), source.uid, { timeout: 30000 });
+        await page.waitForTimeout(900);
+
+        edit = await page.evaluate((uid) => {
+            const box = document.querySelector(`.enpv-annotation-box[data-uid="${CSS.escape(uid)}"]`);
+            const content = box.querySelector('.enpv-text-content');
+            const rect = box.getBoundingClientRect();
+            const lineEls = Array.from(content.querySelectorAll('[data-source-span-line="1"]'));
+            const text = String(content.textContent || '');
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(content);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            const selectionText = String(selection.toString() || '');
+            selection.removeAllRanges();
+            const boldLine = lineEls.find((el) => String(el.textContent || '').includes('WWDC'));
+            const boldRuns = Array.from(boldLine?.querySelectorAll('[data-source-span-run="1"]') || [])
+                .map((run) => ({
+                    text: String(run.textContent || '').slice(0, 40),
+                    family: getComputedStyle(run).fontFamily,
+                    semanticWeight: run.dataset.sourceSemanticFontWeight || '',
+                    pdfFontName: run.dataset.sourcePdfFontName || '',
+                }));
+            return {
+                editing: box.classList.contains('is-editing'),
+                editable: content.isContentEditable,
+                spanEditActive: box.dataset.sourceSpanEditActive || '',
+                promotedParagraphFlow: box.dataset.promotedParagraphFlow || '',
+                text,
+                newlineCount: (text.match(/\n/g) || []).length,
+                selectionText,
+                boldRuns,
+                lines: lineEls.map((el) => {
+                    const lineRect = el.getBoundingClientRect();
+                    return {
+                        text: String(el.textContent || '').slice(0, 30),
+                        top: Number((lineRect.top - rect.top).toFixed(2)),
+                        left: Number((lineRect.left - rect.left).toFixed(2)),
+                    };
+                }),
+            };
+        }, source.uid);
+        await page.screenshot({ path: path.join(OUTPUT_DIR, editName), clip });
+        artifacts.push({ label: 'Paragraph in text edit mode', kind: 'image', filename: editName });
+
+        const steps = (lines) => lines.slice(1).map((line, index) => line.top - lines[index].top);
+        const sourceSteps = steps(source.lines);
+        const editSteps = steps(edit.lines);
+        const median = (values) => {
+            const sorted = [...values].sort((a, b) => a - b);
+            if (!sorted.length) return 0;
+            const middle = Math.floor(sorted.length / 2);
+            return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+        };
+
+        addCheck(
+            'edit_mode_keeps_one_element_per_source_line',
+            edit.editing
+                && edit.spanEditActive === '1'
+                && edit.promotedParagraphFlow !== '1'
+                && edit.lines.length > 1
+                && edit.lines.length === source.lines.length,
+            'Text edit mode rebuilds the paragraph line by line instead of reflowing it into one wrapped block.',
+            { sourceLines: source.lines.length, editLines: edit.lines.length, spanEditActive: edit.spanEditActive },
+        );
+
+        const stepDeltas = editSteps.map((step, index) => Number((step - (sourceSteps[index] ?? 0)).toFixed(2)));
+        addCheck(
+            'edit_mode_line_spacing_matches_source',
+            editSteps.length === sourceSteps.length
+                && editSteps.length > 0
+                && stepDeltas.every((delta) => Math.abs(delta) <= DRYLAB_EDIT_SPACING_STEP_TOLERANCE_PX),
+            `Every edit-mode line step matches the PDF.js source line step within ${DRYLAB_EDIT_SPACING_STEP_TOLERANCE_PX}px.`,
+            { sourceSteps, editSteps, stepDeltas },
+        );
+
+        const sourceGapIndex = sourceSteps.indexOf(Math.max(...sourceSteps));
+        const sourceGapRatio = median(sourceSteps) ? Math.max(...sourceSteps) / median(sourceSteps) : 0;
+        const editGapRatio = median(editSteps) ? (editSteps[sourceGapIndex] ?? 0) / median(editSteps) : 0;
+        addCheck(
+            'edit_mode_keeps_blank_line_paragraph_gap',
+            sourceGapRatio >= DRYLAB_EDIT_SPACING_MIN_GAP_RATIO
+                && editGapRatio >= DRYLAB_EDIT_SPACING_MIN_GAP_RATIO
+                && Math.abs((editSteps[sourceGapIndex] ?? 0) - sourceSteps[sourceGapIndex])
+                    <= DRYLAB_EDIT_SPACING_STEP_TOLERANCE_PX,
+            'The taller blank-line gap before the bold lead-in survives edit mode instead of collapsing to an even line height.',
+            {
+                gapIndex: sourceGapIndex,
+                sourceGap: sourceSteps[sourceGapIndex],
+                editGap: editSteps[sourceGapIndex],
+                sourceGapRatio: Number(sourceGapRatio.toFixed(3)),
+                editGapRatio: Number(editGapRatio.toFixed(3)),
+            },
+        );
+
+        const indentDeltas = edit.lines.map((line, index) => Number((
+            (line.left - edit.lines[0].left) - ((source.lines[index]?.left ?? 0) - source.lines[0].left)
+        ).toFixed(2)));
+        addCheck(
+            'edit_mode_keeps_line_indents',
+            edit.lines.length === source.lines.length
+                && indentDeltas.every((delta) => Math.abs(delta) <= DRYLAB_EDIT_SPACING_INDENT_TOLERANCE_PX),
+            `Every edit-mode line keeps the source indent within ${DRYLAB_EDIT_SPACING_INDENT_TOLERANCE_PX}px.`,
+            { indentDeltas },
+        );
+
+        addCheck(
+            'edit_mode_keeps_text_and_line_breaks',
+            edit.text === source.text
+                && edit.newlineCount === source.newlineCount
+                && edit.newlineCount === edit.lines.length - 1,
+            'Entering edit mode changes neither the paragraph text nor its line breaks.',
+            {
+                newlineCount: edit.newlineCount,
+                sourceNewlineCount: source.newlineCount,
+                textMatches: edit.text === source.text,
+            },
+        );
+
+        const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        addCheck(
+            'edit_mode_keeps_text_selectable',
+            edit.editable && normalize(edit.selectionText) === normalize(source.text),
+            'The rebuilt paragraph is still one editable, fully selectable text block.',
+            { editable: edit.editable, selectionLength: edit.selectionText.length },
+        );
+
+        const boldRun = edit.boldRuns.find((run) => run.text.includes('WWDC'));
+        const regularRun = edit.boldRuns.find((run) => run !== boldRun);
+        addCheck(
+            'edit_mode_keeps_bold_run_typography',
+            Boolean(boldRun)
+                && Boolean(regularRun)
+                && boldRun.family !== regularRun.family
+                && Number(boldRun.semanticWeight) >= 600,
+            'The bold "WWDC and Silicon Valley:" lead-in keeps its own embedded face and bold weight beside the regular run.',
+            edit.boldRuns,
+        );
+
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(400);
+        await page.mouse.click(20, 700);
+        await page.waitForTimeout(1200);
+        after = await page.evaluate((uid) => {
+            const box = document.querySelector(`.enpv-annotation-box[data-uid="${CSS.escape(uid)}"]`);
+            const text = String(box?.querySelector('.enpv-text-content')?.textContent || '');
+            return {
+                editing: box?.classList.contains('is-editing') || false,
+                pendingEdit: box?.dataset.pendingEdit || '',
+                text,
+                newlineCount: (text.match(/\n/g) || []).length,
+            };
+        }, source.uid);
+        addCheck(
+            'leaving_edit_mode_restores_source_paragraph',
+            after.editing === false
+                && after.pendingEdit !== '1'
+                && after.text === source.text
+                && after.newlineCount === source.newlineCount,
+            'Opening and leaving edit mode without typing restores the untouched source paragraph.',
+            after,
+        );
+
+        const status = checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail';
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status,
+            checks,
+            artifacts,
+            metadata: {
+                document_id: documentId,
+                uid: source.uid,
+                annotation_id: source.annotationId,
+                source_lines: source.lines,
+                edit_lines: edit?.lines || [],
+            },
+        });
+    } catch (error) {
+        return buildResult({
+            testKey: test.key,
+            label: test.label,
+            description: test.description,
+            testCategory: test.test_category || PDF_JS_TEST_SUITE_CATEGORY,
+            status: 'error',
+            checks,
+            artifacts,
+            error: error.stack || String(error),
+            metadata: { document_id: documentId, source, edit, after },
+        });
+    } finally {
+        if (documentId) {
+            try { await cleanupDocument(page, documentId); } catch (_e) { /* best-effort fixture cleanup */ }
         }
         await context.close();
         await browser.close();
@@ -21015,6 +21371,7 @@ async function readPdfUploadF1040BoxState(page, annotationId) {
             paintIsTransparent(textStyle.color)
             || paintIsTransparent(textStyle.webkitTextFillColor)
         );
+        const firstVisibleGlyphRect = visibleCharacterRect(text);
         return {
             annotation_id: String(box.dataset.annotationId || ''),
             page_index: pageIndex,
@@ -21083,6 +21440,17 @@ async function readPdfUploadF1040BoxState(page, annotationId) {
             computed_top: textStyle?.top || '',
             computed_transform: textStyle?.transform || '',
             computed_transform_origin: textStyle?.transformOrigin || '',
+            first_visible_glyph_rect: firstVisibleGlyphRect ? {
+                left: firstVisibleGlyphRect.left,
+                top: firstVisibleGlyphRect.top,
+                right: firstVisibleGlyphRect.right,
+                bottom: firstVisibleGlyphRect.bottom,
+                width: firstVisibleGlyphRect.width,
+                height: firstVisibleGlyphRect.height,
+            } : null,
+            source_edit_visual_scale_x: Number.parseFloat(
+                box.dataset.sourceEditVisualScaleX || ''
+            ),
             document_font_options: Array.from(
                 document.querySelectorAll('option[data-pdfjs-embedded-font="1"]')
             ).map((option) => ({
@@ -22017,6 +22385,401 @@ print(json.dumps({
         stdio: ['ignore', 'pipe', 'pipe'],
     });
     return JSON.parse(raw);
+}
+
+async function runPdfUploadMc0072InlineStylesExportFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        styled: buildArtifactName(testKey, runToken, 'inline_styles_in_editor'),
+        pdf: buildArtifactName(testKey, runToken, 'downloaded_result', 'pdf'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let attentionAnnotationId = '';
+    let attentionEditorState = null;
+    let attentionPayloadAnnotation = null;
+    let editorState = null;
+    let payloadAnnotation = null;
+    let pdfInspection = null;
+    try {
+        const expectedText = String(config.target_text || '');
+        const boldText = 'electron';
+        const underlinedText = 'systems';
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1);
+        documentId = opened.documentId;
+
+        const attentionSourceText = 'This form is for patients 18 years of age or older. The patient must sign and date this form.';
+        const attentionEditedText = 'This form is for patients 14 years of age or older. The patient must sign and date this form.';
+        await page.waitForFunction((needle) => (
+            Array.from(document.querySelectorAll('.enpv-annotation-box')).some((box) => (
+                String(
+                    box.dataset.baseText
+                    || box.dataset.originalText
+                    || box.querySelector('.enpv-text-content')?.textContent
+                    || box.textContent
+                    || ''
+                ).replace(/\s+/g, ' ').trim().includes(needle)
+            ))
+        ), attentionSourceText, { timeout: 90000 });
+        attentionAnnotationId = await page.evaluate((needle) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((candidate) => (
+                String(
+                    candidate.dataset.baseText
+                    || candidate.dataset.originalText
+                    || candidate.querySelector('.enpv-text-content')?.textContent
+                    || candidate.textContent
+                    || ''
+                ).replace(/\s+/g, ' ').trim().includes(needle)
+            ));
+            return String(box?.dataset?.annotationId || '');
+        }, attentionSourceText);
+        const attentionLocator = page.locator(
+            `.enpv-annotation-box[data-annotation-id="${attentionAnnotationId}"]`
+        ).first();
+        await attentionLocator.waitFor({ state: 'visible', timeout: 30000 });
+        await selectPdfUploadEditorBox(page, attentionLocator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, attentionAnnotationId, { timeout: 30000 });
+        const attentionBeforeEdit = await readPdfUploadF1040BoxState(page, attentionAnnotationId);
+        const ageOffset = String(attentionBeforeEdit?.editor_text_exact || '').indexOf('18');
+        if (ageOffset < 0) {
+            throw new Error(`The attention line does not contain “18”: ${attentionBeforeEdit?.editor_text_exact || ''}`);
+        }
+        await selectPdfUploadTextOffsets(page, attentionAnnotationId, ageOffset, ageOffset + 2);
+        await page.keyboard.type('14');
+        await page.waitForFunction(({ id, expected }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return String(box?.querySelector('.enpv-text-content')?.textContent || '') === expected;
+        }, { id: attentionAnnotationId, expected: attentionEditedText }, { timeout: 30000 });
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(({ id, expected }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box
+                && !box.classList.contains('is-editing')
+                && String(box.querySelector('.enpv-text-content')?.textContent || '') === expected;
+        }, { id: attentionAnnotationId, expected: attentionEditedText }, { timeout: 30000 });
+        attentionEditorState = await readPdfUploadF1040BoxState(page, attentionAnnotationId);
+        const attentionDomRuns = (attentionEditorState?.rich_dom_runs || [])
+            .filter((run) => String(run?.text || '').trim());
+        const attentionBoldPrefix = attentionDomRuns.some((run) => (
+            String(run.text || '').includes('This form is for patients 14 years of age or older.')
+            && Number.parseInt(String(run.font_weight || '0'), 10) >= 600
+        ));
+        const attentionRegularSuffix = attentionDomRuns.some((run) => (
+            String(run.text || '').includes('The patient must sign and date this form.')
+            && Number.parseInt(String(run.font_weight || '900'), 10) < 600
+        ));
+        addCheck(
+            'editor_preserves_attention_mixed_weight_after_age_edit',
+            attentionEditorState?.editor_text_exact === attentionEditedText
+                && attentionBoldPrefix
+                && attentionRegularSuffix,
+            'Changing 18→14 preserves the bold first sentence and regular trailing sentence in the editor.',
+            JSON.stringify({ before: attentionBeforeEdit, after: attentionEditorState }),
+        );
+
+        const resolved = await resolvePdfUploadBoxByExactText(page, expectedText);
+        annotationId = resolved.annotationId;
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').first().click();
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, annotationId, { timeout: 30000 });
+
+        const boldStart = expectedText.indexOf(boldText);
+        const underlineStart = expectedText.indexOf(underlinedText);
+        if (boldStart < 0 || underlineStart < 0) {
+            throw new Error(`The MC-0072 target does not contain ${boldText}/${underlinedText}.`);
+        }
+        await selectPdfUploadTextOffsets(page, annotationId, boldStart, boldStart + boldText.length);
+        await page.locator('#afb-bold').click();
+        await selectPdfUploadTextOffsets(
+            page,
+            annotationId,
+            underlineStart,
+            underlineStart + underlinedText.length,
+        );
+        await page.locator('#afb-underline').click();
+
+        const readWordStyles = () => page.evaluate(({ id, words }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            const root = box?.querySelector('.enpv-text-content');
+            if (!root) return null;
+            const fullText = String(root.textContent || '');
+            const entries = {};
+            for (const word of words) {
+                const start = fullText.indexOf(word);
+                let offset = 0;
+                let matchedNode = null;
+                const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+                while (walker.nextNode()) {
+                    const node = walker.currentNode;
+                    const end = offset + String(node.nodeValue || '').length;
+                    if (start >= offset && start < end) {
+                        matchedNode = node;
+                        break;
+                    }
+                    offset = end;
+                }
+                const element = matchedNode?.parentElement || root;
+                const style = window.getComputedStyle(element);
+                entries[word] = {
+                    font_weight: String(style.fontWeight || ''),
+                    text_decoration_line: String(style.textDecorationLine || ''),
+                    html: String(element.outerHTML || ''),
+                };
+            }
+            return {
+                text: fullText,
+                html: root.innerHTML,
+                words: entries,
+            };
+        }, { id: annotationId, words: [boldText, underlinedText] });
+
+        editorState = await readWordStyles();
+        addCheck(
+            'editor_applies_partial_bold_and_underline',
+            Number.parseInt(editorState?.words?.[boldText]?.font_weight || '0', 10) >= 600
+                && String(editorState?.words?.[underlinedText]?.text_decoration_line || '').includes('underline'),
+            'The live editor applies bold only to “electron” and underline to “systems”.',
+            JSON.stringify(editorState),
+        );
+        await opened.pageLocator.screenshot({ path: artifactPaths.styled });
+
+        // Match the saved instruction and the reported UI state: invoke
+        // Download PDF while the annotation is still actively editing.
+        // buildPdfjsDownloadPayload() must synchronize the live rich DOM
+        // without requiring an Escape/deselect commit first.
+        const downloaded = await capturePdfUploadEditorDownload(page, artifactPaths.pdf);
+        const annotations = Array.isArray(downloaded.payload?.session_annotations)
+            ? downloaded.payload.session_annotations
+            : [];
+        payloadAnnotation = annotations.find(
+            (annotation) => String(annotation?.id || '') === annotationId
+        ) || null;
+        attentionPayloadAnnotation = annotations.find(
+            (annotation) => String(annotation?.id || '') === attentionAnnotationId
+        ) || null;
+        const payloadRuns = Array.isArray(payloadAnnotation?.richTextRuns)
+            ? payloadAnnotation.richTextRuns
+            : [];
+        const styleAtText = (target) => {
+            const targetOffset = String(payloadAnnotation?.text || '').indexOf(target);
+            let offset = 0;
+            for (const run of payloadRuns) {
+                if (run?.type === 'break') {
+                    offset += 1;
+                    continue;
+                }
+                const text = String(run?.text || '');
+                const end = offset + text.length;
+                if (targetOffset >= offset && targetOffset < end) return run;
+                offset = end;
+            }
+            return null;
+        };
+        const boldRun = styleAtText(boldText);
+        const underlineRun = styleAtText(underlinedText);
+        addCheck(
+            'download_payload_preserves_inline_styles',
+            Number.parseInt(String(boldRun?.fontWeight || '0'), 10) >= 600
+                && underlineRun?.underline === true,
+            'The real Download PDF payload retains the selected bold and underline runs.',
+            JSON.stringify({ annotation: payloadAnnotation, bold_run: boldRun, underline_run: underlineRun }),
+        );
+        const attentionPayloadRuns = Array.isArray(attentionPayloadAnnotation?.richTextRuns)
+            ? attentionPayloadAnnotation.richTextRuns.filter((run) => run?.type === 'text')
+            : [];
+        const attentionPayloadBold = attentionPayloadRuns.some((run) => (
+            String(run.text || '').includes('This form is for patients 14 years of age or older.')
+            && Number.parseInt(String(run.fontWeight || '0'), 10) >= 600
+        ));
+        const attentionPayloadRegular = attentionPayloadRuns.some((run) => (
+            String(run.text || '').includes('The patient must sign and date this form.')
+            && Number.parseInt(String(run.fontWeight || '900'), 10) < 600
+        ));
+        addCheck(
+            'download_payload_preserves_attention_mixed_weight',
+            attentionPayloadAnnotation?.text === attentionEditedText
+                && attentionPayloadBold
+                && attentionPayloadRegular,
+            'The Download PDF payload keeps the edited age inside the original bold/regular run boundary.',
+            JSON.stringify(attentionPayloadAnnotation),
+        );
+        addCheck(
+            'downloaded_pdf_created',
+            downloaded.pdf.length > 1000,
+            'The inline-style edit produced a non-empty downloaded PDF.',
+            `bytes=${downloaded.pdf.length}`,
+        );
+
+        const extraction = extractDownloadedPdfTextStylesViaPython(artifactPaths.pdf);
+        const pdfPage = extraction.pages?.[0] || { spans: [], underlines: [] };
+        const group = payloadAnnotation
+            ? pdfJsSuiteGroupSpans(pdfPage, payloadAnnotation)
+            : { spans: [], bbox: null };
+        const boldSpans = group.spans.filter((span) => (
+            String(span.text || '').toLowerCase().includes(boldText)
+        ));
+        const underlineSpans = group.spans.filter((span) => (
+            String(span.text || '').toLowerCase().includes(underlinedText)
+        ));
+        const pdfHasBold = boldSpans.some((span) => (
+            (Number(span.flags) & 16) !== 0 || /bold/i.test(String(span.font || ''))
+        ));
+        const pdfHasUnderline = underlineSpans.some((span) => {
+            const bbox = Array.isArray(span.bbox) ? span.bbox : [0, 0, 0, 0];
+            return (pdfPage.underlines || []).some((line) => (
+                Number(line.x1) >= Number(bbox[0]) - 2
+                && Number(line.x0) <= Number(bbox[2]) + 2
+                && Number(line.y) >= Number(bbox[1]) - 1
+                && Number(line.y) <= Number(bbox[3]) + 5
+            ));
+        });
+        const attentionGroup = attentionPayloadAnnotation
+            ? pdfJsSuiteGroupSpans(pdfPage, attentionPayloadAnnotation)
+            : { spans: [], bbox: null };
+        const attentionPdfText = normalize(
+            attentionGroup.spans.map((span) => String(span.text || '')).join(' ')
+        );
+        const attentionPdfBold = attentionGroup.spans.some((span) => (
+            String(span.text || '').includes('This form is for patients 14 years of age or older.')
+            && ((Number(span.flags) & 16) !== 0 || /bold/i.test(String(span.font || '')))
+        ));
+        const attentionPdfRegular = attentionGroup.spans.some((span) => (
+            String(span.text || '').includes('The patient must sign and date this form.')
+            && (Number(span.flags) & 16) === 0
+            && !/bold/i.test(String(span.font || ''))
+        ));
+        pdfInspection = {
+            group,
+            bold_spans: boldSpans,
+            underline_spans: underlineSpans,
+            page_underlines: pdfPage.underlines,
+            pdf_has_bold: pdfHasBold,
+            pdf_has_underline: pdfHasUnderline,
+            attention_group: attentionGroup,
+            attention_pdf_text: attentionPdfText,
+            attention_pdf_has_bold_prefix: attentionPdfBold,
+            attention_pdf_has_regular_suffix: attentionPdfRegular,
+        };
+        addCheck(
+            'downloaded_pdf_preserves_inline_styles',
+            pdfHasBold && pdfHasUnderline,
+            'The downloaded PDF renders “electron” bold and draws an underline beneath “systems”.',
+            JSON.stringify(pdfInspection),
+        );
+        addCheck(
+            'downloaded_pdf_preserves_attention_mixed_weight',
+            attentionPdfText.includes(attentionEditedText)
+                && attentionPdfBold
+                && attentionPdfRegular,
+            'The downloaded PDF renders the edited “14 years” sentence bold and the trailing sentence regular.',
+            JSON.stringify(attentionGroup),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            attention_annotation_id: attentionAnnotationId,
+            attention_editor_state: attentionEditorState,
+            editor_state: editorState,
+            attention_payload_annotation: attentionPayloadAnnotation,
+            payload_annotation: payloadAnnotation,
+            pdf_inspection: pdfInspection,
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Inline styles in editor', kind: 'image', filename: artifactNames.styled },
+                { label: 'Downloaded PDF result', kind: 'pdf', filename: artifactNames.pdf },
+                { label: 'Assertion diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            fileSize: downloaded.pdf.length,
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                attention_annotation_id: attentionAnnotationId,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                attention_annotation_id: attentionAnnotationId,
+                attention_editor_state: attentionEditorState,
+                editor_state: editorState,
+                attention_payload_annotation: attentionPayloadAnnotation,
+                payload_annotation: payloadAnnotation,
+                pdf_inspection: pdfInspection,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
 }
 
 async function runPdfUploadF1040BoundingBoxSnappingFlow({
@@ -27223,6 +27986,7 @@ async function runPdfUploadTableTextEditGeometryFlow({
     let documentId = null;
     let annotationId = '';
     let beforeState = null;
+    let editEntryState = null;
     let activeState = null;
     let deselectedState = null;
     try {
@@ -27245,15 +28009,18 @@ async function runPdfUploadTableTextEditGeometryFlow({
             || (pageNumber === 3 ? '2' : '1')
         );
         const expectedEditedText = `${expectedText}${appendedText}`;
-        const resolved = await resolvePdfUploadF1040Box(page, suffix, expectedText);
+        const resolved = config.resolve_target_by_exact_text === true
+            ? await resolvePdfUploadBoxByExactText(page, expectedText)
+            : await resolvePdfUploadF1040Box(page, suffix, expectedText);
         annotationId = resolved.annotationId;
         beforeState = await readPdfUploadF1040BoxState(page, annotationId);
         addCheck(
-            'table_page2_text_target_resolved',
+            'editable_text_target_resolved',
             Boolean(beforeState)
-                && annotationId.endsWith(`_${suffix}`)
+                && (config.resolve_target_by_exact_text === true
+                    || annotationId.endsWith(`_${suffix}`))
                 && normalize(beforeState.text) === normalize(expectedText),
-            `The exact Table-Examples page ${pageNumber} source annotation resolves in the disposable editor.`,
+            `The exact page ${pageNumber} source annotation resolves in the disposable editor.`,
             JSON.stringify(beforeState),
         );
         if (exactDocumentFont) {
@@ -27292,6 +28059,7 @@ async function runPdfUploadTableTextEditGeometryFlow({
             return box?.classList.contains('is-editing')
                 && box.querySelector('.enpv-text-content')?.isContentEditable;
         }, annotationId, { timeout: 30000 });
+        editEntryState = await readPdfUploadF1040BoxState(page, annotationId);
         await page.keyboard.type(appendedText);
         await page.waitForFunction(({ id, editedText }) => {
             const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
@@ -27305,6 +28073,33 @@ async function runPdfUploadTableTextEditGeometryFlow({
 
         const activeContainment = textContainment(activeState);
         const editGeometryDelta = rectDelta(beforeState?.browser_rect, activeState?.browser_rect);
+        if (config.require_first_keystroke_font_stability === true) {
+            const entryGlyphWidth = Number(editEntryState?.first_visible_glyph_rect?.width);
+            const activeGlyphWidth = Number(activeState?.first_visible_glyph_rect?.width);
+            addCheck(
+                'first_keystroke_preserves_all_font_metrics',
+                Math.abs(
+                    Number(activeState?.computed_font_size_px)
+                    - Number(editEntryState?.computed_font_size_px)
+                ) <= 0.01
+                    && activeState?.computed_font_family === editEntryState?.computed_font_family
+                    && activeState?.computed_font_weight === editEntryState?.computed_font_weight
+                    && activeState?.computed_line_height === editEntryState?.computed_line_height
+                    && activeState?.computed_transform === editEntryState?.computed_transform
+                    && Math.abs(activeGlyphWidth - entryGlyphWidth) <= 0.05
+                    && Number(activeState?.source_edit_visual_scale_x) > 0
+                    && Math.abs(
+                        Number(activeState?.source_edit_visual_scale_x)
+                        - Number(editEntryState?.source_edit_visual_scale_x)
+                    ) <= 0.0001,
+                'Appending the first character preserves the visible font size, family, weight, line height, horizontal scale, and existing glyph width.',
+                JSON.stringify({
+                    edit_entry: editEntryState,
+                    active_after_append: activeState,
+                    first_glyph_width_delta: activeGlyphWidth - entryGlyphWidth,
+                }),
+            );
+        }
         if (exactDocumentFont) {
             const expectedPdfFont = String(config.expected_pdf_font_name || 'UHABOU+Calibri');
             const activeRuns = Array.isArray(activeState?.source_span_runs)
@@ -27436,6 +28231,7 @@ async function runPdfUploadTableTextEditGeometryFlow({
             disposable_document_id: documentId,
             resolved_annotation_id: annotationId,
             before_state: beforeState,
+            edit_entry_state: editEntryState,
             active_after_append_state: activeState,
             deselected_state: deselectedState,
             comparisons: {
@@ -27479,6 +28275,7 @@ async function runPdfUploadTableTextEditGeometryFlow({
                 disposable_document_id: documentId,
                 resolved_annotation_id: annotationId,
                 before_state: beforeState,
+                edit_entry_state: editEntryState,
                 active_after_append_state: activeState,
                 deselected_state: deselectedState,
                 checks,
@@ -27500,6 +28297,349 @@ async function runPdfUploadTableTextEditGeometryFlow({
                 editor_only: true,
                 download_invoked: false,
             },
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
+async function runPdfUploadDrylabSelectionFidelityFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'before_select_all'),
+        selected: buildArtifactName(testKey, runToken, 'after_select_all'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let selectionState = null;
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1, {
+            seedAnnotations: config.saved_target_annotation
+                ? [config.saved_target_annotation]
+                : [],
+        });
+        documentId = opened.documentId;
+        const targetText = String(config.target_text || '');
+        const resolved = await resolvePdfUploadBoxByExactText(page, targetText);
+        annotationId = resolved.annotationId;
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.keyboard.press('Control+A');
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(100);
+
+        selectionState = await page.evaluate((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            const content = box?.querySelector('.enpv-text-content');
+            if (!box || !content) return null;
+            const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const rectValue = (rect) => ({
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                width: rect.width,
+                height: rect.height,
+            });
+            const boxRect = box.getBoundingClientRect();
+            const sourceSpans = Array.from(
+                box.closest('.page')?.querySelectorAll('.textLayer span') || [],
+            ).filter((span) => {
+                const rect = span.getBoundingClientRect();
+                return Math.min(rect.right, boxRect.right) > Math.max(rect.left, boxRect.left)
+                    && Math.min(rect.bottom, boxRect.bottom) > Math.max(rect.top, boxRect.top)
+                    && normalizeText(span.textContent);
+            }).map((span) => ({
+                text: normalizeText(span.textContent),
+                rect: rectValue(span.getBoundingClientRect()),
+            })).sort((left, right) => left.rect.top - right.rect.top || left.rect.left - right.rect.left);
+            const paragraphBlock = content.children.length === 1
+                && content.firstElementChild?.tagName === 'DIV'
+                ? content.firstElementChild
+                : null;
+            const paragraphSpan = paragraphBlock?.children.length === 1
+                && paragraphBlock.firstElementChild?.tagName === 'SPAN'
+                ? paragraphBlock.firstElementChild
+                : null;
+            const naturalLineRects = [];
+            const naturalLineTexts = [];
+            if (paragraphSpan) {
+                try {
+                    const range = document.createRange();
+                    range.selectNodeContents(paragraphSpan);
+                    naturalLineRects.push(...Array.from(range.getClientRects())
+                        .filter((rect) => rect.width > 0.5 && rect.height > 2)
+                        .map(rectValue));
+                    range.detach?.();
+                } catch (_) {}
+                try {
+                    const textNode = paragraphSpan.firstChild;
+                    const rawText = textNode?.nodeType === Node.TEXT_NODE
+                        ? String(textNode.nodeValue || '')
+                        : '';
+                    const measuredLines = [];
+                    for (const match of rawText.matchAll(/\S+/gu)) {
+                        const wordRange = document.createRange();
+                        wordRange.setStart(textNode, match.index);
+                        wordRange.setEnd(textNode, match.index + match[0].length);
+                        const rect = wordRange.getBoundingClientRect();
+                        wordRange.detach?.();
+                        let line = measuredLines.find(
+                            (candidate) => Math.abs(candidate.top - rect.top) <= Math.max(1, rect.height * 0.3),
+                        );
+                        if (!line) {
+                            line = { top: rect.top, words: [] };
+                            measuredLines.push(line);
+                        }
+                        line.words.push(match[0]);
+                    }
+                    measuredLines
+                        .sort((left, right) => left.top - right.top)
+                        .forEach((line) => naturalLineTexts.push(line.words.join(' ')));
+                } catch (_) {}
+            }
+            const selection = window.getSelection();
+            const selectionRects = selection?.rangeCount
+                ? Array.from(selection.getRangeAt(0).getClientRects()).map(rectValue)
+                : [];
+            const selectionStyle = getComputedStyle(content, '::selection');
+            return {
+                annotation_id: id,
+                classes: Array.from(box.classList),
+                text: String(content.textContent || ''),
+                selected_text: String(selection?.toString() || ''),
+                selection_inside: Boolean(
+                    selection?.rangeCount
+                    && content.contains(selection.anchorNode)
+                    && content.contains(selection.focusNode)
+                ),
+                active: document.activeElement === content,
+                content_editable: content.contentEditable,
+                selection_background: selectionStyle.backgroundColor,
+                selection_color: selectionStyle.color,
+                selection_rects: selectionRects,
+                box_rect: rectValue(boxRect),
+                content_rect: rectValue(content.getBoundingClientRect()),
+                content_white_space: getComputedStyle(content).whiteSpace,
+                content_transform: getComputedStyle(content).transform,
+                content_letter_spacing: getComputedStyle(content).letterSpacing,
+                source_spans: sourceSpans,
+                natural_line_rects: naturalLineRects,
+                natural_line_texts: naturalLineTexts,
+                simple_dom: {
+                    root_child_count: content.children.length,
+                    block_tag: paragraphBlock?.tagName || '',
+                    block_child_count: paragraphBlock?.children.length ?? -1,
+                    span_tag: paragraphSpan?.tagName || '',
+                    total_span_count: content.querySelectorAll('span').length,
+                },
+                source_scaffold: {
+                    lines: content.querySelectorAll('[data-source-span-line="1"]').length,
+                    runs: content.querySelectorAll('[data-source-span-run="1"]').length,
+                    gaps: content.querySelectorAll('[data-source-span-gap="1"]').length,
+                    breaks: content.querySelectorAll('[data-source-span-line-break="1"]').length,
+                },
+            };
+        }, annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.selected });
+
+        const normalizedTarget = normalize(targetText);
+        const normalizedSelected = normalize(selectionState?.selected_text || '');
+        const normalizedContent = normalize(selectionState?.text || '');
+        const lines = selectionState?.natural_line_rects || [];
+        const sourceLines = selectionState?.source_spans || [];
+        const naturalLineTexts = selectionState?.natural_line_texts || [];
+        const sourceLineTexts = sourceLines.map((line) => normalize(line.text));
+        const comparableLines = lines.slice(0, sourceLines.length).map((line, index) => ({
+            left: line.left - sourceLines[index].rect.left,
+            right: line.right - sourceLines[index].rect.right,
+            top: line.top - sourceLines[index].rect.top,
+        }));
+        const horizontalDeltas = comparableLines.flatMap((line) => [
+            Math.abs(Number(line.left)),
+            Math.abs(Number(line.right)),
+        ]);
+        const topDeltas = comparableLines.map((line) => Number(line.top)).filter(Number.isFinite);
+        const topDeltaSpread = topDeltas.length
+            ? Math.max(...topDeltas) - Math.min(...topDeltas)
+            : Number.POSITIVE_INFINITY;
+        const detachedSelectionRects = (selectionState?.selection_rects || []).filter(
+            (rect) => Number(rect.height) > 2 && Number(rect.width) <= 1,
+        );
+
+        addCheck(
+            'drylab_paragraph_resolved',
+            annotationId !== ''
+                && normalizedContent === normalizedTarget
+                && (selectionState?.source_spans || []).length === 7,
+            'The exact seven-line Drylab capital paragraph resolves as one promoted annotation.',
+            JSON.stringify({
+                annotation_id: annotationId,
+                source_spans: selectionState?.source_spans,
+            }),
+        );
+        addCheck(
+            'ctrl_a_selects_complete_paragraph',
+            normalizedSelected === normalizedTarget
+                && selectionState?.selection_inside === true
+                && selectionState?.active === true
+                && selectionState?.content_editable === 'true'
+                && selectionState?.selection_background !== 'rgba(0, 0, 0, 0)'
+                && selectionState?.selection_color !== 'rgba(0, 0, 0, 0)',
+            'Ctrl+A selects the complete paragraph inside the active contenteditable with visible selection paint.',
+            JSON.stringify({
+                selected_text: selectionState?.selected_text,
+                selection_inside: selectionState?.selection_inside,
+                active: selectionState?.active,
+                selection_background: selectionState?.selection_background,
+                selection_color: selectionState?.selection_color,
+            }),
+        );
+        addCheck(
+            'paragraph_uses_one_natural_editor_span',
+            selectionState?.simple_dom?.root_child_count === 1
+                && selectionState?.simple_dom?.block_tag === 'DIV'
+                && selectionState?.simple_dom?.block_child_count === 1
+                && selectionState?.simple_dom?.span_tag === 'SPAN'
+                && selectionState?.simple_dom?.total_span_count === 1
+                && Object.values(selectionState?.source_scaffold || {}).every((count) => count === 0)
+                && selectionState?.content_white_space === 'normal'
+                && selectionState?.content_transform === 'none',
+            'The paragraph editor is one natural-flow block/span with no captured source-line, run, gap, or transform scaffold.',
+            JSON.stringify({
+                simple_dom: selectionState?.simple_dom,
+                source_scaffold: selectionState?.source_scaffold,
+                white_space: selectionState?.content_white_space,
+                transform: selectionState?.content_transform,
+            }),
+        );
+        addCheck(
+            'natural_lines_match_source_paragraph',
+            lines.length === 7
+                && comparableLines.length === 7
+                && naturalLineTexts.length === 7
+                && naturalLineTexts.every((line, index) => normalize(line) === sourceLineTexts[index])
+                && comparableLines.every((line) => Math.abs(Number(line.left)) <= 0.75),
+            'The single natural-flow span keeps the same seven word-wrap boundaries and left edge as the source paragraph.',
+            JSON.stringify({
+                source_line_texts: sourceLineTexts,
+                natural_line_texts: naturalLineTexts,
+                horizontal_deltas: horizontalDeltas,
+                letter_spacing: selectionState?.content_letter_spacing,
+                lines,
+            }),
+        );
+        addCheck(
+            'selected_lines_keep_source_vertical_rhythm',
+            topDeltas.length === 7 && topDeltaSpread <= 1.25,
+            'The natural paragraph keeps one consistent vertical offset across all seven source rows.',
+            JSON.stringify({ top_deltas: topDeltas, spread: topDeltaSpread }),
+        );
+        addCheck(
+            'selection_has_no_detached_newline_bars',
+            detachedSelectionRects.length === 0
+                && (selectionState?.selection_rects || []).every((rect) => (
+                    rect.left >= Number(selectionState?.box_rect?.left) - 2
+                    && rect.right <= Number(selectionState?.box_rect?.right) + 2
+                )),
+            'Native selection stays inside the paragraph box with no detached blue newline bars.',
+            JSON.stringify({ selection_rects: selectionState?.selection_rects, detached_selection_rects: detachedSelectionRects }),
+        );
+        addCheck(
+            'paragraph_selection_is_native_contiguous_text',
+            !(selectionState?.selected_text || '').includes('\n')
+                && selectionState?.source_scaffold?.breaks === 0,
+            'Ctrl+A selects one contiguous paragraph string rather than synthetic source-row newlines.',
+            JSON.stringify({
+                selected_text: selectionState?.selected_text,
+                source_scaffold: selectionState?.source_scaffold,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            selection_state: selectionState,
+            checks,
+        }, null, 2)}\n`);
+        await page.keyboard.press('Escape');
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Drylab paragraph before selection', kind: 'image', filename: artifactNames.before },
+                { label: 'Drylab paragraph selected with Ctrl+A', kind: 'image', filename: artifactNames.selected },
+                { label: 'Selection geometry diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                editor_only: true,
+                download_invoked: false,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                selection_state: selectionState,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
         });
     } finally {
         if (documentId) {
@@ -28180,6 +29320,673 @@ async function runPdfUploadSs5ParagraphShrinkFlow({
     }
 }
 
+async function runPdfUploadDrylabParagraphAppendLayoutFlow({
+    config,
+    testKey,
+    label,
+    description,
+    sourcePdfPath,
+}) {
+    ensureOutputDir();
+    const runToken = buildRunToken();
+    const artifactNames = {
+        before: buildArtifactName(testKey, runToken, 'before_append'),
+        active: buildArtifactName(testKey, runToken, 'active_after_append'),
+        deselected: buildArtifactName(testKey, runToken, 'after_deselect'),
+        newTeamSelected: buildArtifactName(testKey, runToken, 'page2_new_team_selected'),
+        cineGearEdited: buildArtifactName(testKey, runToken, 'page3_cine_gear_after_first_input'),
+        diagnostics: buildArtifactName(testKey, runToken, 'diagnostics', 'json'),
+    };
+    const artifactPaths = Object.fromEntries(
+        Object.entries(artifactNames).map(([key, filename]) => [key, path.join(OUTPUT_DIR, filename)]),
+    );
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext({ viewport: VIEWPORT });
+    const page = await context.newPage();
+    const checks = [];
+    const addCheck = (item, passed, descriptionText, detail = '') => checks.push({
+        item,
+        result: passed ? 'PASS' : 'FAIL',
+        description: descriptionText,
+        detail,
+    });
+    let documentId = null;
+    let annotationId = '';
+    let beforeState = null;
+    let editEntryState = null;
+    let activeState = null;
+    let deselectedState = null;
+    let newTeamState = null;
+    let cineGearEntryState = null;
+    let cineGearMutationState = null;
+    let cineGearMovedState = null;
+    const readState = (id) => page.evaluate((annotationId) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+            .find((candidate) => String(candidate.dataset.annotationId || '') === annotationId);
+        const content = box?.querySelector('.enpv-text-content');
+        if (!box || !content) return null;
+        const rectValue = (rect) => ({
+            left: rect.left,
+            top: rect.top,
+            right: rect.right,
+            bottom: rect.bottom,
+            width: rect.width,
+            height: rect.height,
+        });
+        const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+        const boxRect = box.getBoundingClientRect();
+        const sourceLines = Array.from(
+            box.closest('.page')?.querySelectorAll('.textLayer span') || [],
+        ).filter((span) => {
+            const rect = span.getBoundingClientRect();
+            return normalizeText(span.textContent)
+                && Math.min(rect.right, boxRect.right) > Math.max(rect.left, boxRect.left)
+                && Math.min(rect.bottom, boxRect.bottom) > Math.max(rect.top, boxRect.top);
+        }).map((span) => ({
+            text: normalizeText(span.textContent),
+            rect: rectValue(span.getBoundingClientRect()),
+        })).sort((left, right) => left.rect.top - right.rect.top || left.rect.left - right.rect.left);
+        const scaffoldLines = Array.from(
+            content.querySelectorAll('[data-source-span-line="1"]'),
+        );
+        const lineRects = scaffoldLines.length
+            ? scaffoldLines.map((line) => {
+                const rects = Array.from(
+                    line.querySelectorAll('[data-source-span-run="1"]'),
+                ).map((run) => {
+                    try {
+                        const range = document.createRange();
+                        range.selectNodeContents(run);
+                        const rect = range.getBoundingClientRect();
+                        range.detach?.();
+                        return rect;
+                    } catch (_) {
+                        return null;
+                    }
+                }).filter((rect) => rect && rect.width > 0.5 && rect.height > 2);
+                if (!rects.length) return null;
+                const left = Math.min(...rects.map((rect) => rect.left));
+                const top = Math.min(...rects.map((rect) => rect.top));
+                const right = Math.max(...rects.map((rect) => rect.right));
+                const bottom = Math.max(...rects.map((rect) => rect.bottom));
+                return { left, top, right, bottom, width: right - left, height: bottom - top };
+            }).filter(Boolean)
+            : (() => {
+                const rects = [];
+                try {
+                    const paragraphSpan = content.children.length === 1
+                        && content.firstElementChild?.tagName === 'DIV'
+                        && content.firstElementChild?.children.length === 1
+                        && content.firstElementChild?.firstElementChild?.tagName === 'SPAN'
+                        ? content.firstElementChild.firstElementChild
+                        : content;
+                    const range = document.createRange();
+                    range.selectNodeContents(paragraphSpan);
+                    Array.from(range.getClientRects())
+                        .filter((rect) => rect.width > 0.5 && rect.height > 2)
+                        .sort((left, right) => left.top - right.top || left.left - right.left)
+                        .forEach((rect) => {
+                            const existing = rects.find(
+                                (line) => Math.abs(line.top - rect.top) <= Math.max(1, rect.height * 0.3),
+                            );
+                            if (existing) {
+                                existing.left = Math.min(existing.left, rect.left);
+                                existing.top = Math.min(existing.top, rect.top);
+                                existing.right = Math.max(existing.right, rect.right);
+                                existing.bottom = Math.max(existing.bottom, rect.bottom);
+                                existing.width = existing.right - existing.left;
+                                existing.height = existing.bottom - existing.top;
+                            } else {
+                                rects.push(rectValue(rect));
+                            }
+                        });
+                    range.detach?.();
+                } catch (_) {}
+                return rects;
+            })();
+        const naturalLineTexts = [];
+        try {
+            const paragraphSpan = content.children.length === 1
+                && content.firstElementChild?.tagName === 'DIV'
+                && content.firstElementChild?.children.length === 1
+                && content.firstElementChild?.firstElementChild?.tagName === 'SPAN'
+                ? content.firstElementChild.firstElementChild
+                : null;
+            const textNode = paragraphSpan?.firstChild;
+            const rawText = textNode?.nodeType === Node.TEXT_NODE
+                ? String(textNode.nodeValue || '')
+                : '';
+            const measuredLines = [];
+            for (const match of rawText.matchAll(/\S+/gu)) {
+                const wordRange = document.createRange();
+                wordRange.setStart(textNode, match.index);
+                wordRange.setEnd(textNode, match.index + match[0].length);
+                const rect = wordRange.getBoundingClientRect();
+                wordRange.detach?.();
+                let line = measuredLines.find(
+                    (candidate) => Math.abs(candidate.top - rect.top) <= Math.max(1, rect.height * 0.3),
+                );
+                if (!line) {
+                    line = { top: rect.top, words: [] };
+                    measuredLines.push(line);
+                }
+                line.words.push(match[0]);
+            }
+            measuredLines
+                .sort((left, right) => left.top - right.top)
+                .forEach((line) => naturalLineTexts.push(line.words.join(' ')));
+        } catch (_) {}
+        const style = getComputedStyle(content);
+        return {
+            annotation_id: annotationId,
+            text: String(content.textContent || ''),
+            is_editing: box.classList.contains('is-editing'),
+            content_editable: content.isContentEditable,
+            box_rect: rectValue(boxRect),
+            content_rect: rectValue(content.getBoundingClientRect()),
+            line_rects: lineRects,
+            natural_line_texts: naturalLineTexts,
+            source_lines: sourceLines,
+            font_family: style.fontFamily,
+            font_size: Number.parseFloat(style.fontSize || ''),
+            line_height: Number.parseFloat(style.lineHeight || ''),
+            padding_left: Number.parseFloat(style.paddingLeft || ''),
+            padding_top: Number.parseFloat(style.paddingTop || ''),
+            white_space: style.whiteSpace,
+            overflow_wrap: style.overflowWrap,
+            editor_mode: box.dataset.editorMode || '',
+            natural_text_flow: box.dataset.naturalTextFlow || '',
+            promoted_reflow_enabled: box.dataset.promotedReflowEnabled || '',
+            pending_resize: box.dataset.pendingResize || '',
+            source_span_active: box.dataset.sourceSpanEditActive || '',
+            canvas_backed_preview: box.dataset.canvasBackedEditPreview || '',
+            source_mask_attached: box.dataset.sourceMaskAttached || '',
+            paragraph_letter_spacing: box.dataset.promotedParagraphLetterSpacingPx || '',
+            simple_dom: {
+                root_child_count: content.children.length,
+                block_tag: content.firstElementChild?.tagName || '',
+                block_child_count: content.firstElementChild?.children?.length ?? -1,
+                span_tag: content.firstElementChild?.firstElementChild?.tagName || '',
+                total_span_count: content.querySelectorAll('span').length,
+            },
+            source_scaffold: {
+                lines: content.querySelectorAll('[data-source-span-line="1"]').length,
+                runs: content.querySelectorAll('[data-source-span-run="1"]').length,
+                gaps: content.querySelectorAll('[data-source-span-gap="1"]').length,
+                breaks: content.querySelectorAll('[data-source-span-line-break="1"]').length,
+            },
+            classes: Array.from(box.classList),
+        };
+    }, id);
+    const geometry = (state, sourceLines) => {
+        const lines = state?.line_rects || [];
+        const source = sourceLines || [];
+        const comparableCount = Math.min(lines.length, source.length);
+        const comparisons = Array.from({ length: comparableCount }, (_, index) => ({
+            index,
+            left: lines[index].left - source[index].rect.left,
+            top: lines[index].top - source[index].rect.top,
+            right: lines[index].right - source[index].rect.right,
+            bottom: lines[index].bottom - source[index].rect.bottom,
+        }));
+        const topOffsets = comparisons.map((entry) => entry.top);
+        const topSpread = topOffsets.length
+            ? Math.max(...topOffsets) - Math.min(...topOffsets)
+            : Number.POSITIVE_INFINITY;
+        return { lines, comparisons, top_offsets: topOffsets, top_spread: topSpread };
+    };
+    try {
+        const opened = await openPdfUploadDisposableEditor(page, sourcePdfPath, 1, {
+            seedAnnotations: [
+                ...(config.saved_target_annotation ? [config.saved_target_annotation] : []),
+                ...(Array.isArray(config.saved_reference_annotations)
+                    ? config.saved_reference_annotations
+                    : []),
+            ],
+        });
+        documentId = opened.documentId;
+        const targetText = String(config.target_text || '');
+        const appendText = String(config.paragraph_append_text || '123');
+        const resolved = await resolvePdfUploadBoxByExactText(page, targetText);
+        annotationId = resolved.annotationId;
+        beforeState = await readState(annotationId);
+        const expectedText = `${normalize(beforeState?.text || targetText)}${appendText}`;
+        await opened.pageLocator.screenshot({ path: artifactPaths.before });
+
+        addCheck(
+            'drylab_newsletter_paragraph_resolved',
+            annotationId === 'promoted_1_1'
+                && normalize(beforeState?.text || '') === normalize(targetText)
+                && beforeState?.source_lines?.length === 10,
+            'The exact ten-line Drylab newsletter paragraph resolves as promoted_1_1.',
+            JSON.stringify(beforeState),
+        );
+
+        await selectPdfUploadEditorBox(page, resolved.locator);
+        await page.locator('#enpv-ann-menu [data-action="edit"]').dispatchEvent('pointerdown');
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box?.classList.contains('is-editing')
+                && box.querySelector('.enpv-text-content')?.isContentEditable;
+        }, annotationId, { timeout: 30000 });
+        editEntryState = await readState(annotationId);
+        await page.keyboard.type(appendText);
+        await page.waitForFunction(({ id, expected }) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            const comparable = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            return box?.dataset?.pendingEdit === '1'
+                && comparable(box.querySelector('.enpv-text-content')?.textContent) === expected;
+        }, {
+            id: annotationId,
+            expected: normalize(expectedText),
+        }, { timeout: 30000 });
+        await page.waitForTimeout(350);
+        activeState = await readState(annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.active });
+
+        const activeGeometry = geometry(activeState, beforeState?.source_lines);
+        const unchangedActiveLines = activeGeometry.comparisons.slice(0, 9);
+        const expectedVisualLines = (beforeState?.source_lines || []).map((line) => normalize(line.text));
+        if (expectedVisualLines.length) {
+            expectedVisualLines[expectedVisualLines.length - 1] += appendText;
+        }
+        addCheck(
+            'append_keeps_original_line_layout_while_editing',
+            activeState?.text === expectedText
+                && activeState?.line_rects?.length === 10
+                && activeState?.simple_dom?.root_child_count === 1
+                && activeState?.simple_dom?.block_tag === 'DIV'
+                && activeState?.simple_dom?.block_child_count === 1
+                && activeState?.simple_dom?.span_tag === 'SPAN'
+                && activeState?.simple_dom?.total_span_count === 1
+                && Object.values(activeState?.source_scaffold || {}).every((count) => count === 0)
+                && !activeState.text.includes('\n')
+                && activeState.white_space === 'normal'
+                && unchangedActiveLines.length === 9
+                && unchangedActiveLines.every((line) => Math.abs(line.left) <= 0.75)
+                && activeState?.natural_line_texts?.length === expectedVisualLines.length
+                && activeState.natural_line_texts.every(
+                    (line, index) => normalize(line) === expectedVisualLines[index],
+                )
+                && activeGeometry.top_spread <= 1.25
+                && Math.abs(Number(activeGeometry.comparisons[9]?.left)) <= 0.75,
+            'Appending 123 uses one pdfe-style natural paragraph span; it keeps the ten-line wrap without source-row/run scaffolding.',
+            JSON.stringify({
+                geometry: activeGeometry,
+                simple_dom: activeState?.simple_dom,
+                source_scaffold: activeState?.source_scaffold,
+            }),
+        );
+
+        await page.keyboard.press('Escape');
+        await page.waitForFunction((id) => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => String(candidate.dataset.annotationId || '') === id);
+            return box
+                && !box.classList.contains('is-editing')
+                && !box.classList.contains('is-selected');
+        }, annotationId, { timeout: 30000 });
+        await page.waitForTimeout(350);
+        deselectedState = await readState(annotationId);
+        await opened.pageLocator.screenshot({ path: artifactPaths.deselected });
+
+        const deselectedGeometry = geometry(deselectedState, beforeState?.source_lines);
+        const boxDelta = {
+            left: Number(deselectedState?.box_rect?.left) - Number(beforeState?.box_rect?.left),
+            top: Number(deselectedState?.box_rect?.top) - Number(beforeState?.box_rect?.top),
+            width: Number(deselectedState?.box_rect?.width) - Number(beforeState?.box_rect?.width),
+            height: Number(deselectedState?.box_rect?.height) - Number(beforeState?.box_rect?.height),
+        };
+        const firstNine = deselectedGeometry.comparisons.slice(0, 9);
+        addCheck(
+            'deselect_preserves_drylab_paragraph_formatting',
+            deselectedState?.text === expectedText
+                && deselectedState?.line_rects?.length === 10
+                && firstNine.length === 9
+                && firstNine.every((line) => Math.abs(line.left) <= 0.75)
+                && deselectedState?.natural_line_texts?.length === expectedVisualLines.length
+                && deselectedState.natural_line_texts.every(
+                    (line, index) => normalize(line) === expectedVisualLines[index],
+                )
+                && Object.values(deselectedState?.source_scaffold || {}).every((count) => count === 0)
+                && deselectedGeometry.top_spread <= 1.25
+                && Math.abs(Number(deselectedGeometry.comparisons[9]?.left)) <= 0.75
+                && Math.abs(boxDelta.left) <= 0.5
+                && Math.abs(boxDelta.top) <= 0.5
+                && Math.abs(boxDelta.width) <= 0.5
+                && Math.abs(boxDelta.height) <= 0.5
+                && Math.abs(Number(deselectedState?.font_size) - Number(activeState?.font_size)) <= 0.01
+                && Math.abs(Number(deselectedState?.line_height) - Number(activeState?.line_height)) <= 0.01,
+            'Deselecting keeps the edited paragraph at its original origin, bounds, font metrics, indentation, and ten source lines.',
+            JSON.stringify({
+                geometry: deselectedGeometry,
+                box_delta: boxDelta,
+                active_state: activeState,
+                deselected_state: deselectedState,
+            }),
+        );
+
+        const newTeamText = [
+            "New team members: We've extended our organization with two permanent developers",
+            "based in Łódź, the film capital of Poland. Two highly skilled interns from the University of",
+            "Oslo's Entrepreneurship Program, will be working on market research until mid-June",
+            '(starting in March), preparing for the US launch. Also, two computer science students',
+            'are working as part-time interns during spring, on machine learning and analysis',
+            'research, as well as innovative architectures based on the Swift language. We hope our',
+            'interns will consider sticking around!',
+        ].join(' ');
+        const pageTwo = page.locator('.pdfViewer .page[data-page-number="2"]');
+        await pageTwo.scrollIntoViewIfNeeded();
+        await page.waitForSelector(
+            '.pdfViewer .page[data-page-number="2"] .textLayer',
+            { state: 'attached', timeout: 60000 },
+        );
+        const newTeamBox = page.locator(
+            '.pdfViewer .page[data-page-number="2"] .enpv-annotation-box[data-annotation-id="promoted_2_2"]:visible',
+        ).last();
+        await newTeamBox.waitFor({ state: 'visible', timeout: 60000 });
+        await selectPdfUploadEditorBox(page, newTeamBox);
+        await page.keyboard.press('Control+A');
+        await page.waitForFunction(() => {
+            const box = document.querySelector(
+                '.enpv-annotation-box[data-annotation-id="promoted_2_2"].is-editing',
+            );
+            return box?.querySelector('.enpv-text-content')?.isContentEditable;
+        }, null, { timeout: 30000 });
+        newTeamState = await newTeamBox.evaluate((box) => {
+            const content = box.querySelector('.enpv-text-content');
+            const block = content?.children.length === 1
+                && content.firstElementChild?.tagName === 'DIV'
+                ? content.firstElementChild
+                : null;
+            const span = block?.children.length === 1
+                && block.firstElementChild?.tagName === 'SPAN'
+                ? block.firstElementChild
+                : null;
+            const rectValue = (rect) => ({
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom,
+                width: rect.width,
+                height: rect.height,
+            });
+            const lineRects = [];
+            if (span) {
+                const range = document.createRange();
+                range.selectNodeContents(span);
+                lineRects.push(...Array.from(range.getClientRects())
+                    .filter((rect) => rect.width > 0.5 && rect.height > 2)
+                    .map(rectValue));
+                range.detach?.();
+            }
+            const selection = window.getSelection();
+            const selectionRects = selection?.rangeCount
+                ? Array.from(selection.getRangeAt(0).getClientRects()).map(rectValue)
+                : [];
+            const style = getComputedStyle(content);
+            return {
+                text: String(content?.textContent || ''),
+                selected_text: String(selection?.toString() || ''),
+                selection_inside: Boolean(
+                    selection?.rangeCount
+                    && content?.contains(selection.anchorNode)
+                    && content?.contains(selection.focusNode)
+                ),
+                box_rect: rectValue(box.getBoundingClientRect()),
+                line_rects: lineRects,
+                selection_rects: selectionRects,
+                simple_dom: {
+                    root_child_count: content?.children.length ?? -1,
+                    block_tag: block?.tagName || '',
+                    block_child_count: block?.children.length ?? -1,
+                    span_tag: span?.tagName || '',
+                    total_span_count: content?.querySelectorAll('span').length ?? -1,
+                },
+                source_scaffold_count: content?.querySelectorAll(
+                    '[data-source-span-line], [data-source-span-run], [data-source-span-gap], [data-source-span-line-break]',
+                ).length ?? -1,
+                font_family: style.fontFamily,
+                font_size: Number.parseFloat(style.fontSize || ''),
+                line_height: Number.parseFloat(style.lineHeight || ''),
+                white_space: style.whiteSpace,
+                transform: style.transform,
+            };
+        });
+        await pageTwo.screenshot({ path: artifactPaths.newTeamSelected });
+        const newTeamSelectionBars = (newTeamState?.selection_rects || []).filter(
+            (rect) => Number(rect.height) > 2 && Number(rect.width) <= 1,
+        );
+        addCheck(
+            'new_team_paragraph_matches_pdfe_editor_contract',
+            normalize(newTeamState?.text || '') === normalize(newTeamText)
+                && normalize(newTeamState?.selected_text || '') === normalize(newTeamText)
+                && newTeamState?.text.includes('Łódź')
+                && !newTeamState?.text.includes('Ł ód ź')
+                && newTeamState?.selection_inside === true
+                && newTeamState?.simple_dom?.root_child_count === 1
+                && newTeamState?.simple_dom?.block_tag === 'DIV'
+                && newTeamState?.simple_dom?.block_child_count === 1
+                && newTeamState?.simple_dom?.span_tag === 'SPAN'
+                && newTeamState?.simple_dom?.total_span_count === 1
+                && newTeamState?.source_scaffold_count === 0
+                && newTeamState?.line_rects?.length === 13
+                && newTeamSelectionBars.length === 0
+                && newTeamState?.selection_rects?.every((rect) => (
+                    rect.left >= Number(newTeamState?.box_rect?.left) - 2
+                    && rect.right <= Number(newTeamState?.box_rect?.right) + 2
+                ))
+                && /lato|g_d/i.test(newTeamState?.font_family || '')
+                && newTeamState?.white_space === 'normal'
+                && newTeamState?.transform === 'none',
+            'Drylab “New team members” is one naturally wrapped, selectable span with joined Łódź text and no source-run scaffold.',
+            JSON.stringify(newTeamState),
+        );
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(() => {
+            const box = document.querySelector(
+                '.enpv-annotation-box[data-annotation-id="promoted_2_2"]',
+            );
+            return box && !box.classList.contains('is-editing');
+        }, null, { timeout: 30000 });
+
+        const pageThree = page.locator('.pdfViewer .page[data-page-number="3"]');
+        await pageThree.scrollIntoViewIfNeeded();
+        await page.waitForSelector(
+            '.pdfViewer .page[data-page-number="3"] .textLayer',
+            { state: 'attached', timeout: 60000 },
+        );
+        const cineGearBox = page.locator(
+            '.pdfViewer .page[data-page-number="3"] .enpv-annotation-box[data-annotation-id="promoted_3_1"]:visible',
+        ).last();
+        await cineGearBox.waitFor({ state: 'visible', timeout: 60000 });
+        await cineGearBox.dblclick({
+            position: { x: 12, y: 12 },
+            force: true,
+        });
+        await page.waitForFunction(() => {
+            const box = document.querySelector(
+                '.enpv-annotation-box[data-annotation-id="promoted_3_1"].is-editing',
+            );
+            return box?.querySelector('.enpv-text-content')?.isContentEditable;
+        }, null, { timeout: 30000 });
+        cineGearEntryState = await readState('promoted_3_1');
+        await page.evaluate(() => {
+            const content = document.querySelector(
+                '.enpv-annotation-box[data-annotation-id="promoted_3_1"] .enpv-text-content',
+            );
+            if (!content) return;
+            const range = document.createRange();
+            range.selectNodeContents(content);
+            range.collapse(false);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            content.focus();
+        });
+        await page.keyboard.type('x');
+        await page.waitForFunction(() => {
+            const box = document.querySelector(
+                '.enpv-annotation-box[data-annotation-id="promoted_3_1"].is-editing',
+            );
+            return box?.dataset.pendingEdit === '1'
+                && box.querySelector('.enpv-text-content')?.textContent?.endsWith('x');
+        }, null, { timeout: 30000 });
+        await page.waitForTimeout(200);
+        cineGearMutationState = await readState('promoted_3_1');
+        await pageThree.screenshot({ path: artifactPaths.cineGearEdited });
+        const cineGearBoxDelta = {
+            left: Number(cineGearMutationState?.box_rect?.left) - Number(cineGearEntryState?.box_rect?.left),
+            top: Number(cineGearMutationState?.box_rect?.top) - Number(cineGearEntryState?.box_rect?.top),
+            width: Number(cineGearMutationState?.box_rect?.width) - Number(cineGearEntryState?.box_rect?.width),
+            height: Number(cineGearMutationState?.box_rect?.height) - Number(cineGearEntryState?.box_rect?.height),
+        };
+        addCheck(
+            'double_click_converts_cine_gear_once_without_first_input_jump',
+            cineGearEntryState?.is_editing === true
+                && cineGearEntryState?.content_editable === true
+                && cineGearEntryState?.canvas_backed_preview === ''
+                && cineGearEntryState?.source_mask_attached === '1'
+                && cineGearEntryState?.white_space === 'normal'
+                && cineGearEntryState?.simple_dom?.root_child_count === 1
+                && cineGearEntryState?.simple_dom?.block_tag === 'DIV'
+                && cineGearEntryState?.simple_dom?.block_child_count === 1
+                && cineGearEntryState?.simple_dom?.span_tag === 'SPAN'
+                && Object.values(cineGearEntryState?.source_scaffold || {}).every((count) => count === 0)
+                && cineGearMutationState?.canvas_backed_preview === ''
+                && cineGearMutationState?.source_mask_attached === '1'
+                && cineGearMutationState?.line_rects?.length === cineGearEntryState?.line_rects?.length
+                && Object.values(cineGearBoxDelta).every((delta) => Math.abs(delta) <= 0.5)
+                && Math.abs(Number(cineGearMutationState?.line_height) - Number(cineGearEntryState?.line_height)) <= 0.01
+                && Math.abs(Number(cineGearMutationState?.padding_left) - Number(cineGearEntryState?.padding_left)) <= 0.01
+                && Math.abs(Number(cineGearMutationState?.padding_top) - Number(cineGearEntryState?.padding_top)) <= 0.01
+                && String(cineGearMutationState?.paragraph_letter_spacing || '')
+                    === String(cineGearEntryState?.paragraph_letter_spacing || ''),
+            'Double-click immediately replaces Cine Gear’s PDF glyphs with one stable text editor; the first input does not swap renderers, resize, or reinitialize flow.',
+            JSON.stringify({
+                entry: cineGearEntryState,
+                after_first_input: cineGearMutationState,
+                box_delta: cineGearBoxDelta,
+            }),
+        );
+        const cineGearMove = await movePdfUploadEditorBox(page, cineGearBox, 24, 18);
+        await page.waitForTimeout(200);
+        cineGearMovedState = await readState('promoted_3_1');
+        const cineGearMoveDelta = {
+            left: Number(cineGearMovedState?.box_rect?.left) - Number(cineGearMutationState?.box_rect?.left),
+            top: Number(cineGearMovedState?.box_rect?.top) - Number(cineGearMutationState?.box_rect?.top),
+            width: Number(cineGearMovedState?.box_rect?.width) - Number(cineGearMutationState?.box_rect?.width),
+            height: Number(cineGearMovedState?.box_rect?.height) - Number(cineGearMutationState?.box_rect?.height),
+        };
+        addCheck(
+            'moving_converted_cine_gear_keeps_the_same_text_flow',
+            Math.abs(cineGearMoveDelta.left) >= 5
+                && Math.abs(cineGearMoveDelta.top) >= 5
+                && Math.abs(cineGearMoveDelta.width) <= 0.5
+                && Math.abs(cineGearMoveDelta.height) <= 0.5
+                && cineGearMovedState?.simple_dom?.root_child_count === 1
+                && cineGearMovedState?.simple_dom?.block_tag === 'DIV'
+                && cineGearMovedState?.simple_dom?.block_child_count === 1
+                && cineGearMovedState?.simple_dom?.span_tag === 'SPAN'
+                && Object.values(cineGearMovedState?.source_scaffold || {}).every((count) => count === 0)
+                && cineGearMovedState?.line_rects?.length === cineGearMutationState?.line_rects?.length
+                && Math.abs(Number(cineGearMovedState?.line_height) - Number(cineGearMutationState?.line_height)) <= 0.01
+                && String(cineGearMovedState?.paragraph_letter_spacing || '')
+                    === String(cineGearMutationState?.paragraph_letter_spacing || ''),
+            'Dragging an already converted paragraph changes only its position; it does not rebuild source runs, resize the box, or adjust its flow.',
+            JSON.stringify({
+                move: cineGearMove,
+                before_move: cineGearMutationState,
+                after_move: cineGearMovedState,
+                delta: cineGearMoveDelta,
+            }),
+        );
+
+        fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+            config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+            disposable_document_id: documentId,
+            resolved_annotation_id: annotationId,
+            before_state: beforeState,
+            edit_entry_state: editEntryState,
+            active_after_append_state: activeState,
+            deselected_state: deselectedState,
+            new_team_state: newTeamState,
+            cine_gear_entry_state: cineGearEntryState,
+            cine_gear_after_first_input_state: cineGearMutationState,
+            cine_gear_after_move_state: cineGearMovedState,
+            comparisons: {
+                active: activeGeometry,
+                deselected: deselectedGeometry,
+                box_delta: boxDelta,
+            },
+            checks,
+        }, null, 2)}\n`);
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: checks.every((check) => check.result === 'PASS') ? 'pass' : 'fail',
+            checks,
+            artifacts: [
+                { label: 'Drylab newsletter paragraph before edit', kind: 'image', filename: artifactNames.before },
+                { label: 'Drylab newsletter paragraph after appending 123', kind: 'image', filename: artifactNames.active },
+                { label: 'Drylab newsletter paragraph after deselection', kind: 'image', filename: artifactNames.deselected },
+                { label: 'Drylab page 2 New team members selected', kind: 'image', filename: artifactNames.newTeamSelected },
+                { label: 'Drylab page 3 Cine Gear after first input', kind: 'image', filename: artifactNames.cineGearEdited },
+                { label: 'Paragraph layout diagnostics', kind: 'json', filename: artifactNames.diagnostics },
+            ],
+            metadata: {
+                test_id: config.test_id,
+                upload_test_id: config.upload_test_id,
+                upload_test_case_id: config.upload_test_case_id,
+                source_document_id: config.source_document_id,
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                editor_only: true,
+                download_invoked: false,
+            },
+        });
+    } catch (error) {
+        try {
+            fs.writeFileSync(artifactPaths.diagnostics, `${JSON.stringify({
+                config: { ...config, source_pdf_path: path.basename(sourcePdfPath) },
+                disposable_document_id: documentId,
+                resolved_annotation_id: annotationId,
+                before_state: beforeState,
+                edit_entry_state: editEntryState,
+                active_after_append_state: activeState,
+                deselected_state: deselectedState,
+                new_team_state: newTeamState,
+                cine_gear_entry_state: cineGearEntryState,
+                cine_gear_after_first_input_state: cineGearMutationState,
+                cine_gear_after_move_state: cineGearMovedState,
+                checks,
+                error: error.stack || String(error),
+            }, null, 2)}\n`);
+        } catch (_) {}
+        return buildResult({
+            testKey,
+            label,
+            description,
+            testCategory: 'PDF Upload Tests',
+            status: 'error',
+            checks,
+            error: error.stack || String(error),
+            artifacts: fs.existsSync(artifactPaths.diagnostics)
+                ? [{ label: 'Failure diagnostics', kind: 'json', filename: artifactNames.diagnostics }]
+                : [],
+        });
+    } finally {
+        if (documentId) {
+            try { await deleteDocument(page, documentId); } catch (_) {}
+        }
+        await browser.close();
+    }
+}
+
 async function runPdfUploadSavedTestFlow() {
     const staticTest = TESTS.pdf_upload_saved_test;
     ensureOutputDir();
@@ -28223,11 +30030,15 @@ async function runPdfUploadSavedTestFlow() {
         f1040s3_page1_move_part_header_preserves_source_tile: 'f1040s3 Page 1 Move Part I / Preserve Source Tile',
         f1040s3_page1_move_down_preserves_font_size: 'f1040s3 Page 1 Move Down / Preserve Font Size',
         drylab_page1_move_title_preserves_footer: 'Drylab Page 1 Move Title / Preserve Footer',
+        drylab_page1_select_paragraph_matches_source: 'Drylab Page 1 Select Paragraph / Match Source',
+        drylab_page1_append_paragraph_preserves_layout: 'Drylab Page 1 Append Paragraph / Preserve Layout',
         table_examples_page1_move_header_preserves_editor_table: 'Table Examples Page 1 Move Header / Preserve Editor Table',
         table_examples_page1_edge_tight_header_export: 'Table Examples Page 1 Tight Header / Single-Line Export',
         table_examples_page1_promoted_edit_entry_stable: 'Table Examples Page 1 Promoted Edit Entry / No Jump',
         table_examples_page2_edit_text_preserves_geometry: 'Table Examples Page 2 Edit Text / Preserve Geometry',
         table_examples_page3_exact_font_edit_preserves_geometry: 'Table Examples Page 3 Exact Font Edit / Preserve Geometry',
+        mc0072_page1_append_preserves_font_metrics: 'MC-0072 Page 1 Append / Preserve Font Metrics',
+        mc0072_page1_inline_styles_export: 'MC-0072 Page 1 Inline Styles / Export',
         ss5_page3_shrink_paragraph_and_export: 'SS-5 Page 3 Shrink Paragraph / Export',
     };
     const label = `Uploaded PDF Test ${config.test_id || '?'}: ${scenarioLabels[config.scenario] || 'Unsupported Saved Instruction'}`;
@@ -28254,11 +30065,15 @@ async function runPdfUploadSavedTestFlow() {
         'f1040s3_page1_move_part_header_preserves_source_tile',
         'f1040s3_page1_move_down_preserves_font_size',
         'drylab_page1_move_title_preserves_footer',
+        'drylab_page1_select_paragraph_matches_source',
+        'drylab_page1_append_paragraph_preserves_layout',
         'table_examples_page1_move_header_preserves_editor_table',
         'table_examples_page1_edge_tight_header_export',
         'table_examples_page1_promoted_edit_entry_stable',
         'table_examples_page2_edit_text_preserves_geometry',
         'table_examples_page3_exact_font_edit_preserves_geometry',
+        'mc0072_page1_append_preserves_font_metrics',
+        'mc0072_page1_inline_styles_export',
         'ss5_page3_shrink_paragraph_and_export',
     ]);
     if (!supportedScenarios.has(config.scenario)) {
@@ -28447,6 +30262,26 @@ async function runPdfUploadSavedTestFlow() {
         });
     }
 
+    if (config.scenario === 'drylab_page1_select_paragraph_matches_source') {
+        return runPdfUploadDrylabSelectionFidelityFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'drylab_page1_append_paragraph_preserves_layout') {
+        return runPdfUploadDrylabParagraphAppendLayoutFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
     if (config.scenario === 'table_examples_page1_move_header_preserves_editor_table') {
         return runPdfUploadTableHeaderMoveEditorFlow({
             config,
@@ -28480,8 +30315,19 @@ async function runPdfUploadSavedTestFlow() {
     if ([
         'table_examples_page2_edit_text_preserves_geometry',
         'table_examples_page3_exact_font_edit_preserves_geometry',
+        'mc0072_page1_append_preserves_font_metrics',
     ].includes(config.scenario)) {
         return runPdfUploadTableTextEditGeometryFlow({
+            config,
+            testKey,
+            label,
+            description,
+            sourcePdfPath,
+        });
+    }
+
+    if (config.scenario === 'mc0072_page1_inline_styles_export') {
+        return runPdfUploadMc0072InlineStylesExportFlow({
             config,
             testKey,
             label,

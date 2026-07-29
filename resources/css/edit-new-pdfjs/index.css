@@ -3853,26 +3853,16 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
     user-select: text;
 }
 /*
- * Clean promoted paragraphs are painted by the PDF canvas before editing.
- * Keep those authoritative pixels visible on edit entry and use the aligned
- * contenteditable only for hit-testing, selection, and its caret. The first
- * real mutation installs a source mask and removes this class atomically.
+ * Keep selection feedback deterministic for every editable text annotation,
+ * including persisted overlays and newly added text. This also prevents page-
+ * level ::selection rules or browser differences from making a valid native
+ * selection invisible.
  */
-.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content,
-.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content * {
-    color: transparent !important;
-    -webkit-text-fill-color: transparent !important;
-    -webkit-text-stroke-color: transparent !important;
-    text-decoration-color: transparent !important;
-    text-shadow: none !important;
-}
-.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content {
-    caret-color: var(--enpv-text-color, #000) !important;
-}
-.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content::selection,
-.enpv-annotation-box.is-editing.is-canvas-backed-edit-preview .enpv-text-content *::selection {
-    color: transparent !important;
-    -webkit-text-fill-color: transparent !important;
+.enpv-annotation-box.is-editing .enpv-text-content::selection,
+.enpv-annotation-box.is-editing .enpv-text-content *::selection {
+    background: #2563eb !important;
+    color: #fff !important;
+    -webkit-text-fill-color: #fff !important;
 }
 .enpv-annotation-box.is-user-sized-text .enpv-text-content {
     overflow: hidden;
@@ -3899,9 +3889,29 @@ body.enpv-body .pdfViewer .page > .annotationLayer {
     overflow: visible;
 }
 .enpv-edit-source-line[data-source-span-line="1"] {
-    display: inline-block;
+    display: block;
     vertical-align: top;
     white-space: pre;
+}
+.enpv-edit-line-break[data-source-span-line-break="1"] {
+    /* The newline keeps copy/paste and caret navigation honest, but it sits
+       between two block-level source lines. Left inline it would generate its
+       own strut-height line box and double the paragraph's flowed height, so
+       the captured per-line slot heights would only look right once the glyph
+       alignment transforms landed. Collapse it to a zero-height block instead:
+       the scaffold then reproduces the PDF's line breaks and paragraph gaps on
+       its own. */
+    display: block;
+    height: 0;
+    font-size: 0;
+    line-height: 0;
+    letter-spacing: 0;
+    word-spacing: 0;
+}
+.enpv-annotation-box.is-editing .enpv-text-content .enpv-edit-line-break::selection {
+    background: transparent !important;
+    color: transparent !important;
+    -webkit-text-fill-color: transparent !important;
 }
 .enpv-edit-gap[data-source-span-gap="1"][style*="--enpv-source-gap-width"] {
     display: inline-block;
@@ -4077,6 +4087,22 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay.is-single-line
     overflow-wrap: break-word;
     word-break: normal;
     overflow-x: hidden;
+}
+.enpv-annotation-box.is-editing.is-promoted-paragraph-flow .enpv-text-content > div {
+    display: block;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+}
+.enpv-annotation-box.is-editing.is-promoted-paragraph-flow .enpv-text-content > div > span {
+    display: inline;
+    margin: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    letter-spacing: inherit;
+    word-spacing: inherit;
+    text-decoration: inherit;
 }
 .enpv-annotation-box.is-editing.is-promoted-paragraph-flow .enpv-text-content * {
     max-width: 100%;

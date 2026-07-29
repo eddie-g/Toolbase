@@ -15970,7 +15970,7 @@
                         const legacyWholeBlockMatch = existingDirtyPromotedByKey.get(rootSourceKey)
                             || hydratedSavedPromotedBySourceKey.get(rootSourceKey)
                             || null;
-                        const shouldHonorLegacyWholeBlockMatch = savedPromotedAnnotationHasMaterialEdits(legacyWholeBlockMatch);
+                        const shouldHonorLegacyWholeBlockMatch = promotedSavedAnnotationHasMaterialEdits(legacyWholeBlockMatch);
                         const builtAnnotations = buildTextAnnotationsFromExtractionBlock(block, pageData, absorbedInlineBlocks, extractedSource);
                         const candidateAnnotations = shouldHonorLegacyWholeBlockMatch
                             ? [buildPromotedTextAnnotationFromSource(block, pageData, extractedSource)]
@@ -15996,14 +15996,14 @@
                             let savedPromotedMatch = null;
                             const exactSavedPromotedMatch = hydratedSavedPromotedBySourceKey.get(sourceKey);
                             if (
-                                savedPromotedAnnotationHasMaterialEdits(exactSavedPromotedMatch)
+                                promotedSavedAnnotationHasMaterialEdits(exactSavedPromotedMatch)
                                 && isPromotedAnnotationCompatibleWithExtractionBlock(exactSavedPromotedMatch, builtAnnotation, sourceKey)
                             ) {
                                 savedPromotedMatch = exactSavedPromotedMatch;
                             }
                             if (!savedPromotedMatch) {
                                 savedPromotedMatch = hydratedSavedPromotedAnnotations.find((candidate) => {
-                                    if (!savedPromotedAnnotationHasMaterialEdits(candidate)) {
+                                    if (!promotedSavedAnnotationHasMaterialEdits(candidate)) {
                                         return false;
                                     }
                                     const candidateId = String(candidate?.id || '');
@@ -16219,7 +16219,7 @@
                         }
 
                         const savedWholeBlockMatch = promotedBySourceKey.get(rootSourceKey) || null;
-                        const shouldHonorLegacyWholeBlockMatch = savedPromotedAnnotationHasMaterialEdits(savedWholeBlockMatch);
+                        const shouldHonorLegacyWholeBlockMatch = promotedSavedAnnotationHasMaterialEdits(savedWholeBlockMatch);
                         if (savedWholeBlockMatch && !shouldHonorLegacyWholeBlockMatch) {
                             unregisterHydratedAnnotation(savedWholeBlockMatch);
                         }

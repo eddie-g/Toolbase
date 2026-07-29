@@ -274,6 +274,9 @@
                         }
                     } catch (error) {
                         console.error('[PDF Debug] Inspection failed', error);
+                        // The editor frame may contain stale or partially initialized
+                        // runtime code. Force the next inspection to reload it.
+                        this.loadedDocumentId = null;
                         this.setStatus(error?.message || 'Inspection failed.', 'error');
                     } finally {
                         this.loading = false;

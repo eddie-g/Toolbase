@@ -21,6 +21,7 @@ import {
     sourceSpanDrawnUnderlineRanges,
     sourceVisualLineSlots,
     splitSourceRunsAtDrawnUnderlineRanges,
+    textResizeCollisionLimits,
 } from './source-edit-contract.js';
 
 const baseSourceOverlay = {
@@ -92,6 +93,12 @@ test('recognizes abbreviated bold-condensed PDF face names', () => {
     assert.equal(pdfjsFontWeightFromFaceName('ETLIDL+HelveticaNeueLTStd-BdCn'), '700');
     assert.equal(pdfjsFontWeightFromFaceName('HelveticaNeueLTStd-BdIt'), '700');
     assert.equal(pdfjsFontWeightFromFaceName('BBBPSR+HelveticaNeueLTStd-Cn'), '400');
+});
+
+test('reads the weight axis of variable-font instances before the style name', () => {
+    assert.equal(pdfjsFontWeightFromFaceName('MontserratThin_700wght'), '700');
+    assert.equal(pdfjsFontWeightFromFaceName('ABCDEF+MontserratThin_300wght'), '300');
+    assert.equal(pdfjsFontWeightFromFaceName('MontserratThin'), '300');
 });
 
 test('repairs whitespace-only drift without losing mixed run styles', () => {
@@ -249,6 +256,40 @@ test('assigns horizontally overlapping same-row masks to one source column', () 
     assert.equal(clamped.right, 185);
     assert.equal(clamped.top, 100);
     assert.equal(clamped.bottom, 120);
+});
+
+test('limits text-box expansion at neighbouring text on all four edges', () => {
+    const start = { left: 100, top: 100, width: 200, height: 120 };
+    const limits = textResizeCollisionLimits(start, [
+        { left: 20, top: 130, width: 50, height: 20 },
+        { left: 330, top: 130, width: 80, height: 20 },
+        { left: 150, top: 40, width: 40, height: 30 },
+        { left: 150, top: 250, width: 40, height: 30 },
+        // This is already inside the starting box and must not freeze resize.
+        { left: 120, top: 120, width: 60, height: 20 },
+        // Diagonal text does not constrain an edge it cannot overlap.
+        { left: 400, top: 300, width: 30, height: 20 },
+    ], { left: 0, top: 0, width: 500, height: 500 }, 2);
+
+    assert.deepEqual(limits, {
+        left: 72,
+        top: 72,
+        right: 328,
+        bottom: 248,
+    });
+});
+
+test('uses page edges when no neighbouring text blocks expansion', () => {
+    assert.deepEqual(textResizeCollisionLimits(
+        { left: 100, top: 100, width: 200, height: 120 },
+        [],
+        { left: 0, top: 0, width: 500, height: 500 },
+    ), {
+        left: 0,
+        top: 0,
+        right: 500,
+        bottom: 500,
+    });
 });
 
 test('restores an explicit PDF.js whitespace span without inventing word breaks', () => {

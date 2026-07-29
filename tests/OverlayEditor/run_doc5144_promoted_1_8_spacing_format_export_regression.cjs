@@ -23,6 +23,9 @@ const DOCUMENT_ID = Number(process.env.DOCUMENT_ID || 5144);
 const TARGET_ID = process.env.TARGET_ID || 'promoted_1_8';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'eddie.gray.biz@gmail.com';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'codex-test-admin-2861';
+const ADMIN_SESSION_COOKIE_NAME = process.env.ADMIN_SESSION_COOKIE_NAME || '';
+const ADMIN_SESSION_COOKIE_VALUE = process.env.ADMIN_SESSION_COOKIE_VALUE || '';
+const SELECTION_ONLY = process.env.SELECTION_ONLY === '1';
 const PYTHON_BIN = process.env.PYTHON_BIN
     || path.resolve(__dirname, '..', '..', 'python', 'venv', 'bin', 'python');
 
@@ -71,6 +74,119 @@ function normalizedRunText(runs) {
     )).join('').replace(/\s+/g, ' ').trim();
 }
 
+async function assertPromotedParagraphSelectionContract(page) {
+    const selectionSelector = '.enpv-annotation-box[data-annotation-id="promoted_1_2"]';
+    await page.waitForSelector(selectionSelector, { timeout: 90000 });
+    const selectionBox = page.locator(`${selectionSelector}:visible`).last();
+    await selectionBox.scrollIntoViewIfNeeded();
+
+    // A selected text annotation is a paragraph-scoped Select All target even
+    // before its hidden source-backed contenteditable has been focused.
+    await selectionBox.click({ force: true });
+    await page.keyboard.press('Control+A');
+    await page.waitForSelector(`${selectionSelector}.is-editing`, { timeout: 10000 });
+
+    const selectAllState = await selectionBox.evaluate((node) => {
+        const content = node.querySelector('.enpv-text-content');
+        const selection = window.getSelection();
+        const selectedText = String(selection?.toString() || '');
+        const fullText = String(content?.textContent || '');
+        const selectionStyle = getComputedStyle(content, '::selection');
+        return {
+            selectedText,
+            fullText,
+            selectedNormalized: selectedText.replace(/\s+/g, ' ').trim(),
+            fullNormalized: fullText.replace(/\s+/g, ' ').trim(),
+            selectionInside: Boolean(
+                selection?.rangeCount
+                && content?.contains(selection.anchorNode)
+                && content?.contains(selection.focusNode)
+            ),
+            active: document.activeElement === content,
+            contentEditable: content?.contentEditable,
+            selectionBackground: selectionStyle.backgroundColor,
+            selectionColor: selectionStyle.color,
+        };
+    });
+    if (selectAllState.selectedNormalized !== selectAllState.fullNormalized
+        || !selectAllState.selectionInside
+        || !selectAllState.active
+        || selectAllState.contentEditable !== 'true'
+        || selectAllState.selectionBackground === 'rgba(0, 0, 0, 0)'
+        || selectAllState.selectionBackground === 'transparent'
+        || selectAllState.selectionColor === 'rgba(0, 0, 0, 0)'
+        || selectAllState.selectionColor === 'transparent') {
+        throw new Error(`Promoted paragraph Ctrl+A contract failed: ${JSON.stringify(selectAllState)}`);
+    }
+
+    // Collapse the full range before starting an independent pointer gesture.
+    // This avoids platform-specific drag-the-existing-selection behavior.
+    await page.keyboard.press('ArrowLeft');
+    const dragGeometry = await selectionBox.evaluate((node) => {
+        const content = node.querySelector('.enpv-text-content');
+        const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+        let textNode = walker.nextNode();
+        while (textNode && String(textNode.nodeValue || '').trim().length < 24) {
+            textNode = walker.nextNode();
+        }
+        if (!textNode) throw new Error('No selectable text run found in promoted_1_2.');
+        const value = String(textNode.nodeValue || '');
+        const startOffset = Math.max(0, value.search(/\S/));
+        const endOffset = Math.min(value.length, startOffset + 22);
+        const startRange = document.createRange();
+        startRange.setStart(textNode, startOffset);
+        startRange.setEnd(textNode, Math.min(value.length, startOffset + 1));
+        const endRange = document.createRange();
+        endRange.setStart(textNode, Math.max(startOffset, endOffset - 1));
+        endRange.setEnd(textNode, endOffset);
+        const startRect = startRange.getBoundingClientRect();
+        const endRect = endRange.getBoundingClientRect();
+        return {
+            start: { x: startRect.left + 1, y: startRect.top + (startRect.height / 2) },
+            end: { x: endRect.right - 1, y: endRect.top + (endRect.height / 2) },
+        };
+    });
+    await page.mouse.move(dragGeometry.start.x, dragGeometry.start.y);
+    await page.mouse.down();
+    await page.mouse.move(dragGeometry.end.x, dragGeometry.end.y, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(50);
+
+    const dragState = await selectionBox.evaluate((node) => {
+        const content = node.querySelector('.enpv-text-content');
+        const selection = window.getSelection();
+        return {
+            selectedText: String(selection?.toString() || ''),
+            fullText: String(content?.textContent || ''),
+            selectionInside: Boolean(
+                selection?.rangeCount
+                && content?.contains(selection.anchorNode)
+                && content?.contains(selection.focusNode)
+            ),
+        };
+    });
+    if (dragState.selectedText.length < 5
+        || dragState.selectedText.length >= dragState.fullText.length
+        || !dragState.selectionInside) {
+        throw new Error(`Promoted paragraph pointer selection contract failed: ${JSON.stringify(dragState)}`);
+    }
+
+    await page.keyboard.press('Control+A');
+    const repeatSelectAll = await selectionBox.evaluate((node) => (
+        String(window.getSelection()?.toString() || '').replace(/\s+/g, ' ').trim()
+        === String(node.querySelector('.enpv-text-content')?.textContent || '').replace(/\s+/g, ' ').trim()
+    ));
+    if (!repeatSelectAll) throw new Error('Ctrl+A did not reselect the complete promoted paragraph.');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector(`${selectionSelector}:not(.is-editing)`, { timeout: 10000 });
+    return {
+        ctrlASelectedLength: selectAllState.selectedText.length,
+        pointerSelectedText: dragState.selectedText,
+        selectionBackground: selectAllState.selectionBackground,
+        selectionColor: selectAllState.selectionColor,
+    };
+}
+
 async function main() {
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({
@@ -86,7 +202,20 @@ async function main() {
     let keepOutput = process.env.KEEP_OUTPUT === '1';
 
     try {
-        await login(page);
+        if (ADMIN_SESSION_COOKIE_NAME && ADMIN_SESSION_COOKIE_VALUE) {
+            const baseUrl = new URL(BASE_URL);
+            await context.addCookies([{
+                name: ADMIN_SESSION_COOKIE_NAME,
+                value: ADMIN_SESSION_COOKIE_VALUE,
+                domain: baseUrl.hostname,
+                path: '/',
+                httpOnly: true,
+                secure: baseUrl.protocol === 'https:',
+                sameSite: 'Lax',
+            }]);
+        } else {
+            await login(page);
+        }
         await page.goto(
             `${BASE_URL}/documents/${DOCUMENT_ID}/edit-new?pdfjs=1&t=${Date.now()}`,
             { waitUntil: 'domcontentloaded', timeout: 90000 },
@@ -104,7 +233,80 @@ async function main() {
         );
         await page.locator('#ftb-edit-mode').click();
         await page.waitForSelector(selector, { timeout: 90000 });
+        const selectionContract = await assertPromotedParagraphSelectionContract(page);
+        if (SELECTION_ONLY) {
+            process.stdout.write(`${JSON.stringify({
+                status: 'pass',
+                documentId: DOCUMENT_ID,
+                targetId: 'promoted_1_2',
+                selectionContract,
+            }, null, 2)}\n`);
+            return;
+        }
         const box = page.locator(`${selector}:visible`).last();
+
+        await box.scrollIntoViewIfNeeded();
+        const editPoint = await box.evaluate((node) => {
+            const forbiddenBoxAttributes = [
+                'data-source-span-runs',
+                'data-source-underline-segments',
+                'data-original-text',
+                'data-base-text',
+            ];
+            const present = forbiddenBoxAttributes.filter((name) => node.hasAttribute(name));
+            if (present.length) {
+                throw new Error(`Large runtime values leaked into annotation DOM attributes: ${present.join(', ')}`);
+            }
+            const content = node.querySelector('.enpv-text-content');
+            const walker = document.createTreeWalker(content, NodeFilter.SHOW_TEXT);
+            let textNode = walker.nextNode();
+            while (textNode && !String(textNode.nodeValue || '').includes('information')) {
+                textNode = walker.nextNode();
+            }
+            if (!textNode) throw new Error('Could not locate the direct-edit word in promoted_1_8.');
+            const index = String(textNode.nodeValue || '').indexOf('information');
+            const range = document.createRange();
+            range.setStart(textNode, index + 3);
+            range.setEnd(textNode, index + 4);
+            const rect = range.getBoundingClientRect();
+            return {
+                x: rect.left + (rect.width / 2),
+                y: rect.top + (rect.height / 2),
+            };
+        });
+        await page.mouse.dblclick(editPoint.x, editPoint.y);
+        await page.waitForSelector(`${selector}.is-editing`, { timeout: 10000 });
+        const directEdit = await box.evaluate((node) => {
+            const content = node.querySelector('.enpv-text-content');
+            const selection = window.getSelection();
+            return {
+                selectedText: selection?.toString() || '',
+                selectionInside: Boolean(
+                    selection?.rangeCount
+                    && content?.contains(selection.anchorNode)
+                    && content?.contains(selection.focusNode)
+                ),
+                contentEditable: content?.contentEditable,
+                leakedAttributes: [
+                    ...[
+                        'data-source-span-runs',
+                        'data-source-underline-segments',
+                        'data-original-text',
+                        'data-base-text',
+                    ].filter((name) => node.hasAttribute(name)),
+                    ...['data-pre-edit', 'data-pre-edit-flattened']
+                        .filter((name) => content?.hasAttribute(name)),
+                ],
+            };
+        });
+        if (directEdit.selectedText !== 'information'
+            || !directEdit.selectionInside
+            || directEdit.contentEditable !== 'true'
+            || directEdit.leakedAttributes.length) {
+            throw new Error(`Direct inline edit contract failed: ${JSON.stringify(directEdit)}`);
+        }
+        await page.keyboard.press('Escape');
+        await page.waitForSelector(`${selector}:not(.is-editing)`, { timeout: 10000 });
 
         await enterEditMode(page, box, selector);
         const before = await box.evaluate((node) => {

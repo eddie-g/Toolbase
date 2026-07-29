@@ -342,6 +342,67 @@ function sourceCellIntervalOverlap(firstStart, firstEnd, secondStart, secondEnd)
     return Math.max(0, Math.min(firstEnd, secondEnd) - Math.max(firstStart, secondStart));
 }
 
+// Return the furthest edge positions a text box may reach without crossing
+// another painted text rectangle. Rectangles already intersecting the box are
+// ignored: they are normally the PDF.js source glyphs owned by the promoted
+// overlay, and a resize must not make a pre-existing overlap worse.
+export function textResizeCollisionLimits(startRect, textRects = [], pageRect = null, gap = 2) {
+    const start = sourceCellRectEdges(startRect);
+    if (!start) return null;
+    const page = sourceCellRectEdges(pageRect) || {
+        left: Number.NEGATIVE_INFINITY,
+        top: Number.NEGATIVE_INFINITY,
+        right: Number.POSITIVE_INFINITY,
+        bottom: Number.POSITIVE_INFINITY,
+    };
+    const clearance = Math.max(0, Number(gap) || 0);
+    const overlapTolerance = 0.5;
+    let left = page.left;
+    let top = page.top;
+    let right = page.right;
+    let bottom = page.bottom;
+
+    for (const value of textRects || []) {
+        const candidate = sourceCellRectEdges(value);
+        if (!candidate) continue;
+        const horizontalOverlap = sourceCellIntervalOverlap(
+            start.left,
+            start.right,
+            candidate.left,
+            candidate.right,
+        );
+        const verticalOverlap = sourceCellIntervalOverlap(
+            start.top,
+            start.bottom,
+            candidate.top,
+            candidate.bottom,
+        );
+        if (horizontalOverlap > overlapTolerance && verticalOverlap > overlapTolerance) continue;
+
+        if (verticalOverlap > overlapTolerance) {
+            if (candidate.right <= start.left + overlapTolerance) {
+                left = Math.max(left, candidate.right + clearance);
+            } else if (candidate.left >= start.right - overlapTolerance) {
+                right = Math.min(right, candidate.left - clearance);
+            }
+        }
+        if (horizontalOverlap > overlapTolerance) {
+            if (candidate.bottom <= start.top + overlapTolerance) {
+                top = Math.max(top, candidate.bottom + clearance);
+            } else if (candidate.top >= start.bottom - overlapTolerance) {
+                bottom = Math.min(bottom, candidate.top - clearance);
+            }
+        }
+    }
+
+    return {
+        left: Math.min(start.left, left),
+        top: Math.min(start.top, top),
+        right: Math.max(start.right, right),
+        bottom: Math.max(start.bottom, bottom),
+    };
+}
+
 // PDF.js line boxes commonly overlap even when their painted glyph rows do
 // not. A source mask based on the full line box can therefore erase the row
 // above/below, while subtracting those overlapping neighbour boxes from a
@@ -560,6 +621,11 @@ export function resolveRichTextRunFontIdentity({
 export function pdfjsFontWeightFromFaceName(faceName, fontObject = null) {
     if (fontObject?.black || fontObject?.bold) return '700';
     const name = String(faceName || '').toLowerCase();
+    // A variable-font instance keeps the family's static style name while the
+    // real instance weight sits in its `wght` axis token, e.g.
+    // `MontserratThin_700wght` is bold, not thin. The axis value wins.
+    const axisWeight = /(?:^|[-_ ,+])([1-9]00)wght(?:$|[-_ ,])/.exec(name);
+    if (axisWeight) return axisWeight[1];
     if (
         /bold|black|heavy|semibold|demibold|demi|extrabold|ultrabold/.test(name)
         // Commercial PDF faces commonly abbreviate Bold Condensed as `BdCn`

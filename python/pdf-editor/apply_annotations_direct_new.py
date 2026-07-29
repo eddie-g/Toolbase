@@ -317,6 +317,83 @@ def _is_variable_font_file(path: str) -> bool:
                 pass
 
 
+def _set_static_font_instance_style_metadata(ttf: Any, wght: int, italic: bool) -> None:
+    """Make a materialized variable-font instance identify its actual style.
+
+    fontTools freezes the glyph outlines and OS/2 weight, but keeps names such
+    as "Inter Regular" / "Inter-Regular" on a 700 instance. MuPDF then embeds
+    the visibly-bold outlines under a regular font name and reports the text
+    as regular when the downloaded PDF is inspected or edited again.
+    """
+    wants_bold = int(wght) >= 600
+    style_name = (
+        "Bold Italic"
+        if wants_bold and italic
+        else "Bold"
+        if wants_bold
+        else "Italic"
+        if italic
+        else "Regular"
+    )
+
+    name_table = ttf.get("name")
+    if name_table is not None:
+        family_name = (
+            name_table.getDebugName(16)
+            or name_table.getDebugName(1)
+            or "MaterializedFont"
+        )
+        family_name = str(family_name).strip() or "MaterializedFont"
+        full_name = f"{family_name} {style_name}"
+        postscript_family = re.sub(r"[^A-Za-z0-9]+", "", family_name) or "MaterializedFont"
+        postscript_name = f"{postscript_family}-{style_name.replace(' ', '')}"
+        replacements = {
+            2: style_name,
+            4: full_name,
+            6: postscript_name[:63],
+            17: style_name,
+        }
+        for name_id, value in replacements.items():
+            platforms = {
+                (record.platformID, record.platEncID, record.langID)
+                for record in name_table.names
+                if record.nameID == name_id
+            }
+            if not platforms:
+                platforms = {(3, 1, 0x409)}
+            for platform_id, encoding_id, language_id in platforms:
+                name_table.setName(
+                    value,
+                    name_id,
+                    platform_id,
+                    encoding_id,
+                    language_id,
+                )
+
+    os2_table = ttf.get("OS/2")
+    if os2_table is not None:
+        os2_table.usWeightClass = max(1, min(1000, int(wght)))
+        selection = int(os2_table.fsSelection)
+        selection &= ~((1 << 0) | (1 << 5) | (1 << 6))
+        if italic:
+            selection |= 1 << 0
+        if wants_bold:
+            selection |= 1 << 5
+        if not italic and not wants_bold:
+            selection |= 1 << 6
+        os2_table.fsSelection = selection
+
+    head_table = ttf.get("head")
+    if head_table is not None:
+        mac_style = int(head_table.macStyle)
+        mac_style &= ~0b11
+        if wants_bold:
+            mac_style |= 0b01
+        if italic:
+            mac_style |= 0b10
+        head_table.macStyle = mac_style
+
+
 def _materialize_variable_font_instance(src_path: str, wght: int, italic: bool) -> str:
     """Return a path to a static TTF instance of `src_path` at the given
     weight (and italic slant if available). Returns `src_path` unchanged
@@ -330,7 +407,10 @@ def _materialize_variable_font_instance(src_path: str, wght: int, italic: bool) 
     try:
         os.makedirs(_STATIC_INSTANCE_CACHE_DIR, exist_ok=True)
         base = os.path.basename(src_path).replace("[", "_").replace("]", "_").replace(",", "_")
-        suffix = f"_w{wght}{'_it' if italic else ''}"
+        # The "styled" cache generation includes corrected name/style metadata
+        # in addition to frozen outlines. Keep it separate from older cached
+        # instances that were all internally named "Regular".
+        suffix = f"_styled_w{wght}{'_it' if italic else ''}"
         out_path = os.path.join(_STATIC_INSTANCE_CACHE_DIR, base.replace(".ttf", f"{suffix}.ttf"))
         if os.path.exists(out_path) and os.path.getsize(out_path) > 0:
             return out_path
@@ -355,6 +435,7 @@ def _materialize_variable_font_instance(src_path: str, wght: int, italic: bool) 
         if not loc:
             return src_path
         inst = instancer.instantiateVariableFont(ttf, loc)
+        _set_static_font_instance_style_metadata(inst, wght, italic)
         inst.save(out_path)
         return out_path
     except Exception:
@@ -5221,6 +5302,21 @@ def resolve_substitute_font_entry(psname: str, ann: Dict[str, Any]) -> Optional[
                 break
         else:
             return None
+
+    # Google-font substitutes such as Inter use one variable font file for
+    # both the regular and bold variants. MuPDF renders a variable file at its
+    # default instance when it is handed directly to fitz.Font, so returning
+    # that file here silently turns bold fallback text into regular text. This
+    # path bypasses resolve_text_fontfile(), where variable fonts are normally
+    # materialized, so lock the substitute to the requested weight/style now.
+    target_weight = 700 if wants_bold else 400
+    materialized_path = _materialize_variable_font_instance(
+        path,
+        target_weight,
+        italic=wants_italic,
+    )
+    if materialized_path and os.path.isfile(materialized_path):
+        path = materialized_path
 
     return {
         "clean_name": f"{family}-{variant_key}",

@@ -272,7 +272,13 @@ def pdfjs_source_edit_transform_scale_x(annotation: Dict[str, Any]) -> float:
     if _boolish(annotation.get("movedTextOverlay")):
         return 1.0
 
-    raw_scale = annotation.get("pdfjsSourceTransformScaleX")
+    # The browser captures the scale of the glyphs actually visible when source
+    # editing begins. Embedded-font Range metrics can differ substantially from
+    # the extraction-time PDF.js span width, so edited text must prefer this
+    # visual scale or the first typed character will compress the whole line.
+    raw_scale = annotation.get("pdfjsSourceEditVisualScaleX")
+    if raw_scale in (None, ""):
+        raw_scale = annotation.get("pdfjsSourceTransformScaleX")
     if raw_scale in (None, ""):
         raw_transform = str(annotation.get("pdfjsSourceTransform") or "").strip()
         match = re.match(r"matrix\(([^,]+),", raw_transform)

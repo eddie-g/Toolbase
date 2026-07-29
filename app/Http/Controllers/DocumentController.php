@@ -5510,7 +5510,17 @@ class DocumentController extends Controller
         $userEmail = $this->resolveEditorEmail();
         $sessionId = $request->session()->getId();
         $this->rememberSessionAccessibleDocument($request, $document);
-        ProcessUploadedDocumentJob::dispatch($document->id, $userEmail, $sessionId);
+        Cache::put(
+            ProcessUploadedDocumentJob::processingCacheKey($document->id),
+            true,
+            now()->addMinutes(10)
+        );
+        try {
+            ProcessUploadedDocumentJob::dispatch($document->id, $userEmail, $sessionId);
+        } catch (\Throwable $exception) {
+            Cache::forget(ProcessUploadedDocumentJob::processingCacheKey($document->id));
+            throw $exception;
+        }
 
         return redirect()
             ->route('documents.editPdfjs', $document)

@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Http\Controllers\DocumentController;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Facades\Cache;
 
 class ProcessUploadedDocumentJob implements ShouldQueue
 {
@@ -21,6 +22,11 @@ class ProcessUploadedDocumentJob implements ShouldQueue
         $this->onQueue('default');
     }
 
+    public static function processingCacheKey(int $documentId): string
+    {
+        return "document:{$documentId}:upload-processing";
+    }
+
     public function handle(DocumentController $documentController): void
     {
         $documentController->processUploadedDocument(
@@ -28,5 +34,12 @@ class ProcessUploadedDocumentJob implements ShouldQueue
             $this->userEmail,
             $this->sessionId,
         );
+
+        Cache::forget(self::processingCacheKey($this->documentId));
+    }
+
+    public function failed(?\Throwable $exception): void
+    {
+        Cache::forget(self::processingCacheKey($this->documentId));
     }
 }

@@ -376,6 +376,18 @@ class PdfAnnotationContractTests(unittest.TestCase):
 
         self.assertEqual(self.module.pdfjs_source_edit_transform_scale_x(annotation), 1.29234)
 
+    def test_pdfjs_source_edit_transform_scale_prefers_saved_visual_edit_scale(self):
+        annotation = {
+            "id": "pdfjs_5143_0_0:50",
+            "type": "text",
+            "savedTextOverlay": True,
+            "pdfjsSourceX": 231.88322368421055,
+            "pdfjsSourceTransformScaleX": "0.820824",
+            "pdfjsSourceEditVisualScaleX": "1.0093",
+        }
+
+        self.assertEqual(self.module.pdfjs_source_edit_transform_scale_x(annotation), 1.0093)
+
     def test_pdfjs_source_edit_transform_scale_ignores_source_scale_for_rich_mode(self):
         annotation = {
             "id": "pdfjs_4037_0_source:0:53",

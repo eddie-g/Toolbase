@@ -1858,5 +1858,35 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
 
         self.assertIsNone(entry)
 
+    def test_bold_substitute_materializes_variable_font_at_requested_weight(self):
+        module = self.module
+        bold_entry = module.resolve_substitute_font_entry(
+            "HelveticaNeueLTStd-BdCn",
+            {
+                "fontWeight": "700",
+                "fontStyle": "normal",
+            },
+        )
+        regular_entry = module.resolve_substitute_font_entry(
+            "HelveticaNeueLTStd-Cn",
+            {
+                "fontWeight": "400",
+                "fontStyle": "normal",
+            },
+        )
+
+        self.assertIsNotNone(bold_entry)
+        self.assertIsNotNone(regular_entry)
+        self.assertNotEqual(bold_entry["fontfile"], regular_entry["fontfile"])
+        self.assertIn("_w700", pathlib.Path(bold_entry["fontfile"]).stem)
+        self.assertIn("_w400", pathlib.Path(regular_entry["fontfile"]).stem)
+        self.assertGreaterEqual(int(bold_entry["css_weight"]), 600)
+        self.assertLess(int(regular_entry["css_weight"]), 600)
+        bold_font = fitz.Font(fontfile=bold_entry["fontfile"])
+        regular_font = fitz.Font(fontfile=regular_entry["fontfile"])
+        self.assertTrue(bold_font.is_bold)
+        self.assertFalse(regular_font.is_bold)
+        self.assertIn("bold", bold_font.name.lower())
+
 if __name__ == "__main__":
     unittest.main()
