@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
-"""
-Rotate a specific page in a PDF document by physically transforming the content.
-Uses show_pdf_page() to ensure text is preserved and content is actually rotated.
+"""Rotate one PDF page by updating its standard /Rotate entry.
+
+Keeping the original page objects and coordinate system is important to the web
+editor: saved annotations remain expressed in the same PDF coordinates while
+PDF.js applies the page rotation to the canvas, text layer, and overlay layer.
 """
 
 import sys
 import fitz  # PyMuPDF
-import tempfile
-import os
 
 # Suppress MuPDF warnings/errors
 fitz.TOOLS.mupdf_display_errors(False)
 
 def rotate_pdf_page(input_path, output_path, page_number, rotation=90):
     """
-    Rotate a specific page by physically transforming content using show_pdf_page.
-    This preserves text and actually rotates the content (not just setting a flag).
+    Rotate a specific page by updating its standard PDF rotation metadata.
+
+    The page's media box and content coordinates remain unchanged. PDF viewers
+    apply the rotation when rendering, which keeps editor annotations anchored
+    in the same canonical PDF coordinate system.
     
     Args:
         input_path: Path to input PDF
@@ -41,49 +44,21 @@ def rotate_pdf_page(input_path, output_path, page_number, rotation=90):
         # Page index (0-based)
         page_idx = page_number - 1
         
-        # Create new document with rotated pages
-        dst_doc = fitz.open()
-        
-        for idx in range(total_pages):
-            src_page = src_doc[idx]
-            
-            if idx == page_idx and rotation != 0:
-                # Calculate new dimensions based on rotation
-                if rotation in (90, 270):
-                    # Swap width and height
-                    new_width = src_page.rect.height
-                    new_height = src_page.rect.width
-                else:
-                    # 180 degrees - keep same dimensions
-                    new_width = src_page.rect.width
-                    new_height = src_page.rect.height
-                
-                # Create new page with appropriate dimensions
-                dst_page = dst_doc.new_page(width=new_width, height=new_height)
-                
-                # Use show_pdf_page with rotation to physically rotate content
-                dst_page.show_pdf_page(
-                    dst_page.rect,
-                    src_doc,
-                    idx,
-                    rotate=rotation
-                )
-            else:
-                # Copy page as-is
-                dst_page = dst_doc.new_page(width=src_page.rect.width, height=src_page.rect.height)
-                dst_page.show_pdf_page(
-                    dst_page.rect,
-                    src_doc,
-                    idx,
-                    rotate=0
-                )
-        
-        # Save with garbage collection and compression
-        dst_doc.save(output_path, garbage=3, deflate=True)
-        dst_doc.close()
+        page = src_doc[page_idx]
+        next_rotation = (int(page.rotation or 0) + rotation) % 360
+        page.set_rotation(next_rotation)
+
+        # Saving the existing document preserves page annotations, links,
+        # bookmarks, forms, and the original content streams. Rebuilding pages
+        # through show_pdf_page() discarded those objects and erased the
+        # rotation metadata the browser needs for rotation-aware geometry.
+        src_doc.save(output_path, garbage=3, deflate=True)
         src_doc.close()
         
-        print(f"SUCCESS: Page {page_number} rotated by {rotation} degrees")
+        print(
+            f"SUCCESS: Page {page_number} rotated by {rotation} degrees "
+            f"(page rotation {next_rotation})"
+        )
         return True
         
     except Exception as e:

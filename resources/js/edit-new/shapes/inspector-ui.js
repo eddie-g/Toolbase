@@ -102,3 +102,16 @@ export function readShapeInspectorState(refs) {
     reflectShapeStateToInputs(state, refs);
     return currentShapeDefaults();
 }
+
+/**
+ * A shape can retain a transparent-fill flag even while the inspector shows a
+ * color and a non-zero opacity. Since the transparency checkbox is no longer a
+ * visible control, editing either visible fill control means the user is
+ * explicitly turning the fill back on.
+ */
+export function activateShapeFillFromInspector(refs) {
+    const fillOpacity = Number(refs?.shapeFillOpacityInput?.value);
+    if (!refs?.shapeFillTransparentInput || !(fillOpacity > 0)) return false;
+    refs.shapeFillTransparentInput.checked = false;
+    return true;
+}

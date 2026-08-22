@@ -15,6 +15,10 @@ import {
     drawOpacity,
 } from '../store/draw-tool-state.js';
 import { setDrawToolStatus } from './session.js';
+import {
+    DIRECT_DRAW_TOOL_ERASER,
+    DIRECT_DRAW_TOOL_SMOOTH_CURVE,
+} from './tool-type.js';
 
 export function syncDrawToolPanelUi(refs) {
     if (!refs) return;
@@ -48,11 +52,13 @@ export function syncDrawToolPanelUi(refs) {
     if (drawToolSizeValue) drawToolSizeValue.textContent = `${Math.round(drawBrushSize)}px`;
     if (drawToolOpacityInput) drawToolOpacityInput.value = String(Math.round(drawOpacity * 100));
     if (drawToolOpacityValue) drawToolOpacityValue.textContent = `${Math.round(drawOpacity * 100)}%`;
-    if (drawToolOpacityInput) drawToolOpacityInput.disabled = drawToolType === 'eraser';
+    if (drawToolOpacityInput) drawToolOpacityInput.disabled = drawToolType === DIRECT_DRAW_TOOL_ERASER;
     setDrawToolStatus(
         drawToolStatus,
-        drawToolType === 'eraser'
+        drawToolType === DIRECT_DRAW_TOOL_ERASER
             ? 'Eraser is active. Drag over a drawing to remove parts of it.'
-            : 'Pen mode is active. Drag directly on the page to draw.',
+            : drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
+                ? 'Smooth curve mode is active. Drag directly on the page to draw a fitted curve.'
+                : 'Pen mode is active. Drag directly on the page to draw.',
     );
 }

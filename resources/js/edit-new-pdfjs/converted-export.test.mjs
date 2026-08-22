@@ -4,6 +4,8 @@ import {
     buildConvertedDownloadUrl,
     estimateConvertedFileBytes,
     readConvertedFileResponse,
+    readQueuedConversionResponse,
+    waitForQueuedConversion,
 } from './converted-export.js';
 
 test('buildConvertedDownloadUrl encodes the single-use token', () => {
@@ -95,4 +97,50 @@ test('readConvertedFileResponse retains newsletter layout metadata', async () =>
 
     assert.equal(success.effective_mode, 'layout');
     assert.equal(success.layout_engine, 'newsletter');
+});
+
+test('queued conversion responses are polled until a download is ready', async () => {
+    const queued = await readQueuedConversionResponse({
+        ok: true,
+        status: 202,
+        json: async () => ({
+            success: true,
+            status: 'queued',
+            status_url: '/documents/1/conversions/job-id',
+        }),
+    }, 'Word');
+    const responses = [
+        { success: true, status: 'processing', progress: 45 },
+        { success: true, status: 'completed', progress: 100, download_token: 'job-id' },
+    ];
+    const progress = [];
+    const completed = await waitForQueuedConversion(queued, 'Word', {
+        pollIntervalMs: 0,
+        delay: async () => {},
+        onProgress: (data) => progress.push(data.status),
+        fetchImpl: async () => ({
+            ok: true,
+            status: 200,
+            json: async () => responses.shift(),
+        }),
+    });
+
+    assert.equal(completed.download_token, 'job-id');
+    assert.deepEqual(progress, ['queued', 'processing']);
+});
+
+test('queued conversion polling surfaces worker failures', async () => {
+    await assert.rejects(() => waitForQueuedConversion({
+        success: true,
+        status: 'queued',
+        status_url: '/status',
+    }, 'Excel', {
+        pollIntervalMs: 0,
+        delay: async () => {},
+        fetchImpl: async () => ({
+            ok: true,
+            status: 200,
+            json: async () => ({ success: false, status: 'failed', message: 'Converter unavailable.' }),
+        }),
+    }), /Converter unavailable/);
 });

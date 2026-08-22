@@ -23,9 +23,9 @@ class DocumentConversionSetting extends Model
     public static function current(): self
     {
         return static::query()->firstOrCreate([], [
-            'word_provider' => self::PROVIDER_LOCAL,
-            'excel_provider' => self::PROVIDER_LOCAL,
-            'fallback_to_local' => true,
+            'word_provider' => self::PROVIDER_ADOBE,
+            'excel_provider' => self::PROVIDER_ADOBE,
+            'fallback_to_local' => false,
         ]);
     }
 }

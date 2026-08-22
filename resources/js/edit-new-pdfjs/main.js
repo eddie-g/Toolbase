@@ -26,6 +26,7 @@ import {
     PDFLinkService,
     PDFFindController,
 } from 'pdfjs-dist/web/pdf_viewer.mjs';
+import html2canvas from 'html2canvas';
 import { generateUuidV4 } from '../edit-new/util/uuid.js';
 import { sliderValueToFontPt, fontPtToSliderValue } from '../edit-new/text/font-slider.js';
 import { computeLineBoxGeometry, constrainLineEndpointTo45, normalizeRotationDegrees } from '../edit-new/util/geometry.js';
@@ -34,10 +35,24 @@ import {
     dragAxisOffsetBounds,
 } from '../edit-new/interactions/drag-bounds.js';
 import { currentShapeDefaults } from '../edit-new/shapes/defaults.js';
-import { reflectShapeStateToInputs, readShapeInspectorState } from '../edit-new/shapes/inspector-ui.js';
+import {
+    activateShapeFillFromInspector,
+    reflectShapeStateToInputs,
+    readShapeInspectorState,
+} from '../edit-new/shapes/inspector-ui.js';
 import { normalizeShapeAnnotation, normalizeImageAnnotation, applyShapeStateToAnnotation } from '../edit-new/annotations/normalize.js';
 import { getImageAnnotationSource } from '../edit-new/annotations/image-source.js';
 import { paintDrawDot, paintDrawSegment } from '../edit-new/draw/primitives.js';
+import {
+    paintSmoothDrawCurve,
+    smoothDrawCurvePoints,
+    smoothDrawCurveSvgPathD,
+} from '../edit-new/draw/smooth-curve.js';
+import {
+    DIRECT_DRAW_TOOL_ERASER,
+    DIRECT_DRAW_TOOL_SMOOTH_CURVE,
+    normalizeDirectDrawTool,
+} from '../edit-new/draw/tool-type.js';
 import {
     normalizeShapeType,
     defaultPolygonUnitPoints,
@@ -56,22 +71,32 @@ import { setImageImportStatus as _setImageImportStatus } from '../edit-new/image
 import { imageImportPendingAsset } from '../edit-new/store/misc-state.js';
 import { installSignatureFeature, isSignatureAnnotation } from './signature.js';
 import {
+    annotationSelectionType,
     clampSourceMaskRectToCell,
     dominantSourceRunFontSize,
+    insertPdfInlineSymbolsIntoText,
+    isPdfInlineSymbolText,
     naturalSourceLineSeparator,
+    normalizePdfInlineSymbolText,
     pdfjsFontWeightFromFaceName,
     pdfjsPromotedOverlayShouldRenderAsPersistedOverlay,
     pdfjsSourceOverlayShouldUseSourceBoxInEditMode,
+    pdfjsTextCoversPromotedFallback,
+    promotedSourceLayoutCompatibleTextEdit,
+    promotedSourceBlockUsesMonospacedTypography,
     promotedTextEditFlags,
     reconcileRichTextRunWhitespace,
     resolveRichTextRunFontIdentity,
     restoreExplicitSourceWhitespace,
     richTextViewportCssLength,
+    sourceDrawnUnderlineRangesForRect,
     sourceRunDrawnUnderlineMetadata,
     sourceNaturalizedGapText,
     sourceRunTextsUseDistributedLeaderSpacing,
     sourceSpanDrawnUnderlineSegments,
     sourceSpanDrawnUnderlineRanges,
+    sourceSpanDrawnUnderlineRangesForRect,
+    sourceVisualLineBreakCounts,
     sourceVisualLineSlots,
     splitSourceRunsAtDrawnUnderlineRanges,
     textResizeCollisionLimits,
@@ -84,6 +109,16 @@ import {
     parseImageExportPages,
     renderPdfPagesToImages,
 } from './image-export.js';
+import { elementAcceptsNativeClipboard } from './annotation-clipboard.js';
+import {
+    normalizePageRotationDegrees,
+    pdfRectToViewportRect,
+    viewportPdfDimensions,
+    viewportPointToPdfPoint,
+    viewportRectToPdfRect,
+    viewportRotatedContentFrame,
+    rotationSnapshotTransform,
+} from './page-geometry.js';
 import {
     buildPdfaDownloadUrl,
     normalizePdfaReport,
@@ -92,7 +127,8 @@ import {
 import {
     buildConvertedDownloadUrl,
     estimateConvertedFileBytes,
-    readConvertedFileResponse,
+    readQueuedConversionResponse,
+    waitForQueuedConversion,
 } from './converted-export.js';
 import {
     deleteElementRuntimeState,
@@ -189,6 +225,39 @@ function setSourceUnderlineSegmentsForBox(box, segments) {
     return normalized;
 }
 
+function normalizeRemovedPdfLinkRects(value) {
+    return parseRuntimeArray(value)
+        .map((rect) => {
+            const normalized = {
+                x: Number(rect?.x),
+                y: Number(rect?.y),
+                w: Number(rect?.w ?? rect?.width),
+                h: Number(rect?.h ?? rect?.height),
+            };
+            if (![normalized.x, normalized.y, normalized.w, normalized.h].every(Number.isFinite)
+                || normalized.w <= 0
+                || normalized.h <= 0) return null;
+            return normalized;
+        })
+        .filter(Boolean)
+        .slice(0, 100);
+}
+
+function removedPdfLinkRectsForBox(box) {
+    const stored = readElementRuntimeState(box, 'removedPdfLinkRects');
+    const rects = normalizeRemovedPdfLinkRects(stored);
+    if (stored !== undefined && stored !== rects) {
+        writeElementRuntimeState(box, 'removedPdfLinkRects', rects);
+    }
+    return rects;
+}
+
+function setRemovedPdfLinkRectsForBox(box, rects) {
+    const normalized = normalizeRemovedPdfLinkRects(rects);
+    writeElementRuntimeState(box, 'removedPdfLinkRects', normalized);
+    return normalized;
+}
+
 function editBaselineForTextElement(textElement) {
     return readElementRuntimeState(textElement, 'preEdit');
 }
@@ -266,6 +335,9 @@ const afbOpacity = document.getElementById('afb-opacity');
 const afbBold = document.getElementById('afb-bold');
 const afbItalic = document.getElementById('afb-italic');
 const afbUnderline = document.getElementById('afb-underline');
+const afbLinkUrl = document.getElementById('afb-link-url');
+const afbLinkApply = document.getElementById('afb-link-apply');
+const afbLinkRemove = document.getElementById('afb-link-remove');
 const afbAlign = document.getElementById('afb-align');
 const afbValign = document.getElementById('afb-valign');
 const afbUppercase = document.getElementById('afb-uppercase');
@@ -336,6 +408,10 @@ const pageManagerDeleteButton = document.getElementById('enpv-page-manager-delet
 const pageManagerCount = document.getElementById('enpv-page-manager-count');
 const pageManagerStatus = document.getElementById('enpv-page-manager-status');
 const pageManagerGrid = document.getElementById('enpv-page-manager-grid');
+const rotatedEditDialog = document.getElementById('enpv-rotated-edit-dialog');
+const rotatedEditDialogDescription = document.getElementById('enpv-rotated-edit-dialog-description');
+const rotatedEditDialogClose = document.getElementById('enpv-rotated-edit-dialog-close');
+const rotatedEditDialogScrim = document.getElementById('enpv-rotated-edit-dialog-scrim');
 const mergeModal = document.getElementById('enpv-merge-modal');
 const mergeCloseButton = document.getElementById('enpv-merge-close');
 const mergeCancelButton = document.getElementById('enpv-merge-cancel');
@@ -882,6 +958,7 @@ let draggedPageManagerIndex = -1;
 let pageManagerRenderGeneration = 0;
 let rotatingPageManagerIndex = -1;
 let rotatingPageManagerDirection = 0;
+const rotatedPageSnapshots = new Map();
 let mergeItems = [];
 let mergeDraggedId = '';
 let mergeBusy = false;
@@ -2186,13 +2263,226 @@ async function pageManagerJsonRequest(url, payload) {
     return result;
 }
 
-async function refreshPdfAfterPageManagerChange(selectPageIndex, message) {
+function clearRotatedPageSnapshot(pageIndex) {
+    const normalizedPageIndex = Number(pageIndex);
+    if (!Number.isFinite(normalizedPageIndex) || normalizedPageIndex < 0) return;
+    rotatedPageSnapshots.delete(normalizedPageIndex);
+    const pageDiv = pdfViewer?.getPageView?.(normalizedPageIndex)?.div;
+    pageDiv?.classList.remove('enpv-page-rotation-snapshot-active');
+    pageDiv?.querySelector(':scope > .enpv-page-rotation-snapshot')?.remove();
+}
+
+function clearAllRotatedPageSnapshots() {
+    for (const pageIndex of rotatedPageSnapshots.keys()) clearRotatedPageSnapshot(pageIndex);
+    rotatedPageSnapshots.clear();
+}
+
+function syncRotatedPageSnapshot(pageIndex) {
+    const normalizedPageIndex = Number(pageIndex);
+    if (!Number.isFinite(normalizedPageIndex) || normalizedPageIndex < 0) return false;
+    const rotation = pageRotationDegrees(normalizedPageIndex);
+    if (rotation === 0) {
+        clearRotatedPageSnapshot(normalizedPageIndex);
+        return false;
+    }
+
+    const snapshot = rotatedPageSnapshots.get(normalizedPageIndex);
+    const pageView = pdfViewer?.getPageView?.(normalizedPageIndex);
+    const pageDiv = pageView?.div;
+    const viewport = pageView?.viewport;
+    if (!snapshot?.canvas || !pageDiv || !viewport) return false;
+
+    let host = pageDiv.querySelector(':scope > .enpv-page-rotation-snapshot');
+    if (!host) {
+        host = document.createElement('div');
+        host.className = 'enpv-page-rotation-snapshot';
+        host.setAttribute('role', 'img');
+        host.setAttribute('aria-label', `Flattened preview of rotated page ${normalizedPageIndex + 1}`);
+        pageDiv.appendChild(host);
+    }
+    if (snapshot.canvas.parentElement !== host) host.replaceChildren(snapshot.canvas);
+
+    const targetWidth = Math.max(1, Number(viewport.width) || pageDiv.clientWidth || 1);
+    const targetHeight = Math.max(1, Number(viewport.height) || pageDiv.clientHeight || 1);
+    host.style.width = `${targetWidth}px`;
+    host.style.height = `${targetHeight}px`;
+    snapshot.canvas.style.width = `${snapshot.width}px`;
+    snapshot.canvas.style.height = `${snapshot.height}px`;
+    snapshot.canvas.style.transform = rotationSnapshotTransform(
+        rotation,
+        snapshot.width,
+        snapshot.height,
+        targetWidth,
+        targetHeight,
+    );
+    host.dataset.rotation = String(rotation);
+    host.dataset.captureMethod = String(snapshot.captureMethod || 'html2canvas');
+    pageDiv.classList.add('enpv-page-rotation-snapshot-active');
+    return true;
+}
+
+async function captureExactPdfPageRotationSnapshot(pageIndex, width, height, captureScale) {
+    const { blob } = await requestEditedPdfBlob();
+    if (!(blob instanceof Blob) || blob.size <= 0) {
+        throw new Error('The flattened PDF preview was empty.');
+    }
+
+    const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(await blob.arrayBuffer()),
+        isEvalSupported: false,
+    });
+    let snapshotDocument = null;
+    try {
+        snapshotDocument = await loadingTask.promise;
+        const snapshotPage = await snapshotDocument.getPage(pageIndex + 1);
+        const baseViewport = snapshotPage.getViewport({ scale: 1, rotation: 0 });
+        const widthScale = width / Math.max(1, Number(baseViewport.width) || 1);
+        const heightScale = height / Math.max(1, Number(baseViewport.height) || 1);
+        const renderScale = Math.max(0.01, Math.min(widthScale, heightScale));
+        const renderViewport = snapshotPage.getViewport({ scale: renderScale, rotation: 0 });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.ceil(renderViewport.width * captureScale));
+        canvas.height = Math.max(1, Math.ceil(renderViewport.height * captureScale));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('The flattened PDF preview canvas is unavailable.');
+        context.setTransform(captureScale, 0, 0, captureScale, 0, 0);
+        await snapshotPage.render({ canvasContext: context, viewport: renderViewport }).promise;
+        return canvas;
+    } finally {
+        if (snapshotDocument) {
+            await snapshotDocument.destroy().catch(() => {});
+        } else {
+            await loadingTask.destroy().catch(() => {});
+        }
+    }
+}
+
+async function captureFlatPageRotationSnapshot(pageIndex) {
+    const normalizedPageIndex = Number(pageIndex);
+    if (!Number.isFinite(normalizedPageIndex) || normalizedPageIndex < 0) {
+        throw new Error('The page to rotate is unavailable.');
+    }
+    if (pageRotationDegrees(normalizedPageIndex) !== 0) {
+        return rotatedPageSnapshots.get(normalizedPageIndex) || null;
+    }
+
+    let pageView = pdfViewer?.getPageView?.(normalizedPageIndex);
+    let pageDiv = pageView?.div;
+    let viewport = pageView?.viewport;
+    let sourceCanvas = pageDiv?.querySelector(':scope > .canvasWrapper canvas');
+    if (!sourceCanvas || sourceCanvas.width <= 0 || sourceCanvas.height <= 0) {
+        pdfViewer.currentPageNumber = normalizedPageIndex + 1;
+        try {
+            pdfViewer.scrollPageIntoView?.({ pageNumber: normalizedPageIndex + 1 });
+            pdfViewer.forceRendering?.();
+        } catch (_) { /* the polling loop below reports a useful error */ }
+        const started = performance.now();
+        while (performance.now() - started < 8000) {
+            await waitMs(50);
+            pageView = pdfViewer?.getPageView?.(normalizedPageIndex);
+            pageDiv = pageView?.div;
+            viewport = pageView?.viewport;
+            sourceCanvas = pageDiv?.querySelector(':scope > .canvasWrapper canvas');
+            if (sourceCanvas && sourceCanvas.width > 0 && sourceCanvas.height > 0) break;
+            pdfViewer.forceRendering?.();
+        }
+    }
+    if (!pageDiv || !viewport || !sourceCanvas || sourceCanvas.width <= 0 || sourceCanvas.height <= 0) {
+        throw new Error(`Page ${normalizedPageIndex + 1} is not ready to rotate yet.`);
+    }
+
+    clearRotatedPageSnapshot(normalizedPageIndex);
+    renderAnnotationBoxLayer(normalizedPageIndex);
+    await document.fonts?.ready?.catch?.(() => {});
+    await nextAnimationFrame();
+    await nextAnimationFrame();
+
+    const width = Math.max(1, Number(viewport.width) || pageDiv.clientWidth || 1);
+    const height = Math.max(1, Number(viewport.height) || pageDiv.clientHeight || 1);
+    const maxSnapshotPixels = 16_000_000;
+    const deviceScale = Math.min(2, Math.max(1, Number(window.devicePixelRatio) || 1));
+    const captureScale = Math.max(0.5, Math.min(
+        deviceScale,
+        Math.sqrt(maxSnapshotPixels / Math.max(1, width * height)),
+    ));
+    const captureToken = `page-${normalizedPageIndex}-${Date.now()}`;
+    pageDiv.dataset.enpvSnapshotCapture = captureToken;
+
+    let canvas;
+    let captureMethod = 'pdf';
+    try {
+        // html2canvas computes inline-text baselines independently from the
+        // browser. On large rich-text runs that can shrink the glyphs and move
+        // them by a sizeable fraction of the line box; rotating that raster
+        // makes a correctly placed header visibly slide sideways. Render the
+        // exact edited PDF instead so the rotation preview uses the same font
+        // metrics and coordinates as Download PDF.
+        canvas = await captureExactPdfPageRotationSnapshot(
+            normalizedPageIndex,
+            width,
+            height,
+            captureScale,
+        );
+    } catch (error) {
+        captureMethod = 'html2canvas';
+        console.warn('Exact rotated-page snapshot failed; using the DOM fallback.', error);
+        canvas = await html2canvas(pageDiv, {
+            backgroundColor: '#ffffff',
+            width,
+            height,
+            scale: captureScale,
+            logging: false,
+            useCORS: true,
+            removeContainer: true,
+            onclone: (clonedDocument) => {
+                clonedDocument.body?.classList.remove(
+                    'enpv-edit-on',
+                    'enpv-add-text-on',
+                    'enpv-shape-on',
+                    'enpv-draw-on',
+                    'enpv-highlight-on',
+                    'enpv-note-anchor-placing',
+                );
+                const clonedPage = clonedDocument.querySelector(
+                    `[data-enpv-snapshot-capture="${captureToken}"]`,
+                );
+                clonedPage?.classList.remove('enpv-page-rotation-snapshot-active');
+                clonedPage?.querySelectorAll([
+                    ':scope > .textLayer',
+                    ':scope > .enpv-gridlines-overlay',
+                    ':scope > .enpv-note-anchor-layer',
+                    ':scope > .enpv-page-rotation-snapshot',
+                    '.enpv-ann-menu',
+                    '.enpv-resize-handle',
+                    '.enpv-shape-rotate-handle',
+                    '.enpv-shape-cut-handle',
+                    '.enpv-shape-angle-badge',
+                ].join(',')).forEach((element) => element.remove());
+                clonedPage?.querySelectorAll('.enpv-annotation-box').forEach((box) => {
+                    box.classList.remove('is-selected', 'is-multi-selected', 'is-editing');
+                    box.classList.add('is-readonly');
+                    box.removeAttribute('contenteditable');
+                });
+            },
+        });
+    } finally {
+        delete pageDiv.dataset.enpvSnapshotCapture;
+    }
+
+    canvas.className = 'enpv-page-rotation-snapshot__canvas';
+    canvas.setAttribute('aria-hidden', 'true');
+    const snapshot = { canvas, width, height, captureMethod };
+    rotatedPageSnapshots.set(normalizedPageIndex, snapshot);
+    return snapshot;
+}
+
+async function refreshPdfAfterPageManagerChange(selectPageIndex, message, options = {}) {
     selectedPageManagerIndex = Math.max(0, Number(selectPageIndex) || 0);
     annotationBoxesLoadPromise = null;
     if (PDF_URL) {
         const reloadUrl = new URL(PDF_URL, window.location.href);
         reloadUrl.searchParams.set('v', String(Date.now()));
-        await loadPdfFromUrl(reloadUrl.toString());
+        await loadPdfFromUrl(reloadUrl.toString(), options);
     } else {
         await loadInitialPdf();
     }
@@ -2209,6 +2499,7 @@ async function refreshPdfAfterPageManagerChange(selectPageIndex, message) {
 async function addBlankPageFromManager() {
     const selected = pageManagerSelectedIndex();
     setPageManagerStatus('Adding page...');
+    clearAllRotatedPageSnapshots();
     await pageManagerJsonRequest(ADD_BLANK_PAGE_URL, {
         insert_after: selected,
         size_reference: selected,
@@ -2219,6 +2510,7 @@ async function addBlankPageFromManager() {
 async function reorderDocumentPages(pageOrder, selectedIndexAfterMove = 0) {
     if (!Array.isArray(pageOrder) || !pageOrder.length) return;
     setPageManagerStatus('Reordering pages...');
+    clearAllRotatedPageSnapshots();
     await pageManagerJsonRequest(REORDER_PAGES_URL, {
         page_order: pageOrder,
         session_id: getSessionId(),
@@ -2236,12 +2528,43 @@ async function rotatePageFromManager(pageIndex, rotation = 90) {
     selectedPageManagerIndex = selected;
     setPageManagerStatus(`Rotating page ${selected + 1} ${direction}...`);
     renderPageManagerGrid();
+    const wasEditing = document.body.classList.contains('enpv-edit-on');
+    let capturedSnapshot = false;
     try {
+        syncSelectedBoxToPersistedAnnotations();
+        syncDirtyBoxesToPersistedAnnotations();
+        syncRenderedPersistedOverlayBoxesToPersistedAnnotations();
+        if (pageRotationDegrees(selected) === 0) {
+            if (wasEditing) setEditMode(false, { skipRotationCheck: true });
+            setPageManagerStatus(`Preparing a flattened preview of page ${selected + 1}...`);
+            renderAnnotationBoxLayer(selected);
+            await captureFlatPageRotationSnapshot(selected);
+            capturedSnapshot = true;
+            setPageManagerStatus(`Rotating page ${selected + 1} ${direction}...`);
+        }
+        syncSelectedBoxToPersistedAnnotations();
+        syncDirtyBoxesToPersistedAnnotations();
+        syncRenderedPersistedOverlayBoxesToPersistedAnnotations();
+        const annotationStateOverride = Array.from(persistedAnnotationsById.values())
+            .map((annotation) => cloneForHistory(annotation));
         await pageManagerJsonRequest(ROTATE_PAGE_URL, {
             page_number: selected + 1,
             rotation: normalizedRotation,
         });
-        await refreshPdfAfterPageManagerChange(selected, `Page ${selected + 1} rotated ${direction}.`);
+        await refreshPdfAfterPageManagerChange(
+            selected,
+            `Page ${selected + 1} rotated ${direction}.`,
+            { annotationStateOverride },
+        );
+        syncEditModeRotationAvailability({ showDialog: true });
+    } catch (error) {
+        if (capturedSnapshot && pageRotationDegrees(selected) === 0) {
+            clearRotatedPageSnapshot(selected);
+        }
+        if (wasEditing && pageRotationDegrees(selected) === 0) {
+            setEditMode(true, { skipRotationCheck: true });
+        }
+        throw error;
     } finally {
         rotatingPageManagerIndex = -1;
         rotatingPageManagerDirection = 0;
@@ -2259,6 +2582,7 @@ async function deleteSelectedPageFromManager() {
     if (!window.confirm(`Delete page ${selected + 1}?`)) return;
     const nextOrder = pageManagerOrderWithout(selected);
     setPageManagerStatus('Deleting page...');
+    clearAllRotatedPageSnapshots();
     await pageManagerJsonRequest(REORDER_PAGES_URL, {
         page_order: nextOrder,
         session_id: getSessionId(),
@@ -3506,11 +3830,18 @@ function promotedOverlayKeepsSourceBlockGeometry(annotation) {
     if (boolish(annotation.styleDirty)) return false;
     if (annotation.userForcedRichText === true) return false;
     if (boolish(annotation.userSizedTextBox)) return false;
-    if (String(annotation.richTextHtml || '').trim() !== '') return false;
     const text = String(annotation.text || '');
     if (!text.includes('\n')) return false;
-    const source = normalizeComparableText(annotation.pdfjsSourceText || annotation.originalText || '');
-    return Boolean(source && normalizeComparableText(text) === source);
+    const rawSource = String(annotation.pdfjsSourceText || annotation.originalText || '');
+    const source = normalizeComparableText(rawSource);
+    const isCleanSourceText = Boolean(source && normalizeComparableText(text) === source);
+    const isCompatibleSubstitution = promotedSourceLayoutCompatibleTextEdit(text, rawSource);
+    // Rich markup normally owns layout. A compatible substitution is the one
+    // exception: older builds generated uniform rich spans merely by releasing
+    // the source scaffold, so restoring source geometry also repairs those
+    // already-saved annotations without discarding a genuine format change.
+    if (String(annotation.richTextHtml || '').trim() !== '' && !isCompatibleSubstitution) return false;
+    return isCleanSourceText || isCompatibleSubstitution;
 }
 
 function isUserCreatedTextAnnotation(annotation) {
@@ -3660,15 +3991,24 @@ function plainTextFromRichTextElement(root) {
     return out;
 }
 
-function normalizeRichPlainText(value) {
-    return String(value || '')
+function normalizeRichPlainText(value, options = {}) {
+    const raw = String(value || '');
+    // The custom Enter handler leaves a zero-width caret anchor after its
+    // newline. That anchor is also the only reliable distinction between an
+    // authored trailing line break and the structural newline emitted by a
+    // browser-created block element. Preserve the former; continue trimming
+    // the latter for legacy rich HTML.
+    const hasAuthoredTrailingLineBreak = /\n\u200b+$/u.test(raw);
+    const normalized = raw
         .replace(/\r\n?/g, '\n')
         .replace(/\u00a0/g, ' ')
         .replace(/\u200b/g, '')
         .replace(/[ \t]+\n/g, '\n')
         .replace(/\n[ \t]+/g, '\n')
-        .replace(/\n{3,}/g, '\n\n')
-        .replace(/\n$/g, '');
+        .replace(/\n{3,}/g, '\n\n');
+    return options.preserveTrailingLineBreaks === true || hasAuthoredTrailingLineBreak
+        ? normalized
+        : normalized.replace(/\n$/g, '');
 }
 
 function annotationPreservesDisplayLineBreaks(annotation) {
@@ -3682,8 +4022,31 @@ function annotationPreservesDisplayLineBreaks(annotation) {
 
 function normalizeAnnotationTextForDisplay(value, options = {}) {
     const text = String(value || '').replace(/\r\n?/g, '\n');
-    if (options.preserveLineBreaks === true) return normalizeRichPlainText(text);
+    if (options.preserveLineBreaks === true) {
+        return normalizeRichPlainText(text, { preserveTrailingLineBreaks: true });
+    }
     return text.replace(/[ \t]*\n[ \t]*/g, ' ');
+}
+
+function normalizeHyperlinkDestination(value) {
+    let candidate = String(value || '')
+        .replace(/[\u0000-\u001f\u007f]/g, '')
+        .trim();
+    if (!candidate || candidate.length > 2048) return '';
+    if (/^[^\s/@]+@[^\s/@]+\.[^\s/@]+$/u.test(candidate)) {
+        candidate = `mailto:${candidate}`;
+    } else if (!/^[a-z][a-z0-9+.-]*:/i.test(candidate)) {
+        candidate = `https://${candidate}`;
+    }
+    try {
+        const parsed = new URL(candidate);
+        const protocol = String(parsed.protocol || '').toLowerCase();
+        if (!['http:', 'https:', 'mailto:', 'tel:'].includes(protocol)) return '';
+        if ((protocol === 'http:' || protocol === 'https:') && !parsed.hostname) return '';
+        return parsed.href;
+    } catch (_) {
+        return '';
+    }
 }
 
 function sanitizeRichTextHtmlForAnnotation(html, options = {}) {
@@ -3691,7 +4054,7 @@ function sanitizeRichTextHtmlForAnnotation(html, options = {}) {
     if (!raw) return '';
     const template = document.createElement('template');
     template.innerHTML = raw;
-    const allowedTags = new Set(['B', 'BR', 'DIV', 'EM', 'I', 'P', 'SPAN', 'STRONG', 'U']);
+    const allowedTags = new Set(['A', 'B', 'BR', 'DIV', 'EM', 'I', 'P', 'SPAN', 'STRONG', 'U']);
     const allowedStyles = new Set([
         'background-color',
         'color',
@@ -3712,8 +4075,14 @@ function sanitizeRichTextHtmlForAnnotation(html, options = {}) {
                     child.replaceWith(...Array.from(child.childNodes));
                     return;
                 }
+                const linkUrl = child.tagName === 'A'
+                    ? normalizeHyperlinkDestination(child.getAttribute('href') || '')
+                    : '';
                 Array.from(child.attributes || []).forEach((attr) => {
-                    if (attr.name.toLowerCase() !== 'style') child.removeAttribute(attr.name);
+                    const name = attr.name.toLowerCase();
+                    if (name !== 'style' && !(child.tagName === 'A' && name === 'href')) {
+                        child.removeAttribute(attr.name);
+                    }
                 });
                 const style = child.getAttribute('style') || '';
                 if (style) {
@@ -3728,6 +4097,15 @@ function sanitizeRichTextHtmlForAnnotation(html, options = {}) {
                     else child.removeAttribute('style');
                 }
                 scrub(child);
+                if (child.tagName === 'A') {
+                    if (!linkUrl) {
+                        child.replaceWith(...Array.from(child.childNodes));
+                        return;
+                    }
+                    child.setAttribute('href', linkUrl);
+                    child.setAttribute('target', '_blank');
+                    child.setAttribute('rel', 'noopener noreferrer');
+                }
             } else if (child.nodeType === Node.TEXT_NODE) {
                 child.nodeValue = options.preserveLineBreaks === true
                     ? normalizeRichPlainText(child.nodeValue || '')
@@ -3799,7 +4177,7 @@ function richTextHtmlForBox(box) {
     if (!html) return '';
     const probe = document.createElement('div');
     probe.innerHTML = html;
-    const hasInlineFormatting = Boolean(probe.querySelector('[style],b,strong,i,em,u'));
+    const hasInlineFormatting = Boolean(probe.querySelector('[style],a[href],b,strong,i,em,u'));
     return hasInlineFormatting ? html : '';
 }
 
@@ -3879,6 +4257,8 @@ function normalizedRichTextRunStyle(node, renderScale) {
             || computedFontStyle,
         )
         : computedFontStyle;
+    const hyperlinkElement = element.closest?.('a[href]');
+    const linkUrl = normalizeHyperlinkDestination(hyperlinkElement?.getAttribute?.('href') || '');
     return {
         fontFamily: fontIdentity.fontFamily,
         fontSourceName: fontIdentity.fontSourceName,
@@ -3892,6 +4272,7 @@ function normalizedRichTextRunStyle(node, renderScale) {
         fontStyle,
         color: cssColorToHex(cs.color || element.style?.color || '', '#000000'),
         underline: decoration.includes('underline') || isUnderlineElement(element),
+        linkUrl: linkUrl || undefined,
     };
 }
 
@@ -3905,6 +4286,7 @@ function richTextRunStyleKey(style) {
         style?.fontStyle || '',
         style?.color || '',
         style?.underline ? '1' : '0',
+        style?.linkUrl || '',
     ].join('|');
 }
 
@@ -3925,6 +4307,10 @@ function richTextDiffersOnlyByLineBreaks(left, right) {
 function richTextRunsForBox(box, renderScale) {
     const root = selectedBoxTextElement(box);
     if (!root) return [];
+    const expected = normalizeRichPlainText(textContentForBox(box), {
+        preserveTrailingLineBreaks: true,
+    });
+    const expectedTrailingBreaks = expected.match(/\n+$/u)?.[0]?.length || 0;
     const runs = [];
     const appendBreak = (allowDuplicate = true) => {
         if (!runs.length) return;
@@ -3972,11 +4358,19 @@ function richTextRunsForBox(box, renderScale) {
         if (isBlock && runs.length > before) appendBreak(false);
     };
     Array.from(root.childNodes || []).forEach(walk);
-    while (runs[runs.length - 1]?.type === 'break') runs.pop();
+    let trailingBreaks = 0;
+    for (let index = runs.length - 1; index >= 0 && runs[index]?.type === 'break'; index -= 1) {
+        trailingBreaks += 1;
+    }
+    while (trailingBreaks > expectedTrailingBreaks) {
+        runs.pop();
+        trailingBreaks -= 1;
+    }
     runs.forEach((run) => delete run._styleKey);
 
-    const expected = normalizeRichPlainText(textContentForBox(box));
-    const actual = normalizeRichPlainText(richTextRunsPlainText(runs));
+    const actual = normalizeRichPlainText(richTextRunsPlainText(runs), {
+        preserveTrailingLineBreaks: true,
+    });
     return expected && actual === expected ? runs : [];
 }
 
@@ -3989,7 +4383,8 @@ function canonicalRichTextHtmlFromRuns(runs) {
             return;
         }
         if (run?.type !== 'text' || !String(run.text || '')) return;
-        const span = document.createElement('span');
+        const linkUrl = normalizeHyperlinkDestination(run.linkUrl || '');
+        const span = document.createElement(linkUrl ? 'a' : 'span');
         span.textContent = String(run.text || '');
         if (run.fontFamily) span.style.fontFamily = String(run.fontFamily);
         if (Number(run.fontSize) > 0) span.style.fontSize = `${Number(run.fontSize)}pt`;
@@ -3998,6 +4393,11 @@ function canonicalRichTextHtmlFromRuns(runs) {
         if (run.fontStyle) span.style.fontStyle = String(run.fontStyle);
         if (run.color) span.style.color = String(run.color);
         if (run.underline) span.style.textDecorationLine = 'underline';
+        if (linkUrl) {
+            span.href = linkUrl;
+            span.target = '_blank';
+            span.rel = 'noopener noreferrer';
+        }
         root.appendChild(span);
     });
     return root.innerHTML.trim();
@@ -4006,9 +4406,21 @@ function canonicalRichTextHtmlFromRuns(runs) {
 function renderRichTextRunsIntoElement(root, runs, renderScale, expectedText = '') {
     if (!root || !Array.isArray(runs) || !runs.length) return false;
     const reconciledRuns = reconcileRichTextRunWhitespace(runs, expectedText);
-    const renderRuns = reconciledRuns.length ? reconciledRuns : runs;
-    const actualText = normalizeRichPlainText(richTextRunsPlainText(renderRuns));
-    const normalizedExpectedText = normalizeRichPlainText(expectedText);
+    const normalizedExpectedText = normalizeRichPlainText(expectedText, {
+        preserveTrailingLineBreaks: true,
+    });
+    const reconciledText = normalizeRichPlainText(richTextRunsPlainText(reconciledRuns), {
+        preserveTrailingLineBreaks: true,
+    });
+    // The generic reconciliation contract intentionally drops trailing break
+    // runs. An authored Enter at the end is meaningful, so retain the original
+    // run list when reconciliation would discard that final blank line.
+    const renderRuns = reconciledRuns.length && reconciledText === normalizedExpectedText
+        ? reconciledRuns
+        : runs;
+    const actualText = normalizeRichPlainText(richTextRunsPlainText(renderRuns), {
+        preserveTrailingLineBreaks: true,
+    });
     if (!actualText || (
         normalizedExpectedText
         && actualText !== normalizedExpectedText
@@ -4022,7 +4434,8 @@ function renderRichTextRunsIntoElement(root, runs, renderScale, expectedText = '
             return;
         }
         if (run?.type !== 'text' || !String(run.text || '')) return;
-        const span = document.createElement('span');
+        const linkUrl = normalizeHyperlinkDestination(run.linkUrl || '');
+        const span = document.createElement(linkUrl ? 'a' : 'span');
         span.textContent = String(run.text || '');
         const documentFont = embeddedFontOptionForValue(run.fontSourceName || run.fontFamily);
         if (run.fontFamily || documentFont?.cssFamily) {
@@ -4033,26 +4446,43 @@ function renderRichTextRunsIntoElement(root, runs, renderScale, expectedText = '
         if (Number(run.fontSize) > 0) span.style.fontSize = `${Number(run.fontSize) * scale}px`;
         if (Number(run.lineHeight) > 0) span.style.lineHeight = `${Number(run.lineHeight) * scale}px`;
         if (run.fontWeight || documentFont?.renderWeight) {
-            span.style.fontWeight = String(
-                documentFont?.source === 'pdfjs-runtime'
-                    ? (documentFont.renderWeight || '400')
-                    : run.fontWeight,
+            const semanticWeight = String(run.fontWeight || documentFont?.weight || '400');
+            const documentSemanticWeight = String(
+                documentFont?.weight || documentFont?.renderWeight || '400',
             );
-            span.dataset.sourceSemanticFontWeight = String(run.fontWeight || documentFont?.weight || '400');
+            const hasAuthoredWeightOverride = Boolean(run.fontWeight)
+                && semanticWeight !== documentSemanticWeight;
+            span.style.fontWeight = String(
+                documentFont?.source === 'pdfjs-runtime' && !hasAuthoredWeightOverride
+                    ? pdfjsRuntimeRenderFontWeight(documentFont)
+                    : semanticWeight,
+            );
+            span.dataset.sourceSemanticFontWeight = semanticWeight;
         }
         if (run.fontStyle || documentFont?.renderStyle) {
-            span.style.fontStyle = String(
-                documentFont?.source === 'pdfjs-runtime'
-                    ? (documentFont.renderStyle || 'normal')
-                    : run.fontStyle,
+            const semanticStyle = String(run.fontStyle || documentFont?.style || 'normal');
+            const documentSemanticStyle = String(
+                documentFont?.style || documentFont?.renderStyle || 'normal',
             );
-            span.dataset.sourceSemanticFontStyle = String(run.fontStyle || documentFont?.style || 'normal');
+            const hasAuthoredStyleOverride = Boolean(run.fontStyle)
+                && semanticStyle !== documentSemanticStyle;
+            span.style.fontStyle = String(
+                documentFont?.source === 'pdfjs-runtime' && !hasAuthoredStyleOverride
+                    ? pdfjsRuntimeRenderFontStyle(documentFont)
+                    : semanticStyle,
+            );
+            span.dataset.sourceSemanticFontStyle = semanticStyle;
         }
         if (documentFont?.pdfFontName) {
             span.dataset.sourcePdfFontName = documentFont.pdfFontName;
         }
         if (run.color) span.style.color = cssColorToHex(run.color, '#000000');
         if (run.underline) span.style.textDecorationLine = 'underline';
+        if (linkUrl) {
+            span.href = linkUrl;
+            span.target = '_blank';
+            span.rel = 'noopener noreferrer';
+        }
         fragment.appendChild(span);
     });
     root.replaceChildren(fragment);
@@ -4102,7 +4532,9 @@ function restorePromotedRichTextBoundaries(root, annotation) {
 // nested inline styles.
 function restoreAuthoredRichTextLineBreaks(root, annotation) {
     if (!root || !annotationPreservesDisplayLineBreaks(annotation)) return false;
-    const annotationText = normalizeRichPlainText(annotation?.text || '');
+    const annotationText = normalizeRichPlainText(annotation?.text || '', {
+        preserveTrailingLineBreaks: true,
+    });
     const standaloneSourceLines = isUserCreatedTextAnnotation(annotation)
         && Array.isArray(annotation?.sourceTextLines)
         && annotation.sourceTextLines.length > 1
@@ -4113,7 +4545,9 @@ function restoreAuthoredRichTextLineBreaks(root, annotation) {
         && richTextDiffersOnlyByLineBreaks(candidate, root.textContent || '')
     )) || '';
     if (!targetText.includes('\n')) return false;
-    if (normalizeRichPlainText(plainTextFromRichTextElement(root)) === targetText) return true;
+    if (normalizeRichPlainText(plainTextFromRichTextElement(root), {
+        preserveTrailingLineBreaks: true,
+    }) === targetText) return true;
 
     const flattenedTarget = targetText.replace(/\n/g, '');
     const flattenedDom = String(root.textContent || '')
@@ -4153,7 +4587,9 @@ function restoreAuthoredRichTextLineBreaks(root, annotation) {
         range.detach?.();
     });
     root.normalize();
-    return normalizeRichPlainText(plainTextFromRichTextElement(root)) === targetText;
+    return normalizeRichPlainText(plainTextFromRichTextElement(root), {
+        preserveTrailingLineBreaks: true,
+    }) === targetText;
 }
 
 function parseCssFontFamily(value) {
@@ -4498,7 +4934,11 @@ function promotedFallbackIsCoveredByPdfjsText(annotation, textLayerEl, viewport,
             normalizeComparableText(span.textContent || ''),
             normalizeComparableText(sourceSpanOriginalText(span)),
         ].filter(Boolean);
-        if (!spanTexts.includes(text)) return false;
+        if (!spanTexts.some((spanText) => pdfjsTextCoversPromotedFallback(
+            spanText,
+            text,
+            annotation.promotedSegmentRole,
+        ))) return false;
         const spanRect = span.getBoundingClientRect();
         const spanBox = {
             left: spanRect.left - layerRect.left,
@@ -5050,12 +5490,13 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     const topPx = Number.parseFloat(box.style.top || '0') || 0;
     const widthPx = Number.parseFloat(box.style.width || '0') || box.offsetWidth || 0;
     const heightPx = Number.parseFloat(box.style.height || '0') || box.offsetHeight || 0;
-    const pdfRect = {
-        x: (leftPx / scale) + dxPts,
-        y: (Number(viewport.height) - (topPx + heightPx)) / scale - dyPts,
-        w: widthPx / scale,
-        h: heightPx / scale,
-    };
+    const pdfRect = viewportRectToPdfRect({
+        left: leftPx + (dxPts * scale),
+        top: topPx + (dyPts * scale),
+        width: widthPx,
+        height: heightPx,
+    }, viewport, scale);
+    if (!pdfRect) return null;
     const isPromotedSourceBox = isPromotedSourceTextBox(box, existingAnnotation);
     const isUserBox = isUserCreatedTextBox(box, existingAnnotation);
     const isStandaloneUserTextBox = !isPromotedSourceBox
@@ -5218,14 +5659,28 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     // rich-text authoring — never serialize it as richTextHtml or the reload
     // path would treat the block as user-formatted and lose source geometry.
     const isSimplePromotedParagraph = box.dataset.promotedParagraphFlow === '1';
+    const simpleParagraphHasAuthoredInlineStyle = isSimplePromotedParagraph
+        && box.dataset.inlineStyleAuthored === '1';
+    const isPreformattedPromotedBlock = box.dataset.promotedPreformattedBlock === '1';
+    const preformattedBlockHasAuthoredInlineStyle = isPreformattedPromotedBlock
+        && box.dataset.inlineStyleAuthored === '1';
     // The pdfe-style paragraph DOM is an editing surface, not authored rich
     // markup. Persist its plain text and paragraph metrics only; serializing
     // the wrapper as rich runs would feed a browser-derived 1.2 line-height
     // back into the next render and compact the paragraph after deselection.
-    const authoredRichTextHtml = displayMarkupTextOverride != null || isSimplePromotedParagraph
+    // Once the user formats a selection, however, the nested span is authored
+    // content and must survive commit. Discarding it here made partial bold,
+    // italic, and color changes disappear as soon as the box was deselected.
+    const discardSimpleParagraphMarkup = isSimplePromotedParagraph
+        && !simpleParagraphHasAuthoredInlineStyle;
+    const discardPreformattedSourceMarkup = isPreformattedPromotedBlock
+        && !preformattedBlockHasAuthoredInlineStyle;
+    const discardGeneratedSourceMarkup = discardSimpleParagraphMarkup
+        || discardPreformattedSourceMarkup;
+    const authoredRichTextHtml = displayMarkupTextOverride != null || discardGeneratedSourceMarkup
         ? ''
         : richTextHtmlForBox(box);
-    const serializedRichTextRuns = displayMarkupTextOverride != null || isSimplePromotedParagraph
+    const serializedRichTextRuns = displayMarkupTextOverride != null || discardGeneratedSourceMarkup
         ? []
         : richTextRunsForBox(box, scale);
     // `textValue` can restore a source-authoritative word boundary that the
@@ -5236,7 +5691,13 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     const reconciledRichTextRuns = serializedRichTextRuns.length
         ? reconcileRichTextRunWhitespace(serializedRichTextRuns, textValue)
         : [];
-    const richTextRuns = reconciledRichTextRuns.length
+    const reconciledRunsMatchText = reconciledRichTextRuns.length
+        && normalizeRichPlainText(richTextRunsPlainText(reconciledRichTextRuns), {
+            preserveTrailingLineBreaks: true,
+        }) === normalizeRichPlainText(textValue, {
+            preserveTrailingLineBreaks: true,
+        });
+    const richTextRuns = reconciledRunsMatchText
         ? reconciledRichTextRuns
         : serializedRichTextRuns;
     // Keep HTML for compatibility with older save readers, but canonicalize it
@@ -5417,13 +5878,17 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         pdfjsSourceY: isStandaloneUserTextBox ? undefined : immutableSourceNumber(existingAnnotation?.pdfjsSourceY, baseRect.y),
         pdfjsSourceW: isStandaloneUserTextBox ? undefined : immutableSourceNumber(existingAnnotation?.pdfjsSourceW, baseRect.w),
         pdfjsSourceH: isStandaloneUserTextBox ? undefined : immutableSourceNumber(existingAnnotation?.pdfjsSourceH, baseRect.h),
-        pdfjsSourcePageHeight: isStandaloneUserTextBox ? undefined : immutableSourceNumber(existingAnnotation?.pdfjsSourcePageHeight, box.dataset.basePageHeight ?? (Number(viewport.height) / scale)),
+        pdfjsSourcePageHeight: isStandaloneUserTextBox ? undefined : immutableSourceNumber(existingAnnotation?.pdfjsSourcePageHeight, box.dataset.basePageHeight ?? viewportPdfDimensions(viewport, scale).height),
         pdfjsSourceText: isStandaloneUserTextBox ? undefined : immutableSourceString(existingAnnotation?.pdfjsSourceText, sourceText),
+        pdfjsRemovedLinkRects: removedPdfLinkRectsForBox(box).length
+            ? removedPdfLinkRectsForBox(box)
+            : undefined,
         pdfjsAnchorUid: immutableSourceString(existingAnnotation?.pdfjsAnchorUid, box.dataset.uid || ''),
         pdfjsSourceOccurrence: immutableSourceString(existingAnnotation?.pdfjsSourceOccurrence, box.dataset.occurrence || '0'),
         pdfjsEditorMode: box.dataset.editorMode || editorModeForBox(box),
         userForcedRichText: box.dataset.userForcedRichText === '1' || existingAnnotation?.userForcedRichText === true,
-        promotedReflowEnabled: isPromotedSourceBox
+        promotedReflowEnabled: displayMarkupTextOverride == null
+            && isPromotedSourceBox
             && (box.dataset.promotedReflowEnabled === '1'
                 || box.dataset.naturalTextFlow === '1'
                 || boolish(existingAnnotation?.promotedReflowEnabled)),
@@ -5535,13 +6000,90 @@ function deletedPdfjsSourceOwnsSpan(pageIndex, currentRect, text, originalText, 
 }
 
 function pdfRectToCanvasRect(pdfRect, viewport, scale) {
-    if (!pdfRect || !viewport || !scale) return null;
-    return {
-        left: pdfRect.x * scale,
-        top: Number(viewport.height) - ((pdfRect.y + pdfRect.h) * scale),
-        width: pdfRect.w * scale,
-        height: pdfRect.h * scale,
-    };
+    return pdfRectToViewportRect(pdfRect, viewport, scale);
+}
+
+function applyViewportRotationFrame(element, viewport, displayRect) {
+    if (!element || !viewport || !displayRect) return null;
+    const frame = viewportRotatedContentFrame(viewport, displayRect.width, displayRect.height);
+    element.dataset.pageRotation = String(frame.rotation);
+    element.style.width = `${Math.max(1, frame.width)}px`;
+    element.style.height = `${Math.max(1, frame.height)}px`;
+    element.style.transformOrigin = '0 0';
+    element.style.transform = frame.transform;
+    return frame;
+}
+
+function appendViewportRotatedContent(box, content, viewport, displayRect) {
+    if (!box || !content) return null;
+    if (normalizePageRotationDegrees(viewport?.rotation) === 0) {
+        box.appendChild(content);
+        return content;
+    }
+    const frame = document.createElement('div');
+    frame.className = 'enpv-page-rotated-content-frame';
+    applyViewportRotationFrame(frame, viewport, displayRect);
+    frame.appendChild(content);
+    box.appendChild(frame);
+    return frame;
+}
+
+function selectedRangePdfRects(box, range) {
+    if (!box || !range || range.collapsed) return [];
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    const pageView = Number.isFinite(pageIndex) && pageIndex >= 0 ? pdfViewer.getPageView(pageIndex) : null;
+    const viewport = pageView?.viewport;
+    const pageLayer = box.parentElement;
+    const layerBounds = pageLayer?.getBoundingClientRect?.();
+    const scale = Number.parseFloat(pageLayer?.dataset?.scale || '')
+        || Number(viewport?.scale)
+        || Number(pdfViewer.currentScale)
+        || 1;
+    if (!viewport || !layerBounds || !(scale > 0)) return [];
+
+    const pageWidth = Number(viewport.width) || 0;
+    const pageHeight = Number(viewport.height) || 0;
+    const rects = Array.from(range.getClientRects?.() || []).map((clientRect) => {
+        const left = Math.max(0, Math.min(pageWidth, clientRect.left - layerBounds.left));
+        const right = Math.max(0, Math.min(pageWidth, clientRect.right - layerBounds.left));
+        const top = Math.max(0, Math.min(pageHeight, clientRect.top - layerBounds.top));
+        const bottom = Math.max(0, Math.min(pageHeight, clientRect.bottom - layerBounds.top));
+        if (right - left <= 0.5 || bottom - top <= 0.5) return null;
+        return {
+            x: left / scale,
+            y: (pageHeight - bottom) / scale,
+            w: (right - left) / scale,
+            h: (bottom - top) / scale,
+        };
+    }).filter(Boolean);
+
+    return rects.filter((rect, index) => !rects.slice(0, index).some((existing) => (
+        Math.abs(existing.x - rect.x) <= 0.2
+        && Math.abs(existing.y - rect.y) <= 0.2
+        && Math.abs(existing.w - rect.w) <= 0.2
+        && Math.abs(existing.h - rect.h) <= 0.2
+    )));
+}
+
+function recordUnderlyingPdfLinkReplacement(box, range) {
+    const selectedRects = selectedRangePdfRects(box, range);
+    if (!selectedRects.length) return [];
+    const existingRects = removedPdfLinkRectsForBox(box);
+    const combined = [...existingRects];
+    for (const rect of selectedRects) {
+        if (combined.some((existing) => {
+            const overlap = pdfRectOverlapArea(existing, rect);
+            const smallerArea = Math.max(0.0001, Math.min(pdfRectArea(existing), pdfRectArea(rect)));
+            return overlap / smallerArea >= 0.9;
+        })) continue;
+        combined.push(rect);
+    }
+    const stored = setRemovedPdfLinkRectsForBox(box, combined);
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    if (Number.isFinite(pageIndex) && pageIndex >= 0) {
+        applyRemovedPdfLinkVisibility(pageIndex, stored);
+    }
+    return stored;
 }
 
 function expandCanvasRect(rect, paddingPx = 1) {
@@ -5559,7 +6101,59 @@ function expandCanvasRect(rect, paddingPx = 1) {
     };
 }
 
+// Canvas pixel sampling (getImageData) is by far the most expensive thing the
+// overlay renderer does: a single source-handle box costs up to 8 readbacks and
+// a page layer is rebuilt on every scroll frame, zoom change and undo/redo.
+// The page canvas is immutable between pdf.js renders, so the samples are pure
+// functions of (canvas, rect). Memoize them per canvas element — pdf.js swaps
+// the canvas on zoom/reflow so stale entries are collected automatically, and
+// `pagerendered` drops the entry explicitly for in-place repaints.
+const canvasSampleCaches = new WeakMap();
+const CANVAS_SAMPLE_CACHE_LIMIT = 8000;
+
+function canvasSampleCacheFor(pageDiv) {
+    const canvas = pageDiv?.querySelector?.(':scope canvas');
+    if (!canvas) return null;
+    let cache = canvasSampleCaches.get(canvas);
+    if (!cache) {
+        cache = new Map();
+        canvasSampleCaches.set(canvas, cache);
+    }
+    return cache;
+}
+
+function invalidateCanvasSampleCache(pageDiv) {
+    const canvas = pageDiv?.querySelector?.(':scope canvas');
+    if (canvas) canvasSampleCaches.delete(canvas);
+}
+
+function memoizedCanvasSample(name, pageDiv, rect, fallback, compute) {
+    const left = Number(rect?.left);
+    const top = Number(rect?.top);
+    const width = Number(rect?.width);
+    const height = Number(rect?.height);
+    if (![left, top, width, height].every(Number.isFinite)) return compute();
+    const cache = canvasSampleCacheFor(pageDiv);
+    if (!cache) return compute();
+    const key = `${name}|${left.toFixed(2)}|${top.toFixed(2)}|${width.toFixed(2)}|${height.toFixed(2)}|${fallback}`;
+    if (cache.has(key)) return cache.get(key);
+    const value = compute();
+    if (cache.size >= CANVAS_SAMPLE_CACHE_LIMIT) cache.clear();
+    cache.set(key, value);
+    return value;
+}
+
 function samplePageBackgroundColor(pageDiv, rect, fallback = '#fff') {
+    return memoizedCanvasSample(
+        'bg',
+        pageDiv,
+        rect,
+        fallback,
+        () => computePageBackgroundColor(pageDiv, rect, fallback),
+    );
+}
+
+function computePageBackgroundColor(pageDiv, rect, fallback = '#fff') {
     if (!pageDiv || !rect || rect.width <= 0 || rect.height <= 0) return fallback;
     const canvas = pageDiv.querySelector(':scope canvas');
     if (!canvas) return fallback;
@@ -5640,13 +6234,29 @@ function samplePageBackgroundColor(pageDiv, rect, fallback = '#fff') {
         const allRatio = bestAll.count / sampleCount;
         const saturation = Math.max(bestAll.r, bestAll.g, bestAll.b) - Math.min(bestAll.r, bestAll.g, bestAll.b);
         const coloredBackground = saturation >= 28 && (allRatio >= 0.45 || bestAll.count >= bestLight.count * 1.35);
-        const darkBackground = allRatio >= 0.62 && bestAll.count >= bestLight.count * 1.5;
+        // A text row cropped tightly to its glyph box on a filled dark cell
+        // never reaches the 62% ratio below, because the light glyph ink eats
+        // most of the remaining pixels (f1040s1 page 1 "Part I" measures ~60%).
+        // Without the relaxed branch the white glyphs win as "background" and
+        // the tile is captured as the text color instead.
+        const darkBackground = (allRatio >= 0.62 && bestAll.count >= bestLight.count * 1.5)
+            || (allLuminance < 90 && allRatio >= 0.45 && bestAll.count >= bestLight.count * 2);
         return (coloredBackground || darkBackground) ? `rgb(${bestAll.key})` : `rgb(${bestLight.key})`;
     }
     return `rgb(${bestAll.key})`;
 }
 
 function samplePageSurroundingBackgroundColor(pageDiv, rect, fallback = '') {
+    return memoizedCanvasSample(
+        'surround',
+        pageDiv,
+        rect,
+        fallback,
+        () => computePageSurroundingBackgroundColor(pageDiv, rect, fallback),
+    );
+}
+
+function computePageSurroundingBackgroundColor(pageDiv, rect, fallback = '') {
     if (!pageDiv || !rect || rect.width <= 0 || rect.height <= 0) return fallback;
     const pageBounds = pageDiv.getBoundingClientRect?.();
     if (!pageBounds || pageBounds.width <= 0 || pageBounds.height <= 0) return fallback;
@@ -5720,6 +6330,16 @@ function samplePageMovedSourceMaskColor(pageDiv, rect, fallback = '#ffffff') {
 }
 
 function samplePageForegroundColor(pageDiv, rect, fallback = '#000000') {
+    return memoizedCanvasSample(
+        'fg',
+        pageDiv,
+        rect,
+        fallback,
+        () => computePageForegroundColor(pageDiv, rect, fallback),
+    );
+}
+
+function computePageForegroundColor(pageDiv, rect, fallback = '#000000') {
     if (!pageDiv || !rect || rect.width <= 0 || rect.height <= 0) return fallback || '';
     const canvas = pageDiv.querySelector(':scope canvas');
     if (!canvas) return fallback || '';
@@ -5765,7 +6385,16 @@ function samplePageForegroundColor(pageDiv, rect, fallback = '#000000') {
             localBackground.g - surroundingBackground.g,
             localBackground.b - surroundingBackground.b,
         );
-        if (distance > 40 && (surroundingSaturation >= 28 || surroundingLuminance < localLuminance - 35 || localSaturation < 35)) {
+        // A strongly dark local fill is a filled form cell holding light
+        // glyphs. The bands sampled around such a narrow glyph row mostly miss
+        // the cell and report the white page, and adopting that as the
+        // background makes the cell itself look like ink (f1040s1 page 1,
+        // "Part I" turned black on move). Mirror the rule the moved-source
+        // mask color already applies and keep the dark local fill.
+        const localIsFilledCell = localLuminance < 100 && surroundingLuminance > localLuminance + 80;
+        if (!localIsFilledCell
+            && distance > 40
+            && (surroundingSaturation >= 28 || surroundingLuminance < localLuminance - 35 || localSaturation < 35)) {
             background = surroundingBackground;
         }
     }
@@ -5807,6 +6436,17 @@ function samplePageForegroundColor(pageDiv, rect, fallback = '#000000') {
 }
 
 function detectForegroundCanvasInkBounds(pageDiv, rect) {
+    const cached = memoizedCanvasSample(
+        'ink',
+        pageDiv,
+        rect,
+        '',
+        () => computeForegroundCanvasInkBounds(pageDiv, rect),
+    );
+    return cached ? { ...cached } : cached;
+}
+
+function computeForegroundCanvasInkBounds(pageDiv, rect) {
     if (!pageDiv || !rect || rect.width <= 0 || rect.height <= 0) return null;
     const canvas = pageDiv.querySelector(':scope canvas');
     if (!canvas) return null;
@@ -5879,6 +6519,78 @@ function detectForegroundCanvasInkBounds(pageDiv, rect) {
         width,
         height,
     };
+}
+
+// Returns the contiguous band of canvas rows around `centerY` whose pixels are
+// dominated by `fillColor`, expressed in page-relative CSS pixels. Used to snap
+// a moved-source mask onto the filled form cell it has to erase: text-layer run
+// boxes are measured from the glyph advance box and routinely stop a pixel or
+// two short of the painted ink, which leaves a sliver of the original glyph
+// bottoms visible after the block is moved (f1040s1 page 1, "Part I").
+function detectCanvasFillBandRows(pageDiv, boundsRect, fillColor, centerY) {
+    if (!pageDiv || !boundsRect || boundsRect.width <= 0 || boundsRect.height <= 0 || !fillColor) return null;
+    const target = parseCssRgb(fillColor);
+    if (!target) return null;
+    const canvas = pageDiv.querySelector(':scope canvas');
+    if (!canvas) return null;
+    let ctx = null;
+    try {
+        ctx = canvas.getContext('2d', { willReadFrequently: true });
+    } catch (_) {
+        return null;
+    }
+    if (!ctx) return null;
+
+    const pageBounds = pageDiv.getBoundingClientRect();
+    const canvasBounds = canvas.getBoundingClientRect();
+    if (!canvasBounds.width || !canvasBounds.height || !canvas.width || !canvas.height) return null;
+
+    const scaleX = canvas.width / canvasBounds.width;
+    const scaleY = canvas.height / canvasBounds.height;
+    const offsetLeft = canvasBounds.left - pageBounds.left;
+    const offsetTop = canvasBounds.top - pageBounds.top;
+    const sx = Math.max(0, Math.floor((boundsRect.left - offsetLeft) * scaleX));
+    const sy = Math.max(0, Math.floor((boundsRect.top - offsetTop) * scaleY));
+    const sw = Math.max(1, Math.min(canvas.width - sx, Math.ceil(boundsRect.width * scaleX)));
+    const sh = Math.max(1, Math.min(canvas.height - sy, Math.ceil(boundsRect.height * scaleY)));
+    if (sw <= 0 || sh <= 0) return null;
+
+    let data;
+    try {
+        data = ctx.getImageData(sx, sy, sw, sh).data;
+    } catch (_) {
+        return null;
+    }
+
+    const fillRatios = new Array(sh).fill(0);
+    for (let y = 0; y < sh; y += 1) {
+        let matched = 0;
+        let total = 0;
+        for (let x = 0; x < sw; x += 1) {
+            const offset = ((y * sw) + x) * 4;
+            if (data[offset + 3] < 24) continue;
+            total += 1;
+            const distance = Math.hypot(
+                data[offset] - target.r,
+                data[offset + 1] - target.g,
+                data[offset + 2] - target.b,
+            );
+            if (distance <= 32) matched += 1;
+        }
+        fillRatios[y] = total > 0 ? matched / total : 0;
+    }
+    // Rows carrying glyph ink still read as majority fill; paper rows read as
+    // zero. A third of the row is enough to stay inside the cell.
+    const minFillRatio = 0.3;
+    const centerRow = Math.min(sh - 1, Math.max(0, Math.round(((centerY - offsetTop) * scaleY) - sy)));
+    if (fillRatios[centerRow] < minFillRatio) return null;
+    let first = centerRow;
+    let last = centerRow;
+    while (first - 1 >= 0 && fillRatios[first - 1] >= minFillRatio) first -= 1;
+    while (last + 1 < sh && fillRatios[last + 1] >= minFillRatio) last += 1;
+    const top = offsetTop + ((sy + first) / scaleY);
+    const bottom = offsetTop + ((sy + last + 1) / scaleY);
+    return bottom > top ? { top, bottom } : null;
 }
 
 function inflatedCanvasRect(rect, paddingPx = 1) {
@@ -6131,6 +6843,10 @@ function sourceSpanRunMaskItems(source = null, currentScale = 0) {
             rightPx: right * ratio,
             topPx: top * ratio,
             bottomPx: bottom * ratio,
+            text: String(item?.text || ''),
+            pdfjsFontName: String(item?.pdfjsFontName || item?.pdf_font_name || ''),
+            inlineSymbol: isPdfInlineSymbolText(item?.text || '')
+                || /symbol/i.test(String(item?.pdfjsFontName || item?.fontFamily || '')),
         };
     }).filter(Boolean);
 }
@@ -6249,10 +6965,10 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
         box.dataset.forceEmbeddedFont = '1';
     }
     const documentFontWeight = documentFont?.source === 'pdfjs-runtime'
-        ? (documentFont.renderWeight || '400')
+        ? pdfjsRuntimeRenderFontWeight(documentFont)
         : documentFont?.weight;
     const documentFontStyle = documentFont?.source === 'pdfjs-runtime'
-        ? (documentFont.renderStyle || 'normal')
+        ? pdfjsRuntimeRenderFontStyle(documentFont)
         : documentFont?.style;
     box.style.setProperty('--enpv-font-weight', String(documentFontWeight || annotation?.fontWeight || sourceStyle?.fontWeight || 'normal'));
     box.style.setProperty('--enpv-font-style', String(documentFontStyle || annotation?.fontStyle || sourceStyle?.fontStyle || 'normal'));
@@ -6307,7 +7023,7 @@ function captureSourceSpanRunsForBox(box, group, layerEl) {
         if (!layerRect) return;
         const items = Array.from(group.spans || [])
             .map((span) => {
-                const text = String(span?.textContent || '');
+                const text = normalizePdfInlineSymbolText(span?.textContent || '');
                 const trimmed = text.trim();
                 if (!trimmed || !span) return null;
                 const cs = window.getComputedStyle(span);
@@ -6479,6 +7195,9 @@ function restoreSourceSpanMetricsFromAnnotation(box, annotation) {
         && String(annotation.pdfjsSourceSpanRuns) !== '') {
         setSourceSpanRunsForBox(box, annotation.pdfjsSourceSpanRuns);
         restoredKeys.add('sourceSpanRuns');
+    }
+    if (annotation.pdfjsRemovedLinkRects != null) {
+        setRemovedPdfLinkRectsForBox(box, annotation.pdfjsRemovedLinkRects);
     }
     if (boolish(annotation.pdfjsSourceHasDrawnUnderline)) {
         box.dataset.sourceHasDrawnUnderline = '1';
@@ -6712,19 +7431,6 @@ function drawnUnderlineSegmentsFromPromotedSourceSpan(sourceSpan) {
     return sourceSpanDrawnUnderlineSegments(sourceSpan);
 }
 
-function drawnUnderlineRangesForSourceRunRect(segments, runRect, fallbackSpan = null) {
-    const x = Number(runRect?.x);
-    const width = Number(runRect?.w);
-    if (Array.isArray(segments) && segments.length
-        && Number.isFinite(x) && Number.isFinite(width) && width > 0) {
-        return sourceSpanDrawnUnderlineRanges({
-            bbox: [x, 0, x + width, 1],
-            drawnUnderlineSegments: segments,
-        });
-    }
-    return fallbackSpan ? sourceSpanDrawnUnderlineRanges(fallbackSpan) : [];
-}
-
 function promotedSourceStyleForPdfjsSource(pageIndex, sourceRect, sourceText, pageHeight) {
     if (!sourceRect || !(pageHeight > 0)) return null;
     const targetText = normalizeComparableText(sourceText);
@@ -6754,11 +7460,7 @@ function promotedSourceStyleForPdfjsSource(pageIndex, sourceRect, sourceText, pa
     return {
         fontWeight: fontWeightFromPromotedSourceSpan(best),
         fontStyle: fontStyleFromPromotedSourceSpan(best),
-        underlineRanges: drawnUnderlineRangesForSourceRunRect(
-            drawnUnderlineSegments,
-            sourceRect,
-            best,
-        ),
+        underlineRanges: sourceSpanDrawnUnderlineRangesForRect(best, sourceRect),
         underlineRangesPrecise: drawnUnderlineSegments.length > 0,
         drawnUnderlineSegments,
         hasDrawnUnderline: spanUnderlineRanges.length > 0,
@@ -6912,30 +7614,170 @@ function clearSourceFidelityBoundingBoxSnap(box, tc = null) {
     delete box.dataset.sourceBoundingBoxSnapped;
     delete box.dataset.sourceBoundingBoxSnapX;
     delete box.dataset.sourceBoundingBoxSnapY;
+    delete box.dataset.sourceBoundingBoxSnapSource;
+    delete box.dataset.sourceBoundingBoxSnapStatus;
+}
+
+function trimmedTextRangeClientRect(element) {
+    if (!element) return null;
+    try {
+        const textNodes = [];
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) textNodes.push(walker.currentNode);
+        const first = textNodes.find((node) => /\S/.test(String(node.nodeValue || '')));
+        const last = textNodes.slice().reverse().find((node) => /\S/.test(String(node.nodeValue || '')));
+        if (!first || !last) return null;
+        const firstValue = String(first.nodeValue || '');
+        const lastValue = String(last.nodeValue || '');
+        const range = document.createRange();
+        range.setStart(first, Math.max(0, firstValue.search(/\S/)));
+        let lastOffset = lastValue.length;
+        while (lastOffset > 0 && /\s/.test(lastValue[lastOffset - 1])) lastOffset -= 1;
+        range.setEnd(last, lastOffset);
+        const rect = range.getBoundingClientRect();
+        range.detach?.();
+        return rect.width > 0 && rect.height > 0 ? rect : null;
+    } catch (_) {
+        return null;
+    }
+}
+
+// Cached source runs from older sessions can predate the captured text-range
+// coordinates used by the editor snap. The live PDF.js text layer is the
+// authoritative geometry whenever it is available, so measure its actual
+// glyph ranges at edit entry instead of falling back to the annotation box's
+// raw top-left corner.
+function liveSourceSpansForBox(box, layerEl) {
+    if (!box || !layerEl) return [];
+    const allSpans = Array.from(layerEl.querySelectorAll('span'));
+    const annotationId = String(box.dataset.annotationId || '');
+    const owned = annotationId
+        ? allSpans.filter((span) => String(span.dataset.enpvPersistentId || '') === annotationId)
+        : [];
+    if (owned.length) return owned;
+
+    // A rerender can replace sourceGroupsByPage while an existing annotation
+    // box still carries the correct stable uid. Resolve that uid directly in
+    // the current text layer before consulting the cache.
+    const pageIndex = String(Number.parseInt(box.dataset.pageIndex || '-1', 10));
+    const uidParts = String(box.dataset.uid || '').split(':');
+    const groupIndex = uidParts.length >= 2 ? uidParts[uidParts.length - 1] : '';
+    const byUid = groupIndex && pageIndex !== '-1'
+        ? allSpans.filter((span) => (
+            String(span.dataset.enpvPage || '') === pageIndex
+            && String(span.dataset.enpvGroupIndex || span.dataset.enpvIndex || '') === groupIndex
+        ))
+        : [];
+    if (byUid.length) return byUid;
+
+    const lookup = sourceGroupForBox(box);
+    if (lookup?.layerEl === layerEl) {
+        const currentGroupSpans = Array.from(new Set(lookup.group?.spans || []))
+            .filter((span) => layerEl.contains(span));
+        if (currentGroupSpans.length) return currentGroupSpans;
+    }
+
+    // Final fallback for legacy boxes without ownership or a stable uid.
+    // Occurrence keeps duplicate strings from binding to the wrong row.
+    const targetText = normalizeComparableText(
+        baseTextForBox(box)
+        || originalTextForBox(box)
+        || selectedBoxTextElement(box)?.textContent
+        || '',
+    );
+    const targetOccurrence = String(box.dataset.occurrence || '');
+    return allSpans.filter((span) => {
+        const spanText = normalizeComparableText(
+            sourceSpanOriginalText(span) || span.textContent || '',
+        );
+        const occurrence = String(span.dataset.enpvOccurrence || '');
+        return Boolean(
+            targetText
+            && spanText === targetText
+            && (!targetOccurrence || !occurrence || occurrence === targetOccurrence)
+        );
+    });
+}
+
+function liveSourceGlyphMetricsForBox(box, layerEl) {
+    const spans = Array.from(new Set(liveSourceSpansForBox(box, layerEl)))
+        .filter((span) => layerEl?.contains(span) && String(span.textContent || '').trim());
+    const rects = spans.map(trimmedTextRangeClientRect).filter(Boolean);
+    return { rect: unionRects(rects), span: spans[0] || null };
+}
+
+function liveSourceGlyphClientRectForBox(box, layerEl) {
+    return liveSourceGlyphMetricsForBox(box, layerEl).rect;
+}
+
+// A text range's client rect spans the font's ascent/descent, not the painted
+// glyphs, so two elements whose fonts resolve differently report different rect
+// tops for the very same baseline. PDF.js routinely falls back to a generic
+// family in the text layer while the canvas (and the editor) use the embedded
+// font, so measure each side's baseline offset and align on that instead.
+let baselineOffsetProbeEl = null;
+function textBoxBaselineOffsetPx(element, text) {
+    if (!element || typeof document === 'undefined') return null;
+    const cs = window.getComputedStyle?.(element);
+    if (!cs) return null;
+    if (!baselineOffsetProbeEl?.isConnected) {
+        baselineOffsetProbeEl = document.createElement('div');
+        baselineOffsetProbeEl.setAttribute('aria-hidden', 'true');
+        baselineOffsetProbeEl.style.cssText = 'position:absolute;left:-99999px;top:0;visibility:hidden;pointer-events:none;white-space:pre;line-height:normal;';
+        document.body.appendChild(baselineOffsetProbeEl);
+    }
+    const probe = baselineOffsetProbeEl;
+    probe.style.fontFamily = cs.fontFamily;
+    probe.style.fontSize = cs.fontSize;
+    probe.style.fontWeight = cs.fontWeight;
+    probe.style.fontStyle = cs.fontStyle;
+    probe.style.fontStretch = cs.fontStretch;
+    probe.style.letterSpacing = cs.letterSpacing;
+    probe.textContent = '';
+    const sample = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 240) || 'Hxg';
+    const textNode = document.createTextNode(sample);
+    const strut = document.createElement('span');
+    strut.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline;';
+    probe.appendChild(textNode);
+    probe.appendChild(strut);
+    let offset = null;
+    try {
+        const range = document.createRange();
+        range.selectNode(textNode);
+        const textRect = range.getBoundingClientRect();
+        range.detach?.();
+        const strutTop = strut.getBoundingClientRect().top;
+        if (textRect.height > 0 && Number.isFinite(strutTop) && Number.isFinite(textRect.top)) {
+            offset = strutTop - textRect.top;
+        }
+    } catch (_) { /* an unmeasurable probe simply disables the correction */ }
+    probe.textContent = '';
+    return Number.isFinite(offset) ? offset : null;
 }
 
 // A source handle's selection box is intentionally a little larger than the
 // painted glyph Range so masks and drag handles cover the whole PDF.js run.
-// Keep that immutable glyph inset both while editing at the source and after
-// the box becomes a moved overlay; otherwise the first drag frame exposes the
-// DOM text at the expanded box's raw (0, 0), snapping it upward.
+// Keep that immutable glyph inset while editing at the source and after the
+// source becomes any persisted overlay (edited or moved); otherwise reopening
+// an edited annotation exposes the DOM text at the expanded box's raw (0, 0),
+// snapping it upward.
 function snapSourceFidelityEditorToCapturedBoundingBox(box, tc) {
     const isSourceEdit = box?.dataset?.sourceFidelityEditing === '1'
         && box?.classList?.contains('is-source-handle')
         && !box?.classList?.contains('is-persisted-overlay')
         && box?.dataset?.movedTextOverlay !== '1';
-    const isMovedSourceOverlay = box?.classList?.contains('is-source-fidelity')
+    const isPersistedSourceOverlay = box?.classList?.contains('is-source-fidelity')
         && box?.classList?.contains('is-persisted-overlay')
-        && box?.dataset?.movedTextOverlay === '1'
         && editorModeForBox(box) === 'source'
         && box?.dataset?.userSizedTextBox !== '1'
         && box?.dataset?.userForcedRichText !== '1'
         && box?.dataset?.naturalTextFlow !== '1';
     if (!box || !tc
-        || (!isSourceEdit && !isMovedSourceOverlay)
+        || (!isSourceEdit && !isPersistedSourceOverlay)
         || sourceFidelityTextIsVertical(box)
         || tc.querySelector('[data-source-span-line="1"]')) {
         clearSourceFidelityBoundingBoxSnap(box, tc);
+        if (box) box.dataset.sourceBoundingBoxSnapStatus = 'not-applicable';
         return false;
     }
 
@@ -6947,12 +7789,24 @@ function snapSourceFidelityEditorToCapturedBoundingBox(box, tc) {
     const layerEl = pageView?.textLayer?.div || pageView?.textLayer?.textLayerDiv;
     const layerRect = layerEl?.getBoundingClientRect?.();
     const runs = sourceSpanRunsForBox(box);
-    const glyphLefts = runs.map((run) => Number(run.textLeftPx)).filter(Number.isFinite);
-    const glyphTops = runs.map((run) => Number(run.textTopPx)).filter(Number.isFinite);
-    if (!layerRect
-        || !glyphLefts.length
-        || !glyphTops.length) {
+    const liveGlyphMetrics = liveSourceGlyphMetricsForBox(box, layerEl);
+    const liveGlyphRect = liveGlyphMetrics.rect;
+    const capturedGlyphOrigins = runs.map((run) => ({
+        left: Number(run.textLeftPx),
+        top: Number(run.textTopPx),
+    })).filter((origin) => Number.isFinite(origin.left) && Number.isFinite(origin.top));
+    // Captured runs are text-layer relative, so a collapsed layer rect (hidden
+    // or not yet rendered) would resolve them against a bogus (0, 0) origin.
+    const usesCapturedGlyphOrigins = !liveGlyphRect
+        && capturedGlyphOrigins.length > 0
+        && Boolean(layerRect)
+        && (layerRect.width > 0 || layerRect.height > 0);
+    const hasGlyphGeometry = Boolean(liveGlyphRect) || usesCapturedGlyphOrigins;
+    // A persisted overlay's target is expressed relative to its captured
+    // source rect, so it has no meaning without a glyph origin.
+    if (!hasGlyphGeometry && isPersistedSourceOverlay) {
         clearSourceFidelityBoundingBoxSnap(box, tc);
+        box.dataset.sourceBoundingBoxSnapStatus = 'missing-source-geometry';
         return false;
     }
 
@@ -6964,13 +7818,29 @@ function snapSourceFidelityEditorToCapturedBoundingBox(box, tc) {
     const ratio = currentScale > 0 && capturedScale > 0
         ? currentScale / capturedScale
         : 1;
-    const glyphOrigin = {
-        left: layerRect.left + (Math.min(...glyphLefts) * ratio),
-        top: layerRect.top + (Math.min(...glyphTops) * ratio),
-    };
+    // Seat the editor on the PDF row's baseline. Both offsets are measured off
+    // the resolved fonts, so identical fonts leave the target untouched while a
+    // text-layer fallback no longer drags the editable text above the row.
+    const sourceBaselineOffset = liveGlyphRect
+        ? textBoxBaselineOffsetPx(liveGlyphMetrics.span, liveGlyphMetrics.span?.textContent)
+        : null;
+    const editorBaselineOffset = liveGlyphRect
+        ? textBoxBaselineOffsetPx(tc.querySelector('.enpv-edit-run') || tc, tc.textContent)
+        : null;
+    const baselineCorrection = Number.isFinite(sourceBaselineOffset) && Number.isFinite(editorBaselineOffset)
+        ? sourceBaselineOffset - editorBaselineOffset
+        : 0;
+    const glyphOrigin = liveGlyphRect
+        ? { left: liveGlyphRect.left, top: liveGlyphRect.top + baselineCorrection }
+        : usesCapturedGlyphOrigins
+        ? {
+            left: layerRect.left + (Math.min(...capturedGlyphOrigins.map((origin) => origin.left)) * ratio),
+            top: layerRect.top + (Math.min(...capturedGlyphOrigins.map((origin) => origin.top)) * ratio),
+        }
+        : null;
     const boxRect = box.getBoundingClientRect();
     let target = glyphOrigin;
-    if (isMovedSourceOverlay) {
+    if (glyphOrigin && isPersistedSourceOverlay) {
         const annotationLayerRect = box.parentElement?.getBoundingClientRect?.();
         const sourcePdfRect = {
             x: Number.parseFloat(box.dataset.sourceBboxX || ''),
@@ -7012,15 +7882,41 @@ function snapSourceFidelityEditorToCapturedBoundingBox(box, tc) {
         range.detach?.();
         if (rect.width > 0 && rect.height > 0) current = rect;
     } catch (_) { /* an unmeasurable editor cannot be snapped */ }
-    if (!current) return false;
+    if (!current) {
+        box.dataset.sourceBoundingBoxSnapStatus = 'missing-editor-geometry';
+        return false;
+    }
+
+    if (!target) {
+        // Neither the live text layer nor captured runs could locate the PDF
+        // glyph row (e.g. a source handle stored without span runs whose text
+        // layer span cannot be matched). The source box is still the immutable
+        // glyph extent, and PDF rows sit on its baseline, so seat the editor's
+        // line box against the box bottom. Without this the editor opens at the
+        // box's raw (0, 0) and the text visibly jumps to the top on edit entry.
+        const lineHeightPx = computedElementLineHeightPx(tc);
+        const editorTop = tc.getBoundingClientRect?.().top;
+        if (!(lineHeightPx > 0) || !Number.isFinite(editorTop)) {
+            box.dataset.sourceBoundingBoxSnapStatus = 'missing-source-geometry';
+            return false;
+        }
+        target = {
+            left: current.left,
+            top: current.top + (boxRect.bottom - (editorTop + lineHeightPx)),
+        };
+    }
 
     const dx = target.left - current.left;
     const dy = target.top - current.top;
     const maxDx = Math.max(12, (Number(boxRect.width) || 0) * 0.2);
-    const maxDy = Math.max(12, (Number(boxRect.height) || 0) * 0.2);
+    // A font-metric mismatch between the text layer and the editor can legitimately
+    // need most of a line box worth of correction, but never more than the glyph
+    // extent itself, so the box height stays the ceiling for bogus origins.
+    const maxDy = Math.max(12, Number(boxRect.height) || 0);
     if (![dx, dy].every(Number.isFinite)
         || Math.abs(dx) > maxDx
         || Math.abs(dy) > maxDy) {
+        box.dataset.sourceBoundingBoxSnapStatus = 'rejected-delta';
         return false;
     }
 
@@ -7030,11 +7926,16 @@ function snapSourceFidelityEditorToCapturedBoundingBox(box, tc) {
     box.dataset.sourceBoundingBoxSnapped = '1';
     box.dataset.sourceBoundingBoxSnapX = dx.toFixed(3);
     box.dataset.sourceBoundingBoxSnapY = dy.toFixed(3);
+    box.dataset.sourceBoundingBoxSnapSource = !glyphOrigin
+        ? 'source-box-line-box'
+        : liveGlyphRect ? 'live-text-layer' : 'captured-runs';
+    box.dataset.sourceBoundingBoxSnapStatus = 'applied';
     return true;
 }
 
 function refreshAttachedSourceFidelityTextFit(box) {
     if (!box?.classList?.contains('is-source-fidelity')) return;
+    if (normalizePageRotationDegrees(box.dataset.pageRotation) !== 0) return;
     const tc = selectedBoxTextElement(box);
     if (!tc) return;
     applySourceFidelityTextFit(box, tc);
@@ -7179,7 +8080,7 @@ function applySourceFidelityTypography(box, options = {}) {
     box.style.setProperty('--enpv-font-size', `${fontSizePx}px`);
     box.style.setProperty(
         '--enpv-font-weight',
-        runtimeFont?.renderWeight
+        (runtimeFont ? pdfjsRuntimeRenderFontWeight(runtimeFont) : '')
             || box.dataset.sourceRenderFontWeight
             || box.dataset.sourceFontWeight
             || box.style.getPropertyValue('--enpv-font-weight')
@@ -7187,7 +8088,7 @@ function applySourceFidelityTypography(box, options = {}) {
     );
     box.style.setProperty(
         '--enpv-font-style',
-        runtimeFont?.renderStyle
+        (runtimeFont ? pdfjsRuntimeRenderFontStyle(runtimeFont) : '')
             || box.dataset.sourceRenderFontStyle
             || box.dataset.sourceFontStyle
             || box.style.getPropertyValue('--enpv-font-style')
@@ -7322,6 +8223,17 @@ function cssQuoteFontFamily(value) {
     return `'${normalized.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 }
 
+// Quote one concrete face even when its PDF/PostScript name contains a comma
+// (for example `Arial,Bold`). `cssQuoteFontFamily` also accepts complete CSS
+// stacks, where a comma is a separator, so it intentionally cannot make this
+// distinction by itself.
+function cssQuoteConcreteFontFamily(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const unquoted = /^(["']).*\1$/.test(raw) ? raw.slice(1, -1) : raw;
+    return `'${unquoted.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
 // PDF.js rebuilds every embedded subset with a Unicode cmap derived from
 // ToUnicode. A glyph whose ToUnicode value holds several characters — the
 // "ﬁ"/"ﬂ" ligatures — claims the code point of its FIRST character, so U+0066
@@ -7341,7 +8253,11 @@ function unicodeSafeCssFontFamily(value) {
     const extracted = extractedFontFamilyRegistry.get(normalizeFontKey(source.cleanName))
         || extractedFontFamilyRegistry.get(normalizeFontKey(source.pdfFontName));
     if (!extracted || normalizeFontKey(extracted) === normalizeFontKey(raw)) return cssQuoteFontFamily(raw);
-    return `${cssQuoteFontFamily(extracted)}, ${cssQuoteFontFamily(raw)}`;
+    // Extracted font metadata names a single face. Names such as
+    // `Arial,Bold` must remain one quoted family; treating the comma as a CSS
+    // separator makes Chrome choose local regular Arial before it ever tries
+    // the embedded bold runtime face.
+    return `${cssQuoteConcreteFontFamily(extracted)}, ${cssQuoteFontFamily(raw)}`;
 }
 
 // Build a CSS font-family stack that appends a matching generic family after
@@ -7549,6 +8465,14 @@ function realignSourceRunTextsToCanonical(items, canonicalText) {
     return true;
 }
 
+// Extraction spans carry the PDF ink color per run (`hex_color`), e.g. an
+// orange link fragment inside an otherwise black paragraph. The pdf.js text
+// layer has no color information, so this is the only source for it.
+function sourceSpanHexColor(span) {
+    const raw = String(span?.hex_color ?? span?.hexColor ?? '').trim();
+    return /^#[0-9a-f]{6}$/i.test(raw) ? raw.toLowerCase() : '';
+}
+
 function buildSourceEditSpanItems(group, layerEl) {
     if (!group || !layerEl) return [];
     const items = liveSourceGroupItems(group, layerEl);
@@ -7557,7 +8481,7 @@ function buildSourceEditSpanItems(group, layerEl) {
     return items.map((item, index) => {
         const span = item.span;
         const cs = span ? window.getComputedStyle(span) : null;
-        const text = String(item.text || '').replace(/\s+/g, ' ');
+        const text = normalizePdfInlineSymbolText(item.text || '').replace(/\s+/g, ' ');
         const trimmed = text.trim();
         if (!trimmed) return null;
         const clientRect = span?.getBoundingClientRect?.();
@@ -7646,6 +8570,7 @@ function buildSourceSpanItemsFromAnnotation(annotation, scale = 1) {
                 fontFamily: String(span?.embedded_font_name || span?.font || span?.embedded_font_family || ''),
                 fontWeight,
                 fontStyle,
+                textColor: sourceSpanHexColor(span),
                 underlineRanges,
                 sourceUnderlineSegments,
                 underlineRangesPrecise: sourceUnderlineSegments.length > 0,
@@ -7685,6 +8610,7 @@ function enrichSourceRunItemsFromAnnotationSpans(box, items) {
             const sourceUnderlineSegments = drawnUnderlineSegmentsFromPromotedSourceSpan(span);
             const underlineRanges = sourceSpanDrawnUnderlineRanges(span);
             return {
+                sourceSpan: span,
                 text: norm(span?.text || span?.rawText || ''),
                 rawText: rawNorm(span?.text || span?.rawText || ''),
                 fontFamily: String(span?.embedded_font_name || span?.font || span?.embedded_font_family || '').trim(),
@@ -7692,6 +8618,7 @@ function enrichSourceRunItemsFromAnnotationSpans(box, items) {
                     ? String(explicitWeight)
                     : (boolish(span?.bold) ? '700' : '400'),
                 fontStyle: boolish(span?.italic) ? 'italic' : 'normal',
+                textColor: sourceSpanHexColor(span),
                 underlineRanges,
                 sourceUnderlineSegments,
                 underlineRangesPrecise: sourceUnderlineSegments.length > 0,
@@ -7728,6 +8655,10 @@ function enrichSourceRunItemsFromAnnotationSpans(box, items) {
         if (allGeneric && match.fontFamily) item.fontFamily = match.fontFamily;
         if (allGeneric && match.fontWeight && !item.pdfjsFontMetadataResolved) item.fontWeight = match.fontWeight;
         if (allGeneric && match.fontStyle && !item.pdfjsFontMetadataResolved) item.fontStyle = match.fontStyle;
+        // Colored runs (links, highlighted lead-ins) only exist in the
+        // extraction spans; without this a moved block repaints them in the
+        // block's dominant color.
+        if (match.textColor) item.textColor = match.textColor;
         const itemLeft = Number(item.leftPx);
         const itemRight = Number(item.rightPx);
         item.underlineRanges = match.underlineRangesPrecise
@@ -7735,13 +8666,10 @@ function enrichSourceRunItemsFromAnnotationSpans(box, items) {
             && Number.isFinite(itemLeft)
             && Number.isFinite(itemRight)
             && itemRight > itemLeft
-            ? drawnUnderlineRangesForSourceRunRect(
-                match.sourceUnderlineSegments,
-                {
-                    x: itemLeft / sourceRunsScale,
-                    w: (itemRight - itemLeft) / sourceRunsScale,
-                },
-            )
+            ? sourceSpanDrawnUnderlineRangesForRect(match.sourceSpan, {
+                x: itemLeft / sourceRunsScale,
+                w: (itemRight - itemLeft) / sourceRunsScale,
+            })
             : match.underlineRanges;
         item.sourceUnderlineSegments = match.sourceUnderlineSegments;
         item.underlineRangesPrecise = match.underlineRangesPrecise;
@@ -7886,6 +8814,65 @@ function recoverLegacyDrawnUnderlineRangesFromCanvas(box, items) {
     });
 }
 
+// Colored fragments (link text, highlighted words) do not get their own
+// PDF.js text-layer span: PDF.js only splits a row when the FONT changes. The
+// extraction spans do know the per-fragment ink color, so split the captured
+// run at the colored span's own x-range. Without this a moved block repaints
+// such fragments in the block's dominant color.
+function splitSourceRunItemsAtColorBoundaries(box, items) {
+    if (!Array.isArray(items) || !items.length) return items;
+    const annotation = persistedAnnotationsById.get(String(box?.dataset?.annotationId || '')) || null;
+    const sourceSpans = Array.isArray(annotation?.sourceSpans) ? annotation.sourceSpans : [];
+    if (!sourceSpans.length) return items;
+    const runsScale = Number.parseFloat(box?.dataset?.sourceSpanRunsScale || '')
+        || Number.parseFloat(box?.dataset?.renderScale || '')
+        || 0;
+    if (!(runsScale > 0)) return items;
+    const blockColor = String(cssColorToHex(box?.dataset?.sourceTextColor || '#000000') || '').toLowerCase();
+    const coloredSpans = sourceSpans.map((span) => {
+        const color = sourceSpanHexColor(span);
+        const bbox = Array.isArray(span?.bbox) ? span.bbox : null;
+        const text = String(span?.text || span?.rawText || '').trim();
+        if (!color || color === blockColor || !text || !bbox || bbox.length < 4) return null;
+        const leftPx = Number(bbox[0]) * runsScale;
+        const topPx = Number(bbox[1]) * runsScale;
+        const rightPx = Number(bbox[2]) * runsScale;
+        const bottomPx = Number(bbox[3]) * runsScale;
+        if (![leftPx, topPx, rightPx, bottomPx].every(Number.isFinite) || rightPx <= leftPx) return null;
+        return { color, text, leftPx, topPx, rightPx, bottomPx };
+    }).filter(Boolean);
+    if (!coloredSpans.length) return items;
+    const consumed = new Set();
+    return items.flatMap((item) => {
+        const itemLeft = Number(item.leftPx);
+        const itemRight = Number(item.rightPx);
+        const itemTop = Number(item.topPx);
+        const itemBottom = Number(item.bottomPx);
+        if (![itemLeft, itemRight, itemTop, itemBottom].every(Number.isFinite)) return [item];
+        let pieces = [item];
+        for (const span of coloredSpans) {
+            if (consumed.has(span)) continue;
+            // Same visual row, and the colored advance lies inside this run.
+            if (!(Math.min(itemBottom, span.bottomPx) - Math.max(itemTop, span.topPx) > 0)) continue;
+            if (span.leftPx < itemLeft - 1 || span.rightPx > itemRight + 1) continue;
+            const index = pieces.findIndex((piece) => String(piece.text || '').includes(span.text));
+            if (index < 0) continue;
+            const piece = pieces[index];
+            const text = String(piece.text || '');
+            const at = text.indexOf(span.text);
+            const before = text.slice(0, at);
+            const after = text.slice(at + span.text.length);
+            const replacement = [];
+            if (before) replacement.push({ ...piece, text: before, rightPx: span.leftPx });
+            replacement.push({ ...piece, text: span.text, leftPx: span.leftPx, rightPx: span.rightPx, textColor: span.color });
+            if (after) replacement.push({ ...piece, text: after, leftPx: span.rightPx });
+            pieces = pieces.slice(0, index).concat(replacement, pieces.slice(index + 1));
+            consumed.add(span);
+        }
+        return pieces;
+    });
+}
+
 function applySourceFidelitySpanEditMarkup(box, options = {}) {
     if (!box) return false;
     const tc = box.querySelector('.enpv-text-content');
@@ -7893,7 +8880,25 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
     const allowMultiline = options.allowMultiline === true;
     if (boxTextHasNewline(box) && !allowMultiline) return false;
     const purpose = options.purpose === 'display' ? 'display' : 'edit';
+    const sourceAnnotation = box.dataset.annotationId
+        ? persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null
+        : null;
+    const currentBoxScale = Number.parseFloat(box.parentElement?.dataset?.scale || '')
+        || Number.parseFloat(box.dataset.renderScale || '')
+        || 1;
     let items = sourceSpanRunsForBox(box);
+    if (box.dataset.promotedPreformattedBlock === '1' && sourceAnnotation) {
+        // A preformatted extraction block owns authored hard line breaks.
+        // Build its edit runs from sourceSpans/sourceTextLines rather than a
+        // possibly incomplete set of PDF.js groups. Otherwise one excluded
+        // row makes reconstruction fail and incorrectly invokes prose reflow.
+        const annotationItems = buildSourceSpanItemsFromAnnotation(sourceAnnotation, currentBoxScale);
+        if (annotationItems.length) {
+            items = annotationItems;
+            setSourceSpanRunsForBox(box, items);
+            box.dataset.sourceSpanRunsScale = String(currentBoxScale);
+        }
+    }
     if (!Array.isArray(items) || items.length < 1) {
         // Fallback: try to recompute from the live pdf.js text layer if it
         // is currently in the DOM. Persisted overlays saved before per-span
@@ -7968,6 +8973,33 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
     // sourceSpans with a forward cursor, which only works when the runs
     // arrive in reading order.
     items = enrichSourceRunItemsFromAnnotationSpans(box, items);
+    items = splitSourceRunItemsAtColorBoundaries(box, items);
+    // Saved overlays created before underline-range projection was fixed can
+    // already contain the validated PDF stroke but an empty relative range.
+    // Rebuild the range from that persisted source data so reopening (or
+    // continuing to drag) repairs the moved text without another extraction.
+    const underlineRunsScale = Number.parseFloat(box.dataset.sourceSpanRunsScale || '')
+        || Number.parseFloat(box.dataset.renderScale || '')
+        || 0;
+    if (underlineRunsScale > 0) {
+        items = items.map((item) => {
+            const left = Number(item?.leftPx);
+            const right = Number(item?.rightPx);
+            const segments = item?.sourceUnderlineSegments;
+            if (!Array.isArray(segments) || !segments.length
+                || !Number.isFinite(left) || !Number.isFinite(right) || right <= left) {
+                return item;
+            }
+            return {
+                ...item,
+                underlineRanges: sourceDrawnUnderlineRangesForRect(segments, {
+                    x: left / underlineRunsScale,
+                    w: (right - left) / underlineRunsScale,
+                }),
+                underlineRangesPrecise: true,
+            };
+        });
+    }
     items = recoverLegacyDrawnUnderlineRangesFromCanvas(box, items);
     items = splitSourceRunsAtDrawnUnderlineRanges(items, measureSourceRunTextWidthPx);
     if (!items.length) return false;
@@ -8061,6 +9093,9 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
     };
 
     const wrapCapturedLines = allowMultiline && lines.length > 1;
+    const blockTextColor = String(
+        cssColorToHex(box.dataset.sourceTextColor || '#000000') || '#000000',
+    ).trim().toLowerCase();
     const lineReferenceTops = lines.map((line) => {
         const top = line.runs.reduce(
             (min, item) => Math.min(min, Number(item.topPx)),
@@ -8128,6 +9163,13 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
             // Always emit font-style: a run that is upright must override an
             // italic box-level --enpv-font-style, not inherit it.
             styleParts.push(`font-style:${sourceRunRenderFontStyle(item)}`);
+            // Runs that carry their own PDF ink color (link text, colored
+            // lead-ins) must keep it: the box-level color only describes the
+            // block's dominant color.
+            const runTextColor = String(item.textColor || '').trim().toLowerCase();
+            if (runTextColor && runTextColor !== blockTextColor) {
+                styleParts.push(`color:${runTextColor}`);
+            }
             // Drawn PDF underlines are vector artwork, not a CSS property on
             // the text layer. Enriched source runs explicitly restore the
             // decoration on only the matching words.
@@ -8187,6 +9229,33 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
         box.dataset.sourceSpanEditActive = '1';
     }
     return true;
+}
+
+// The captured per-span scaffold is the same markup in both states: display
+// markup is promoted in place when the block opens for editing, and demoted
+// back on exit. Callers that only need to know "is the captured scaffold
+// installed" must accept either flag.
+function boxHasCapturedSourceSpanScaffold(box) {
+    return box?.dataset?.sourceSpanDisplayActive === '1'
+        || box?.dataset?.sourceSpanEditActive === '1';
+}
+
+// True while the live edit scaffold still describes the stored source text,
+// so exiting edit mode can demote it back to display markup (keeping the
+// captured line breaks, paragraph gaps and per-run typography) instead of
+// flattening it to plain text.
+function promotedSourceBlockEditKeepsExactLayout(box) {
+    if (!box || box.dataset.sourceSpanEditActive !== '1') return false;
+    if (!box.classList.contains('is-promoted-source-block')) return false;
+    if (box.dataset.styleDirty === '1'
+        || box.dataset.userForcedRichText === '1'
+        || box.dataset.userSizedTextBox === '1') return false;
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    const currentText = flattenedTextFromSourceSpanMarkup(box).replace(/\r\n?/g, '\n');
+    const immutableText = String(existing?.pdfjsSourceText || existing?.originalText || '')
+        .replace(/\r\n?/g, '\n');
+    return currentText === immutableText
+        || promotedSourceLayoutCompatibleTextEdit(currentText, immutableText);
 }
 
 function clearSourceFidelitySpanEditMarkup(box) {
@@ -8259,12 +9328,7 @@ function promotedSourceLineBreakCounts(annotation, lineCount) {
     const boxes = Array.isArray(annotation?.sourceLineBBoxes)
         ? annotation.sourceLineBBoxes
         : [];
-    if (boxes.length !== lineCount) return Array(Math.max(0, lineCount - 1)).fill(1);
-    const tops = boxes.map((bbox) => Number(Array.isArray(bbox) ? bbox[1] : bbox?.top));
-    const slots = sourceVisualLineSlots(tops);
-    return Array.from({ length: Math.max(0, lineCount - 1) }, (_, index) => (
-        Math.max(1, Number.parseInt(slots[index]?.breakCount || '1', 10) || 1)
-    ));
+    return sourceVisualLineBreakCounts(boxes, lineCount);
 }
 
 function collapsePromotedExtractionVisualBreaks(box, annotationOverride = null) {
@@ -8273,6 +9337,9 @@ function collapsePromotedExtractionVisualBreaks(box, annotationOverride = null) 
         || persistedAnnotationsById.get(String(box?.dataset?.annotationId || ''))
         || null;
     if (!box || !tc || !isPromotedExtractionAnnotation(annotation)) return false;
+    // Configuration/code blocks use semantic newlines, not incidental prose
+    // wrapping. They must never pass through the visual-break collapsing path.
+    if (box.dataset.promotedPreformattedBlock === '1') return false;
     const currentText = normalizeRichPlainText(plainTextFromRichTextElement(tc));
     const currentLines = currentText.split('\n');
     if (currentLines.length < 2 || !matchingPromotedSourceLines(annotation, currentLines)) return false;
@@ -8303,6 +9370,18 @@ function collapsePromotedExtractionVisualBreaks(box, annotationOverride = null) 
     }
     box.dataset.promotedReflowEnabled = '1';
     return true;
+}
+
+// The blank row a PDF paragraph gap produces is carried by the preceding
+// captured line's break count, not by the separator's own single newline.
+function capturedSourceLineSeparatorText(separator) {
+    const text = String(separator?.textContent || '');
+    if (!/^\n+$/.test(text)) return text;
+    const breakCount = Number.parseInt(
+        separator.previousElementSibling?.dataset?.sourceLineBreakCount || '1',
+        10,
+    ) || 1;
+    return '\n'.repeat(Math.max(text.length, Math.min(12, breakCount)));
 }
 
 function preserveCollapsedCaretThroughMutation(container, mutate) {
@@ -8366,12 +9445,21 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
         : String(tc.textContent || '').trim().split(/\s+/u);
     const preservesDistributedLeaderSpacing = options.preserveCapturedGapSpacing === true
         && sourceRunTextsUseDistributedLeaderSpacing(distributedLeaderRunTexts);
+    const preservesAllCapturedGapSpacing = options.preserveAllCapturedGapSpacing === true;
+    const preservesPreformattedLineBreaks = box.dataset.promotedPreformattedBlock === '1';
     if (preservesDistributedLeaderSpacing) {
         box.dataset.preserveDistributedLeaderSpacing = '1';
     } else {
         delete box.dataset.preserveDistributedLeaderSpacing;
     }
     if (hasScaffold) {
+        // Decide up front whether the released text keeps the PDF's visual
+        // rows. Rejoined prose must shed the old row indentation, but rows
+        // that survive have to keep both that indentation and the blank rows
+        // between paragraphs, otherwise a one-character edit reflows the block.
+        const rejoinsVisualRows = !preservesPreformattedLineBreaks
+            && collapsePromotedExtractionVisualBreaks(box);
+        const keepsCapturedRows = !rejoinsVisualRows;
         tc.querySelectorAll('[data-source-span-gap="1"]').forEach((gap) => {
             const prev = gap.previousSibling;
             const next = gap.nextSibling;
@@ -8388,8 +9476,10 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
                 atLineStart,
                 currentText: currentGapText,
                 originalSpaceCount,
-                preserveCapturedSpacing: preservesDistributedLeaderSpacing
-                    && /^[.…·•]+$/u.test(String(next?.textContent || '').trim()),
+                preserveCapturedSpacing: preservesAllCapturedGapSpacing
+                    || (preservesDistributedLeaderSpacing
+                        && /^[.…·•]+$/u.test(String(next?.textContent || '').trim())),
+                preserveLineStartIndent: keepsCapturedRows,
                 userMutated: userMutatedGap,
             });
             // Keep the node in place while an input event is completing. Replacing
@@ -8418,12 +9508,15 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
             gap.style.removeProperty('--enpv-source-gap-width');
             removeEmptyStyleAttribute(gap);
         });
-        collapsePromotedExtractionVisualBreaks(box);
         tc.querySelectorAll('[data-source-span-line-break="1"]').forEach((separator) => {
             // The fixed-line scaffold is being released into natural flow.
             // Restore the separator as an ordinary text node so its spaces or
             // authored hard break use the paragraph's normal font metrics.
-            separator.replaceWith(document.createTextNode(separator.textContent || ''));
+            separator.replaceWith(document.createTextNode(
+                keepsCapturedRows
+                    ? capturedSourceLineSeparatorText(separator)
+                    : (separator.textContent || ''),
+            ));
         });
         tc.querySelectorAll('[data-source-span-run="1"]').forEach((run) => {
             run.removeAttribute('data-source-span-run');
@@ -8450,7 +9543,7 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
         clearSourceFidelitySpanState(box);
         delete box.dataset.sourceSpanGlyphAligned;
         deleteElementRuntimeState(tc, 'preEditFlattened');
-    } else {
+    } else if (!preservesPreformattedLineBreaks) {
         collapsePromotedExtractionVisualBreaks(box);
     }
     clearPromotedSourceBlockEditHorizontalFit(box);
@@ -8461,7 +9554,9 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
     // captured spacing must never be compressed or reflowed. Ordinary prose
     // continues to use natural wrapping.
     tc.style.whiteSpace = preservesDistributedLeaderSpacing ? 'pre' : 'pre-wrap';
-    tc.style.overflowWrap = preservesDistributedLeaderSpacing ? 'normal' : 'break-word';
+    tc.style.overflowWrap = preservesDistributedLeaderSpacing || preservesPreformattedLineBreaks
+        ? 'normal'
+        : 'break-word';
     tc.style.wordBreak = 'normal';
 }
 
@@ -8689,6 +9784,36 @@ function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
     const currentScale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 0;
     const sourceRunsScale = Number.parseFloat(box.dataset.sourceSpanRunsScale || '') || currentScale || 1;
     const ratio = currentScale > 0 && sourceRunsScale > 0 ? currentScale / sourceRunsScale : 1;
+    // Captured glyph coordinates are immutable text-layer coordinates. A moved
+    // promoted block keeps those coordinates, but its live box is translated
+    // away from the source rectangle. Aligning directly back to the immutable
+    // coordinates while that translation is active cancels the move inside the
+    // child line transforms: the selection frame stays moved while its text
+    // jumps back to the original PDF position on double-click.
+    //
+    // Carry the box's visual displacement into every captured glyph target.
+    // Measuring against the source rectangle works for both live drags (whose
+    // displacement is still a box transform) and reloaded moved overlays (whose
+    // displacement has already been folded into left/top).
+    let visualSourceOffset = { left: 0, top: 0 };
+    const annotationLayerRect = box.parentElement?.getBoundingClientRect?.();
+    const sourcePdfRect = {
+        x: Number.parseFloat(box.dataset.sourceBboxX || ''),
+        y: Number.parseFloat(box.dataset.sourceBboxY || ''),
+        w: Number.parseFloat(box.dataset.sourceBboxW || ''),
+        h: Number.parseFloat(box.dataset.sourceBboxH || ''),
+    };
+    const sourceCanvasRect = Object.values(sourcePdfRect).every(Number.isFinite)
+        ? pdfRectToCanvasRect(sourcePdfRect, pageView?.viewport, currentScale)
+        : null;
+    const boxRect = box.getBoundingClientRect?.();
+    if (annotationLayerRect && sourceCanvasRect && boxRect) {
+        const left = boxRect.left - (annotationLayerRect.left + sourceCanvasRect.left);
+        const top = boxRect.top - (annotationLayerRect.top + sourceCanvasRect.top);
+        if (Number.isFinite(left) && Number.isFinite(top)) {
+            visualSourceOffset = { left, top };
+        }
+    }
     let aligned = 0;
 
     tc.querySelectorAll('[data-source-span-line="1"]').forEach((line) => {
@@ -8739,10 +9864,10 @@ function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
             bottom: Math.max(...rects.map((rect) => rect.bottom)),
         };
         const target = {
-            left: layerRect.left + (glyphLeft * ratio),
-            right: layerRect.left + (glyphRight * ratio),
-            top: layerRect.top + (glyphTop * ratio),
-            bottom: layerRect.top + (glyphBottom * ratio),
+            left: layerRect.left + (glyphLeft * ratio) + visualSourceOffset.left,
+            right: layerRect.left + (glyphRight * ratio) + visualSourceOffset.left,
+            top: layerRect.top + (glyphTop * ratio) + visualSourceOffset.top,
+            bottom: layerRect.top + (glyphBottom * ratio) + visualSourceOffset.top,
         };
         const currentWidth = current.right - current.left;
         const targetWidth = target.right - target.left;
@@ -8873,6 +9998,7 @@ function clearPromotedSourceBlockEditHorizontalFit(box) {
 // and normal wrapping.
 function applyPromotedOverlayDisplayHorizontalFit(box) {
     if (!box || box.classList.contains('is-editing')) return;
+    if (normalizePageRotationDegrees(box.dataset.pageRotation) !== 0) return;
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     if (!isPromotedSourceTextBox(box, existing)) return;
     const tc = selectedBoxTextElement(box);
@@ -8882,6 +10008,11 @@ function applyPromotedOverlayDisplayHorizontalFit(box) {
         || boolish(existing?.promotedReflowEnabled);
     if (usesNaturalFlow) {
         const isSimplePromotedParagraph = box.dataset.promotedParagraphFlow === '1';
+        const preservesSourcePitchAfterFamilyChange = String(
+            box.dataset.richTextPromotionReason
+                || existing?.richTextPromotionReason
+                || '',
+        ) === 'font-family';
         clearPromotedSourceBlockEditHorizontalFit(box);
         tc.style.transform = '';
         tc.style.transformOrigin = '';
@@ -8892,7 +10023,9 @@ function applyPromotedOverlayDisplayHorizontalFit(box) {
         // The one-span promoted paragraph inherits the source row pitch set
         // at edit entry. Replacing it with the generic 1.2em natural-flow
         // fallback compacts every row immediately after deselection.
-        if (!isSimplePromotedParagraph) ensureNaturalTextLineHeight(box);
+        if (!isSimplePromotedParagraph && !preservesSourcePitchAfterFamilyChange) {
+            ensureNaturalTextLineHeight(box);
+        }
         return;
     }
     if (tc.childElementCount > 0) return;
@@ -9456,6 +10589,7 @@ function fitEditingSourceTextBoxToContent(box) {
 function fitPersistedRichOverlayBoxesToContent(layer) {
     if (!layer) return;
     layer.querySelectorAll('.enpv-annotation-box.is-persisted-overlay.is-rich-editor').forEach((box) => {
+        if (normalizePageRotationDegrees(box.dataset.pageRotation) !== 0) return;
         const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
         // Explicitly user-sized boxes own their saved geometry. Re-measuring
         // them while a page is merely being painted makes the render path
@@ -9805,8 +10939,22 @@ function updateShapeSvgForBox(box, annotation, scale = 1) {
     if (!box || !annotation) return;
     const ann = normalizeShapeAnnotation({ ...annotation });
     const svg = ensureShapeSvg(box);
-    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
-    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const displayWidth = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const displayHeight = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const pageFrame = viewportRotatedContentFrame(
+        { rotation: Number.parseFloat(box.dataset.pageRotation || '0') || 0 },
+        displayWidth,
+        displayHeight,
+    );
+    const width = Math.max(1, pageFrame.width);
+    const height = Math.max(1, pageFrame.height);
+    svg.style.inset = 'auto';
+    svg.style.left = '0';
+    svg.style.top = '0';
+    svg.style.width = `${width}px`;
+    svg.style.height = `${height}px`;
+    svg.style.transformOrigin = '0 0';
+    svg.style.transform = pageFrame.transform;
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
     svg.replaceChildren();
 
@@ -10024,22 +11172,25 @@ function lineEndpointPointsForBox(box, viewport, scale) {
     const heightPx = Number.parseFloat(box.style.height || '0') || box.offsetHeight || 0;
     const dxPts = Number.parseFloat(box.dataset.dxPts || '0') || 0;
     const dyPts = Number.parseFloat(box.dataset.dyPts || '0') || 0;
-    const pdfLeft = (leftPx / scale) + dxPts;
-    const pdfBottom = (Number(viewport.height) - (topPx + heightPx)) / scale - dyPts;
-    const pdfWidth = widthPx / scale;
-    const pdfHeight = heightPx / scale;
+    const pdfRect = viewportRectToPdfRect({
+        left: leftPx + (dxPts * scale),
+        top: topPx + (dyPts * scale),
+        width: widthPx,
+        height: heightPx,
+    }, viewport, scale);
+    if (!pdfRect) return null;
     const lineStartX = clampLineUnit(box.dataset.lineStartX, 0);
     const lineStartY = clampLineUnit(box.dataset.lineStartY, 0);
     const lineEndX = clampLineUnit(box.dataset.lineEndX, 1);
     const lineEndY = clampLineUnit(box.dataset.lineEndY, 1);
     return {
         start: {
-            x: pdfLeft + (pdfWidth * lineStartX),
-            y: pdfBottom + (pdfHeight * (1 - lineStartY)),
+            x: pdfRect.x + (pdfRect.w * lineStartX),
+            y: pdfRect.y + (pdfRect.h * (1 - lineStartY)),
         },
         end: {
-            x: pdfLeft + (pdfWidth * lineEndX),
-            y: pdfBottom + (pdfHeight * (1 - lineEndY)),
+            x: pdfRect.x + (pdfRect.w * lineEndX),
+            y: pdfRect.y + (pdfRect.h * (1 - lineEndY)),
         },
     };
 }
@@ -10492,6 +11643,7 @@ function createShapeOverlayBox(annotation, pageIndex, viewport, scale, allowInte
     box.dataset.locked = ann.locked ? '1' : '0';
     box.dataset.zIndex = String(Number(ann.zIndex) || 2);
     box.dataset.userCreated = '1';
+    box.dataset.pageRotation = String(normalizePageRotationDegrees(viewport?.rotation));
     if (ann.guidedLeaseUnderline === true) {
         box.dataset.guidedLeaseUnderline = '1';
     }
@@ -10521,6 +11673,7 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     const rect = pdfRectToCanvasRect(currentPdfBox, viewport, scale);
     if (!rect || rect.width <= 0 || rect.height <= 0) return null;
 
+    const restoresPromotedSourceGeometry = promotedOverlayKeepsSourceBlockGeometry(annotation);
     const box = document.createElement('div');
     box.className = 'enpv-annotation-box is-persisted-overlay';
     if (cleanPromotedSourceText(annotation)) {
@@ -10534,6 +11687,7 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     box.dataset.uid = String(annotation.pdfjsAnchorUid || annotation.id || `${pageIndex}:persisted`);
     box.dataset.annotationId = String(annotation.id || buildPdfjsAnnotationId(pageIndex, box.dataset.uid));
     box.dataset.pageIndex = String(pageIndex);
+    box.dataset.pageRotation = String(normalizePageRotationDegrees(viewport?.rotation));
     const isStandaloneUserTextBox = isUserCreatedTextAnnotation(annotation);
     setOriginalTextForBox(box, annotation.originalText || annotation.pdfjsSourceText || annotation.text || '');
     box.dataset.occurrence = String(annotation.pdfjsSourceOccurrence || '0');
@@ -10546,7 +11700,7 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     box.dataset.baseBboxY = box.dataset.sourceBboxY;
     box.dataset.baseBboxW = box.dataset.sourceBboxW;
     box.dataset.baseBboxH = box.dataset.sourceBboxH;
-    box.dataset.basePageHeight = String(Number(annotation.pdfjsSourcePageHeight || (Number(viewport.height) / scale)));
+    box.dataset.basePageHeight = String(Number(annotation.pdfjsSourcePageHeight || viewportPdfDimensions(viewport, scale).height));
     setBaseTextForBox(box, isStandaloneUserTextBox ? '' : annotation.pdfjsSourceText || annotation.originalText || annotation.text || '');
     box.dataset.fontSizePts = String(Number(annotation.fontSize) || 12);
     box.dataset.renderScale = String(scale);
@@ -10554,6 +11708,10 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     box.dataset.zIndex = String(Number(annotation.zIndex) || 2);
     if (boolish(annotation.userCreated) && !isPromotedExtractionAnnotation(annotation)) box.dataset.userCreated = '1';
     if (boolish(annotation.userAuthored)) box.dataset.userAuthored = '1';
+    if (isPromotedExtractionAnnotation(annotation)
+        && promotedSourceBlockUsesMonospacedTypography(annotation)) {
+        box.dataset.promotedPreformattedBlock = '1';
+    }
     if (boolish(annotation.skipPdfjsSourceMask)) box.dataset.skipPdfjsSourceMask = '1';
     if (boolish(annotation.movedTextOverlay)) box.dataset.movedTextOverlay = '1';
     const sourceMaskBox = annotationSourceMaskPdfBox(annotation);
@@ -10572,7 +11730,7 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     }
     if (boolish(annotation.styleDirty)) box.dataset.styleDirty = '1';
     if (annotation.userForcedRichText === true) box.dataset.userForcedRichText = '1';
-    if (boolish(annotation.promotedReflowEnabled)) {
+    if (boolish(annotation.promotedReflowEnabled) && !restoresPromotedSourceGeometry) {
         box.dataset.promotedReflowEnabled = '1';
         box.dataset.naturalTextFlow = '1';
         box.dataset.sourceSpanNaturalized = '1';
@@ -10605,7 +11763,11 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
         scale,
         annotation.text || '',
     );
-    if (renderedStructuredRichText) {
+    if (restoresPromotedSourceGeometry) {
+        // Ignore compatibility rich markup generated by the old reflow path;
+        // the current text is remapped onto the immutable source runs below.
+        tc.textContent = normalizeRichPlainText(annotation.text || '');
+    } else if (renderedStructuredRichText) {
         // Version 2 rich text is already expressed in PDF points and rendered
         // above at the current viewport scale.
     } else if (richTextHtml) {
@@ -10619,18 +11781,32 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
             preserveLineBreaks: annotationPreservesDisplayLineBreaks(annotation),
         });
     }
-    box.appendChild(tc);
+    appendViewportRotatedContent(box, tc, viewport, displayRect);
     if (box.dataset.promotedReflowEnabled === '1') {
         collapsePromotedExtractionVisualBreaks(box, annotation);
     }
-    const keepsPromotedBlockGeometry = !richTextHtml && !renderedStructuredRichText
-        && promotedOverlayKeepsSourceBlockGeometry(annotation)
+    const keepsPromotedBlockGeometry = restoresPromotedSourceGeometry
         && (() => {
             box.classList.add('is-promoted-source-block');
             setBoxEditorMode(box, 'rich');
             if (applySourceFidelitySpanEditMarkup(box, { purpose: 'display', allowMultiline: true })) {
                 applyPromotedSourceBlockEditLayout(box, { suppressHangingIndent: true });
                 alignPromotedSourceEditGlyphsToCapturedRanges(box, tc);
+                // createPersistedOverlayBox builds its contents before the
+                // caller attaches `box` to the page layer. The synchronous
+                // alignment above therefore has no measurable glyph ranges.
+                // Repeat once attached (and once final fonts are ready) so a
+                // repaired saved paragraph is source-aligned even before the
+                // user enters Edit Text.
+                const alignAttachedDisplayRuns = () => {
+                    if (box.isConnected && box.dataset.sourceSpanDisplayActive === '1') {
+                        alignPromotedSourceEditGlyphsToCapturedRanges(box, tc);
+                    }
+                };
+                window.requestAnimationFrame?.(alignAttachedDisplayRuns);
+                if (document.fonts?.ready) {
+                    document.fonts.ready.then(alignAttachedDisplayRuns).catch(() => { /* noop */ });
+                }
                 return true;
             }
             box.classList.remove('is-promoted-source-block');
@@ -10784,6 +11960,88 @@ function applyDeletedAcroWidgetVisibility(pageIndex) {
     });
 }
 
+function removedPdfLinkRectsForAnnotation(annotation) {
+    return normalizeRemovedPdfLinkRects(annotation?.pdfjsRemovedLinkRects);
+}
+
+function applyRemovedPdfLinkVisibility(pageIndex, additionalRects = []) {
+    const pageView = pdfViewer.getPageView(pageIndex);
+    const pageDiv = pageView?.div;
+    const viewport = pageView?.viewport;
+    const annotationLayer = pageView?.annotationLayer?.div
+        || pageDiv?.querySelector?.(':scope > .annotationLayer');
+    if (!pageDiv || !viewport || !annotationLayer) return;
+
+    annotationLayer.querySelectorAll('.enpv-removed-pdf-link').forEach((element) => {
+        element.classList.remove('enpv-removed-pdf-link');
+        delete element.dataset.enpvRemovedPdfLink;
+    });
+
+    const scale = Number(viewport.scale) || Number(pdfViewer.currentScale) || 1;
+    const removalRects = [
+        ...(annotationBoxesByPage.get(pageIndex) || []).flatMap(removedPdfLinkRectsForAnnotation),
+        ...normalizeRemovedPdfLinkRects(additionalRects),
+    ]
+        .map((rect) => pdfRectToCanvasRect(rect, viewport, scale))
+        .filter(Boolean);
+    if (!removalRects.length) return;
+
+    const annotationLayerBounds = annotationLayer.getBoundingClientRect();
+    const linkHosts = new Set();
+    annotationLayer.querySelectorAll('.linkAnnotation, a[href]').forEach((element) => {
+        const host = element.closest('.linkAnnotation') || element;
+        if (annotationLayer.contains(host)) linkHosts.add(host);
+    });
+    linkHosts.forEach((host) => {
+        const bounds = host.getBoundingClientRect?.();
+        let linkRect = bounds && bounds.width > 0 && bounds.height > 0
+            ? {
+                left: bounds.left - annotationLayerBounds.left,
+                top: bounds.top - annotationLayerBounds.top,
+                width: bounds.width,
+                height: bounds.height,
+            }
+            : null;
+        // PDF.js may temporarily hide an annotation layer while edit overlays
+        // are active. A hidden link has a zero client rect, but its positioned
+        // geometry is still usable and must remain suppressed when the layer
+        // becomes visible again.
+        if (!linkRect) {
+            const styledRect = {
+                left: Number.parseFloat(host.style.left || ''),
+                top: Number.parseFloat(host.style.top || ''),
+                width: Number.parseFloat(host.style.width || ''),
+                height: Number.parseFloat(host.style.height || ''),
+            };
+            if (Object.values(styledRect).every(Number.isFinite)
+                && styledRect.width > 0
+                && styledRect.height > 0) {
+                linkRect = styledRect;
+            }
+        }
+        if (!linkRect) return;
+        const linkArea = Math.max(1, linkRect.width * linkRect.height);
+        const removed = removalRects.some((rect) => {
+            const overlapWidth = Math.max(
+                0,
+                Math.min(linkRect.left + linkRect.width, rect.left + rect.width)
+                    - Math.max(linkRect.left, rect.left),
+            );
+            const overlapHeight = Math.max(
+                0,
+                Math.min(linkRect.top + linkRect.height, rect.top + rect.height)
+                    - Math.max(linkRect.top, rect.top),
+            );
+            const overlapArea = overlapWidth * overlapHeight;
+            const removalArea = Math.max(1, rect.width * rect.height);
+            return overlapArea / Math.min(linkArea, removalArea) >= 0.15;
+        });
+        if (!removed) return;
+        host.classList.add('enpv-removed-pdf-link');
+        host.dataset.enpvRemovedPdfLink = '1';
+    });
+}
+
 function deletedMaskAnnotationFromBox(box) {
     if (!box) return null;
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
@@ -10825,7 +12083,7 @@ function deletedMaskAnnotationFromBox(box) {
         pdfjsSourceY: sourceRect.y,
         pdfjsSourceW: sourceRect.w,
         pdfjsSourceH: sourceRect.h,
-        pdfjsSourcePageHeight: Number.parseFloat(box.dataset.basePageHeight || '') || (Number(viewport.height) / scale),
+        pdfjsSourcePageHeight: Number.parseFloat(box.dataset.basePageHeight || '') || viewportPdfDimensions(viewport, scale).height,
         pdfjsSourceText: text,
         pdfjsAnchorUid: String(box.dataset.uid || ''),
         pdfjsSourceOccurrence: String(box.dataset.occurrence || '0'),
@@ -11300,9 +12558,20 @@ function detectHorizontalCanvasRuleGaps(pageDiv, rect, options = {}) {
         : Number(rect.bottom) - Number(rect.top);
     if (!(rectWidth > 0) || !(rectHeight > 0)) return [];
     const minRectWidth = Number(options.minRectWidth ?? 0) || 0;
-    if (rectWidth < minRectWidth) return [];
     const minDarkRatio = Number(options.minDarkRatio ?? 0.72) || 0.72;
     const minContiguousDarkRatio = Number(options.minContiguousDarkRatio ?? 0) || 0;
+    const horizontalProbePaddingPx = Math.max(
+        0,
+        Number(options.horizontalProbePaddingPx ?? 0) || 0,
+    );
+    const minHorizontalProbeDarkRatio = Math.max(
+        0,
+        Math.min(1, Number(options.minHorizontalProbeDarkRatio ?? 0) || 0),
+    );
+    const minAbsoluteContiguousDarkPx = Math.max(
+        0,
+        Number(options.minAbsoluteContiguousDarkPx ?? 0) || 0,
+    );
     const verticalProbePaddingPx = Math.max(
         0,
         Number(options.verticalProbePaddingPx ?? 0) || 0,
@@ -11322,16 +12591,32 @@ function detectHorizontalCanvasRuleGaps(pageDiv, rect, options = {}) {
 
     const scaleX = canvas.width / canvasBounds.width;
     const scaleY = canvas.height / canvasBounds.height;
-    const canvasLeft = rect.left - (canvasBounds.left - pageBounds.left);
+    const canvasOffsetLeft = canvasBounds.left - pageBounds.left;
+    const canvasLeft = rect.left
+        - horizontalProbePaddingPx
+        - canvasOffsetLeft;
     const canvasTop = rect.top
         - verticalProbePaddingPx
         - (canvasBounds.top - pageBounds.top);
     const sx = Math.max(0, Math.floor(canvasLeft * scaleX));
     const sy = Math.max(0, Math.floor(canvasTop * scaleY));
-    const sw = Math.max(1, Math.min(canvas.width - sx, Math.ceil(rectWidth * scaleX)));
+    const probeWidth = rectWidth + (horizontalProbePaddingPx * 2);
+    if (probeWidth < minRectWidth) return [];
+    const sw = Math.max(1, Math.min(canvas.width - sx, Math.ceil(probeWidth * scaleX)));
     const probeHeight = rectHeight + (verticalProbePaddingPx * 2);
     const sh = Math.max(1, Math.min(canvas.height - sy, Math.ceil(probeHeight * scaleY)));
     if (sw <= 0 || sh <= 0) return [];
+
+    // The source mask can be narrower than the old minimum rule width (for
+    // example the `1` inside a table cell). Sampling only that narrow width
+    // makes a digit's horizontal stroke indistinguishable from a table rule.
+    // The optional side probes verify that a dark row continues on BOTH sides
+    // of the source mask. This preserves real page rules for every annotation
+    // width without carving glyph-shaped holes back into the mask.
+    const sourceCanvasLeft = (rect.left - canvasOffsetLeft) * scaleX;
+    const sourceCanvasRight = (rect.left + rectWidth - canvasOffsetLeft) * scaleX;
+    const leftProbeEnd = Math.max(0, Math.min(sw, Math.floor(sourceCanvasLeft) - sx));
+    const rightProbeStart = Math.max(0, Math.min(sw, Math.ceil(sourceCanvasRight) - sx));
 
     let data;
     try {
@@ -11345,6 +12630,8 @@ function detectHorizontalCanvasRuleGaps(pageDiv, rect, options = {}) {
         let dark = 0;
         let contiguousDark = 0;
         let longestContiguousDark = 0;
+        let leftProbeDark = 0;
+        let rightProbeDark = 0;
         const rowOffset = y * sw * 4;
         for (let x = 0; x < sw; x += 1) {
             const offset = rowOffset + (x * 4);
@@ -11353,13 +12640,29 @@ function detectHorizontalCanvasRuleGaps(pageDiv, rect, options = {}) {
             const b = data[offset + 2];
             if (r < 170 && g < 170 && b < 170) {
                 dark += 1;
+                if (x < leftProbeEnd) leftProbeDark += 1;
+                if (x >= rightProbeStart) rightProbeDark += 1;
                 contiguousDark += 1;
                 if (contiguousDark > longestContiguousDark) longestContiguousDark = contiguousDark;
             } else {
                 contiguousDark = 0;
             }
         }
-        if (dark / sw >= minDarkRatio
+        const leftProbeWidth = leftProbeEnd;
+        const rightProbeWidth = sw - rightProbeStart;
+        const continuesThroughSideProbes = minHorizontalProbeDarkRatio > 0 && (
+            leftProbeWidth > 0
+            && rightProbeWidth > 0
+            && leftProbeDark / leftProbeWidth >= minHorizontalProbeDarkRatio
+            && rightProbeDark / rightProbeWidth >= minHorizontalProbeDarkRatio
+        );
+        const hasAbsoluteRuleLength = minAbsoluteContiguousDarkPx > 0
+            && longestContiguousDark / scaleX >= minAbsoluteContiguousDarkPx;
+        const hasRequiredRuleExtent = !minHorizontalProbeDarkRatio
+            || continuesThroughSideProbes
+            || hasAbsoluteRuleLength;
+        if (hasRequiredRuleExtent
+            && dark / sw >= minDarkRatio
             && (!minContiguousDarkRatio || longestContiguousDark / sw >= minContiguousDarkRatio)) {
             darkRows.push(y);
         }
@@ -11875,20 +13178,120 @@ function movedOverlayRuleGapRectsForMask(rect, pageDiv = null) {
     if (!rect || !pageDiv) return [];
     const edges = rectToEdges(rect);
     if (!edges) return [];
+    const rasterEdgePaddingPx = 1;
     return detectHorizontalCanvasRuleGaps(pageDiv, edges, {
         minRectWidth: 18,
         minDarkRatio: 0.55,
         minContiguousDarkRatio: 0.65,
+        // A narrow single-character source mask is smaller than the old
+        // minimum rule width. Probe beyond it and require the dark row to
+        // continue on both sides; the probe width satisfies the minimum while
+        // a glyph stroke confined to the mask cannot be mistaken for a rule.
+        horizontalProbePaddingPx: 8,
+        minHorizontalProbeDarkRatio: 0.55,
+        // Long rules can terminate exactly at the source box, leaving one or
+        // both side probes white. Accept a continuous run that is much wider
+        // than a single glyph while short `m`/`4` strokes still require the
+        // stronger two-sided continuation signal.
+        minAbsoluteContiguousDarkPx: 32,
         // Table borders often sit exactly on the text cell's typographic
         // edge. Probe just outside the mask so a half-pixel-antialiased rule
         // is still discovered and carved out instead of painted white.
         verticalProbePaddingPx: 2.5,
-    }).map((gap) => rectToEdges({
-        left: edges.left,
-        top: edges.top + gap.top,
-        right: edges.right,
-        bottom: edges.top + gap.top + gap.height,
-    })).filter(Boolean);
+    }).map((gap) => {
+        // Keep the mask a full CSS pixel away from the detected rule. A
+        // fractional mask edge is antialiased by Chromium; ending it exactly
+        // at the canvas rule still blends the black border with the white mask
+        // and leaves the same pale-looking gap at common PDF.js zoom levels.
+        const top = Math.max(edges.top, edges.top + gap.top - rasterEdgePaddingPx);
+        const bottom = Math.min(
+            edges.bottom,
+            edges.top + gap.top + gap.height + rasterEdgePaddingPx,
+        );
+        return rectToEdges({
+            left: edges.left,
+            top,
+            right: edges.right,
+            bottom,
+        });
+    }).filter(Boolean);
+}
+
+function movedOverlayOwnedUnderlineRectsForBox(box) {
+    if (!box) return [];
+    const segments = sourceUnderlineSegmentsForBox(box);
+    if (!segments.length) return [];
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    const pageView = Number.isFinite(pageIndex) && pageIndex >= 0
+        ? pdfViewer.getPageView(pageIndex)
+        : null;
+    const viewport = pageView?.viewport;
+    const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '')
+        || Number(viewport?.scale)
+        || Number.parseFloat(box.dataset.renderScale || '')
+        || 1;
+    const pageHeight = Number.parseFloat(box.dataset.basePageHeight || '')
+        || viewportPdfDimensions(viewport, scale).height;
+    if (!viewport || !(pageHeight > 0)) return [];
+
+    return segments.map((segment) => {
+        const x0 = Number(segment?.x0 ?? segment?.left ?? segment?.[0]);
+        const x1 = Number(segment?.x1 ?? segment?.right ?? segment?.[1]);
+        const y = Number(segment?.y ?? segment?.top ?? segment?.[2]);
+        const strokeWidth = Number(segment?.width ?? segment?.line_width ?? segment?.[3] ?? 0);
+        if (![x0, x1, y].every(Number.isFinite) || Math.abs(x1 - x0) <= 0.01) return null;
+        // Extraction coordinates use a top-left origin; convert the owned
+        // stroke to the PDF bottom-left rectangle expected by the viewport.
+        // Include enough vertical padding to absorb antialiased edge pixels.
+        const padPts = Math.max(0.75, (Number.isFinite(strokeWidth) ? strokeWidth : 0) / 2 + 0.5);
+        return rectToEdges(pdfRectToCanvasRect({
+            x: Math.min(x0, x1) - 0.5,
+            y: pageHeight - (y + padPts),
+            w: Math.abs(x1 - x0) + 1,
+            h: padPts * 2,
+        }, viewport, scale));
+    }).filter(Boolean);
+}
+
+function alignMaskRunRectToFilledSourceCell(runRect, boundsRect, pageDiv) {
+    if (!pageDiv || !runRect || !boundsRect) return runRect;
+    const width = runRect.right - runRect.left;
+    const height = runRect.bottom - runRect.top;
+    if (width <= 0 || height <= 0) return runRect;
+    const fill = samplePageMovedSourceMaskColor(pageDiv, {
+        left: runRect.left,
+        top: runRect.top,
+        width,
+        height,
+    }, '');
+    const fillRgb = parseCssRgb(fill);
+    if (!fillRgb) return runRect;
+    const fillLuminance = (0.299 * fillRgb.r) + (0.587 * fillRgb.g) + (0.114 * fillRgb.b);
+    // Runs on plain paper keep the deliberately tight mask that protects the
+    // neighbouring columns. Only a filled form cell is re-aligned: repainting
+    // more of a cell in its own color cannot change what the page looks like,
+    // but stopping short of the painted glyph ink leaves a visible sliver.
+    if (fillLuminance >= 235) return runRect;
+    const band = detectCanvasFillBandRows(
+        pageDiv,
+        {
+            left: runRect.left,
+            top: boundsRect.top,
+            width,
+            height: boundsRect.height,
+        },
+        fill,
+        (runRect.top + runRect.bottom) / 2,
+    );
+    return {
+        left: runRect.left,
+        top: band ? Math.max(boundsRect.top, Math.min(runRect.top, band.top)) : runRect.top,
+        right: runRect.right,
+        bottom: band
+            ? Math.min(boundsRect.top + boundsRect.height, Math.max(runRect.bottom, band.bottom))
+            : runRect.bottom,
+        filledSourceCell: true,
+    };
 }
 
 function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
@@ -11898,10 +13301,25 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
     }
     const items = movedOverlayRunItemsForBox(box, pageDiv);
     const protectedRects = movedOverlayProtectedRectsForBox(box, rect);
+    // Literal underscores are content in monospaced/configuration blocks, not
+    // horizontal page rules. Rule-gap detection would otherwise carve those
+    // dark rows back out of the source mask and leave short underscore strokes
+    // behind after the block is moved.
+    const preserveHorizontalCanvasRules = box.dataset.promotedPreformattedBlock !== '1';
+    const ownedUnderlineRects = movedOverlayOwnedUnderlineRectsForBox(box);
+    const ruleGapsWithoutOwnedUnderlines = (targetRect) => {
+        const gaps = movedOverlayRuleGapRectsForMask(targetRect, pageDiv);
+        if (!ownedUnderlineRects.length) return gaps;
+        // Rule-gap detection intentionally protects table/form strokes. An
+        // underline owned by this source text is different: it must disappear
+        // with the source glyphs and be redrawn on the moved run. Subtract only
+        // the exact extracted underline segments from the protected gaps.
+        return gaps.flatMap((gap) => subtractRects([gap], ownedUnderlineRects));
+    };
     const applyFallbackPieces = () => {
         const cutRects = [
             ...protectedRects,
-            ...movedOverlayRuleGapRectsForMask(rect, pageDiv),
+            ...(preserveHorizontalCanvasRules ? ruleGapsWithoutOwnedUnderlines(rect) : []),
         ];
         const fallbackPieces = subtractRects([{
             left: rect.left,
@@ -11951,17 +13369,37 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
         const runHeight = Number.isFinite(topPx) && Number.isFinite(bottomPx) && bottomPx > topPx
             ? bottomPx - topPx
             : rect.height;
-        const padY = Math.max(0.75, Math.min(2.5, runHeight * 0.16));
-        runRects.push({
-            left: Math.max(rect.left, leftPx - padX),
+        const symbolRun = item.inlineSymbol === true
+            || isPdfInlineSymbolText(item.text || '')
+            || /symbol/i.test(String(item.pdfjsFontName || ''));
+        // A legacy Symbol-font registered mark is painted wider than its DOM
+        // Range bbox (the leftover right arc looks like a standalone `)`).
+        // Expand only those source runs; ordinary neighbouring text retains
+        // the tight mask used to protect adjacent columns.
+        const runPadX = symbolRun
+            ? Math.max(padX, Math.min(7, runHeight * 0.26))
+            : padX;
+        const padY = symbolRun
+            ? Math.max(2.5, Math.min(5, runHeight * 0.22))
+            : Math.max(0.75, Math.min(2.5, runHeight * 0.16));
+        runRects.push(alignMaskRunRectToFilledSourceCell({
+            left: Math.max(rect.left, leftPx - runPadX),
             top: Number.isFinite(topPx) ? Math.max(rect.top, topPx - padY) : rect.top,
-            right: Math.min(rect.left + rect.width, rightPx + padX),
+            right: Math.min(rect.left + rect.width, rightPx + runPadX),
             bottom: Number.isFinite(bottomPx) ? Math.min(rect.top + rect.height, bottomPx + padY) : rect.top + rect.height,
-        });
+        }, rect, pageDiv));
     }
     const cutRects = [
         ...protectedRects,
-        ...runRects.flatMap((runRect) => movedOverlayRuleGapRectsForMask(runRect, pageDiv)),
+        ...(preserveHorizontalCanvasRules
+            // A run sitting inside a filled form cell has no rules to save: the
+            // whole cell is one solid fill, so "rule" detection just carves the
+            // solid rows back out of the mask and the cut edge slices through
+            // the light glyph ink it was supposed to erase (f1040s1 page 1,
+            // "Part I"). Repainting the cell in its own color is a no-op.
+            ? runRects.filter((runRect) => runRect.filledSourceCell !== true)
+                .flatMap(ruleGapsWithoutOwnedUnderlines)
+            : []),
     ];
     writeElementRuntimeState(mask, 'enpvMaskRunRects', runRects);
     writeElementRuntimeState(mask, 'enpvMaskProtectedRects', protectedRects);
@@ -12069,6 +13507,7 @@ function attachSourceMaskForBox(box) {
 
 function collapsedPersistedOverlayRect(rect, box, annotation, scale) {
     if (!rect || !box || !annotation) return rect;
+    if (normalizePageRotationDegrees(box.dataset.pageRotation) !== 0) return rect;
     if (boolish(annotation.userForcedRichText)
         || String(annotation.pdfjsEditorMode || '') === 'rich'
         || String(annotation.richTextPromotionReason || '') === 'manual-resize') {
@@ -12172,11 +13611,13 @@ function pdfjsPointFromPageClient(pageIndex, clientX, clientY) {
     const viewportHeight = Number(viewport.height) || pageRect.height;
     const canvasX = Math.max(0, Math.min(clientX - pageRect.left, viewportWidth));
     const canvasY = Math.max(0, Math.min(clientY - pageRect.top, viewportHeight));
+    const pdfPoint = viewportPointToPdfPoint(canvasX, canvasY, viewport, scale);
+    if (!pdfPoint) return null;
     return {
         canvasX,
         canvasY,
-        pdfX: canvasX / scale,
-        pdfY: (viewportHeight - canvasY) / scale,
+        pdfX: pdfPoint.x,
+        pdfY: pdfPoint.y,
         pageRect,
         scale,
         viewport,
@@ -13559,8 +15000,16 @@ async function convertEditedPdfToWord() {
             },
             body: formData,
         });
-        setConvertProgress(88, 'Preparing the Word document...');
-        const data = await readConvertedFileResponse(response, 'Word');
+        setConvertProgress(35, 'Word conversion queued...');
+        const queued = await readQueuedConversionResponse(response, 'Word');
+        const data = await waitForQueuedConversion(queued, 'Word', {
+            onProgress: (status) => {
+                const progress = Math.max(0, Math.min(100, Number(status.progress) || 0));
+                setConvertProgress(35 + Math.round(progress * 0.55), status.status === 'processing'
+                    ? 'Preparing the Word document...'
+                    : 'Waiting for a conversion worker...');
+            },
+        });
         const downloadUrl = buildConvertedDownloadUrl(DOWNLOAD_CONVERTED_URL, data.download_token);
         setConvertProgress(96, 'Starting download...');
         triggerConvertedFileDownload(downloadUrl, data.download_name || `${baseName}.docx`);
@@ -13627,8 +15076,16 @@ async function convertEditedPdfToExcel() {
             },
             body: formData,
         });
-        setConvertProgress(88, 'Building the spreadsheet...');
-        const data = await readConvertedFileResponse(response, 'Excel');
+        setConvertProgress(35, 'Excel conversion queued...');
+        const queued = await readQueuedConversionResponse(response, 'Excel');
+        const data = await waitForQueuedConversion(queued, 'Excel', {
+            onProgress: (status) => {
+                const progress = Math.max(0, Math.min(100, Number(status.progress) || 0));
+                setConvertProgress(35 + Math.round(progress * 0.55), status.status === 'processing'
+                    ? 'Building the spreadsheet...'
+                    : 'Waiting for a conversion worker...');
+            },
+        });
         const downloadUrl = buildConvertedDownloadUrl(DOWNLOAD_CONVERTED_URL, data.download_token);
         setConvertProgress(96, 'Starting download...');
         triggerConvertedFileDownload(downloadUrl, data.download_name || `${baseName}.xlsx`);
@@ -14256,11 +15713,11 @@ function setDrawToolStatus(message) {
 }
 
 function activeDirectDrawStrokeColor() {
-    return drawToolType === 'eraser' ? '#ffffff' : drawStrokeColor;
+    return drawToolType === DIRECT_DRAW_TOOL_ERASER ? '#ffffff' : drawStrokeColor;
 }
 
 function activeDirectDrawOpacity() {
-    return drawToolType === 'eraser' ? 1 : drawOpacity;
+    return drawToolType === DIRECT_DRAW_TOOL_ERASER ? 1 : drawOpacity;
 }
 
 function syncDrawToolPanelUi() {
@@ -14274,7 +15731,11 @@ function syncDrawToolPanelUi() {
         floatingDrawButton.classList.toggle('is-active', drawModeActive);
         floatingDrawButton.setAttribute('aria-pressed', drawModeActive ? 'true' : 'false');
         floatingDrawButton.title = drawModeActive
-            ? (drawToolType === 'eraser' ? 'Eraser active — drag on the PDF to cover content' : 'Draw active — drag on the PDF to draw')
+            ? (drawToolType === DIRECT_DRAW_TOOL_ERASER
+                ? 'Eraser active — drag on the PDF to cover content'
+                : drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
+                    ? 'Smooth curve active — drag on the PDF to draw a fitted curve'
+                    : 'Draw active — drag on the PDF to draw')
             : 'Draw — sketch directly on the PDF';
     }
     drawToolButtons.forEach((button) => {
@@ -14283,20 +15744,22 @@ function syncDrawToolPanelUi() {
     drawColorSwatches.forEach((button) => {
         button.classList.toggle('is-active', cssColorToHex(button.dataset.drawColor, '') === cssColorToHex(drawStrokeColor, '#111827'));
     });
-    if (drawToolInkColors) drawToolInkColors.hidden = drawToolType === 'eraser';
-    if (drawToolEraserColor) drawToolEraserColor.hidden = drawToolType !== 'eraser';
+    if (drawToolInkColors) drawToolInkColors.hidden = drawToolType === DIRECT_DRAW_TOOL_ERASER;
+    if (drawToolEraserColor) drawToolEraserColor.hidden = drawToolType !== DIRECT_DRAW_TOOL_ERASER;
     if (drawToolColorInput) drawToolColorInput.value = cssColorToHex(drawStrokeColor, '#111827');
     if (drawToolSizeInput) drawToolSizeInput.value = String(Math.round(drawBrushSize));
     if (drawToolSizeValue) drawToolSizeValue.textContent = `${Math.round(drawBrushSize)}px`;
     if (drawToolOpacityInput) {
         drawToolOpacityInput.value = String(Math.round(activeDirectDrawOpacity() * 100));
-        drawToolOpacityInput.disabled = drawToolType === 'eraser';
+        drawToolOpacityInput.disabled = drawToolType === DIRECT_DRAW_TOOL_ERASER;
     }
     if (drawToolOpacityValue) drawToolOpacityValue.textContent = `${Math.round(activeDirectDrawOpacity() * 100)}%`;
     setDrawToolStatus(
-        drawToolType === 'eraser'
+        drawToolType === DIRECT_DRAW_TOOL_ERASER
             ? 'Eraser mode is active. Drag directly on the page to cover content with white.'
-            : 'Pen mode is active. Drag directly on the page to draw.',
+            : drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
+                ? 'Smooth curve mode is active. Drag directly on the page to draw a fitted curve.'
+                : 'Pen mode is active. Drag directly on the page to draw.',
     );
 }
 
@@ -14329,7 +15792,7 @@ function clampDirectDrawVectorNumber(value, fallback = 0) {
     return Number.isFinite(number) ? number : fallback;
 }
 
-function directDrawSvgPathFromPoints(points) {
+function directDrawSvgPathFromPoints(points, smoothCurve = false) {
     const cleanPoints = Array.isArray(points)
         ? points
             .map((point) => ({
@@ -14339,6 +15802,7 @@ function directDrawSvgPathFromPoints(points) {
             .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
         : [];
     if (!cleanPoints.length) return '';
+    if (smoothCurve) return smoothDrawCurveSvgPathD(cleanPoints);
     if (cleanPoints.length === 1) {
         const point = cleanPoints[0];
         return `M ${point.x.toFixed(3)} ${point.y.toFixed(3)} L ${(point.x + 0.01).toFixed(3)} ${point.y.toFixed(3)}`;
@@ -14353,7 +15817,7 @@ function directDrawVectorToSvgDataUrl(vector) {
     const height = Math.max(1, clampDirectDrawVectorNumber(vector.height, 0));
     const strokes = Array.isArray(vector.strokes) ? vector.strokes : [];
     const paths = strokes.map((stroke) => {
-        const pathData = directDrawSvgPathFromPoints(stroke?.points);
+        const pathData = directDrawSvgPathFromPoints(stroke?.points, Boolean(stroke?.smoothCurve));
         if (!pathData) return '';
         const color = cssColorToHex(stroke?.color, '#111827');
         const opacity = clamp01(stroke?.opacity ?? 1, 1);
@@ -14380,7 +15844,13 @@ function restyleDirectDrawVector(vector, style = {}) {
                 y: clampDirectDrawVectorNumber(point?.y, 0),
             }))
             : [];
-        return points.length ? { color, opacity, brushSize, points } : null;
+        return points.length ? {
+            color,
+            opacity,
+            brushSize,
+            smoothCurve: Boolean(stroke?.smoothCurve),
+            points,
+        } : null;
     }).filter(Boolean);
     if (!strokes.length) return null;
 
@@ -14433,8 +15903,8 @@ function directDrawPrimaryStroke(annotation) {
 function reflectDirectDrawAnnotationToInputs(annotation) {
     if (!isDirectDrawAnnotation(annotation)) return;
     const stroke = directDrawPrimaryStroke(annotation);
-    drawToolType = isDirectDrawEraserAnnotation(annotation) ? 'eraser' : 'pen';
-    if (stroke && drawToolType !== 'eraser') {
+    drawToolType = normalizeDirectDrawTool(annotation.directDrawTool);
+    if (stroke && drawToolType !== DIRECT_DRAW_TOOL_ERASER) {
         drawStrokeColor = cssColorToHex(stroke.color || annotation.drawStrokeColor, drawStrokeColor);
         drawOpacity = clamp01(stroke.opacity ?? drawOpacity, drawOpacity);
     }
@@ -14456,26 +15926,27 @@ function applyDrawPanelStateToSelectedDirectDrawAnnotations(options = {}) {
         const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
         if (!isDirectDrawAnnotation(existing) || !existing.directDrawVector) continue;
         const current = buildAnnotationFromBox(box, existing) || existing;
-        const isEraser = isDirectDrawEraserAnnotation(existing);
+        const directDrawTool = normalizeDirectDrawTool(existing.directDrawTool);
+        const isEraser = directDrawTool === DIRECT_DRAW_TOOL_ERASER;
         const styled = restyleDirectDrawVector(existing.directDrawVector, {
             color: isEraser ? '#ffffff' : drawStrokeColor,
             opacity: isEraser ? 1 : drawOpacity,
             brushSize: drawBrushSize,
         });
         if (!styled?.vector) continue;
-        updates.push({ box, existing, current, styled, isEraser });
+        updates.push({ box, existing, current, styled, isEraser, directDrawTool });
     }
     if (!updates.length) return false;
     if (options.pushHistory === true) pushHistorySnapshot('change drawing style');
 
-    for (const { box, existing, current, styled, isEraser } of updates) {
+    for (const { box, existing, current, styled, isEraser, directDrawTool } of updates) {
         const unitX = Math.max(0.0001, (Number(current.pdfWidth) || Number(existing.pdfWidth) || 1) / Math.max(1, styled.oldWidth));
         const unitY = Math.max(0.0001, (Number(current.pdfHeight) || Number(existing.pdfHeight) || 1) / Math.max(1, styled.oldHeight));
         const next = normalizeImageAnnotation({
             ...existing,
             ...current,
             imageToolSource: 'direct-draw',
-            directDrawTool: isEraser ? 'eraser' : 'pen',
+            directDrawTool,
             drawStrokeColor: isEraser ? '#ffffff' : cssColorToHex(drawStrokeColor, '#111827'),
             directDrawVector: styled.vector,
             dataUrl: directDrawVectorToSvgDataUrl(styled.vector),
@@ -14530,12 +16001,14 @@ function finishLiveDrawPanelStateEdit() {
 }
 
 function directDrawVectorFromSession(session, cropLeft, cropTop, cropWidth, cropHeight) {
-    const points = (Array.isArray(session?.points) ? session.points : [])
+    let points = (Array.isArray(session?.points) ? session.points : [])
         .map((point) => ({
             x: Math.max(0, Math.min(cropWidth, clampDirectDrawVectorNumber(point.x, 0) - cropLeft)),
             y: Math.max(0, Math.min(cropHeight, clampDirectDrawVectorNumber(point.y, 0) - cropTop)),
         }));
     if (!points.length) return null;
+    const smoothCurve = normalizeDirectDrawTool(session?.directDrawTool) === DIRECT_DRAW_TOOL_SMOOTH_CURVE;
+    if (smoothCurve) points = smoothDrawCurvePoints(points);
     return {
         version: 1,
         width: Math.max(1, cropWidth),
@@ -14544,6 +16017,7 @@ function directDrawVectorFromSession(session, cropLeft, cropTop, cropWidth, crop
             color: cssColorToHex(session.color, '#111827'),
             opacity: clamp01(session.opacity ?? 1, 1),
             brushSize: Math.max(0.25, clampDirectDrawVectorNumber(session.width, 1)),
+            smoothCurve,
             points,
         }],
     };
@@ -14564,7 +16038,7 @@ function directDrawAnnotationAtPageBox(pageIndex, asset, box) {
         rotation: 0,
         opacity: 1,
         userCreated: true,
-        zIndex: String(asset.directDrawTool || '').toLowerCase() === 'eraser' ? 1000 : 2,
+        zIndex: normalizeDirectDrawTool(asset.directDrawTool) === DIRECT_DRAW_TOOL_ERASER ? 1000 : 2,
         dataUrl: asset.dataUrl,
         src: '',
         fileName: 'drawing.png',
@@ -14572,7 +16046,7 @@ function directDrawAnnotationAtPageBox(pageIndex, asset, box) {
         intrinsicWidth: Math.max(1, Number(asset.width) || 1),
         intrinsicHeight: Math.max(1, Number(asset.height) || 1),
         imageToolSource: 'direct-draw',
-        directDrawTool: String(asset.directDrawTool || '').toLowerCase() === 'eraser' ? 'eraser' : 'pen',
+        directDrawTool: normalizeDirectDrawTool(asset.directDrawTool),
         drawStrokeColor: cssColorToHex(asset.drawStrokeColor, '#111827'),
         directDrawVector: asset.directDrawVector || null,
         text: '',
@@ -14651,9 +16125,14 @@ function moveDirectPenStroke(event) {
     session.minY = Math.min(session.minY, point.y - (session.width / 2));
     session.maxX = Math.max(session.maxX, point.x + (session.width / 2));
     session.maxY = Math.max(session.maxY, point.y + (session.width / 2));
-    const midPoint = { x: (lastPoint.x + point.x) / 2, y: (lastPoint.y + point.y) / 2 };
-    paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, midPoint, session.width, session.color);
-    session.lastMidPoint = midPoint;
+    if (session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
+        session.ctx.clearRect(0, 0, session.layer.width, session.layer.height);
+        paintSmoothDrawCurve(session.ctx, session, session.color, session.width);
+    } else {
+        const midPoint = { x: (lastPoint.x + point.x) / 2, y: (lastPoint.y + point.y) / 2 };
+        paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, midPoint, session.width, session.color);
+        session.lastMidPoint = midPoint;
+    }
     return true;
 }
 
@@ -14663,7 +16142,7 @@ function finishDirectPenStroke(event) {
     event.preventDefault();
     event.stopPropagation();
     try { session.pageDiv?.releasePointerCapture?.(event.pointerId); } catch (_) {}
-    if (session.points.length > 1) {
+    if (session.points.length > 1 && session.directDrawTool !== DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
         const lastPoint = session.points[session.points.length - 1];
         paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, lastPoint, session.width, session.color);
     }
@@ -14685,7 +16164,18 @@ function finishDirectPenStroke(event) {
     const outputCtx = outputCanvas.getContext('2d');
     outputCtx.scale(outputScale, outputScale);
     outputCtx.globalAlpha = session.opacity;
-    outputCtx.drawImage(session.layer, -cropLeft, -cropTop);
+    if (session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
+        paintSmoothDrawCurve(outputCtx, {
+            color: session.color,
+            width: session.width,
+            points: session.points.map((point) => ({
+                x: point.x - cropLeft,
+                y: point.y - cropTop,
+            })),
+        }, session.color, session.width);
+    } else {
+        outputCtx.drawImage(session.layer, -cropLeft, -cropTop);
+    }
     const pdfWidth = cropWidth / session.scale;
     const pdfHeight = cropHeight / session.scale;
     const annotation = directDrawAnnotationAtPageBox(session.pageIndex, {
@@ -14704,9 +16194,11 @@ function finishDirectPenStroke(event) {
     clearActiveDrawSession();
     if (upsertDirectDrawAnnotation(annotation, 'add drawing')) {
         setDrawToolStatus(
-            session.directDrawTool === 'eraser'
+            session.directDrawTool === DIRECT_DRAW_TOOL_ERASER
                 ? 'Eraser stroke added. Keep dragging to cover more content.'
-                : 'Drawing added. Keep drawing on the page.',
+                : session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE
+                    ? 'Smooth curve added. Keep drawing on the page.'
+                    : 'Drawing added. Keep drawing on the page.',
         );
     }
     return true;
@@ -14733,13 +16225,18 @@ function setDrawMode(active) {
         shapeToolPanel?.classList.remove('is-visible');
     }
     if (!nextActive) clearActiveDrawSession();
-    drawToolType = 'pen';
     drawModeActive = nextActive;
     document.body.classList.toggle('enpv-draw-on', drawModeActive);
     syncDrawToolPanelUi();
     if (drawModeActive) {
         deselectAnnBox();
-        setStatus('Draw mode active. Drag on the PDF to draw.');
+        setStatus(
+            drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
+                ? 'Smooth curve mode active. Drag on the PDF to draw a fitted curve.'
+                : drawToolType === DIRECT_DRAW_TOOL_ERASER
+                    ? 'Eraser mode active. Drag on the PDF to cover content.'
+                    : 'Draw mode active. Drag on the PDF to draw.',
+        );
     } else if (!document.body.classList.contains('enpv-edit-on')
         && !document.body.classList.contains('enpv-add-text-on')
         && !document.body.classList.contains('enpv-shape-on')
@@ -14958,6 +16455,8 @@ function highlightAnnotationFromCanvasRect(pageIndex, canvasRect) {
     const width = Math.max(1, Math.min(Number(canvasRect.width) || 0, pageWidth - left));
     const height = Math.max(1, Math.min(Number(canvasRect.height) || 0, pageHeight - top));
     if (width < 2 || height < 2) return null;
+    const pdfRect = viewportRectToPdfRect({ left, top, width, height }, viewport, scale);
+    if (!pdfRect || pdfRect.w <= 0 || pdfRect.h <= 0) return null;
     const uid = `highlight_${generateUuidV4()}`;
     return normalizeShapeAnnotation({
         _uid: uid,
@@ -14968,10 +16467,10 @@ function highlightAnnotationFromCanvasRect(pageIndex, canvasRect) {
         userCreated: true,
         userAuthored: true,
         text: '',
-        pdfX: left / scale,
-        pdfY: (pageHeight - top - height) / scale,
-        pdfWidth: width / scale,
-        pdfHeight: height / scale,
+        pdfX: pdfRect.x,
+        pdfY: pdfRect.y,
+        pdfWidth: pdfRect.w,
+        pdfHeight: pdfRect.h,
         strokeColor: highlightColor,
         strokeOpacity: 0,
         strokeWidth: 1,
@@ -14985,8 +16484,8 @@ function highlightAnnotationFromCanvasRect(pageIndex, canvasRect) {
         zIndex: 1,
         highlightColor,
         highlightOpacity,
-        _originalBox: { x: left / scale, y: (pageHeight - top - height) / scale, w: width / scale, h: height / scale },
-        _originalPdfBox: { x: left / scale, y: (pageHeight - top - height) / scale, w: width / scale, h: height / scale },
+        _originalBox: { ...pdfRect },
+        _originalPdfBox: { ...pdfRect },
     });
 }
 
@@ -15239,14 +16738,23 @@ function createNewTextAnnotation(pageIndex, canvasX, canvasY, canvasWidth = null
     const defaultWidthPts = 36;
     const defaultHeightPts = Math.ceil(defaultFontSize * 1.25);
     const hasDraggedSize = Number.isFinite(canvasWidth) && Number.isFinite(canvasHeight);
-    const widthPts = hasDraggedSize ? Math.max(60 / scale, Number(canvasWidth) / scale) : defaultWidthPts;
-    const heightPts = hasDraggedSize ? Math.max(28 / scale, Number(canvasHeight) / scale) : defaultHeightPts;
-    const rawX = Number(canvasX) / scale;
-    const rawY = hasDraggedSize
-        ? (Number(viewport.height) - (Number(canvasY) + (heightPts * scale))) / scale
-        : ((Number(viewport.height) - Number(canvasY)) / scale) - defaultHeightPts;
-    const pageWidthPts = Number(viewport.width) / scale;
-    const pageHeightPts = Number(viewport.height) / scale;
+    const draggedPdfRect = hasDraggedSize
+        ? viewportRectToPdfRect({
+            left: Number(canvasX),
+            top: Number(canvasY),
+            width: Math.max(60, Number(canvasWidth)),
+            height: Math.max(28, Number(canvasHeight)),
+        }, viewport, scale)
+        : null;
+    const clickedPdfPoint = viewportPointToPdfPoint(canvasX, canvasY, viewport, scale);
+    if (!clickedPdfPoint) return null;
+    const widthPts = draggedPdfRect ? draggedPdfRect.w : defaultWidthPts;
+    const heightPts = draggedPdfRect ? draggedPdfRect.h : defaultHeightPts;
+    const rawX = draggedPdfRect ? draggedPdfRect.x : clickedPdfPoint.x;
+    const rawY = draggedPdfRect ? draggedPdfRect.y : clickedPdfPoint.y - defaultHeightPts;
+    const pageSizePts = viewportPdfDimensions(viewport, scale);
+    const pageWidthPts = pageSizePts.width;
+    const pageHeightPts = pageSizePts.height;
     const pdfX = Math.max(0, Math.min(rawX, Math.max(0, pageWidthPts - widthPts)));
     const pdfY = Math.max(0, Math.min(rawY, Math.max(0, pageHeightPts - heightPts)));
     const uid = `new_${generateUuidV4()}`;
@@ -15298,8 +16806,9 @@ function createImageAnnotationOnPage(pageIndex, asset, centerPt = null) {
     const scale = Number(viewport.scale) || Number(pdfViewer.currentScale) || 1;
     if (!(scale > 0)) return null;
 
-    const pageWidthPts = Number(viewport.width) / scale;
-    const pageHeightPts = Number(viewport.height) / scale;
+    const pageSizePts = viewportPdfDimensions(viewport, scale);
+    const pageWidthPts = pageSizePts.width;
+    const pageHeightPts = pageSizePts.height;
     const intrinsicWidth = Math.max(1, Number(asset.width || asset.intrinsicWidth) || 1);
     const intrinsicHeight = Math.max(1, Number(asset.height || asset.intrinsicHeight) || 1);
     const aspectRatio = intrinsicWidth / intrinsicHeight;
@@ -15369,10 +16878,10 @@ function createImageBoxElement(annotation, pageIndex, viewport, scale, editModeO
     box.dataset.zIndex = String(Number(annotation.zIndex) || (isDirectDrawEraserAnnotation(annotation) ? 1000 : (isDirectDrawAnnotation(annotation) ? 2 : 6)));
     if (isDirectDrawAnnotation(annotation)) {
         box.dataset.directDraw = '1';
-        box.dataset.directDrawTool = String(annotation.directDrawTool || '').toLowerCase() === 'eraser' ? 'eraser' : 'pen';
+        box.dataset.directDrawTool = normalizeDirectDrawTool(annotation.directDrawTool);
         box.classList.add('enpv-direct-draw-box');
     }
-    box.dataset.basePageHeight = String(Number(viewport.height) / scale);
+    box.dataset.basePageHeight = String(viewportPdfDimensions(viewport, scale).height);
     box.style.left = `${rect.left}px`;
     box.style.top = `${rect.top}px`;
     box.style.width = `${Math.max(1, rect.width)}px`;
@@ -15388,7 +16897,7 @@ function createImageBoxElement(annotation, pageIndex, viewport, scale, editModeO
     const src = vectorSrc || getImageAnnotationSource(annotation);
     if (src) img.src = src;
     img.alt = isDirectDrawAnnotation(annotation) ? 'Drawing' : 'Image';
-    box.appendChild(img);
+    appendViewportRotatedContent(box, img, viewport, rect);
 
     const label = document.createElement('span');
     label.className = 'enpv-image-selection-label';
@@ -15418,8 +16927,9 @@ function createFieldAnnotationOnPage(pageIndex, fieldKind = 'text', centerPt = n
     if (!(scale > 0)) return null;
 
     const kind = normalizeFieldKind(fieldKind);
-    const pageWidthPts = Number(viewport.width) / scale;
-    const pageHeightPts = Number(viewport.height) / scale;
+    const pageSizePts = viewportPdfDimensions(viewport, scale);
+    const pageWidthPts = pageSizePts.width;
+    const pageHeightPts = pageSizePts.height;
     const defaultWidth = kind === 'signature' ? 180 : 190;
     const defaultHeight = kind === 'signature' ? 54 : 28;
     const pdfWidth = Math.max(48, Math.min(defaultWidth, pageWidthPts - 24));
@@ -15468,7 +16978,7 @@ function createFieldBoxElement(annotation, pageIndex, viewport, scale, hooks) {
     box.dataset.fieldName = String(normalized.fieldName || '');
     box.dataset.locked = normalized.locked ? '1' : '0';
     box.dataset.zIndex = String(Number(normalized.zIndex) || 7);
-    box.dataset.basePageHeight = String(Number(viewport.height) / scale);
+    box.dataset.basePageHeight = String(viewportPdfDimensions(viewport, scale).height);
     box.style.left = `${rect.left}px`;
     box.style.top = `${rect.top}px`;
     box.style.width = `${Math.max(1, rect.width)}px`;
@@ -15996,13 +17506,54 @@ function syncAnnotationBoxToPersistedAnnotations(box, options = {}) {
     }
 }
 
+// A move is a pure translation: it must never re-typeset the paragraph. When
+// the captured per-line scaffold can still describe the block, install it —
+// the very markup the reload path (createPersistedOverlayBox) uses for moved
+// promoted blocks — so the overlay keeps the PDF's own line breaks, leading
+// indents, glyph advances and per-run typography instead of being re-wrapped
+// (and letter-spacing-corrected) by the flowing paragraph editor.
+function installMovedPromotedSourceLayout(box) {
+    if (!promotedSourceBlockPrefersExactSourceEditLayout(box)) return false;
+    const tc = selectedBoxTextElement(box);
+    if (!tc) return false;
+    const applied = boxHasCapturedSourceSpanScaffold(box)
+        || applySourceFidelitySpanEditMarkup(box, { purpose: 'display', allowMultiline: true });
+    if (!applied) return false;
+    // A move started from the toolbar grip leaves the block in edit mode. Its
+    // scaffold is the layout the overlay now paints, so exiting edit mode must
+    // demote it to display markup rather than flatten away the paragraph gaps
+    // and per-run typography the move just preserved.
+    if (promotedSourceBlockEditKeepsExactLayout(box)) box.dataset.preserveExactSourceLayoutEdit = '1';
+    setBoxEditorMode(box, 'rich');
+    applyPromotedSourceBlockEditLayout(box, { suppressHangingIndent: true });
+    return true;
+}
+
+// Glyph alignment compares live run rects against the captured coordinates in
+// the page text layer, so it has to measure the block at its source position.
+// Neutralize the drag translate for the measurement and restore it right after.
+function alignMovedPromotedSourceLayout(box) {
+    const tc = selectedBoxTextElement(box);
+    if (!tc) return;
+    const dragTransform = box.style.transform;
+    if (dragTransform) box.style.transform = '';
+    try {
+        alignPromotedSourceEditGlyphsToCapturedRanges(box, tc);
+    } finally {
+        if (dragTransform) box.style.transform = dragTransform;
+    }
+}
+
 function promoteSourceBoxToMovedOverlay(box) {
     if (!box || box.classList.contains('is-persisted-overlay')) return;
     const tc = selectedBoxTextElement(box);
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
-    // Moving a promoted paragraph uses the same one-time conversion as
-    // double-click editing. Never rebuild captured source rows during drag.
-    convertPromotedParagraphForDirectManipulation(box, existing);
+    // Keep the exact captured layout when it still applies; only blocks the
+    // scaffold can no longer describe (restyled, resized, already reflowed or
+    // carrying authored rich markup) fall back to the flowing conversion that
+    // double-click editing uses. Never rebuild captured source rows mid-drag.
+    const keepsExactSourceLayout = installMovedPromotedSourceLayout(box);
+    if (!keepsExactSourceLayout) convertPromotedParagraphForDirectManipulation(box, existing);
     if (tc && !String(tc.textContent || '').trim()) {
         tc.textContent = normalizeAnnotationTextForDisplay(baseTextForBox(box) || originalTextForBox(box) || '');
     }
@@ -16021,7 +17572,11 @@ function promoteSourceBoxToMovedOverlay(box) {
     // longer wrap. Such blocks render as pre-wrap rich text both at creation and
     // after reload (createPersistedOverlayBox skips source-fidelity when
     // editorMode === 'rich'), so keep that rendering on live drag too.
-    if (editorModeForBox(box) !== 'rich') {
+    if (keepsExactSourceLayout) {
+        // The scaffold only becomes measurable once the handle's hidden text
+        // element is revealed by the persisted-overlay classes above.
+        alignMovedPromotedSourceLayout(box);
+    } else if (editorModeForBox(box) !== 'rich') {
         applySourceFidelityTypography(box);
         applySourceFidelitySpanEditMarkup(box, { purpose: 'display' });
         restoreSourceTypographyForBox(box, existing, Number.parseFloat(box.parentElement?.dataset?.scale || '') || Number.parseFloat(box.dataset.renderScale || '') || 1);
@@ -16506,24 +18061,44 @@ function isSourceUnderlineRuleText(text) {
     return normalized.length >= 1 && /^_+$/.test(normalized);
 }
 
+// Underscore runs that act as fill-in-the-blank leaders, as opposed to a lone
+// underscore that is part of a word (`ap_bookmark.IFD`) and must stay in the
+// span so the source box keeps covering its glyph.
+function sourceUnderlineRuleRanges(raw) {
+    const ranges = [];
+    const pattern = /_+/g;
+    let match = pattern.exec(raw);
+    while (match) {
+        const start = match.index;
+        const end = start + match[0].length;
+        const isWordInternal = match[0].length < 2
+            && /\S/.test(raw[start - 1] || '')
+            && /\S/.test(raw[end] || '');
+        if (!isWordInternal) ranges.push([start, end]);
+        match = pattern.exec(raw);
+    }
+    return ranges;
+}
+
 function sourceTextSegmentsWithoutUnderlineRules(text, rect) {
     const raw = String(text || '');
     if (!rect || raw.indexOf('_') < 0) return null;
+    const ruleRanges = sourceUnderlineRuleRanges(raw);
+    if (!ruleRanges.length) return null;
     const ranges = [];
-    let start = -1;
-    for (let i = 0; i < raw.length; i += 1) {
-        const isUnderline = raw[i] === '_';
-        if (!isUnderline && start < 0) start = i;
-        if ((isUnderline || i === raw.length - 1) && start >= 0) {
-            const end = isUnderline ? i : i + 1;
-            let trimStart = start;
-            let trimEnd = end;
-            while (trimStart < trimEnd && /\s/.test(raw[trimStart])) trimStart += 1;
-            while (trimEnd > trimStart && /\s/.test(raw[trimEnd - 1])) trimEnd -= 1;
-            if (trimEnd > trimStart) ranges.push([trimStart, trimEnd]);
-            start = -1;
-        }
+    const pushRange = (start, end) => {
+        let trimStart = start;
+        let trimEnd = end;
+        while (trimStart < trimEnd && /\s/.test(raw[trimStart])) trimStart += 1;
+        while (trimEnd > trimStart && /\s/.test(raw[trimEnd - 1])) trimEnd -= 1;
+        if (trimEnd > trimStart) ranges.push([trimStart, trimEnd]);
+    };
+    let cursor = 0;
+    for (const [ruleStart, ruleEnd] of ruleRanges) {
+        pushRange(cursor, ruleStart);
+        cursor = ruleEnd;
     }
+    pushRange(cursor, raw.length);
     if (!ranges.length) return [];
     if (ranges.length === 1 && ranges[0][0] === 0 && ranges[0][1] === raw.length) return null;
     const total = Math.max(1, raw.length);
@@ -18979,8 +20554,14 @@ function markPageOverlaysReady(pageIndex) {
 function removeAnnotationBoxLayer(pageIndex) {
     const pageView = pdfViewer.getPageView(pageIndex);
     const pageDiv = pageView?.div;
-    pageDiv?.querySelector(':scope > .enpv-annotation-box-layer')?.remove();
-    removeSourceMaskLayer(pageDiv);
+    if (!pageDiv) return;
+    const layer = pageDiv.querySelector(':scope > .enpv-annotation-box-layer');
+    const maskLayer = pageDiv.querySelector(':scope > .enpv-source-mask-layer');
+    // Scrolling calls this for every off-screen page on every frame. Once the
+    // page is stripped and already flagged pending there is nothing left to do.
+    if (!layer && !maskLayer && pageDiv.classList.contains('enpv-overlays-pending')) return;
+    layer?.remove();
+    maskLayer?.remove();
     markPageOverlaysPending(pageIndex);
 }
 
@@ -19104,6 +20685,7 @@ function sourceGroupsForPromotedSourceBlock(annotation, pageIndex, viewport, sca
     const annotationText = normalizePromotedSourceOwnershipText(
         annotation.pdfjsSourceText || annotation.originalText || annotation.text || '',
     );
+    const ownsContainedMonospacedRows = promotedSourceBlockUsesMonospacedTypography(annotation);
     return sourceGroups
         .map((group) => ({ group, pdfRect: sourceGroupPdfRect(group, viewport, scale) }))
         .filter((entry) => {
@@ -19112,8 +20694,19 @@ function sourceGroupsForPromotedSourceBlock(annotation, pageIndex, viewport, sca
             const overlap = pdfRectOverlapArea(sourceBox, groupRect);
             const groupRatio = overlap / Math.max(0.0001, pdfRectArea(groupRect));
             if (groupRatio < 0.35) return false;
+            // Extraction already established one preformatted block boundary.
+            // Its contained rows are authoritative even when PDF.js splits a
+            // line into word fragments whose reconstructed text differs from
+            // the extraction text. This notably keeps the three Description
+            // rows in c4611_sample_explain inside promoted_2_1.
+            if (ownsContainedMonospacedRows) return true;
             const groupText = normalizePromotedSourceOwnershipText(entry.group?.text || entry.group?.visualText || '');
             if (!annotationText || !groupText) return true;
+            // Symbol-font legal marks are stripped from the extraction-backed
+            // paragraph text, but PDF.js still exposes them as standalone PUA
+            // source groups inside the paragraph box. Geometry establishes
+            // ownership here; the run is normalized to Unicode when captured.
+            if (isPdfInlineSymbolText(entry.group?.text || entry.group?.visualText || '')) return true;
             return annotationText.includes(groupText) || groupText.includes(annotationText);
         })
         .sort((left, right) => (left.pdfRect.y === right.pdfRect.y
@@ -19181,6 +20774,26 @@ function markSourceGroupOwnedByPromotedSourceBlock(group, owner) {
     }
 }
 
+// A genuinely wrapped paragraph fills every line except the last to nearly the
+// width of its widest line. Structured content — configuration/code listings,
+// label-above-value rows — leaves interior lines markedly short because those
+// line breaks are deliberate. Proportional-font structured rows should retain
+// separate handles. Monospaced extracted blocks are handled separately: they
+// use one block handle while the exact-source scaffold preserves every hard
+// line break.
+function promotedSourceBlockHasHardInteriorLineBreaks(annotation) {
+    const lines = logicalParagraphSourceSpanLines(annotation);
+    if (lines.length < 3) return false;
+    const widths = lines.map((line) => Math.max(0, line.rect.x1 - line.rect.x0));
+    const maxWidth = Math.max(...widths);
+    if (!(maxWidth > 0)) return false;
+    const interior = widths.slice(0, -1);
+    const shortCount = interior.filter((width) => width > 0 && width < maxWidth * 0.5).length;
+    // A single short interior line is an ordinary paragraph break inside a
+    // multi-paragraph block; a recurring pattern of them is structure.
+    return shortCount >= 2 && shortCount / interior.length >= 0.25;
+}
+
 function promotedSourceBlockLooksLikeParagraph(annotation, groups) {
     if (!Array.isArray(groups) || groups.length < 2) return false;
     const sourceText = String(annotation?.pdfjsSourceText || annotation?.originalText || annotation?.text || '');
@@ -19191,6 +20804,7 @@ function promotedSourceBlockLooksLikeParagraph(annotation, groups) {
     if (lineTexts.some((text) => isSourceUnderlineRuleText(text) || /_{2,}/.test(text))) return false;
     if (sourceText && /_{2,}/.test(sourceText)) return false;
     if (groups.some((group) => group?.syntheticSourceText)) return false;
+    if (promotedSourceBlockHasHardInteriorLineBreaks(annotation)) return false;
 
     const joined = lineTexts.join(' ');
     const wordCount = (joined.match(/[A-Za-z0-9]+(?:['’][A-Za-z0-9]+)?/g) || []).length;
@@ -19357,6 +20971,26 @@ function installSimplePromotedParagraphEditor(box, tc, annotation, fallbackText)
     return true;
 }
 
+// Configuration/code blocks are grouped for manipulation, but their newlines
+// are authored content rather than prose wrapping. If the captured run
+// scaffold is unavailable, retain a plain preformatted editor instead of
+// falling through to the one-span paragraph editor that joins every line.
+function installPreformattedPromotedSourceEditor(box, tc, annotation, fallbackText) {
+    if (!box || !tc) return false;
+    const text = String(annotation?.text ?? fallbackText ?? '');
+    tc.textContent = text;
+    clearSourceFidelitySpanState(box);
+    delete box.dataset.sourceSpanGlyphAligned;
+    delete box.dataset.promotedParagraphFlow;
+    box.classList.remove('is-promoted-paragraph-flow');
+    tc.classList.remove('enpv-simple-paragraph-editor');
+    box.dataset.promotedPreformattedBlock = '1';
+    tc.style.whiteSpace = 'pre-wrap';
+    tc.style.overflowWrap = 'normal';
+    tc.style.wordBreak = 'normal';
+    return true;
+}
+
 // Spacing fidelity comes first when a promoted paragraph opens for editing:
 // the captured per-line scaffold reproduces the PDF's own line breaks,
 // paragraph gaps, leading indents and per-run typography (for example a bold
@@ -19378,9 +21012,11 @@ function promotedSourceBlockPrefersExactSourceEditLayout(box) {
     if (!tc) return false;
     // Authored rich markup owns its own layout. Per-span DISPLAY markup is not
     // authored content: it is the same captured scaffold, and edit mode
-    // promotes it in place instead of rebuilding it.
+    // promotes it in place instead of rebuilding it. The EDIT flag marks that
+    // very same scaffold while the block is open for editing, so a move
+    // started mid-edit (via the toolbar grip) must keep it too.
     if (tc.querySelector('*')
-        && !(box.dataset.sourceSpanDisplayActive === '1'
+        && !(boxHasCapturedSourceSpanScaffold(box)
             && tc.querySelector('[data-source-span-run="1"]'))) return false;
     return true;
 }
@@ -19497,16 +21133,23 @@ function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale,
     const rect = pdfRectToCanvasRect(sourceBox, viewport, scale);
     if (!rect || rect.width <= 0 || rect.height <= 0) return null;
     const groups = sourceGroupsForPromotedSourceBlock(annotation, pageIndex, viewport, scale, sourceGroups);
-    // Keep true paragraph blocks editable as one box, but do not let form rows
-    // with fill-in rules/labels become a giant promoted-block handle.
+    const usesPreformattedLayout = promotedSourceBlockUsesMonospacedTypography(annotation);
+    // Keep true prose paragraphs editable as one box. A monospaced source
+    // block is also one logical editable unit, but remains preformatted via
+    // the exact-source layout rather than being converted to flowing prose.
+    // Other structured form rows retain independent handles.
     if (groups.length > 0
         && !boolish(annotation.promotedLogicalParagraph)
+        && !usesPreformattedLayout
         && !promotedSourceBlockLooksLikeParagraph(annotation, groups)) return null;
     if (!promotedSourceBlockHasMultipleLines(annotation)) return null;
     const sourcePageHeight = Number(annotation.sourcePageHeight || annotation.pdfjsSourcePageHeight || (Number(viewport.height) / scale));
     const annotationId = String(annotation.id || buildPdfjsAnnotationId(pageIndex, `promoted-block:${groups[0]?.index || 0}`));
     const uid = `promoted-block:${annotationId}`;
-    const baseText = String(annotation.pdfjsSourceText || annotation.originalText || annotation.text || '');
+    const baseText = insertPdfInlineSymbolsIntoText(
+        String(annotation.pdfjsSourceText || annotation.originalText || annotation.text || ''),
+        groups,
+    );
     const sourceSnapshotRect = sourceBox;
     const baseRect = annotation._baselinePdfBox || sourceSnapshotRect;
 
@@ -19516,6 +21159,7 @@ function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale,
     box.dataset.annotationId = annotationId;
     box.dataset.persistedAnnotationId = annotationId;
     box.dataset.pageIndex = String(pageIndex);
+    if (usesPreformattedLayout) box.dataset.promotedPreformattedBlock = '1';
     setOriginalTextForBox(box, annotation.originalText || baseText);
     box.dataset.occurrence = String(annotation.pdfjsSourceOccurrence || '0');
     box.dataset.sourceBboxX = String(sourceSnapshotRect.x);
@@ -19608,7 +21252,10 @@ function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale,
         restoreAuthoredRichTextLineBreaks(tc, annotation);
         rescaleRichTextInlineStylesForAnnotation(tc, annotation, scale);
     } else {
-        tc.textContent = normalizeRichPlainText(annotation.text || baseText);
+        tc.textContent = normalizeRichPlainText(insertPdfInlineSymbolsIntoText(
+            String(annotation.text || baseText),
+            groups,
+        ));
     }
     box.appendChild(tc);
     if (box.dataset.promotedReflowEnabled === '1') {
@@ -19619,6 +21266,12 @@ function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale,
         || renderedStructuredRichText
         || Boolean(richTextHtml);
     setBoxEditorMode(box, persistedRichMode ? 'rich' : editorModeForBox(box));
+    // Install the captured source scaffold for the clean handle too. Besides
+    // making mixed Arial/Arial-Bold runs semantically visible before the first
+    // drag, this places any owned registered marks inside the paragraph DOM so
+    // they move as part of the annotation instead of remaining source-layer
+    // glyphs at the old position.
+    applySourceFidelitySpanEditMarkup(box, { purpose: 'display', allowMultiline: true });
     addEditableBoxChrome(box);
 
     return { box, rect: handleRect, groups, sourceBox, spans: allSpans };
@@ -19669,7 +21322,9 @@ function hideSourceSpansForMovedPromotedOverlays(pageIndex, viewport, scale, tex
 }
 
 function renderAnnotationBoxLayer(pageIndex) {
-    const editModeOn = document.body.classList.contains('enpv-edit-on');
+    const editModeRequested = document.body.classList.contains('enpv-edit-on');
+    const editModeRotationBlocked = editModeRequested && pageHasUnsupportedEditRotation(pageIndex);
+    const editModeOn = editModeRequested && !editModeRotationBlocked;
     const addTextModeOn = document.body.classList.contains('enpv-add-text-on');
     const allAnnotations = annotationBoxesByPage.get(pageIndex) || [];
     const allTextAnnotations = allAnnotations.filter(
@@ -19732,6 +21387,7 @@ function renderAnnotationBoxLayer(pageIndex) {
     const scale = Number(viewport.scale) || Number(pdfViewer.currentScale) || 1;
     if (!scale) return;
     applyDeletedAcroWidgetVisibility(pageIndex);
+    applyRemovedPdfLinkVisibility(pageIndex);
 
     const staleCompositeVisibleTextAnnotations = visibleTextAnnotations.filter(
         (annotation) => isStaleCompositePdfjsSourceOverlay(annotation, pageIndex, viewport, scale),
@@ -19789,6 +21445,10 @@ function renderAnnotationBoxLayer(pageIndex) {
     layer.dataset.pageIndex = String(pageIndex);
     layer.dataset.scale = String(scale);
     layer.dataset.editMode = editModeOn ? '1' : '0';
+    if (editModeRotationBlocked) {
+        layer.dataset.rotationEditDisabled = '1';
+        layer.classList.add('enpv-rotation-edit-disabled');
+    }
     layer.dataset.annotationRevision = String(persistedAnnotationsRevision);
     removeSourceMaskLayer(pageDiv);
     const sourceMaskLayer = ensureSourceMaskLayer(pageDiv);
@@ -20238,7 +21898,10 @@ function pageHasCurrentAnnotationBoxLayer(pageIndex) {
     const pageView = pdfViewer.getPageView(pageIndex);
     const currentScale = Number(pageView?.viewport?.scale) || Number(pdfViewer.currentScale) || 1;
     const layerScale = Number.parseFloat(layer.dataset.scale || '0') || 0;
-    const editMode = document.body.classList.contains('enpv-edit-on') ? '1' : '0';
+    const editMode = document.body.classList.contains('enpv-edit-on')
+        && !pageHasUnsupportedEditRotation(pageIndex)
+        ? '1'
+        : '0';
     return Math.abs(layerScale - currentScale) <= 0.0001
         && String(layer.dataset.editMode || '0') === editMode
         && Number(layer.dataset.annotationRevision || '-1') === persistedAnnotationsRevision
@@ -20247,27 +21910,32 @@ function pageHasCurrentAnnotationBoxLayer(pageIndex) {
 
 function renderAllAnnotationBoxLayers(options = {}) {
     const preserveCurrent = options.preserveCurrent === true;
+    // Read phase: measuring a page and then mutating its DOM in the same loop
+    // forces a full layout per page (this runs on every scroll frame). Collect
+    // the work first, then apply it.
+    const viewportRect = container.getBoundingClientRect();
+    const toRender = [];
+    const toRemove = [];
     for (let i = 0; i < pdfViewer.pagesCount; i += 1) {
-        if (pageIsNearViewport(i)) {
-            if (preserveCurrent && pageHasCurrentAnnotationBoxLayer(i)) continue;
-            renderAnnotationBoxLayer(i);
-        } else {
-            removeAnnotationBoxLayer(i);
+        const pageDiv = pdfViewer.getPageView(i)?.div;
+        if (!pageDiv) continue;
+        const pageRect = pageDiv.getBoundingClientRect();
+        const isNear = pageRect.bottom >= viewportRect.top - OVERLAY_VIEWPORT_BUFFER_PX
+            && pageRect.top <= viewportRect.bottom + OVERLAY_VIEWPORT_BUFFER_PX;
+        if (!isNear) {
+            toRemove.push(i);
+        } else if (!preserveCurrent || !pageHasCurrentAnnotationBoxLayer(i)) {
+            toRender.push(i);
         }
     }
+
+    // Write phase.
+    for (const pageIndex of toRemove) removeAnnotationBoxLayer(pageIndex);
+    for (const pageIndex of toRender) renderAnnotationBoxLayer(pageIndex);
 }
 
 const OVERLAY_VIEWPORT_BUFFER_PX = 150;
 let overlayRenderRaf = 0;
-
-function pageIsNearViewport(pageIndex) {
-    const pageDiv = pdfViewer.getPageView(pageIndex)?.div;
-    if (!pageDiv) return false;
-    const pageRect = pageDiv.getBoundingClientRect();
-    const viewportRect = container.getBoundingClientRect();
-    return pageRect.bottom >= viewportRect.top - OVERLAY_VIEWPORT_BUFFER_PX
-        && pageRect.top <= viewportRect.bottom + OVERLAY_VIEWPORT_BUFFER_PX;
-}
 
 function scheduleRenderAllAnnotationBoxLayers() {
     if (overlayRenderRaf) return;
@@ -20385,8 +22053,9 @@ function pdfjsShapeAnnotationFromPoints(startPt, endPt, pageIndex, options = {})
     const viewport = pageView?.viewport;
     if (!viewport || !startPt || !endPt) return null;
     const scale = Number(viewport.scale) || Number(pdfViewer.currentScale) || 1;
-    const pageWidthPts = Number(viewport.width) / scale;
-    const pageHeightPts = Number(viewport.height) / scale;
+    const pageSizePts = viewportPdfDimensions(viewport, scale);
+    const pageWidthPts = pageSizePts.width;
+    const pageHeightPts = pageSizePts.height;
     const defaults = readCurrentShapeState();
     const constrain = options.constrain === true;
     const uid = String(options.uid || `shape_${generateUuidV4()}`);
@@ -20610,6 +22279,24 @@ function startDirectDrawGesture(ev) {
     beginDirectPenStroke(ev, pageIndex);
 }
 
+function guardRotatedPagePointerInteraction(ev) {
+    if (ev.button !== 0) return;
+    const pageIndex = pageIndexFromEventTarget(ev.target);
+    if (!Number.isFinite(pageIndex) || pageIndex < 0 || !pageHasUnsupportedEditRotation(pageIndex)) return;
+    const mutationToolActive = document.body.classList.contains('enpv-edit-on')
+        || document.body.classList.contains('enpv-add-text-on')
+        || document.body.classList.contains('enpv-shape-on')
+        || document.body.classList.contains('enpv-note-anchor-placing')
+        || drawModeActive
+        || highlightModeActive
+        || Boolean(imagePlacementState)
+        || Boolean(fieldPlacementState);
+    if (!mutationToolActive) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    preventUnsupportedRotatedPageEdit(pageIndex, ev.target);
+}
+
 function updateDirectDrawGesture(ev) {
     if (!drawModeActive || !activeDrawSession) return;
     moveDirectPenStroke(ev);
@@ -20620,6 +22307,7 @@ function finishDirectDrawGesture(ev) {
     finishDirectPenStroke(ev);
 }
 
+container.addEventListener('pointerdown', guardRotatedPagePointerInteraction, { capture: true });
 container.addEventListener('pointerdown', startHighlightDrag, { capture: true });
 container.addEventListener('pointermove', updateHighlightDrag, { capture: true });
 container.addEventListener('pointerup', finishHighlightDrag, { capture: true });
@@ -20695,6 +22383,9 @@ const multiSelectedAnnBoxUids = new Set();
 // the re-anchor block in renderAnnotationBoxLayer can restore edit
 // mode on the new box rather than silently dropping the user mid-type.
 let selectedAnnBoxIsEditing = false;
+// A click or double-click often includes a few pixels of mouse/touchpad
+// wobble. Do not turn that into a text move before inline editing opens.
+const ANN_BOX_DRAG_START_THRESHOLD_PX = 4;
 let dragState = null;
 let multiDragState = null;
 let marqueeSelectionState = null;
@@ -20930,6 +22621,52 @@ function registerPdfjsRuntimeFontMetadata(fontObject, faceName = '') {
     return metadata;
 }
 
+function normalizedCssFontFaceWeight(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'normal') return '400';
+    if (raw === 'bold') return '700';
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) ? String(parsed) : raw;
+}
+
+// Embedded PDF.js fonts are normally registered as a unique CSS FontFace at
+// weight 400/style normal because the face's outlines already contain their
+// bold/italic appearance. Standard PDF fonts are different: PDF.js can report
+// a broad runtime family such as `Courier` without registering any FontFace,
+// leaving the browser to use its local Courier fallback. That fallback needs
+// the semantic 700/italic request or a moved Courier-Bold row becomes regular.
+function pdfjsRuntimeHasBakedCssFace(metadata) {
+    if (metadata?.source !== 'pdfjs-runtime') return false;
+    if (typeof document === 'undefined' || !document.fonts) return true;
+    const familyKey = normalizeFontKey(metadata.cssFamily);
+    if (!familyKey) return false;
+    const renderWeight = normalizedCssFontFaceWeight(metadata.renderWeight || '400');
+    const renderStyle = String(metadata.renderStyle || 'normal').trim().toLowerCase();
+    return Array.from(document.fonts).some((face) => (
+        normalizeFontKey(face?.family) === familyKey
+        && normalizedCssFontFaceWeight(face?.weight || '400') === renderWeight
+        && String(face?.style || 'normal').trim().toLowerCase() === renderStyle
+    ));
+}
+
+function pdfjsRuntimeRenderFontWeight(metadata) {
+    if (metadata?.source !== 'pdfjs-runtime') return String(metadata?.weight || '400');
+    return String(
+        pdfjsRuntimeHasBakedCssFace(metadata)
+            ? (metadata.renderWeight || '400')
+            : (metadata.weight || metadata.renderWeight || '400'),
+    );
+}
+
+function pdfjsRuntimeRenderFontStyle(metadata) {
+    if (metadata?.source !== 'pdfjs-runtime') return String(metadata?.style || 'normal');
+    return String(
+        pdfjsRuntimeHasBakedCssFace(metadata)
+            ? (metadata.renderStyle || 'normal')
+            : (metadata.style || metadata.renderStyle || 'normal'),
+    );
+}
+
 function applyPdfjsRuntimeFontsToSourceRunItems(items) {
     if (!Array.isArray(items)) return items;
     for (const item of items) {
@@ -20945,8 +22682,8 @@ function applyPdfjsRuntimeFontsToSourceRunItems(items) {
         item.semanticFontStyle = item.semanticFontStyle || metadata.style;
         item.fontWeight = item.semanticFontWeight || metadata.weight || '400';
         item.fontStyle = item.semanticFontStyle || metadata.style || 'normal';
-        item.renderFontWeight = metadata.renderWeight || '400';
-        item.renderFontStyle = metadata.renderStyle || 'normal';
+        item.renderFontWeight = pdfjsRuntimeRenderFontWeight(metadata);
+        item.renderFontStyle = pdfjsRuntimeRenderFontStyle(metadata);
     }
     return items;
 }
@@ -20963,8 +22700,10 @@ function applyPdfjsRuntimeFontToSourceBox(box) {
     box.dataset.sourceFontFamily = metadata.pdfFontName || metadata.cleanName;
     box.dataset.sourceFontWeight = metadata.weight || '400';
     box.dataset.sourceFontStyle = metadata.style || 'normal';
-    box.dataset.sourceRenderFontWeight = metadata.renderWeight || '400';
-    box.dataset.sourceRenderFontStyle = metadata.renderStyle || 'normal';
+    const renderWeight = pdfjsRuntimeRenderFontWeight(metadata);
+    const renderStyle = pdfjsRuntimeRenderFontStyle(metadata);
+    box.dataset.sourceRenderFontWeight = renderWeight;
+    box.dataset.sourceRenderFontStyle = renderStyle;
     box.dataset.sourceSemanticFontWeight = metadata.weight || '400';
     box.dataset.sourceSemanticFontStyle = metadata.style || 'normal';
     // Merely moving a source handle must not turn a display-only PDF.js face
@@ -20976,8 +22715,8 @@ function applyPdfjsRuntimeFontToSourceBox(box) {
         box.dataset.fontSourceName = metadata.cleanName;
     }
     box.style.setProperty('--enpv-font-family', cssFontFamilyWithGenericFallback(metadata.cssFamily));
-    box.style.setProperty('--enpv-font-weight', metadata.renderWeight || '400');
-    box.style.setProperty('--enpv-font-style', metadata.renderStyle || 'normal');
+    box.style.setProperty('--enpv-font-weight', renderWeight);
+    box.style.setProperty('--enpv-font-style', renderStyle);
     if (runs.length) {
         setSourceSpanRunsForBox(box, runs);
     }
@@ -21034,8 +22773,12 @@ function renderDocumentFontsInPicker() {
         option.dataset.fontWeight = metadata.weight || '400';
         option.dataset.fontStyle = metadata.style || 'normal';
         option.style.fontFamily = cssFontFamilyWithGenericFallback(metadata.cssFamily || metadata.cleanName);
-        option.style.fontWeight = metadata.renderWeight || metadata.weight || '400';
-        option.style.fontStyle = metadata.renderStyle || metadata.style || 'normal';
+        option.style.fontWeight = metadata.source === 'pdfjs-runtime'
+            ? pdfjsRuntimeRenderFontWeight(metadata)
+            : (metadata.weight || '400');
+        option.style.fontStyle = metadata.source === 'pdfjs-runtime'
+            ? pdfjsRuntimeRenderFontStyle(metadata)
+            : (metadata.style || 'normal');
         afbFont.insertBefore(option, insertionAnchor.nextSibling);
         insertionAnchor = option;
     });
@@ -21235,7 +22978,8 @@ function setAnnotationBoxVerticalAlign(box, value) {
 
 function updateAnnotationFormatBarForBox(box) {
     if (!annFormatBar || !box) return;
-    const type = String(box?.dataset?.annotationType || 'text').toLowerCase();
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    const type = annotationSelectionType(box.dataset.annotationType, existing?.type);
     if (!box || type === 'signature' || type === 'image' || type === 'shape' || type === 'field') {
         hideAnnotationFormatBar();
         return;
@@ -21248,7 +22992,6 @@ function updateAnnotationFormatBarForBox(box) {
         const first = formatBarAvailableOptions(afbFont)[0];
         if (first) afbFont.value = first.value;
     }
-    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     if (afbAnnotationId) {
         const annotationId = String(box.dataset.annotationId || existing?.id || box.dataset.uid || '');
         afbAnnotationId.value = annotationId;
@@ -21323,12 +23066,18 @@ function updateAnnotationFormatBarForBox(box) {
             setFormatBarSizeLabel(inlineState.fontSizePts);
         }
     }
+    if (afbLinkUrl && document.activeElement !== afbLinkUrl) {
+        afbLinkUrl.value = inlineState?.linkUrl || '';
+    }
     if (afbAlign) afbAlign.value = normalizeTextAlign(box.dataset.textAlign || box.style.getPropertyValue('--enpv-text-align') || existing?.textAlign || cs?.textAlign);
     if (afbValign) afbValign.value = normalizeVerticalAlign(box.dataset.verticalAlign || existing?.verticalAlign);
     const locked = isAnnBoxLocked(box);
     [afbFont, afbSize, afbTextColor, afbBgColor, afbOpacity, afbBold, afbItalic, afbUnderline, afbAlign, afbValign, afbCopy, afbDelete].forEach((control) => {
         if (control) control.disabled = locked;
     });
+    if (afbLinkUrl) afbLinkUrl.disabled = locked || !inlineState;
+    if (afbLinkApply) afbLinkApply.disabled = locked || !inlineState;
+    if (afbLinkRemove) afbLinkRemove.disabled = locked || !inlineState;
     if (!document.body.classList.contains('enpv-shape-on')) {
         shapeToolPanel?.classList.remove('is-visible');
     }
@@ -21384,9 +23133,20 @@ function stripInlineStylePropertiesFromBox(box, properties) {
     if (propSet.has('text-decoration') || propSet.has('text-decoration-line')) stripFormat('underline');
 }
 
+// An unopened source handle still hides its text element, so content
+// measurement would report one empty line. Callers re-run the fit after the
+// sync that reveals the committed overlay.
+function richTextBoxContentIsMeasurable(box) {
+    const tc = selectedBoxTextElement(box);
+    return Boolean(tc) && tc.getClientRects().length > 0;
+}
+
 function fitTextBoxAfterStyleMutation(box, options = {}) {
     if (!box || options.fit === false || !options.fitOptions || editorModeForBox(box) !== 'rich') return false;
-    if (options.naturalFlow === true) ensureNaturalTextLineHeight(box);
+    if (!richTextBoxContentIsMeasurable(box)) return false;
+    if (options.naturalFlow === true && options.preserveLineHeight !== true) {
+        ensureNaturalTextLineHeight(box);
+    }
     const changed = fitRichTextBoxToContent(box, options.fitAnchor || 'top', {
         ...options.fitOptions,
         // Style changes must be allowed to grow promoted paragraphs too;
@@ -21397,6 +23157,26 @@ function fitTextBoxAfterStyleMutation(box, options = {}) {
     const clamped = clampBoxInsidePage(box);
     if (changed || clamped) box.dataset.pendingResize = '1';
     return changed || clamped;
+}
+
+// A webfont face can still be downloading while the fit above measures the
+// box, so the text would only overflow once the real metrics swap in.
+function refitStyledBoxWhenFontsSettle(box, options = {}) {
+    const tc = box ? selectedBoxTextElement(box) : null;
+    if (!tc || !options.fitOptions || !document.fonts?.ready) return;
+    const cs = window.getComputedStyle(tc);
+    const request = `${cs.fontStyle || 'normal'} ${cs.fontWeight || '400'} ${cs.fontSize || '12px'} ${cs.fontFamily || 'sans-serif'}`;
+    Promise.resolve()
+        .then(() => document.fonts.load(request))
+        .catch(() => { /* an unavailable face still falls back below */ })
+        .then(() => document.fonts.ready)
+        .then(() => {
+            if (!box.isConnected || !fitTextBoxAfterStyleMutation(box, options)) return;
+            syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
+            positionAnnMenuOver(box);
+            markManualSaveNeeded();
+        })
+        .catch(() => { /* noop */ });
 }
 
 function ensureNaturalTextLineHeight(box) {
@@ -21428,7 +23208,11 @@ function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     if (options.promote !== false) {
         promoteBoxToRichTextMode(box, options.reason || historyLabel || 'style');
     }
-    if (options.naturalFlow === true) normalizeSourceSpanMarkupForNaturalFlow(box);
+    if (options.naturalFlow === true) {
+        normalizeSourceSpanMarkupForNaturalFlow(box, {
+            preserveAllCapturedGapSpacing: options.preserveCapturedGapSpacing === true,
+        });
+    }
     mutator(box);
     stripInlineStylePropertiesFromBox(box, options.stripInlineProps);
     fitTextBoxAfterStyleMutation(box, options);
@@ -21436,6 +23220,12 @@ function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     box.dataset.pendingEdit = '1';
     attachSourceMaskForBox(box);
     syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
+    // The sync above reveals the committed overlay, so a box that was still a
+    // hidden source handle can only be measured and fitted now.
+    if (fitTextBoxAfterStyleMutation(box, options)) {
+        syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
+    }
+    refitStyledBoxWhenFontsSettle(box, options);
     updateAnnotationFormatBarForBox(box);
     positionAnnMenuOver(box);
     markManualSaveNeeded();
@@ -21447,11 +23237,24 @@ function applyFontFamilyToSelectedBox(fontFamily) {
     const embedded = embeddedFontOptionForValue(normalized);
     const cssFamily = embedded?.cssFamily || normalized;
     const renderWeight = embedded?.source === 'pdfjs-runtime'
-        ? (embedded.renderWeight || '400')
+        ? pdfjsRuntimeRenderFontWeight(embedded)
         : (embedded?.weight || '400');
     const renderStyle = embedded?.source === 'pdfjs-runtime'
-        ? (embedded.renderStyle || 'normal')
+        ? pdfjsRuntimeRenderFontStyle(embedded)
         : (embedded?.style || 'normal');
+    // A family swap invalidates the captured glyph advances exactly like a size
+    // change does, so it takes the same natural-flow + refit path. Keeping the
+    // captured scaffold would let a wider face (Verdana over Arial) run past the
+    // annotation's right edge instead of wrapping inside it.
+    const reflowOptions = {
+        naturalFlow: true,
+        // A font-family swap invalidates glyph widths, but it does not change
+        // the authored/source paragraph rhythm. Keep the captured bullet indent
+        // and line pitch while the new face reflows inside the same box.
+        preserveCapturedGapSpacing: true,
+        preserveLineHeight: true,
+        fitOptions: { allowShrink: true, fitWidth: false },
+    };
     if (applyInlineStyleToSelectedText('change selected text font', (span, box) => {
         span.style.fontFamily = unicodeSafeCssFontFamily(cssFamily);
         if (embedded && box) {
@@ -21470,7 +23273,7 @@ function applyFontFamilyToSelectedBox(fontFamily) {
             delete box.dataset.fontSourceName;
             delete box.dataset.forceEmbeddedFont;
         }
-    }, { reason: 'font-family' })) return;
+    }, { reason: 'font-family', ...reflowOptions })) return;
     applyStyleToSelectedBox('change annotation font', (box) => {
         box.dataset.fontFamilyValue = embedded?.pickerValue || normalized;
         box.style.setProperty('--enpv-font-family', cssFontFamilyWithGenericFallback(cssFamily));
@@ -21485,7 +23288,7 @@ function applyFontFamilyToSelectedBox(fontFamily) {
             delete box.dataset.fontSourceName;
             delete box.dataset.forceEmbeddedFont;
         }
-    }, { reason: 'font-family', stripInlineProps: ['font-family'] });
+    }, { reason: 'font-family', stripInlineProps: ['font-family'], ...reflowOptions });
 }
 
 function applyFontSizeToSelectedBox(fontSizePts) {
@@ -21610,6 +23413,62 @@ function applyUnderlineToSelectedBox(active) {
     }, { reason: 'underline', fit: false, stripInlineProps: ['text-decoration', 'text-decoration-line'] });
 }
 
+function applyHyperlinkToSelectedText(value) {
+    const destination = normalizeHyperlinkDestination(value);
+    if (!destination) {
+        setStatus('Enter a valid http, https, email, or telephone destination.', true);
+        afbLinkUrl?.focus();
+        return false;
+    }
+    const box = findSelectedBox();
+    if (!box || !selectedInlineTextRange(box)) {
+        setStatus('Select the text you want to turn into a hyperlink.', true);
+        return false;
+    }
+    const applied = applyInlineStyleToSelectedText('add hyperlink', (anchor) => {
+        anchor.setAttribute('href', destination);
+        anchor.setAttribute('target', '_blank');
+        anchor.setAttribute('rel', 'noopener noreferrer');
+        anchor.style.color = '#0563c1';
+        anchor.style.textDecoration = 'underline';
+        anchor.style.textDecorationLine = 'underline';
+    }, {
+        reason: 'hyperlink',
+        fit: false,
+        format: 'hyperlink',
+        wrapperTag: 'a',
+        unlinkExisting: true,
+        replaceUnderlyingPdfLink: true,
+    });
+    if (!applied) {
+        setStatus('Select the text you want to turn into a hyperlink.', true);
+        return false;
+    }
+    if (afbLinkUrl) afbLinkUrl.value = destination;
+    setStatus('Hyperlink applied.');
+    return true;
+}
+
+function removeHyperlinkFromSelectedText() {
+    const box = findSelectedBox();
+    if (!box || !selectedInlineTextRange(box)) {
+        setStatus('Select linked text to remove its hyperlink.', true);
+        return false;
+    }
+    const removed = applyInlineStyleToSelectedText('remove hyperlink', () => {}, {
+        reason: 'hyperlink',
+        fit: false,
+        format: 'hyperlink',
+        active: false,
+        promote: true,
+        replaceUnderlyingPdfLink: true,
+    });
+    if (!removed) return false;
+    if (afbLinkUrl) afbLinkUrl.value = '';
+    setStatus('Hyperlink removed.');
+    return true;
+}
+
 function applyTextAlignToSelectedBox(align) {
     const normalized = normalizeTextAlign(align);
     applyStyleToSelectedBox('change annotation alignment', (box) => {
@@ -21659,7 +23518,7 @@ function refreshAnnMenuState(box) {
     if (isSignatureMenu) {
         compactMenuActions = new Set(['move', 'lock', 'front', 'back', 'edit', 'burn', 'copy', 'delete']);
     } else if (isShapeMenu) {
-        compactMenuActions = new Set(['move', 'cut', 'burn', 'lock', 'delete']);
+        compactMenuActions = new Set(['move', 'cut', 'burn', 'lock', 'front', 'back', 'delete']);
     } else if (isFieldMenu) {
         compactMenuActions = new Set(['move', 'lock', 'front', 'back', 'delete']);
     }
@@ -21730,7 +23589,14 @@ function textOffsetForRangePoint(root, node, offset) {
         const range = document.createRange();
         range.setStart(root, 0);
         range.setEnd(node, offset);
-        return String(range.toString() || '').length;
+        // Range#toString follows rendered whitespace rules, while the inverse
+        // mapper below walks literal text nodes. A source scaffold can contain
+        // four positional spaces that Range#toString collapses to one; saving
+        // that offset and restoring it from text nodes shifts a selection
+        // three characters to the right when the URL input receives focus.
+        // cloneContents().textContent uses the same literal DOM-text coordinate
+        // system as rangePointForTextOffset, so both mappings are reversible.
+        return String(range.cloneContents().textContent || '').length;
     } catch (_) { /* fall through to manual fallback */ }
     if (node === root) return childTextLengthBeforeOffset(root, offset);
     let total = 0;
@@ -21808,11 +23674,20 @@ function isUnderlineElement(element) {
     return String(window.getComputedStyle(element).textDecorationLine || '').toLowerCase().includes('underline');
 }
 
+function isHyperlinkElement(element) {
+    return Boolean(element?.tagName === 'A'
+        && normalizeHyperlinkDestination(element.getAttribute('href') || ''));
+}
+
 function closestFormatElement(node, root, format) {
     let element = elementForStyleNode(node, root);
     const predicate = format === 'bold'
         ? isBoldElement
-        : (format === 'italic' ? isItalicElement : isUnderlineElement);
+        : format === 'italic'
+        ? isItalicElement
+        : format === 'hyperlink'
+        ? isHyperlinkElement
+        : isUnderlineElement;
     while (element && element !== root) {
         if (predicate(element)) return element;
         element = element.parentElement;
@@ -21832,10 +23707,17 @@ function inlineSelectionStyleState(box) {
     const weight = String(cs.fontWeight || element.style?.fontWeight || '').toLowerCase();
     const style = String(cs.fontStyle || element.style?.fontStyle || '').toLowerCase();
     const decoration = String(cs.textDecorationLine || element.style?.textDecorationLine || element.style?.textDecoration || '').toLowerCase();
+    const hyperlink = [
+        element.closest?.('a[href]'),
+        ...Array.from(tc.querySelectorAll('a[href]')).filter((anchor) => {
+            try { return range.intersectsNode(anchor); } catch (_) { return false; }
+        }),
+    ].find((anchor) => normalizeHyperlinkDestination(anchor?.getAttribute?.('href') || ''));
     return {
         bold: closestFormatElement(probeNode, tc, 'bold') != null || weight === 'bold' || Number.parseInt(weight, 10) >= 600,
         italic: closestFormatElement(probeNode, tc, 'italic') != null || style === 'italic' || style === 'oblique',
         underline: closestFormatElement(probeNode, tc, 'underline') != null || decoration.includes('underline'),
+        linkUrl: normalizeHyperlinkDestination(hyperlink?.getAttribute?.('href') || ''),
         color: cssColorToHex(cs.color || '', ''),
         fontFamily: parseCssFontFamily(cs.fontFamily || element.style?.fontFamily || ''),
         fontSizePts: (() => {
@@ -21873,6 +23755,8 @@ function removeFormatFromElement(element, format) {
         element.style.textDecoration = '';
         element.style.textDecorationLine = '';
         if (element.tagName === 'U') return unwrapElement(element);
+    } else if (format === 'hyperlink' && element.tagName === 'A') {
+        return unwrapElement(element);
     }
     removeEmptyStyleAttribute(element);
     return element;
@@ -21954,11 +23838,30 @@ function finishInlineTextStyleMutation(box, range, options = {}) {
     box.dataset.pendingEdit = '1';
     box.dataset.inlineStyleAuthored = '1';
     if (box.dataset.sourceSpanEditActive === '1') delete box.dataset.sourceSpanEditActive;
-    if (options.naturalFlow === true) normalizeSourceSpanMarkupForNaturalFlow(box);
+    if (options.naturalFlow === true) {
+        normalizeSourceSpanMarkupForNaturalFlow(box, {
+            preserveAllCapturedGapSpacing: options.preserveCapturedGapSpacing === true,
+        });
+    }
     syncRichTextBoxTypographyFromContent(box);
     fitTextBoxAfterStyleMutation(box, options);
     attachSourceMaskForBox(box);
     syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
+    // The sync above reveals the committed overlay, so a box that was still a
+    // hidden source handle can only be measured and fitted now.
+    if (fitTextBoxAfterStyleMutation(box, options)) {
+        syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
+    }
+    refitStyledBoxWhenFontsSettle(box, options);
+    if (options.replaceUnderlyingPdfLink === true) {
+        const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+        if (Number.isFinite(pageIndex) && pageIndex >= 0) {
+            // The annotation map can lag this in-progress box mutation by one
+            // render. Include the box-local rectangles so a later visibility
+            // refresh cannot briefly restore the source PDF link hotspot.
+            applyRemovedPdfLinkVisibility(pageIndex, removedPdfLinkRectsForBox(box));
+        }
+    }
     restoreInlineTextRange(range);
     savedInlineTextSelection = {
         boxUid: box.dataset.uid || '',
@@ -21975,18 +23878,45 @@ function applyInlineStyleToSelectedText(historyLabel, mutator, options = {}) {
     if (!box || typeof mutator !== 'function') return false;
     if (isAnnBoxLocked(box)) return false;
     const tc = selectedBoxTextElement(box);
-    const selectedRange = selectedInlineTextRange(box);
+    let selectedRange = selectedInlineTextRange(box);
     if (!tc || !selectedRange) return false;
 
     pushHistorySnapshot(historyLabel || 'change selected text style');
+    if (options.replaceUnderlyingPdfLink === true) {
+        recordUnderlyingPdfLinkReplacement(box, selectedRange);
+    }
     if (options.promote !== false) {
         promoteBoxToRichTextMode(box, options.reason || historyLabel || 'inline-style');
+    }
+    const selectedHyperlink = options.unlinkExisting === true
+        ? closestFormatElement(selectedRange.startContainer, tc, 'hyperlink')
+        : null;
+    if (selectedHyperlink) {
+        const offsets = textOffsetRangeForDomRange(tc, selectedRange);
+        restoreInlineTextRange(selectedRange);
+        try { document.execCommand('unlink', false, null); } catch (_) { /* fallback below */ }
+        selectedRange = domRangeFromTextOffsets(tc, offsets) || selectedRange;
     }
     restoreInlineTextRange(selectedRange);
     const range = window.getSelection()?.rangeCount ? window.getSelection().getRangeAt(0) : selectedRange;
     if (!range || range.collapsed || !rangeIsInsideTextElement(range, tc)) return false;
     const format = String(options.format || '');
     const active = options.active !== false;
+    if (!active && format === 'hyperlink') {
+        const offsets = textOffsetRangeForDomRange(tc, range);
+        let unlinked = false;
+        try { unlinked = document.execCommand('unlink', false, null); } catch (_) { /* fallback below */ }
+        if (!unlinked) {
+            const hyperlink = closestFormatElement(range.startContainer, tc, 'hyperlink');
+            if (hyperlink && hyperlink.contains(range.endContainer)
+                && selectedRangeCoversElement(range, hyperlink)) {
+                removeFormatFromElement(hyperlink, 'hyperlink');
+            }
+        }
+        const nextRange = domRangeFromTextOffsets(tc, offsets) || range;
+        finishInlineTextStyleMutation(box, nextRange, options);
+        return true;
+    }
     const formattedAncestor = !active && format
         ? closestFormatElement(range.startContainer, tc, format)
         : null;
@@ -22009,7 +23939,7 @@ function applyInlineStyleToSelectedText(historyLabel, mutator, options = {}) {
         finishInlineTextStyleMutation(box, nextRange, options);
         return true;
     }
-    const wrapper = document.createElement('span');
+    const wrapper = document.createElement(options.wrapperTag === 'a' ? 'a' : 'span');
     mutator(wrapper, box);
     const fragment = range.extractContents();
     // A whole-paragraph selection can contain source spans with an explicit
@@ -22200,11 +24130,7 @@ function removeUserCreatedTextBox(box, options = {}) {
 let annotationClipboardSnapshot = null;
 
 function activeElementAcceptsNativeClipboard() {
-    const active = document.activeElement;
-    return Boolean(active?.isContentEditable
-        || active?.closest?.('[contenteditable="true"]')
-        || active?.tagName === 'INPUT'
-        || active?.tagName === 'TEXTAREA');
+    return elementAcceptsNativeClipboard(document.activeElement);
 }
 
 function windowHasSelectedText() {
@@ -22248,11 +24174,7 @@ function pageSizePtsForIndex(pageIndex) {
     const viewport = pageView?.viewport || null;
     const scale = Number(viewport?.scale) || Number(pdfViewer.currentScale) || 1;
     if (!viewport || !(scale > 0)) return null;
-    return {
-        width: Number(viewport.width) / scale,
-        height: Number(viewport.height) / scale,
-        scale,
-    };
+    return { ...viewportPdfDimensions(viewport, scale), scale };
 }
 
 function pasteAnnotationClipboard() {
@@ -22590,7 +24512,7 @@ function routeSidePanelForSelectedBox(box) {
         if (shapeToolPanel) shapeToolPanel.classList.add('is-visible');
         return;
     }
-    const type = String(box.dataset.annotationType || existing?.type || '').toLowerCase();
+    const type = annotationSelectionType(box.dataset.annotationType, existing?.type);
     if (type === 'text') {
         hideSelectionSidePanels('text');
         return;
@@ -22600,11 +24522,15 @@ function routeSidePanelForSelectedBox(box) {
 
 function selectAnnBox(box) {
     if (!box) return;
-    // If this box is already the selected one, do nothing — calling
-    // deselect+select would tear down in-place edit mode (.is-editing,
-    // contenteditable, focus) and trigger a commit, which we don't want
-    // when the user is just starting a resize gesture on the same box.
+    // Do not deselect+select an already-selected box: that would tear down
+    // in-place edit mode and trigger a commit. Still refresh the same
+    // selection UI as a new selection, though. In particular, the user may
+    // have closed Text Options while leaving this box selected; clicking the
+    // box again must reopen the panel just as clicking a different text box
+    // does.
     if (box.classList.contains('is-selected')) {
+        positionAnnMenuOver(box);
+        updateAnnotationFormatBarForBox(box);
         routeSidePanelForSelectedBox(box);
         return;
     }
@@ -22635,11 +24561,16 @@ function onTextContentInput(ev) {
                 tc.style.overflowWrap = 'break-word';
             }
         }
+        const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+        const preserveExactSourceLayout = promotedSourceBlockEditKeepsExactLayout(box);
+        if (preserveExactSourceLayout) box.dataset.preserveExactSourceLayoutEdit = '1';
+        else delete box.dataset.preserveExactSourceLayoutEdit;
         const promoteMixedSourceEdit = box.dataset.sourceSpanEditActive === '1'
             && editorModeForBox(box) === 'source'
             && sourceSpanRunsHaveMixedTypography(box);
         const isSimplePromotedParagraph = box.dataset.promotedParagraphFlow === '1';
-        if (!isSimplePromotedParagraph
+        if (!preserveExactSourceLayout
+            && !isSimplePromotedParagraph
             && (box.dataset.promotedSourceBlockEditEntryLayout === '1'
             || (box.classList.contains('is-promoted-source-block')
                 && box.dataset.naturalTextFlow !== '1')
@@ -22661,7 +24592,6 @@ function onTextContentInput(ev) {
             // box-level style. Promote once, retaining the live styled runs.
             promoteBoxToRichTextMode(box, 'mixed-source-edit');
         }
-        const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
         if (isUserCreatedTextBox(box, existing)) {
             removeAnnBoxSourceMasks(box);
             if (fitUserCreatedTextBoxToContent(box)) {
@@ -22672,7 +24602,7 @@ function onTextContentInput(ev) {
             // Paragraph editors own a stable rectangle, just like the
             // PDF.js/pdfe model. Typing rewraps inside that rectangle; it does
             // not silently resize the annotation on every input event.
-            const fitted = isSimplePromotedParagraph
+            const fitted = isSimplePromotedParagraph || preserveExactSourceLayout
                 ? false
                 : editorModeForBox(box) === 'source'
                 ? fitEditingSourceTextBoxToContent(box)
@@ -22788,6 +24718,10 @@ function selectAllInlineText(box) {
 // glyphs with text-only redaction in the writer.
 function beginEditMode(box, options = {}) {
     if (!box) return;
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    if (document.body.classList.contains('enpv-edit-on')
+        && Number.isFinite(pageIndex) && pageIndex >= 0
+        && preventUnsupportedRotatedPageEdit(pageIndex, box)) return;
     if (box.dataset.annotationType === 'shape') return;
     if (isAnnBoxLocked(box)) {
         setStatus('Annotation is locked.', true);
@@ -22851,13 +24785,31 @@ function beginEditMode(box, options = {}) {
         // no longer describe (restyled, resized, already reflowed, or carrying
         // authored rich markup) fall back to the flowing paragraph editor.
         const isPromotedSourceBlock = box.classList.contains('is-promoted-source-block');
+        // Naturalization joins incidental PDF wraps with spaces, but retains
+        // semantic separators such as bullet-list rows. A restyled bullet list
+        // therefore still contains its authored newline even though it no
+        // longer qualifies for the immutable source scaffold. Keep that text
+        // preformatted on later edit entries; converting it to the simple prose
+        // editor would join the bullets and discard their captured spacing.
+        const preservesNaturalizedHardLineBreaks = isPromotedSourceBlock
+            && /\r|\n/.test(originalText)
+            && (box.dataset.naturalTextFlow === '1'
+                || box.dataset.promotedReflowEnabled === '1'
+                || box.dataset.sourceSpanNaturalized === '1');
+        const isPreformattedPromotedBlock = isPromotedSourceBlock
+            && (box.dataset.promotedPreformattedBlock === '1'
+                || preservesNaturalizedHardLineBreaks);
         const prefersExactPromotedSourceLayout = isPromotedSourceBlock
             && promotedSourceBlockPrefersExactSourceEditLayout(box);
-        let isSimplePromotedParagraph = isPromotedSourceBlock && !prefersExactPromotedSourceLayout;
+        let isSimplePromotedParagraph = isPromotedSourceBlock
+            && !isPreformattedPromotedBlock
+            && !prefersExactPromotedSourceLayout;
         const editingText = isSimplePromotedParagraph
             ? simplePromotedParagraphText(existing, originalText)
             : originalText;
-        if (isSimplePromotedParagraph) {
+        if (isPreformattedPromotedBlock && !prefersExactPromotedSourceLayout) {
+            installPreformattedPromotedSourceEditor(box, tc, existing, originalText);
+        } else if (isSimplePromotedParagraph) {
             installSimplePromotedParagraphEditor(box, tc, existing, originalText);
         } else {
             delete box.dataset.promotedParagraphFlow;
@@ -22920,11 +24872,15 @@ function beginEditMode(box, options = {}) {
                 // when the user actually typed.
                 setFlattenedEditBaselineForTextElement(tc, flattenedTextFromSourceSpanMarkup(box));
             } else if (prefersExactPromotedSourceLayout) {
-                // The captured per-line scaffold could not be rebuilt (no
-                // usable source runs). Keep the block editable with the
-                // flowing paragraph editor instead of leaving it unstyled.
-                isSimplePromotedParagraph = true;
-                installSimplePromotedParagraphEditor(box, tc, existing, originalText);
+                if (isPreformattedPromotedBlock) {
+                    // Hard source newlines are semantic. Even without usable
+                    // source runs, never convert this block to flowing prose.
+                    installPreformattedPromotedSourceEditor(box, tc, existing, originalText);
+                } else {
+                    // Prose can fall back to ordinary flowing paragraph text.
+                    isSimplePromotedParagraph = true;
+                    installSimplePromotedParagraphEditor(box, tc, existing, originalText);
+                }
             }
             if (!preserveRenderedPromotedSourceLayout) {
                 applyPromotedSourceBlockEditLayout(box, { suppressHangingIndent: editSpanMarkupActive });
@@ -22978,6 +24934,8 @@ function endEditMode(box) {
     if (!box) return;
     const tc = box.querySelector('.enpv-text-content');
     const isSimplePromotedParagraph = box.dataset.promotedParagraphFlow === '1';
+    const preservesExactSourceLayout = box.dataset.preserveExactSourceLayoutEdit === '1'
+        && box.dataset.sourceSpanEditActive === '1';
     if (tc) {
         if (box.dataset.promotedParagraphFlow === '1'
             && box.dataset.pendingEdit !== '1'
@@ -22993,21 +24951,30 @@ function endEditMode(box) {
             // the exact pre-edit text so an untouched edit is a strict no-op.
             // Mid-edit autosave can clear pendingEdit, so the no-op decision
             // must compare text instead of trusting the flag.
-            const preEdit = editBaselineForTextElement(tc);
-            const preEditFlattened = flattenedEditBaselineForTextElement(tc);
-            flattenPromotedSourceSpanEditMarkup(box);
-            const flattenedNow = normalizeComparableText(tc.textContent);
-            const isUntouched = (preEdit !== undefined
-                    && flattenedNow === normalizeComparableText(preEdit))
-                // The captured runs can disagree with the stored text by more
-                // than whitespace collapse (run boundaries can eat spaces),
-                // so also compare against the flatten of the untouched markup
-                // captured at edit entry — that comparison is invariant to
-                // capture defects and only fails when the user really typed.
-                || (preEditFlattened !== undefined
-                    && flattenedNow === normalizeComparableText(preEditFlattened));
-            if (preEdit !== undefined && isUntouched) {
-                tc.textContent = preEdit;
+            if (preservesExactSourceLayout) {
+                // Keep the edited source-run DOM as display markup. Building
+                // the annotation reads canonical text from a clone, so the
+                // live five-row scaffold and its marker gap remain untouched.
+                delete box.dataset.sourceSpanEditActive;
+                box.dataset.sourceSpanDisplayActive = '1';
+                tc.style.whiteSpace = 'pre';
+            } else {
+                const preEdit = editBaselineForTextElement(tc);
+                const preEditFlattened = flattenedEditBaselineForTextElement(tc);
+                flattenPromotedSourceSpanEditMarkup(box);
+                const flattenedNow = normalizeComparableText(tc.textContent);
+                const isUntouched = (preEdit !== undefined
+                        && flattenedNow === normalizeComparableText(preEdit))
+                    // The captured runs can disagree with the stored text by more
+                    // than whitespace collapse (run boundaries can eat spaces),
+                    // so also compare against the flatten of the untouched markup
+                    // captured at edit entry — that comparison is invariant to
+                    // capture defects and only fails when the user really typed.
+                    || (preEditFlattened !== undefined
+                        && flattenedNow === normalizeComparableText(preEditFlattened));
+                if (preEdit !== undefined && isUntouched) {
+                    tc.textContent = preEdit;
+                }
             }
         }
         tc.removeEventListener('beforeinput', onTextContentBeforeInput);
@@ -23020,7 +24987,13 @@ function endEditMode(box) {
         clearEditBaselinesForTextElement(tc);
     }
     const isRichTextCommit = box.dataset.editorMode === 'rich' || box.dataset.userForcedRichText === '1';
-    if (isRichTextCommit) {
+    if (preservesExactSourceLayout) {
+        // The compatible text-only edit was deliberately promoted from edit
+        // scaffold to display scaffold above. Do not run either ordinary
+        // rich-commit cleanup branch: both flatten or clear the captured
+        // per-line runs and would discard their marker gap and hanging indent
+        // at the exact moment the user deselects the annotation.
+    } else if (isRichTextCommit) {
         // The temporary source-span marker can outlive promotion to rich text.
         // Do not flatten here: selected inline formatting, such as bolding
         // only "4a", is represented by authored spans in the same DOM.
@@ -23030,7 +25003,7 @@ function endEditMode(box) {
         // post-edit source-fidelity render path see plain text only.
         clearSourceFidelitySpanEditMarkup(box);
     }
-    if (!isSimplePromotedParagraph) clearPromotedSourceBlockEditLayout(box);
+    if (!isSimplePromotedParagraph && !preservesExactSourceLayout) clearPromotedSourceBlockEditLayout(box);
     // Re-apply per-span display markup so post-edit rendering keeps the
     // mixed font-weights captured from the original PDF text layer.
     if (!isRichTextCommit
@@ -23040,6 +25013,7 @@ function endEditMode(box) {
     box.style.minHeight = '';
     delete box.dataset.preEditWidth;
     delete box.dataset.preEditHeight;
+    delete box.dataset.preserveExactSourceLayoutEdit;
     if (box._enpvOrigMask) {
         box._enpvOrigMask.remove();
         box._enpvOrigMask = null;
@@ -23121,6 +25095,14 @@ function onAnnBoxPointerDown(ev) {
         ev.stopPropagation();
         ev.preventDefault();
         deselectAnnBox();
+        return;
+    }
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    if (document.body.classList.contains('enpv-edit-on')
+        && Number.isFinite(pageIndex) && pageIndex >= 0
+        && preventUnsupportedRotatedPageEdit(pageIndex, box)) {
+        ev.stopPropagation();
+        ev.preventDefault();
         return;
     }
     const isImageBacked = isImageBackedBox(box);
@@ -24227,8 +26209,9 @@ function beginAnnBoxDrag(box, ev) {
     const pageView = (Number.isFinite(pageIndex) && pageIndex >= 0)
         ? pdfViewer.getPageView(pageIndex) : null;
     const viewport = pageView?.viewport;
-    const pageWPts = viewport ? (Number(viewport.width) / scale) : null;
-    const pageHPts = viewport ? (Number(viewport.height) / scale) : null;
+    const pageSizePts = viewport ? viewportPdfDimensions(viewport, scale) : null;
+    const pageWPts = pageSizePts?.width ?? null;
+    const pageHPts = pageSizePts?.height ?? null;
     const margin = 0; // pts
     // Use the box's CURRENT visual geometry for clamps, not the
     // original `sourceBbox*` (which is fixed to the source text run
@@ -24307,6 +26290,10 @@ function onAnnBoxPointerMove(ev) {
             dxMin, dxMax, dyMin, dyMax } = dragState;
     const dxPx = ev.clientX - startClientX;
     const dyPx = ev.clientY - startClientY;
+    if (!dragState.dragActivated) {
+        if (Math.hypot(dxPx, dyPx) < ANN_BOX_DRAG_START_THRESHOLD_PX) return;
+        dragState.dragActivated = true;
+    }
     let dxPts = startDxPts + (dxPx / scale);
     let dyPts = startDyPts + (dyPx / scale);
     // Clamp to keep the moved box inside the page rect.
@@ -24716,6 +26703,9 @@ function onSpanClick(ev) {
     // topbar (#edit-mode-toggle). When edit mode is off the textLayer
     // behaves like the stock pdf.js viewer (selectable, no edit hooks).
     if (!document.body.classList.contains('enpv-edit-on')) return;
+    const pageIndex = Number.parseInt(ev.currentTarget?.dataset?.enpvPage || '-1', 10);
+    if (Number.isFinite(pageIndex) && pageIndex >= 0
+        && preventUnsupportedRotatedPageEdit(pageIndex, ev.currentTarget)) return;
     const sel = window.getSelection();
     if (sel && sel.toString().length > 0) return;
     ev.stopPropagation();
@@ -24738,6 +26728,9 @@ function onSpanClick(ev) {
 // double-click anywhere in the rendered PDF text while Edit PDF is on.
 function onSpanDblClick(ev) {
     if (!document.body.classList.contains('enpv-edit-on')) return;
+    const pageIndex = Number.parseInt(ev.currentTarget?.dataset?.enpvPage || '-1', 10);
+    if (Number.isFinite(pageIndex) && pageIndex >= 0
+        && preventUnsupportedRotatedPageEdit(pageIndex, ev.currentTarget)) return;
     ev.stopPropagation();
     ev.preventDefault();
     const box = createAnnotationBoxFromSpan(ev.currentTarget);
@@ -24905,6 +26898,17 @@ afbItalic?.addEventListener('click', () => {
 });
 afbUnderline?.addEventListener('click', () => {
     applyUnderlineToSelectedBox(afbUnderline.getAttribute('aria-pressed') !== 'true');
+});
+afbLinkApply?.addEventListener('click', () => {
+    applyHyperlinkToSelectedText(afbLinkUrl?.value || '');
+});
+afbLinkRemove?.addEventListener('click', () => {
+    removeHyperlinkFromSelectedText();
+});
+afbLinkUrl?.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    applyHyperlinkToSelectedText(afbLinkUrl.value);
 });
 afbAlign?.addEventListener('change', () => {
     applyTextAlignToSelectedBox(afbAlign.value);
@@ -25867,7 +27871,11 @@ if (pageJumpInput) {
 }
 
 eventBus.on('pagechanging', (evt) => {
+    const wasEditing = document.body.classList.contains('enpv-edit-on');
     refreshPageBar(evt.pageNumber, pdfViewer.pagesCount);
+    window.requestAnimationFrame(() => {
+        syncEditModeRotationAvailability({ showDialog: wasEditing });
+    });
 });
 eventBus.on('pagesloaded', async () => {
     const loadGeneration = viewerLoadGeneration;
@@ -25875,12 +27883,16 @@ eventBus.on('pagesloaded', async () => {
     if (notesLoaded) renderNoteMarkers();
     if (pageManagerModal?.hidden === false) renderPageManagerGrid();
     scheduleRenderGridlines();
+    syncEditModeRotationAvailability();
     await revealWhenEditedDocumentReady(loadGeneration);
 });
 
 eventBus.on('pagerendered', (evt) => {
     const pageIndex = evt.pageNumber - 1;
     const currentPageView = pdfViewer.getPageView(pageIndex);
+    // The page canvas just changed, so every memoized pixel sample taken from
+    // it is stale (pdf.js may repaint an existing canvas in place).
+    invalidateCanvasSampleCache(currentPageView?.div);
     if (attachedPdfGeneration !== viewerLoadGeneration
         || !currentPageView?.div
         || (evt.source && evt.source !== currentPageView)) return;
@@ -25889,6 +27901,10 @@ eventBus.on('pagerendered', (evt) => {
         retryRevealAfterFirstPageRendered(viewerLoadGeneration);
     }
     renderAnnotationBoxLayer(pageIndex);
+    syncRotatedPageSnapshot(pageIndex);
+    if (pageIndex === Math.max(0, Number(pdfViewer.currentPageNumber || 1) - 1)) {
+        syncEditModeRotationAvailability();
+    }
     renderGridlinesForPage(pageIndex);
     if (notesLoaded) renderNoteMarkers(pageIndex);
 });
@@ -26194,6 +28210,104 @@ if (typeof MutationObserver !== 'undefined') {
 // the click-to-edit hover/click on text spans on or off. The legacy
 // CSS already swaps the button label/colour via the .is-active class,
 // so we just toggle that and a body class our textLayer styles look at.
+let rotatedEditDialogReturnFocus = null;
+
+function pageRotationDegrees(pageIndex) {
+    const normalizedPageIndex = Number(pageIndex);
+    if (!Number.isFinite(normalizedPageIndex) || normalizedPageIndex < 0) return 0;
+    const pageView = pdfViewer?.getPageView?.(Math.floor(normalizedPageIndex));
+    const viewportRotation = Number(pageView?.viewport?.rotation);
+    if (Number.isFinite(viewportRotation)) return normalizePageRotationDegrees(viewportRotation);
+    return normalizePageRotationDegrees(pageView?.pdfPage?.rotate ?? pageView?.rotation ?? 0);
+}
+
+function pageHasUnsupportedEditRotation(pageIndex) {
+    const rotation = pageRotationDegrees(pageIndex);
+    return rotation !== 0;
+}
+
+function currentPageEditRotationState() {
+    const pageIndex = Math.max(0, Number(pdfViewer?.currentPageNumber || 1) - 1);
+    const rotation = pageRotationDegrees(pageIndex);
+    return {
+        pageIndex,
+        pageNumber: pageIndex + 1,
+        rotation,
+        blocked: rotation !== 0,
+    };
+}
+
+function editRotationStateForPage(pageIndex) {
+    const normalizedPageIndex = Math.max(0, Number(pageIndex) || 0);
+    const rotation = pageRotationDegrees(normalizedPageIndex);
+    return {
+        pageIndex: normalizedPageIndex,
+        pageNumber: normalizedPageIndex + 1,
+        rotation,
+        blocked: rotation !== 0,
+    };
+}
+
+function preventUnsupportedRotatedPageEdit(pageIndex, trigger = null) {
+    const state = editRotationStateForPage(pageIndex);
+    if (!state.blocked) return false;
+    setStatus(`Edit PDF is unavailable on page ${state.pageNumber} while it is rotated ${state.rotation}°.`, true);
+    showRotatedEditDialog(state, trigger);
+    return true;
+}
+
+function closeRotatedEditDialog() {
+    if (!rotatedEditDialog || rotatedEditDialog.hidden) return;
+    rotatedEditDialog.hidden = true;
+    rotatedEditDialog.setAttribute('aria-hidden', 'true');
+    const returnFocus = rotatedEditDialogReturnFocus;
+    rotatedEditDialogReturnFocus = null;
+    if (returnFocus?.isConnected) returnFocus.focus?.();
+}
+
+function showRotatedEditDialog(state = currentPageEditRotationState(), trigger = null) {
+    if (!rotatedEditDialog || !state?.blocked) return;
+    rotatedEditDialogReturnFocus = trigger instanceof HTMLElement
+        ? trigger
+        : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    if (rotatedEditDialogDescription) {
+        rotatedEditDialogDescription.textContent = `Page ${state.pageNumber} is rotated ${state.rotation}°. `
+            + 'This page is shown as one flattened image so its saved masks and edits stay aligned. '
+            + 'Rotate the page back to 0° to edit it.';
+    }
+    rotatedEditDialog.hidden = false;
+    rotatedEditDialog.setAttribute('aria-hidden', 'false');
+    window.requestAnimationFrame(() => rotatedEditDialogClose?.focus());
+}
+
+function syncEditModeRotationAvailability(options = {}) {
+    const state = currentPageEditRotationState();
+    document.body.classList.toggle('enpv-edit-rotation-blocked', state.blocked);
+    for (const button of editModeButtons) {
+        if (!button.dataset.rotationEnabledTitle) {
+            button.dataset.rotationEnabledTitle = button.getAttribute('title') || 'Edit PDF';
+        }
+        button.classList.toggle('is-rotation-disabled', state.blocked);
+        if (state.blocked) {
+            button.setAttribute('aria-disabled', 'true');
+            button.title = `Edit PDF unavailable: page ${state.pageNumber} is rotated ${state.rotation}°`;
+        } else {
+            button.removeAttribute('aria-disabled');
+            button.title = button.dataset.rotationEnabledTitle;
+        }
+    }
+    const wasEditing = document.body.classList.contains('enpv-edit-on');
+    if (state.blocked && wasEditing && options.keepEditMode !== true) {
+        setEditMode(false, { skipRotationCheck: true });
+    }
+    if (state.blocked && options.showDialog === true) {
+        showRotatedEditDialog(state, options.trigger || null);
+    }
+    return state;
+}
+
 const editModeBtn = document.getElementById('edit-mode-toggle');
 const editModeLabel = document.getElementById('edit-mode-toggle-label');
 const floatingEditModeBtn = document.getElementById('ftb-edit-mode');
@@ -26285,7 +28399,15 @@ function setAddTextMode(on, options = {}) {
     }
 }
 
-function setEditMode(on) {
+function setEditMode(on, options = {}) {
+    if (on && options.skipRotationCheck !== true) {
+        const rotationState = syncEditModeRotationAvailability({ keepEditMode: true });
+        if (rotationState.blocked) {
+            setStatus(`Edit PDF is unavailable on page ${rotationState.pageNumber} while it is rotated ${rotationState.rotation}°.`, true);
+            showRotatedEditDialog(rotationState, options.trigger || null);
+            return false;
+        }
+    }
     if (on && document.body.classList.contains('enpv-add-text-on')) {
         setAddTextMode(false);
     }
@@ -26311,6 +28433,7 @@ function setEditMode(on) {
     }
     renderAllAnnotationBoxLayers();
     scheduleRenderAllAnnotationBoxLayers();
+    return true;
 }
 
 for (const button of editModeButtons) {
@@ -26319,9 +28442,17 @@ for (const button of editModeButtons) {
             showPremiumFeatureMessage(button.dataset.premiumFeature || 'Edit PDF');
             return;
         }
-        setEditMode(!document.body.classList.contains('enpv-edit-on'));
+        setEditMode(!document.body.classList.contains('enpv-edit-on'), { trigger: button });
     });
 }
+rotatedEditDialogClose?.addEventListener('click', closeRotatedEditDialog);
+rotatedEditDialogScrim?.addEventListener('click', closeRotatedEditDialog);
+document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && rotatedEditDialog?.hidden === false) {
+        event.preventDefault();
+        closeRotatedEditDialog();
+    }
+});
 setEditMode(IS_UPLOAD_TEST_REVIEW);
 
 if (floatingGuidedConvertButton) {
@@ -26527,7 +28658,7 @@ highlightOpacityInput?.addEventListener('change', () => {
 });
 drawToolButtons.forEach((button) => {
     button.addEventListener('click', () => {
-        drawToolType = button.dataset.drawDirectTool === 'eraser' ? 'eraser' : 'pen';
+        drawToolType = normalizeDirectDrawTool(button.dataset.drawDirectTool);
         syncDrawToolPanelUi();
     });
 });
@@ -27007,6 +29138,9 @@ shapeMoreToggle?.addEventListener('click', (event) => {
         if (input === shapeStrokeHexInput && shapeStrokeColorInput) shapeStrokeColorInput.value = cssColorToHex(shapeStrokeHexInput.value, shapeStrokeColorInput.value);
         if (input === shapeFillColorInput && shapeFillHexInput) shapeFillHexInput.value = shapeFillColorInput.value;
         if (input === shapeFillHexInput && shapeFillColorInput) shapeFillColorInput.value = cssColorToHex(shapeFillHexInput.value, shapeFillColorInput.value);
+        if ([shapeFillColorInput, shapeFillHexInput, shapeFillOpacityInput].includes(input)) {
+            activateShapeFillFromInspector(shapeInspectorRefs);
+        }
         if ([shapeStrokeColorInput, shapeStrokeHexInput, shapeStrokeWidthInput, shapeStrokeOpacityInput].includes(input)
             && shapeStrokeTransparentInput
             && (Number(shapeStrokeWidthInput?.value) || 0) > 0
@@ -27053,7 +29187,13 @@ if (window.__enpvPdfjsInitialLoadStarted) {
                 await openPasswordUnlockModal();
             }
             await loadInitialPdf();
-            window.__enpv = { pdfViewer, eventBus, linkService };
+            window.__enpv = {
+                pdfViewer,
+                eventBus,
+                linkService,
+                captureFlatPageRotationSnapshot,
+                syncRotatedPageSnapshot,
+            };
         } catch (err) {
             console.error(err);
             showError(err.message);

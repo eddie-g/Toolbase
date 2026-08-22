@@ -50,6 +50,12 @@ import {
 } from '../edit-new/signature/library-ui.js';
 import { ensureSignatureFontLoaded } from '../edit-new/signature/font-loader.js';
 import {
+    pdfRectToViewportRect,
+    viewportPdfDimensions,
+    viewportPointToPdfPoint,
+    viewportRotatedContentFrame,
+} from './page-geometry.js';
+import {
     signatureMode,
     signatureDirty,
     signatureDrawing,
@@ -840,12 +846,15 @@ export function installSignatureFeature(deps) {
         const pageRect = pageDiv.getBoundingClientRect();
         const xPx = ev.clientX - pageRect.left;
         const yPx = ev.clientY - pageRect.top;
+        const pdfPoint = viewportPointToPdfPoint(xPx, yPx, viewport, scale);
+        if (!pdfPoint) return null;
+        const pageSize = viewportPdfDimensions(viewport, scale);
         return {
             pi,
-            pdfX: xPx / scale,
-            pdfY: (Number(viewport.height) - yPx) / scale, // y-flip
-            pageWPts: Number(viewport.width) / scale,
-            pageHPts: Number(viewport.height) / scale,
+            pdfX: pdfPoint.x,
+            pdfY: pdfPoint.y,
+            pageWPts: pageSize.width,
+            pageHPts: pageSize.height,
         };
     }
 
@@ -926,15 +935,6 @@ export function installSignatureFeature(deps) {
     }, true);
 
     // ---- Box rendering helper (called from main.js renderer) ------------
-    function pdfRectToCanvasRect(pdfRect, viewport, scale) {
-        if (!pdfRect || !viewport || !scale) return null;
-        return {
-            left: pdfRect.x * scale,
-            top: Number(viewport.height) - ((pdfRect.y + pdfRect.h) * scale),
-            width: pdfRect.w * scale,
-            height: pdfRect.h * scale,
-        };
-    }
     function createSignatureBoxElement(annotation, pageIndex, viewport, scale, editModeOn, hooks) {
         if (!isSignatureAnnotation(annotation)) return null;
         const pdfRect = {
@@ -943,7 +943,7 @@ export function installSignatureFeature(deps) {
             w: Number(annotation.pdfWidth) || 1,
             h: Number(annotation.pdfHeight) || 1,
         };
-        const rect = pdfRectToCanvasRect(pdfRect, viewport, scale);
+        const rect = pdfRectToViewportRect(pdfRect, viewport, scale);
         if (!rect || rect.width <= 0 || rect.height <= 0) return null;
         const box = document.createElement('div');
         box.className = 'enpv-annotation-box enpv-signature-box is-persisted-overlay';
@@ -953,7 +953,7 @@ export function installSignatureFeature(deps) {
         box.dataset.annotationType = 'signature';
         box.dataset.locked = annotation.locked ? '1' : '0';
         box.dataset.zIndex = String(Number(annotation.zIndex) || 6);
-        box.dataset.basePageHeight = String(Number(viewport.height) / scale);
+        box.dataset.basePageHeight = String(viewportPdfDimensions(viewport, scale).height);
         box.style.left = `${rect.left}px`;
         box.style.top = `${rect.top}px`;
         box.style.width = `${Math.max(1, rect.width)}px`;
@@ -967,6 +967,14 @@ export function installSignatureFeature(deps) {
         const src = String(annotation.dataUrl || annotation.src || annotation.assetPath || annotation.imagePath || '').trim();
         if (src) img.src = src;
         img.alt = 'Signature';
+        const pageFrame = viewportRotatedContentFrame(viewport, rect.width, rect.height);
+        img.style.position = 'absolute';
+        img.style.left = '0';
+        img.style.top = '0';
+        img.style.width = `${Math.max(1, pageFrame.width)}px`;
+        img.style.height = `${Math.max(1, pageFrame.height)}px`;
+        img.style.transformOrigin = '0 0';
+        img.style.transform = pageFrame.transform;
         box.appendChild(img);
         const label = document.createElement('span');
         label.className = 'enpv-signature-selection-label';

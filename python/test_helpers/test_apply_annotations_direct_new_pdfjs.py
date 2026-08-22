@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import json
 import pathlib
 import sys
 import tempfile
@@ -32,6 +33,82 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
     def setUpClass(cls):
         cls.module = load_module()
 
+    def test_malformed_extracted_font_cmap_is_rejected_instead_of_drawing_boxes(self):
+        module = self.module
+        font_path = "/tmp/malformed-runtime-extracted-font.ttf"
+        module._FONT_CMAP_CACHE.pop(font_path, None)
+
+        with patch("fontTools.ttLib.TTFont", side_effect=AssertionError("corrupt cmap")):
+            self.assertFalse(module._embedded_font_covers_text(font_path, "Overview"))
+
+        # The failed validation is cached as unsafe, so later runs cannot
+        # silently reinterpret the same corrupt subset as having full coverage.
+        self.assertIn(font_path, module._FONT_CMAP_CACHE)
+        self.assertIsNone(module._FONT_CMAP_CACHE[font_path])
+        self.assertFalse(module._embedded_font_covers_text(font_path, "Overview"))
+        module._FONT_CMAP_CACHE.pop(font_path, None)
+
+    def test_mupdf_validates_bundled_font_when_fonttools_is_unavailable(self):
+        module = self.module
+        font_path = module.FONT_FILE_VARIANTS["Helvetica"]["normal"]
+        module._FONT_CMAP_CACHE.pop(font_path, None)
+
+        with patch("fontTools.ttLib.TTFont", side_effect=ImportError("fontTools unavailable")):
+            self.assertTrue(module._embedded_font_covers_text(font_path, "Overview®"))
+
+        module._FONT_CMAP_CACHE.pop(font_path, None)
+
+    def test_source_mask_matches_legacy_symbol_registered_marks_to_unicode(self):
+        self.assertTrue(self.module._source_mask_line_matches_source_text(
+            "display of bookmarks in Adobe\uf8e8 Acrobat\uf8e8 Reader",
+            "display of bookmarks in Adobe® Acrobat® Reader",
+        ))
+
+    def test_draw_smooth_curve_tool_exports_cubic_bezier_segments(self):
+        document = fitz.open()
+        try:
+            page = document.new_page(width=240, height=200)
+            annotation = {
+                "type": "image",
+                "imageToolSource": "direct-draw",
+                "directDrawTool": "smooth-curve",
+                "drawStrokeColor": "#2563eb",
+                "opacity": 1,
+                "directDrawVector": {
+                    "version": 1,
+                    "width": 180,
+                    "height": 100,
+                    "strokes": [{
+                        "color": "#2563eb",
+                        "opacity": 1,
+                        "brushSize": 3,
+                        "smoothCurve": True,
+                        "points": [
+                            {"x": 0, "y": 50},
+                            {"x": 45, "y": 10},
+                            {"x": 125, "y": 85},
+                            {"x": 180, "y": 50},
+                        ],
+                    }],
+                },
+            }
+
+            drew = self.module.draw_direct_draw_vector_annotation(
+                page,
+                annotation,
+                fitz.Rect(20, 40, 200, 140),
+            )
+
+            self.assertTrue(drew)
+            drawings = page.get_drawings()
+            self.assertEqual(len(drawings), 1)
+            operators = [item[0] for item in drawings[0]["items"]]
+            self.assertEqual(operators.count("c"), 3)
+            self.assertNotIn("l", operators)
+            self.assertAlmostEqual(drawings[0]["width"], 3, places=3)
+        finally:
+            document.close()
+
     def test_f1040_form_rule_below_source_bbox_is_not_owned_as_underline(self):
         document = fitz.open()
         try:
@@ -62,6 +139,108 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
             )
 
             self.assertEqual(segments, [])
+        finally:
+            document.close()
+
+    def test_f1040_title_annotation_underline_overrides_unstyled_exact_source_span(self):
+        document = fitz.open()
+        try:
+            page = document.new_page(width=612, height=792)
+            title = "Additional Income and Adjustments to Income"
+            source_rect = fitz.Rect(65, 32, 451, 56)
+            annotation = {
+                "id": "pdfjs_5304_0_0:2",
+                "type": "text",
+                "text": title,
+                "fontFamily": "Helvetica",
+                "fontSize": 14,
+                "textColor": "#7f3f35",
+                "underline": True,
+                "savedTextOverlay": True,
+                "pdfjsSourceText": title,
+            }
+            exact_source_lines = [{
+                "rect": source_rect,
+                "rotation": 0,
+                "spans": [{
+                    "text": title,
+                    "rect": source_rect,
+                    "baseline_x": 65,
+                    "baseline_y": 50,
+                    "font_family": "Helvetica",
+                    "font_source_name": "Helvetica",
+                    "font_size": 14,
+                    "font_weight": "400",
+                    "font_style": "normal",
+                    "color": "#7f3f35",
+                    # This is the original PDF style. It must not override the
+                    # annotation-level underline applied in the editor.
+                    "underline": False,
+                }],
+            }]
+
+            drew = self.module.draw_text_using_exact_source_spans(
+                page,
+                annotation,
+                exact_source_lines,
+                1.0,
+                inherit_annotation_underline=True,
+            )
+
+            with tempfile.NamedTemporaryFile(suffix=".pdf") as output_file:
+                document.save(output_file.name)
+                exported = fitz.open(output_file.name)
+                try:
+                    underline_paths = [
+                        drawing
+                        for drawing in exported[0].get_drawings()
+                        if float(drawing["rect"].width) > 200
+                        and float(drawing["rect"].height) < 0.01
+                    ]
+                finally:
+                    exported.close()
+            self.assertTrue(drew)
+            self.assertEqual(len(underline_paths), 1)
+            self.assertAlmostEqual(float(underline_paths[0]["rect"].x0), 65, places=2)
+            self.assertGreater(float(underline_paths[0]["rect"].x1), 300)
+            self.assertGreater(float(underline_paths[0]["rect"].y0), 50)
+        finally:
+            document.close()
+
+    def test_current_rich_span_can_remove_inherited_annotation_underline(self):
+        document = fitz.open()
+        try:
+            page = document.new_page(width=240, height=120)
+            annotation = {
+                "type": "text",
+                "text": "partially plain",
+                "fontFamily": "Helvetica",
+                "fontSize": 12,
+                "underline": True,
+            }
+            lines = [{
+                "rect": fitz.Rect(20, 20, 150, 40),
+                "spans": [{
+                    "text": "partially plain",
+                    "rect": fitz.Rect(20, 20, 150, 40),
+                    "baseline_x": 20,
+                    "baseline_y": 35,
+                    "font_family": "Helvetica",
+                    "font_size": 12,
+                    "underline": False,
+                    "underline_is_current_style": True,
+                }],
+            }]
+
+            self.module.draw_text_using_exact_source_spans(
+                page,
+                annotation,
+                lines,
+                1.0,
+                inherit_annotation_underline=True,
+            )
+
+            self.assertEqual(page.get_drawings(), [])
         finally:
             document.close()
 
@@ -735,9 +914,44 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
         text_ops = [op for op in ops if op.get("type") == "text"]
         permanent = next(op for op in text_ops if "permanent" in op.get("text", ""))
         addition = next(op for op in text_ops if "addition" in op.get("text", ""))
-        self.assertEqual(permanent["text"], " permanent")
+        self.assertEqual(permanent["text"], "permanent")
         self.assertEqual(permanent["font_weight"], "700")
+        self.assertTrue(text_ops[0]["text"].endswith(" "))
         self.assertEqual(addition["color"], "#b23857")
+
+    def test_promoted_1_7_boundary_spaces_stay_outside_emphasized_runs(self):
+        annotation = {
+            "type": "text",
+            "text": "All formalities associated with this process are now finalized.",
+            "fontFamily": "PdbpbbLato-Regular",
+            "fontSourceName": "PdbpbbLato-Regular",
+            "fontSize": 12,
+            "lineHeight": 14.4,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "richTextVersion": 2,
+            "richTextRuns": [
+                {"type": "text", "text": "All formalities", "fontWeight": "400"},
+                {"type": "text", "text": "associated", "fontWeight": "700"},
+                {"type": "text", "text": "with this", "fontWeight": "400"},
+                {"type": "text", "text": "process", "fontStyle": "italic"},
+                {"type": "text", "text": "are now", "fontWeight": "400"},
+                {"type": "text", "text": "finalized", "underline": True},
+                {"type": "text", "text": ".", "fontWeight": "400"},
+            ],
+        }
+
+        ops = self.module.parse_rich_text_layout_ops(annotation)
+        text_ops = [op for op in ops if op.get("type") == "text"]
+
+        self.assertEqual(self.module._rich_text_layout_ops_to_text(ops), annotation["text"])
+        self.assertEqual(next(op for op in text_ops if op["text"] == "associated")["font_weight"], "700")
+        self.assertEqual(next(op for op in text_ops if op["text"] == "process")["font_style"], "italic")
+        finalized = next(op for op in text_ops if op.get("underline"))
+        self.assertEqual(finalized["text"], "finalized")
+        self.assertFalse(finalized["text"].startswith(" "))
+        self.assertTrue(any(op["text"].endswith(" ") and not op.get("underline") for op in text_ops))
 
     def test_multiline_moved_overlay_ignores_single_line_source_baseline_offset(self):
         lines = [f"Paragraph line {index}" for index in range(1, 10)]
@@ -885,6 +1099,134 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
         self.assertEqual(by_text["Small blue"]["color"], 0x0000FF)
         self.assertLess(by_text["Large red"]["bbox"][1], by_text["Small blue"]["bbox"][1])
         self.assertTrue(any(drawing.get("color") == (1.0, 0.0, 0.0) for drawing in drawings))
+
+    def test_structured_hyperlink_exports_blue_underlined_clickable_uri(self):
+        annotation = {
+            "id": "pdfjs_rich_hyperlink_regression",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "Visit OpenAI today",
+            "pdfX": 72,
+            "pdfY": 700,
+            "pdfWidth": 240,
+            "pdfHeight": 32,
+            "fontFamily": "Helvetica",
+            "fontSize": 12,
+            "lineHeight": 15,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "opacity": 1,
+            "userCreated": True,
+            "userAuthored": True,
+            "savedTextOverlay": True,
+            "skipPdfjsSourceMask": True,
+            "pdfjsRemovedLinkRects": [
+                {"x": 100, "y": 712, "w": 72, "h": 20},
+            ],
+            "richTextVersion": 2,
+            "richTextRuns": [
+                {"type": "text", "text": "Visit ", "color": "#000000", "underline": False},
+                {
+                    "type": "text",
+                    "text": "OpenAI",
+                    "color": "#0563c1",
+                    "underline": True,
+                    "linkUrl": "https://openai.com/",
+                },
+                {"type": "text", "text": " today", "color": "#000000", "underline": False},
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = pathlib.Path(temp_dir) / "hyperlink.pdf"
+            document = fitz.open()
+            page = document.new_page(width=612, height=792)
+            page.insert_link({
+                "kind": fitz.LINK_URI,
+                "from": fitz.Rect(100, 60, 172, 80),
+                "uri": "https://old.example/",
+            })
+            document.save(pdf_path)
+            document.close()
+
+            self.module.apply_annotations(str(pdf_path), [annotation])
+
+            output = fitz.open(pdf_path)
+            try:
+                links = output[0].get_links()
+                spans = [
+                    span
+                    for block in output[0].get_text("dict").get("blocks", [])
+                    for line in block.get("lines", [])
+                    for span in line.get("spans", [])
+                    if span.get("text", "").strip()
+                ]
+            finally:
+                output.close()
+
+        self.assertEqual(len(links), 1)
+        self.assertEqual(links[0].get("kind"), fitz.LINK_URI)
+        self.assertEqual(links[0].get("uri"), "https://openai.com/")
+        linked_span = next(span for span in spans if span.get("text") == "OpenAI")
+        self.assertEqual(linked_span.get("color"), 0x0563C1)
+
+    def test_removed_hyperlink_deletes_original_pdf_hotspot(self):
+        annotation = {
+            "id": "pdfjs_removed_hyperlink_regression",
+            "type": "text",
+            "pageIndex": 0,
+            "text": "Visit OpenAI today",
+            "pdfX": 72,
+            "pdfY": 700,
+            "pdfWidth": 240,
+            "pdfHeight": 32,
+            "fontFamily": "Helvetica",
+            "fontSize": 12,
+            "lineHeight": 15,
+            "textColor": "#000000",
+            "userCreated": True,
+            "userAuthored": True,
+            "savedTextOverlay": True,
+            "skipPdfjsSourceMask": True,
+            "pdfjsRemovedLinkRects": [
+                {"x": 100, "y": 712, "w": 72, "h": 20},
+            ],
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = pathlib.Path(temp_dir) / "removed-hyperlink.pdf"
+            document = fitz.open()
+            page = document.new_page(width=612, height=792)
+            page.insert_link({
+                "kind": fitz.LINK_URI,
+                "from": fitz.Rect(100, 60, 172, 80),
+                "uri": "https://old.example/",
+            })
+            document.save(pdf_path)
+            document.close()
+
+            self.module.apply_annotations(str(pdf_path), [annotation])
+
+            output = fitz.open(pdf_path)
+            try:
+                links = output[0].get_links()
+            finally:
+                output.close()
+
+        self.assertEqual(links, [])
+
+    def test_hyperlink_destination_rejects_unsafe_protocols(self):
+        self.assertEqual(
+            self.module.normalize_hyperlink_destination("javascript:alert(1)"),
+            "",
+        )
+        self.assertEqual(
+            self.module.normalize_hyperlink_destination("example.com/path"),
+            "https://example.com/path",
+        )
 
     def test_promoted_source_block_geometry_is_a_search_safe_source_anchor(self):
         annotation = {
@@ -1260,6 +1602,50 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
         self.assertEqual([span["font_weight"] for span in spans], ["700", "400"])
         self.assertEqual([span["color"] for span in spans], ["#303038", "#a68930"])
 
+    def test_single_line_moved_source_runs_use_resolved_destination_baseline(self):
+        text = "Prepared by:"
+        annotation = {
+            "type": "text",
+            "text": text,
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsSourceBaselineOffsetY": 12.0473,
+            "fontFamily": "sans-serif",
+            "fontSize": 11.0391,
+            "fontWeight": "700",
+            "pdfjsSourceSpanRunsScale": 2.533333333333333,
+            "pdfjsSourceSpanRuns": [
+                {
+                    "text": text,
+                    "leftPx": 160.5781,
+                    "rightPx": 330.6641,
+                    "topPx": 476.8125,
+                    "bottomPx": 504.7813,
+                    "fontSizePx": 27.968,
+                    "fontFamily": "g_d0_f3",
+                    "pdfjsFontName": "HOEPNL+Arial,Bold",
+                    "fontWeight": "700",
+                },
+            ],
+        }
+        current_rect = fitz.Rect(140.9518, 162.1780, 209.2752, 176.2938)
+
+        layout = self.module.normalize_pdfjs_source_span_run_layout(
+            annotation,
+            text,
+            current_rect,
+            11.0391,
+        )
+
+        self.assertEqual(len(layout), 1)
+        self.assertEqual(len(layout[0]["spans"]), 1)
+        self.assertAlmostEqual(
+            layout[0]["spans"][0]["baseline_y"],
+            current_rect.y0 + 12.0473,
+            places=4,
+        )
+
     def test_style_dirty_rich_overlay_reflows_instead_of_reusing_stale_source_rects(self):
         annotation = {
             "movedTextOverlay": True,
@@ -1280,6 +1666,275 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
                 "Styled text",
             )
         )
+
+    def test_multiline_moved_source_runs_preserve_inline_bold_face(self):
+        text = "First source row\ndisplay in Adobe® Acrobat® Reader by clicking Window > Show Bookmarks ."
+        annotation = {
+            "type": "text",
+            "text": text,
+            "promotedFromExtraction": True,
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "pdfjsSourceFidelity": True,
+            "fontFamily": "Arial",
+            "fontSize": 11,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "pdfjsSourceSpanRunsScale": 1,
+            "pdfjsSourceSpanRuns": [
+                {
+                    "text": "First source row",
+                    "leftPx": 0,
+                    "rightPx": 82,
+                    "topPx": 0,
+                    "bottomPx": 12,
+                    "fontSizePx": 11,
+                    "fontFamily": "g_d0_f1",
+                    "pdfjsFontName": "HOEPAP+Arial",
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                },
+                {
+                    "text": "display in Adobe® Acrobat® Reader by clicking",
+                    "leftPx": 0,
+                    "rightPx": 236,
+                    "topPx": 13,
+                    "bottomPx": 25,
+                    "fontSizePx": 11,
+                    "fontFamily": "g_d0_f1",
+                    "pdfjsFontName": "HOEPAP+Arial",
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                },
+                {
+                    "text": "Window > Show Bookmarks",
+                    "leftPx": 240,
+                    "rightPx": 365,
+                    "topPx": 13,
+                    "bottomPx": 25,
+                    "fontSizePx": 11,
+                    "fontFamily": "g_d0_f3",
+                    "pdfjsFontName": "HOEPNL+Arial,Bold",
+                    "fontWeight": "700",
+                    "fontStyle": "normal",
+                },
+                {
+                    "text": ".",
+                    "leftPx": 367,
+                    "rightPx": 370,
+                    "topPx": 13,
+                    "bottomPx": 25,
+                    "fontSizePx": 11,
+                    "fontFamily": "g_d0_f1",
+                    "pdfjsFontName": "HOEPAP+Arial",
+                    "fontWeight": "400",
+                    "fontStyle": "normal",
+                },
+            ],
+        }
+
+        self.assertTrue(self.module.should_preserve_pdfjs_moved_source_line(annotation, text))
+        layout = self.module.normalize_pdfjs_source_span_run_layout(
+            annotation,
+            text,
+            fitz.Rect(20, 20, 390, 45),
+            11,
+        )
+
+        self.assertEqual(len(layout), 1)
+        bold_run = next(
+            span for span in layout[0]["spans"]
+            if "Show Bookmarks" in span["text"]
+        )
+        self.assertEqual(bold_run["font_weight"], "700")
+        self.assertEqual(bold_run["font_source_name"], "HOEPNL+Arial,Bold")
+
+    def _doc5293_moved_source_header_annotation(self, text, rich_runs=None):
+        """Doc 5293 (ss-5.pdf) header overlay `pdfjs_5293_0_0:0`, moved + edited.
+
+        The stored source runs still describe the pristine "Form SS-5 (12-2024) UF"
+        line, so the exact-span layout is (correctly) unusable once the token is
+        retyped. The rich runs are the only remaining record of the bold token.
+        """
+        source_runs = [
+            {
+                "text": "Form", "fontFamily": "Helvetica", "fontWeight": "400",
+                "fontStyle": "normal", "pdfjsFontName": "ArialMT",
+                "fontSizePx": 25.3333, "leftPx": 49.1875, "rightPx": 108.3045,
+                "topPx": 48.4531, "bottomPx": 73.7812,
+            },
+            {
+                "text": "SS-5", "fontFamily": "Helvetica", "fontWeight": "700",
+                "fontStyle": "normal", "pdfjsFontName": "Arial-BoldMT",
+                "fontSizePx": 25.3333, "leftPx": 115.3281, "rightPx": 171.6444,
+                "topPx": 48.4531, "bottomPx": 73.7812,
+            },
+            {
+                "text": "(12-2024) UF", "fontFamily": "Helvetica", "fontWeight": "400",
+                "fontStyle": "normal", "pdfjsFontName": "ArialMT",
+                "fontSizePx": 25.3333, "leftPx": 178.6875, "rightPx": 332.2325,
+                "topPx": 48.4531, "bottomPx": 73.7812,
+            },
+        ]
+
+        annotation = {
+            "id": "pdfjs_5293_0_0:0",
+            "type": "text",
+            "pageIndex": 0,
+            "text": text,
+            "originalText": "Form SS-5 (12-2024) UF",
+            "sourceTextLines": [text],
+            "pdfX": 357.9027,
+            "pdfY": 763.2042,
+            "pdfWidth": 111.7661,
+            "pdfHeight": 13.0263,
+            "fontFamily": "ArialMT",
+            "fontSourceName": "ArialMT",
+            "fontSize": 10,
+            "lineHeight": 12,
+            "fontWeight": "400",
+            "fontStyle": "normal",
+            "textColor": "#000000",
+            "textAlign": "left",
+            "verticalAlign": "top",
+            "opacity": 1,
+            "savedTextOverlay": True,
+            "movedTextOverlay": True,
+            "userAuthored": True,
+            "forceEmbeddedFont": True,
+            "pdfjsForceEmbeddedFont": True,
+            "pdfjsSourceFidelity": True,
+            "pdfjsEditorMode": "rich",
+            "pdfjsSourceText": "Form SS-5 (12-2024) UF",
+            "pdfjsSourceX": 18.8240,
+            "pdfjsSourceY": 762.2305,
+            "pdfjsSourceW": 111.7661,
+            "pdfjsSourceH": 12.8157,
+            "pdfjsSourceMaskX": 18.8240,
+            "pdfjsSourceMaskY": 762.2305,
+            "pdfjsSourceMaskW": 111.7661,
+            "pdfjsSourceMaskH": 12.8157,
+            "pdfjsSourcePageHeight": 792,
+            "sourcePageHeight": 792,
+            "pdfjsSourceFontFamily": "ArialMT",
+            "pdfjsSourceFontSizePx": "25.3333",
+            "pdfjsSourceFontWeight": "400",
+            "pdfjsSourceFontStyle": "normal",
+            "pdfjsSourceTextColor": "#000000",
+            "pdfjsSourceSpanRunsScale": "2.533333333333333",
+            "pdfjsSourceSpanRuns": json.dumps(source_runs),
+            "skipPdfjsSourceMask": True,
+        }
+
+        if rich_runs:
+            annotation.update({
+                "richTextVersion": 2,
+                "userForcedRichText": True,
+                "richTextPromotionReason": "mixed-source-edit",
+                "richTextRuns": [
+                    {
+                        "type": "text", "text": run_text, "color": "#000000",
+                        "fontSize": 10, "lineHeight": 12, "fontStyle": "normal",
+                        "underline": False, "fontFamily": family,
+                        "fontSourceName": family, "fontWeight": weight,
+                    }
+                    for run_text, weight, family in rich_runs
+                ],
+                "richTextHtml": "".join(
+                    '<span style="font-family: {family}; font-size: 10pt; line-height: 12pt;'
+                    ' font-weight: {weight}; font-style: normal; color: rgb(0, 0, 0);">'
+                    "{text}</span>".format(family=family, weight=weight, text=run_text)
+                    for run_text, weight, family in rich_runs
+                ),
+            })
+
+        return annotation
+
+    def _export_header_spans(self, annotation):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = pathlib.Path(temp_dir) / "moved_source_header.pdf"
+            document = fitz.open()
+            document.new_page(width=612, height=792)
+            document.save(pdf_path)
+            document.close()
+
+            self.module.apply_annotations(str(pdf_path), [annotation])
+
+            output = fitz.open(pdf_path)
+            try:
+                return [
+                    {
+                        # Substituted faces re-encode "-" as U+00AD on write.
+                        "text": span.get("text", "").replace("\u00ad", "-"),
+                        "font": span.get("font", ""),
+                        "bold": bool(int(span.get("flags") or 0) & int(fitz.TEXT_FONT_BOLD)),
+                        "bbox": span.get("bbox"),
+                    }
+                    for block in output[0].get_text("dict").get("blocks", [])
+                    for line in block.get("lines", [])
+                    for span in line.get("spans", [])
+                    if span.get("text", "").strip()
+                ]
+            finally:
+                output.close()
+
+    def test_moved_pdfjs_source_line_exports_inline_bold_run(self):
+        """Doc 5293: retyping `SS-5` as a bold `13-7` must stay bold in the PDF.
+
+        Moved source lines used to fall through to the uniform single-font
+        renderer, which silently flattened every rich run to one face.
+        """
+        annotation = self._doc5293_moved_source_header_annotation(
+            "Form 13-7 (12-2024) UF",
+            rich_runs=[
+                ("Form", "400", "ArialMT"),
+                ("13-7", "700", "Arial-BoldMT"),
+                ("(12-2024) UF", "400", "ArialMT"),
+            ],
+        )
+
+        spans = self._export_header_spans(annotation)
+        joined = "".join(span["text"] for span in spans)
+        self.assertIn("Form", joined)
+        self.assertIn("13-7", joined)
+        self.assertIn("(12-2024) UF", joined)
+
+        bold_spans = [span for span in spans if "13-7" in span["text"]]
+        self.assertTrue(bold_spans, f"no span carried the retyped token: {spans}")
+        for span in bold_spans:
+            self.assertTrue(
+                span["bold"] or "bold" in span["font"].lower(),
+                f"retyped token lost its bold face: {span}",
+            )
+
+        for span in spans:
+            if "13-7" in span["text"]:
+                continue
+            self.assertFalse(
+                span["bold"] or "bold" in span["font"].lower(),
+                f"neighbouring run should stay regular: {span}",
+            )
+
+        # The styled runs must still render as one squeezed line, not wrap.
+        tops = {round(span["bbox"][1], 1) for span in spans}
+        self.assertEqual(len(tops), 1, f"styled runs wrapped onto extra lines: {spans}")
+
+    def test_uniform_moved_pdfjs_source_line_still_exports_as_one_run(self):
+        """A moved source line without mixed styles keeps the single-run renderer."""
+        annotation = self._doc5293_moved_source_header_annotation(
+            "Form 13-7 (12-2024) UF",
+            rich_runs=[
+                ("Form", "400", "ArialMT"),
+                ("13-7", "400", "ArialMT"),
+                ("(12-2024) UF", "400", "ArialMT"),
+            ],
+        )
+
+        spans = self._export_header_spans(annotation)
+        self.assertEqual(len(spans), 1, f"uniform moved line was split: {spans}")
+        self.assertEqual(spans[0]["text"].strip(), "Form 13-7 (12-2024) UF")
+        self.assertFalse(spans[0]["bold"])
 
     def test_rich_style_boundary_splits_a_preserved_pdfjs_source_run_generically(self):
         text = "AlphaBeta Tail"
@@ -1815,6 +2470,56 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
             module._embedded_font_covers_text = original_covers
             module.embedded_font_public_path_to_absolute = original_abs
             module.EMBEDDED_FONT_METADATA_CACHE.pop("9999", None)
+
+    def test_rich_lato_style_override_rejects_regular_only_embedded_face(self):
+        module = self.module
+        metadata = {
+            "PdbpbbLato-Regular": {
+                "clean_name": "PdbpbbLato-Regular",
+                "family": "PdbpbbLato",
+                "css_weight": "400",
+                "css_style": "normal",
+                "css_stretch": "normal",
+                "file_path": "/fonts/runtime-extracted/5217/PdbpbbLato-Regular.ttf",
+            },
+        }
+        base = {
+            "fontFamily": "PdbpbbLato-Regular",
+            "fontSourceName": "PdbpbbLato-Regular",
+            "forceEmbeddedFont": True,
+            "pdfjsForceEmbeddedFont": True,
+            "promotedFromExtraction": True,
+            "userAuthored": True,
+            "__documentId": "5217",
+        }
+
+        with patch.object(module, "load_embedded_font_metadata", return_value=metadata):
+            regular = module.resolve_embedded_font_entry(
+                dict(base, fontWeight="400", fontStyle="normal", text="formalities")
+            )
+            bold = module.resolve_embedded_font_entry(
+                dict(base, fontWeight="700", fontStyle="normal", text="associated")
+            )
+            italic = module.resolve_embedded_font_entry(
+                dict(base, fontWeight="400", fontStyle="italic", text="process")
+            )
+
+        self.assertIsNotNone(regular)
+        self.assertEqual(regular["clean_name"], "PdbpbbLato-Regular")
+        self.assertIsNone(bold)
+        self.assertIsNone(italic)
+        self.assertEqual(
+            pathlib.Path(module.resolve_text_fontfile(
+                dict(base, fontWeight="700", fontStyle="normal", text="associated")
+            )).name,
+            "Lato-Bold.ttf",
+        )
+        self.assertIn(
+            "NotoSans-Italic",
+            pathlib.Path(module.resolve_text_fontfile(
+                dict(base, fontWeight="400", fontStyle="italic", text="process")
+            )).name,
+        )
 
     def test_user_authored_promoted_edit_rejects_embedded_subset_missing_new_glyph(self):
         module = self.module

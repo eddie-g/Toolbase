@@ -17,6 +17,7 @@ import {
     defaultPolygonUnitPoints,
     normalizePolygonPointList,
 } from './shape-geometry.js';
+import { normalizeDirectDrawTool } from '../draw/tool-type.js';
 
 export function normalizeShapeAnnotation(ann) {
     if (!isShapeAnnotation(ann)) return ann;
@@ -96,10 +97,12 @@ export function normalizeImageAnnotation(ann) {
     ann.mimeType = String(ann.mimeType || 'image/png');
     ann.intrinsicWidth = Math.max(1, Number(ann.intrinsicWidth || ann.width || ann.imageWidth) || 1);
     ann.intrinsicHeight = Math.max(1, Number(ann.intrinsicHeight || ann.height || ann.imageHeight) || 1);
-    if (isDirectDrawAnnotation(ann) && ann.drawStrokeColor) {
+    if (isDirectDrawAnnotation(ann)) {
         ann.drawStrokeColor = normalizeHexColor(ann.drawStrokeColor, '#111827');
+        ann.directDrawTool = normalizeDirectDrawTool(ann.directDrawTool);
     } else {
         delete ann.drawStrokeColor;
+        delete ann.directDrawTool;
         delete ann.directDrawVector;
     }
     if (isDirectDrawAnnotation(ann) && ann.directDrawVector) {
@@ -124,6 +127,7 @@ function normalizeDirectDrawVector(vector) {
             color: normalizeHexColor(stroke?.color, '#111827'),
             opacity: clamp01(stroke?.opacity ?? 1, 1),
             brushSize: Math.max(0.25, Number(stroke?.brushSize) || 1),
+            smoothCurve: Boolean(stroke?.smoothCurve),
             points: normalizedPoints,
         };
     }).filter(Boolean);

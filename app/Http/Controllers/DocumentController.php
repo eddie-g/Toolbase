@@ -3,10 +3,12 @@
 namespace App\Http\Controllers;
 
 use App\Exceptions\InsufficientCreditBalanceException;
+use App\Jobs\ConvertDocumentExportJob;
 use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Admin;
 use App\Models\CreditTransaction;
 use App\Models\Document;
+use App\Models\DocumentConversion;
 use App\Models\DocumentConversionSetting;
 use App\Models\DocumentNote;
 use App\Models\GuidedTemplate;
@@ -16,6 +18,7 @@ use App\Models\PdfState;
 use App\Services\PdfAnnotationAssetService;
 use App\Services\AdobePdfServices;
 use App\Services\DocumentConversionPricing;
+use App\Services\DocumentExportConversionService;
 use App\Services\PdfDocumentMergeConflictException;
 use App\Services\PdfDocumentMergeService;
 use App\Services\PdfFitzExtractionNormalizer;
@@ -548,6 +551,16 @@ class DocumentController extends Controller
             is_array($requiredModule) ? $requiredModule : [$requiredModule],
             static fn ($module) => is_string($module) && $module !== ''
         ));
+
+        // Probing a candidate costs a full python start-up per call. The
+        // interpreter cannot change within a request, so memoize per module
+        // set — endpoints that shell out several times only pay it once.
+        static $resolved = [];
+        $cacheKey = implode('|', $requiredModules);
+        if (isset($resolved[$cacheKey])) {
+            return $resolved[$cacheKey];
+        }
+
         $candidates = array_values(array_unique([
             base_path('.venv/bin/python'),
             base_path('venv/bin/python'),
@@ -565,7 +578,7 @@ class DocumentController extends Controller
             }
 
             if ($requiredModules === []) {
-                return $candidate;
+                return $resolved[$cacheKey] = $candidate;
             }
 
             $invalidModules = array_filter(
@@ -586,11 +599,11 @@ class DocumentController extends Controller
             exec($probeCommand, $probeOutput, $probeExitCode);
 
             if ($probeExitCode === 0) {
-                return $candidate;
+                return $resolved[$cacheKey] = $candidate;
             }
         }
 
-        return 'python3';
+        return $resolved[$cacheKey] = 'python3';
     }
 
     private function annotationAssets(): PdfAnnotationAssetService
@@ -5602,7 +5615,7 @@ class DocumentController extends Controller
         $this->rememberSessionAccessibleDocument($request, $document);
 
         return redirect()
-            ->route('documents.edit', $document)
+            ->route('documents.editPdfjs', $document)
             ->with('status', 'Blank PDF created. You can now add text, images and annotations.');
     }
 
@@ -12982,6 +12995,209 @@ class DocumentController extends Controller
         return response()->json(['success' => true]);
     }
 
+    public function queueWordConversion(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'layout' => ['required', 'string', 'in:flow,exact'],
+            'include_images' => ['boolean'],
+            'ocr' => ['boolean'],
+            'pdf' => ['nullable', 'file', 'mimes:pdf', 'max:51200'],
+        ]);
+
+        return $this->queueDocumentConversion($request, $document, 'word', [
+            'layout' => $validated['layout'],
+            'include_images' => $validated['include_images'] ?? true,
+            'ocr' => $validated['ocr'] ?? false,
+            // The PDF.js editor posts the completed PDF. Mark it for Adobe
+            // preparation so native text and vector shapes remain semantic,
+            // while image-backed drawings and signatures stay flattened.
+            'visual_fidelity' => $request->hasFile('pdf'),
+        ]);
+    }
+
+    public function queueExcelConversion(Request $request, Document $document)
+    {
+        $validated = $request->validate([
+            'mode' => ['required', 'string', 'in:tables,all'],
+            'merge_cells' => ['boolean'],
+            'sheet_per_page' => ['boolean'],
+            'pdf' => ['nullable', 'file', 'mimes:pdf', 'max:51200'],
+        ]);
+
+        return $this->queueDocumentConversion($request, $document, 'excel', [
+            'mode' => $validated['mode'],
+            'merge_cells' => $validated['merge_cells'] ?? true,
+            'sheet_per_page' => $validated['sheet_per_page'] ?? true,
+        ]);
+    }
+
+    private function queueDocumentConversion(
+        Request $request,
+        Document $document,
+        string $format,
+        array $options,
+    ) {
+        if (! $this->hasEditorAuthentication()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Sign in to convert PDFs to Word or Excel.',
+                'login_url' => route('login'),
+            ], 401);
+        }
+
+        $actor = $this->resolveEditorActor();
+        if (! $actor instanceof User && ! $actor instanceof Admin) {
+            return response()->json(['success' => false, 'message' => 'Conversion account not found.'], 401);
+        }
+
+        $uuid = Str::uuid()->toString();
+        $directory = "documents/conversions/{$uuid}";
+        $inputPath = "{$directory}/input.pdf";
+        $extension = $format === 'word' ? 'docx' : 'xlsx';
+        $outputPath = "{$directory}/output.{$extension}";
+
+        Storage::makeDirectory($directory);
+        if ($request->hasFile('pdf')) {
+            $upload = $request->file('pdf');
+            if (! $upload->isValid()) {
+                Storage::deleteDirectory($directory);
+
+                return response()->json(['success' => false, 'message' => 'Invalid PDF upload.'], 422);
+            }
+            $upload->move(dirname(Storage::path($inputPath)), basename($inputPath));
+        } else {
+            if (! $document->path || ! Storage::exists($document->path)) {
+                Storage::deleteDirectory($directory);
+
+                return response()->json(['success' => false, 'message' => 'Current PDF is missing.'], 404);
+            }
+            if (! Storage::copy($document->path, $inputPath)) {
+                Storage::deleteDirectory($directory);
+
+                return response()->json(['success' => false, 'message' => 'Unable to prepare the PDF for conversion.'], 500);
+            }
+        }
+
+        try {
+            $quote = app(DocumentExportConversionService::class)->quote(Storage::path($inputPath));
+        } catch (\Throwable $exception) {
+            Storage::deleteDirectory($directory);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Unable to price this conversion: '.$exception->getMessage(),
+            ], 422);
+        }
+
+        if ($balanceResponse = $this->documentConversionBalanceResponse($actor, $quote)) {
+            Storage::deleteDirectory($directory);
+
+            return $balanceResponse;
+        }
+        if ($quotaResponse = $this->consumeMonthlyActionQuota($request)) {
+            Storage::deleteDirectory($directory);
+
+            return $quotaResponse;
+        }
+
+        $baseName = pathinfo($document->original_name, PATHINFO_FILENAME) ?: 'document';
+        $conversion = DocumentConversion::create([
+            'uuid' => $uuid,
+            'document_id' => $document->id,
+            'user_id' => $actor instanceof User ? $actor->id : null,
+            'admin_id' => $actor instanceof Admin ? $actor->id : null,
+            'format' => $format,
+            'status' => DocumentConversion::STATUS_QUEUED,
+            'progress' => 5,
+            'options' => $options,
+            'quote' => $quote,
+            'input_path' => $inputPath,
+            'output_path' => $outputPath,
+            'download_name' => "{$baseName}.{$extension}",
+            'content_type' => $format === 'word'
+                ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+                : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'ip_address' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'queued_at' => now(),
+        ]);
+
+        try {
+            ConvertDocumentExportJob::dispatch($conversion->id);
+        } catch (\Throwable $exception) {
+            $conversion->forceFill([
+                'status' => DocumentConversion::STATUS_FAILED,
+                'progress' => 100,
+                'error' => 'The conversion queue is unavailable. Please try again shortly.',
+                'completed_at' => now(),
+            ])->save();
+            Storage::deleteDirectory($directory);
+            Log::error('Unable to dispatch document conversion to Horizon.', [
+                'conversion_id' => $uuid,
+                'document_id' => $document->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'The conversion queue is unavailable. Please try again shortly.',
+            ], 503);
+        }
+
+        return response()->json([
+            'success' => true,
+            'queued' => true,
+            'status' => DocumentConversion::STATUS_QUEUED,
+            'conversion_id' => $conversion->uuid,
+            'status_url' => route('documents.conversions.status', [$document, $conversion]),
+            'charge_usd' => $quote['charge_usd'],
+            'page_count' => $quote['page_count'],
+            'billable_transactions' => $quote['transactions'],
+        ], 202);
+    }
+
+    public function conversionStatus(
+        Request $request,
+        Document $document,
+        DocumentConversion $conversion,
+    ) {
+        $this->authorizeDocumentConversionAccess($conversion, $document);
+        $conversion->refresh();
+
+        $payload = [
+            'success' => $conversion->status !== DocumentConversion::STATUS_FAILED,
+            'conversion_id' => $conversion->uuid,
+            'status' => $conversion->status,
+            'progress' => $conversion->progress,
+        ];
+
+        if ($conversion->status === DocumentConversion::STATUS_FAILED) {
+            $payload['message'] = $conversion->error ?: 'The document conversion failed.';
+        }
+        if ($conversion->status === DocumentConversion::STATUS_COMPLETED) {
+            $payload = array_merge($payload, $conversion->result ?? [], [
+                'download_token' => $conversion->uuid,
+                'download_name' => $conversion->download_name,
+            ]);
+        }
+
+        return response()->json($payload);
+    }
+
+    private function authorizeDocumentConversionAccess(
+        DocumentConversion $conversion,
+        Document $document,
+    ): void {
+        abort_unless((int) $conversion->document_id === (int) $document->id, 404);
+        $userId = $this->currentWebUserId();
+        $adminId = $this->currentAdminId();
+        abort_unless(
+            ($userId !== null && (int) $conversion->user_id === $userId)
+            || ($adminId !== null && (int) $conversion->admin_id === $adminId),
+            403
+        );
+    }
+
     public function convertToWord(Request $request, Document $document)
     {
         if (!$this->hasEditorAuthentication()) {
@@ -14353,9 +14569,32 @@ class DocumentController extends Controller
 
     public function downloadConverted(Request $request)
     {
-        $token = $request->query('token');
+        $token = trim((string) $request->query('token', ''));
         if (!$token) {
             abort(400, 'Missing download token');
+        }
+
+        $conversion = DocumentConversion::query()->where('uuid', $token)->first();
+        if ($conversion) {
+            $document = Document::findOrFail($conversion->document_id);
+            $this->authorizeDocumentConversionAccess($conversion, $document);
+            abort_unless($conversion->status === DocumentConversion::STATUS_COMPLETED, 409, 'Conversion is not complete');
+
+            if ($conversion->expires_at && now()->greaterThan($conversion->expires_at)) {
+                if ($conversion->output_path) {
+                    Storage::delete($conversion->output_path);
+                }
+                abort(410, 'Download link has expired');
+            }
+            if (! $conversion->output_path || ! Storage::exists($conversion->output_path)) {
+                abort(404, 'File not found');
+            }
+
+            return response()->download(
+                Storage::path($conversion->output_path),
+                $conversion->download_name ?: 'converted-document',
+                ['Content-Type' => $conversion->content_type ?: 'application/octet-stream']
+            );
         }
 
         $data = session()->pull("converted_download_{$token}");

@@ -7,10 +7,137 @@ function normalizeComparableText(value) {
     return String(value ?? '').replace(/\r\n?/g, '\n').replace(/\s+/g, ' ').trim();
 }
 
+// PDF.js source boxes are created lazily from text-layer spans and older
+// boxes do not always carry data-annotation-type. They are text unless an
+// explicit non-text type says otherwise. Selection and format-panel routing
+// must use the same default or one opens Text Options and the other
+// immediately closes it.
+export function annotationSelectionType(boxType, persistedType) {
+    return String(boxType || persistedType || 'text').trim().toLowerCase() || 'text';
+}
+
+// A field-label segment can be narrower than the PDF.js text item that paints
+// it. For example, extraction splits "2a" from "Alimony received", while
+// PDF.js exposes the whole row as one span. In that case the live source span
+// already paints the marker and a clean promoted fallback would duplicate it.
+// Restrict prefix matching to explicit field-label segments and require a word
+// boundary so a marker such as "2" cannot claim a source item beginning "20".
+export function pdfjsTextCoversPromotedFallback(sourceText, fallbackText, segmentRole = '') {
+    const source = normalizeComparableText(sourceText);
+    const fallback = normalizeComparableText(fallbackText);
+    if (!source || !fallback) return false;
+    if (source === fallback) return true;
+    if (String(segmentRole || '').trim().toLowerCase() !== 'field_label') return false;
+    if (!source.startsWith(fallback)) return false;
+    return !/[\p{L}\p{N}_]/u.test(source.slice(fallback.length, fallback.length + 1));
+}
+
 function textWithoutWhitespace(value) {
     return Array.from(String(value ?? ''))
         .filter((character) => !/\s/u.test(character))
         .join('');
+}
+
+// Old Symbol encodings commonly expose the registered sign as the Adobe
+// private-use value U+F8E8. Keeping that value in authored/exported text ties
+// the glyph to the source PDF's Symbol encoding and produces either a missing
+// glyph box or no searchable character in a newly stamped font. Normalize the
+// small set of inline legal marks we can identify unambiguously to Unicode.
+const PDF_INLINE_SYMBOL_REPLACEMENTS = new Map([
+    ['\uf8e8', '\u00ae'],
+]);
+const PDF_INLINE_SEMANTIC_SYMBOLS = new Set(['\u00a9', '\u00ae', '\u2122']);
+
+export function normalizePdfInlineSymbolText(value) {
+    return Array.from(String(value ?? ''))
+        .map((character) => PDF_INLINE_SYMBOL_REPLACEMENTS.get(character) || character)
+        .join('');
+}
+
+export function isPdfInlineSymbolText(value) {
+    const characters = Array.from(String(value ?? '')).filter((character) => !/\s/u.test(character));
+    return characters.length > 0 && characters.every((character) => (
+        PDF_INLINE_SYMBOL_REPLACEMENTS.has(character)
+        || PDF_INLINE_SEMANTIC_SYMBOLS.has(character)
+    ));
+}
+
+function sourceGroupRectsShareLine(left, right) {
+    const leftTop = Number(left?.top);
+    const leftBottom = Number(left?.bottom ?? (Number(left?.top) + Number(left?.height)));
+    const rightTop = Number(right?.top);
+    const rightBottom = Number(right?.bottom ?? (Number(right?.top) + Number(right?.height)));
+    if (![leftTop, leftBottom, rightTop, rightBottom].every(Number.isFinite)) return false;
+    const overlap = Math.max(0, Math.min(leftBottom, rightBottom) - Math.max(leftTop, rightTop));
+    const shorter = Math.max(0.001, Math.min(leftBottom - leftTop, rightBottom - rightTop));
+    return overlap / shorter >= 0.5;
+}
+
+function textEndIgnoringWhitespace(haystack, needle, startIndex = 0) {
+    const targetCharacters = Array.from(textWithoutWhitespace(needle));
+    if (!targetCharacters.length) return -1;
+    const compact = [];
+    const sourceIndexes = [];
+    let sourceIndex = 0;
+    for (const character of String(haystack ?? '')) {
+        if (!/\s/u.test(character)) {
+            compact.push(character);
+            sourceIndexes.push(sourceIndex);
+        }
+        sourceIndex += character.length;
+    }
+    const compactStart = sourceIndexes.findIndex((index) => index >= startIndex);
+    let matchAt = -1;
+    for (let index = Math.max(0, compactStart); index <= compact.length - targetCharacters.length; index += 1) {
+        if (targetCharacters.every((character, offset) => compact[index + offset] === character)) {
+            matchAt = index;
+            break;
+        }
+    }
+    if (matchAt < 0) return -1;
+    const lastCompactIndex = matchAt + targetCharacters.length - 1;
+    const lastSourceIndex = sourceIndexes[lastCompactIndex];
+    return Number.isFinite(lastSourceIndex) ? lastSourceIndex + compact[lastCompactIndex].length : -1;
+}
+
+// Insert standalone Symbol-font marks into the paragraph text that owns their
+// visual row. `groups` are the live PDF.js source groups in page coordinates.
+// The normal extraction paragraph omits PUA characters, so we anchor each mark
+// after the nearest preceding textual group on the same line (Adobe®,
+// Acrobat®) without disturbing the paragraph's captured line breaks.
+export function insertPdfInlineSymbolsIntoText(value, groups) {
+    let text = String(value ?? '');
+    if (!text || !Array.isArray(groups) || !groups.length) return text;
+    const ordered = groups.slice().sort((left, right) => {
+        const topDelta = Number(left?.rect?.top || 0) - Number(right?.rect?.top || 0);
+        return Math.abs(topDelta) > 0.5
+            ? topDelta
+            : Number(left?.rect?.left || 0) - Number(right?.rect?.left || 0);
+    });
+    let searchFrom = 0;
+    ordered.forEach((group, index) => {
+        if (!isPdfInlineSymbolText(group?.text)) return;
+        const semantic = normalizePdfInlineSymbolText(group.text).replace(/\s+/gu, '');
+        if (!semantic) return;
+        const previous = ordered.slice(0, index).reverse().find((candidate) => (
+            !isPdfInlineSymbolText(candidate?.text)
+            && sourceGroupRectsShareLine(candidate?.rect, group?.rect)
+            && Number(candidate?.rect?.left || 0) <= Number(group?.rect?.left || 0)
+        ));
+        if (!previous) return;
+        let insertAt = textEndIgnoringWhitespace(text, previous.text, searchFrom);
+        if (insertAt < 0) {
+            const trailingWord = String(previous.text || '').trim().match(/[\p{L}\p{N}.]+$/u)?.[0] || '';
+            insertAt = textEndIgnoringWhitespace(text, trailingWord, searchFrom);
+        }
+        if (insertAt < 0) return;
+        const following = Array.from(text.slice(insertAt))[0] || '';
+        if (normalizePdfInlineSymbolText(following) !== semantic) {
+            text = `${text.slice(0, insertAt)}${semantic}${text.slice(insertAt)}`;
+        }
+        searchFrom = insertAt + semantic.length;
+    });
+    return text;
 }
 
 function normalizedUnderlineRange(value) {
@@ -160,6 +287,32 @@ export function sourceSpanDrawnUnderlineRanges(sourceSpan) {
         || boolish(sourceSpan?.suppress_drawn_underline)
         || boolish(sourceSpan?.underline)
     ) ? [{ start: 0, end: 1 }] : [];
+}
+
+// Project an extracted span's validated page-space underline strokes onto a
+// PDF.js source run. The run can be a few points wider than the extraction
+// bbox, so its x/width — rather than the span bbox — defines the returned
+// relative ranges. Keep the original span for vertical ownership validation;
+// replacing it with a synthetic y=0..1 bbox would reject every real stroke.
+export function sourceDrawnUnderlineRangesForRect(segments, runRect) {
+    const x = Number(runRect?.x ?? runRect?.left ?? runRect?.[0]);
+    const explicitWidth = Number(runRect?.w ?? runRect?.width);
+    const right = Number(runRect?.right ?? runRect?.x1 ?? runRect?.[2]);
+    const width = Number.isFinite(explicitWidth) ? explicitWidth : right - x;
+    if (!Array.isArray(segments) || !segments.length
+        || !Number.isFinite(x) || !Number.isFinite(width) || width <= 0) {
+        return [];
+    }
+    return mergeUnderlineRanges(segments.map((segment) => ({
+        start: (Number(segment?.x0 ?? segment?.left ?? segment?.[0]) - x) / width,
+        end: (Number(segment?.x1 ?? segment?.right ?? segment?.[1]) - x) / width,
+    })));
+}
+
+export function sourceSpanDrawnUnderlineRangesForRect(sourceSpan, runRect) {
+    const segments = sourceSpanDrawnUnderlineSegments(sourceSpan);
+    if (segments.length) return sourceDrawnUnderlineRangesForRect(segments, runRect);
+    return sourceSpanDrawnUnderlineRanges(sourceSpan);
 }
 
 function sourceRunBoundaryFractions(text, item, measureTextWidth) {
@@ -514,6 +667,53 @@ export function sourceVisualLineSlots(lineTops, scaleRatio = 1) {
     });
 }
 
+// Extraction can represent a blank paragraph row as a zero-width line bbox
+// while omitting that row from sourceTextLines (and from the live PDF.js text
+// runs). Align the boxes to the visible lines before deriving break counts.
+// The removed row is still reflected by the larger top-to-top delta, so the
+// preceding visible line correctly receives a double break.
+export function sourceVisualLineBreakCounts(lineBBoxes, visibleLineCount) {
+    const count = Math.max(0, Number.parseInt(String(visibleLineCount ?? 0), 10) || 0);
+    const fallback = Array(Math.max(0, count - 1)).fill(1);
+    if (count < 2 || !Array.isArray(lineBBoxes)) return fallback;
+
+    let boxes = lineBBoxes.map((bbox) => {
+        const left = Number(Array.isArray(bbox) ? bbox[0] : bbox?.left ?? bbox?.x0);
+        const top = Number(Array.isArray(bbox) ? bbox[1] : bbox?.top ?? bbox?.y0);
+        const right = Number(Array.isArray(bbox) ? bbox[2] : bbox?.right ?? bbox?.x1);
+        return { left, top, right };
+    }).filter((bbox) => [bbox.left, bbox.top, bbox.right].every(Number.isFinite));
+
+    if (boxes.length !== count) {
+        boxes = boxes.filter((bbox) => Math.abs(bbox.right - bbox.left) > 0.25);
+    }
+    if (boxes.length !== count) return fallback;
+
+    const slots = sourceVisualLineSlots(boxes.map((bbox) => bbox.top));
+    return fallback.map((_, index) => (
+        Math.max(1, Number.parseInt(String(slots[index]?.breakCount ?? 1), 10) || 1)
+    ));
+}
+
+// A same-length substitution can reuse every captured source line slot. This
+// is the common correction case (for example changing a list marker from 5 to
+// 6): no whitespace or line boundary moved, so converting the paragraph to
+// natural flow would introduce far more layout change than the edit itself.
+export function promotedSourceLayoutCompatibleTextEdit(currentText, sourceText) {
+    const current = String(currentText ?? '').replace(/\r\n?/g, '\n');
+    const source = String(sourceText ?? '').replace(/\r\n?/g, '\n');
+    if (!current || !source || current.length !== source.length) return false;
+    let changed = false;
+    for (let index = 0; index < source.length; index += 1) {
+        if (current[index] === source[index]) continue;
+        // Any whitespace change can alter a run boundary, visual wrap, or
+        // paragraph break and therefore must take the normal reflow path.
+        if (/\s/u.test(current[index]) || /\s/u.test(source[index])) return false;
+        changed = true;
+    }
+    return changed;
+}
+
 // PDF extraction frequently gives a list marker (for example, a bullet) a
 // larger glyph box than the paragraph that follows it. The marker must not
 // become the paragraph's root font size: doing so turns every ordinary run
@@ -582,6 +782,7 @@ function richTextRunStyleKey(style) {
         style?.fontStyle || '',
         style?.color || '',
         style?.underline ? '1' : '0',
+        style?.linkUrl || '',
     ].join('|');
 }
 
@@ -688,6 +889,13 @@ export function reconcileRichTextRunWhitespace(runs, expectedText) {
             rebuilt.push({ ...style, type: 'text', text, _styleKey: key });
         }
     };
+    const emphasisScore = (run) => {
+        const weight = Number.parseInt(String(run?.fontWeight || '400'), 10);
+        const style = String(run?.fontStyle || 'normal').toLowerCase();
+        return (run?.underline ? 4 : 0)
+            + (Number.isFinite(weight) && weight >= 600 ? 1 : 0)
+            + (style === 'italic' || style === 'oblique' ? 1 : 0);
+    };
     for (const character of Array.from(expected)) {
         if (character === '\n') {
             if (pendingWhitespace && rebuilt[rebuilt.length - 1]?.type === 'text') {
@@ -703,7 +911,22 @@ export function reconcileRichTextRunWhitespace(runs, expectedText) {
         }
         const styledCharacter = styledCharacters[characterIndex++];
         if (!styledCharacter || styledCharacter.character !== character) return [];
-        appendText(`${pendingWhitespace}${character}`, styledCharacter.style);
+        let whitespaceForCurrentRun = pendingWhitespace;
+        const previous = rebuilt[rebuilt.length - 1];
+        const currentStyleKey = richTextRunStyleKey(styledCharacter.style);
+        if (
+            pendingWhitespace
+            && previous?.type === 'text'
+            && previous._styleKey !== currentStyleKey
+            && emphasisScore(previous) <= emphasisScore(styledCharacter.style)
+        ) {
+            // A missing boundary space is normally unformatted. Keep it on
+            // the less-emphasized adjacent run so selecting "finalized"
+            // never exports an underline beneath the preceding blank.
+            previous.text += pendingWhitespace;
+            whitespaceForCurrentRun = '';
+        }
+        appendText(`${whitespaceForCurrentRun}${character}`, styledCharacter.style);
         pendingWhitespace = '';
     }
     if (pendingWhitespace && rebuilt[rebuilt.length - 1]?.type === 'text') {
@@ -719,14 +942,17 @@ export function sourceNaturalizedGapText({
     currentText = '',
     originalSpaceCount = 0,
     preserveCapturedSpacing = false,
+    preserveLineStartIndent = false,
     userMutated = false,
 } = {}) {
     if (userMutated) return String(currentText || '');
-    if (atLineStart) return '';
     const capturedCount = Math.max(
         1,
         Math.min(120, Number.parseInt(String(originalSpaceCount || 0), 10) || 1),
     );
+    // A released row that keeps its hard line break also keeps the PDF's
+    // hanging indent; only a rejoined paragraph may drop it.
+    if (atLineStart) return preserveLineStartIndent ? ' '.repeat(capturedCount) : '';
     return ' '.repeat(preserveCapturedSpacing ? capturedCount : 1);
 }
 
@@ -803,6 +1029,52 @@ function promotedAnnotationIsMultiLine(annotation) {
         .map((line) => line.trim())
         .filter((line) => line.length > 0);
     return lines.length > 1;
+}
+
+function sourceFontNameLooksMonospaced(value) {
+    const normalized = String(value || '')
+        .replace(/[+,_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    if (!normalized) return false;
+    if (/(?:^|\s)(?:courier(?: new| prime)?|consolas|menlo|monaco|monospace|mono|fixed|lucida console|source code pro|roboto mono|ibm plex mono|dejavu sans mono|liberation mono|nimbus mono)(?:\s|$)/.test(normalized)) {
+        return true;
+    }
+    // PostScript face names commonly omit all separators (CourierNewPSMT,
+    // NimbusMonoPS-Regular). Match those established family tokens without a
+    // broad `mono` substring check that would misclassify vendor names such as
+    // Monotype Times.
+    const compact = normalized.replace(/\s+/g, '');
+    return /(?:courier|consolas|menlo|monaco|lucidaconsole|sourcecodepro|robotomono|ibmplexmono|dejavusansmono|liberationmono|nimbusmono)/.test(compact);
+}
+
+// PyMuPDF exposes the PDF font flags on every extracted source span; bit 3
+// means monospaced. Prefer that structural signal, but retain a font-name
+// fallback for older extraction rows that predate the flags field. Weighting
+// by text length prevents a stray one-character mono symbol from making an
+// otherwise proportional paragraph look like a code/configuration block.
+export function promotedSourceBlockUsesMonospacedTypography(annotation) {
+    if (!annotation || typeof annotation !== 'object') return false;
+    if ([annotation.fontFamily, annotation.fontSourceName, annotation.embeddedFontFamily]
+        .some(sourceFontNameLooksMonospaced)) return true;
+
+    const spans = Array.isArray(annotation.sourceSpans) ? annotation.sourceSpans : [];
+    let totalWeight = 0;
+    let monospacedWeight = 0;
+    for (const span of spans) {
+        if (!span || typeof span !== 'object') continue;
+        const text = String(span.text ?? span.rawText ?? span.render_text ?? '').trim();
+        if (!text) continue;
+        const weight = Math.max(1, Array.from(text).length);
+        const flags = Number(span.flags);
+        const hasMonospacedFlag = Number.isFinite(flags) && (Math.trunc(flags) & 8) !== 0;
+        const hasMonospacedName = [span.font, span.fontFamily, span.fontSourceName, span.embedded_font_family]
+            .some(sourceFontNameLooksMonospaced);
+        totalWeight += weight;
+        if (hasMonospacedFlag || hasMonospacedName) monospacedWeight += weight;
+    }
+    return totalWeight > 0 && monospacedWeight / totalWeight >= 0.8;
 }
 
 export function pdfjsPromotedOverlayShouldRenderAsPersistedOverlay(annotation) {

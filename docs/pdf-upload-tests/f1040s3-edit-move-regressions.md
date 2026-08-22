@@ -86,9 +86,11 @@ result. It asserts that:
 
 - the source PDF's black `Part I` tile remains at its original coordinates;
 - only the text moves;
-- the moved text becomes black and remains visible on the white destination
-  in the live editor and downloaded PDF;
-- no dark background moves with or is copied behind the text; and
+- the moved text keeps the white glyph color it had inside the black tile, in
+  the live editor and in the downloaded PDF (colour fidelity: a moved run is
+  never re-contrasted against its new surroundings);
+- no dark background moves with or is copied behind the text, so the white
+  destination stays white; and
 - the neighboring `Nonrefundable Credits` text and geometry remain unchanged.
 
 All scenarios delete their disposable documents in cleanup and never edit

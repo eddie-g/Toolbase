@@ -89,6 +89,36 @@ async function main() {
         }, TARGET_ID);
         await page.waitForSelector('#ann-format-bar.is-visible', { timeout: 5000 });
 
+        // Closing Text Options intentionally leaves the annotation selected.
+        // A second click on that same annotation must reopen the panel, just
+        // as selecting a different text annotation does.
+        await page.locator('#afb-close').click();
+        await page.waitForFunction(
+            () => !document.querySelector('#ann-format-bar')?.classList.contains('is-visible'),
+            null,
+            { timeout: 5000 },
+        );
+        await page.evaluate((targetId) => {
+            const box = document.querySelector(`.enpv-annotation-box[data-annotation-id="${CSS.escape(targetId)}"]`);
+            if (!(box instanceof HTMLElement)) throw new Error(`missing selected target ${targetId}`);
+            const rect = box.getBoundingClientRect();
+            box.dispatchEvent(new PointerEvent('pointerdown', {
+                bubbles: true,
+                button: 0,
+                clientX: rect.left + (rect.width / 2),
+                clientY: rect.top + (rect.height / 2),
+                pointerId: 2,
+                pointerType: 'mouse',
+            }));
+            window.dispatchEvent(new PointerEvent('pointerup', {
+                bubbles: true,
+                button: 0,
+                pointerId: 2,
+                pointerType: 'mouse',
+            }));
+        }, TARGET_ID);
+        await page.waitForSelector('#ann-format-bar.is-visible', { timeout: 5000 });
+
         await page.selectOption('#afb-font', 'Courier');
         await page.locator('#afb-size').evaluate((input) => {
             input.value = '85';

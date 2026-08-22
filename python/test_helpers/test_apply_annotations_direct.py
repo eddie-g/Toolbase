@@ -1563,7 +1563,7 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(stream_pixels, [(255, 255, 255), (255, 255, 255), (255, 255, 255)])
         self.assertEqual(mask_pixels, [48, 255, 0])
 
-    def test_draw_signature_prefers_direct_draw_vector_over_image_payload(self):
+    def test_draw_signature_flattens_direct_draw_vector_to_image(self):
         annotation = {
             "type": "image",
             "imageToolSource": "direct-draw",
@@ -1586,18 +1586,24 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
                 }],
             },
         }
-        page = self.FakePage()
+        document = fitz.open()
+        try:
+            page = document.new_page(width=180, height=120)
+            self.module.draw_signature(page, annotation)
+            pixmap = page.get_pixmap(alpha=False)
 
-        self.module.draw_signature(page, annotation)
-
-        self.assertEqual(len(page.shape_draw_polyline_calls), 1)
-        self.assertEqual(len(page.shape_finish_calls), 1)
-        finish = page.shape_finish_calls[0]
-        self.assertEqual(finish["color"], self.module.hex_to_rgb("#dc2626"))
-        self.assertAlmostEqual(finish["stroke_opacity"], 0.75, places=3)
-        self.assertEqual(finish["lineCap"], 1)
-        self.assertEqual(finish["lineJoin"], 1)
-        self.assertGreater(finish["width"], 0)
+            self.assertEqual(len(page.get_images(full=True)), 1)
+            self.assertEqual(len(page.get_drawings()), 0)
+            red_pixels = sum(
+                1
+                for offset in range(0, len(pixmap.samples), 3)
+                if pixmap.samples[offset] > 150
+                and pixmap.samples[offset + 1] < 100
+                and pixmap.samples[offset + 2] < 100
+            )
+            self.assertGreater(red_pixels, 20)
+        finally:
+            document.close()
 
     def test_direct_draw_eraser_annotation_is_sorted_above_every_other_layer(self):
         annotations = [

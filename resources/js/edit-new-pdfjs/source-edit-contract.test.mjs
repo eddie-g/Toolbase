@@ -1,28 +1,98 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+    annotationSelectionType,
     clampSourceMaskRectToCell,
     dominantSourceRunFontSize,
+    insertPdfInlineSymbolsIntoText,
+    isPdfInlineSymbolText,
     isPdfjsPromotedExtractionAnnotation,
     isPdfjsSourceBackedTextAnnotation,
     naturalSourceLineSeparator,
+    normalizePdfInlineSymbolText,
     pdfjsFontWeightFromFaceName,
     pdfjsPromotedOverlayShouldRenderAsPersistedOverlay,
     pdfjsSourceOverlayShouldUseSourceBoxInEditMode,
+    pdfjsTextCoversPromotedFallback,
+    promotedSourceLayoutCompatibleTextEdit,
+    promotedSourceBlockUsesMonospacedTypography,
     promotedTextEditFlags,
     reconcileRichTextRunWhitespace,
     resolveRichTextRunFontIdentity,
     restoreExplicitSourceWhitespace,
     richTextViewportCssLength,
+    sourceDrawnUnderlineRangesForRect,
     sourceNaturalizedGapText,
     sourceRunDrawnUnderlineMetadata,
     sourceRunTextsUseDistributedLeaderSpacing,
     sourceSpanDrawnUnderlineSegments,
     sourceSpanDrawnUnderlineRanges,
+    sourceSpanDrawnUnderlineRangesForRect,
+    sourceVisualLineBreakCounts,
     sourceVisualLineSlots,
     splitSourceRunsAtDrawnUnderlineRanges,
     textResizeCollisionLimits,
 } from './source-edit-contract.js';
+
+test('routes PDF.js source text boxes without an explicit annotation type to Text Options', () => {
+    assert.equal(annotationSelectionType('', ''), 'text');
+    assert.equal(annotationSelectionType(undefined, undefined), 'text');
+    assert.equal(annotationSelectionType('', 'text'), 'text');
+});
+
+test('keeps explicit non-text annotation selection types out of Text Options', () => {
+    assert.equal(annotationSelectionType('shape', 'text'), 'shape');
+    assert.equal(annotationSelectionType('', 'image'), 'image');
+    assert.equal(annotationSelectionType('FIELD', ''), 'field');
+});
+
+test('treats promoted_1_9_seg_0 as covered by its combined PDF.js source row', () => {
+    assert.equal(pdfjsTextCoversPromotedFallback(
+        '2a Alimony received . . . . . . . . . .',
+        '2a',
+        'field_label',
+    ), true);
+});
+
+test('treats promoted_2_10_seg_0 as covered by its combined PDF.js source row', () => {
+    assert.equal(pdfjsTextCoversPromotedFallback(
+        '19a Alimony paid . . . . . . . . . .',
+        '19a',
+        'field_label',
+    ), true);
+});
+
+test('does not let unrelated short fallbacks or partial numeric labels claim a PDF.js row', () => {
+    assert.equal(pdfjsTextCoversPromotedFallback('20 Wages', '2', 'field_label'), false);
+    assert.equal(pdfjsTextCoversPromotedFallback('2a Alimony received', '2a', ''), false);
+    assert.equal(pdfjsTextCoversPromotedFallback('Partnership', 'Partnership', ''), true);
+});
+
+test('normalizes legacy Symbol registered marks and inserts them into their paragraph', () => {
+    const groups = [
+        { text: 'display of bookmarks in Adobe', rect: { left: 57, top: 658, right: 207, bottom: 670 } },
+        { text: '\uf8e8', rect: { left: 207, top: 658, right: 214, bottom: 669 } },
+        { text: 'Acrobat', rect: { left: 214, top: 658, right: 255, bottom: 670 } },
+        { text: '\uf8e8', rect: { left: 255, top: 658, right: 263, bottom: 669 } },
+        { text: 'Reader by clicking', rect: { left: 263, top: 658, right: 359, bottom: 670 } },
+    ];
+    const source = (
+        'The left pane displays the available bookmarks for this PDF.\n'
+        + 'display of bookmarks in Adobe Acrobat Reader by clicking'
+    );
+
+    assert.equal(normalizePdfInlineSymbolText('\uf8e8'), '\u00ae');
+    assert.equal(isPdfInlineSymbolText('\uf8e8'), true);
+    assert.equal(isPdfInlineSymbolText('\u00ae'), true);
+    assert.equal(isPdfInlineSymbolText('Acrobat'), false);
+    assert.equal(
+        insertPdfInlineSymbolsIntoText(source, groups),
+        (
+            'The left pane displays the available bookmarks for this PDF.\n'
+            + 'display of bookmarks in Adobe\u00ae Acrobat\u00ae Reader by clicking'
+        ),
+    );
+});
 
 const baseSourceOverlay = {
     id: 'pdfjs_4037_0_source:0:53',
@@ -51,6 +121,37 @@ const basePromotedOverlay = {
     pdfjsSourceText: 'Partnership',
     text: 'Partnership',
 };
+
+test('recognizes an extracted Courier configuration block as one monospaced unit', () => {
+    assert.equal(promotedSourceBlockUsesMonospacedTypography({
+        fontFamily: 'Courier',
+        fontSourceName: 'Courier',
+        sourceSpans: [
+            { text: '^reformat trunc', font: 'Courier', flags: 8 },
+            { text: '^symbolset WINLATIN1', font: 'Courier', flags: 8 },
+            { text: '^field trans_date', font: 'Courier', flags: 8 },
+        ],
+    }), true);
+    assert.equal(promotedSourceBlockUsesMonospacedTypography({
+        fontSourceName: 'ABCDEF+CourierNewPSMT',
+    }), true);
+});
+
+test('uses weighted source font flags without promoting proportional form rows', () => {
+    assert.equal(promotedSourceBlockUsesMonospacedTypography({
+        sourceSpans: [
+            { text: 'Description for item #1', font: 'Unidentified', flags: 8 },
+            { text: '^field trans_type', font: 'Unidentified', flags: 8 },
+        ],
+    }), true);
+    assert.equal(promotedSourceBlockUsesMonospacedTypography({
+        fontFamily: 'Arial',
+        sourceSpans: [
+            { text: 'Relationship to deceased:', font: 'Arial', flags: 0 },
+            { text: '\uf0a3', font: 'Wingdings', flags: 8 },
+        ],
+    }), false);
+});
 
 test('converts versioned PDF-point rich text to viewport pixels', () => {
     assert.equal(richTextViewportCssLength('21pt', { pointScale: 10 / 3 }), '70px');
@@ -122,6 +223,54 @@ test('repairs whitespace-only drift without losing mixed run styles', () => {
     assert.deepEqual(reconcileRichTextRunWhitespace([
         { type: 'text', text: 'Different', fontWeight: '700' },
     ], 'Content'), []);
+});
+
+test('keeps hyperlink destinations as distinct rich-text run styles', () => {
+    const runs = reconcileRichTextRunWhitespace([
+        {
+            type: 'text',
+            text: 'Visit',
+            color: '#000000',
+            underline: false,
+        },
+        {
+            type: 'text',
+            text: 'example.com',
+            color: '#0563c1',
+            underline: true,
+            linkUrl: 'https://example.com/',
+        },
+    ], 'Visit example.com');
+
+    assert.equal(runs.length, 2);
+    assert.equal(runs[0].text, 'Visit ');
+    assert.equal(runs[0].linkUrl, undefined);
+    assert.equal(runs[1].text, 'example.com');
+    assert.equal(runs[1].linkUrl, 'https://example.com/');
+});
+
+test('keeps promoted_1_7 separator spaces out of authored inline styles', () => {
+    const runs = reconcileRichTextRunWhitespace([
+        { type: 'text', text: 'All formalities', fontWeight: '400', fontStyle: 'normal', underline: false },
+        { type: 'text', text: 'associated', fontWeight: '700', fontStyle: 'normal', underline: false },
+        { type: 'text', text: 'with this', fontWeight: '400', fontStyle: 'normal', underline: false },
+        { type: 'text', text: 'process', fontWeight: '400', fontStyle: 'italic', underline: false },
+        { type: 'text', text: 'are now', fontWeight: '400', fontStyle: 'normal', underline: false },
+        { type: 'text', text: 'finalized', fontWeight: '400', fontStyle: 'normal', underline: true },
+        { type: 'text', text: '.', fontWeight: '400', fontStyle: 'normal', underline: false },
+    ], 'All formalities associated with this process are now finalized.');
+
+    assert.equal(runs.map((run) => run.text || '').join(''), (
+        'All formalities associated with this process are now finalized.'
+    ));
+    const associated = runs.find((run) => run.text === 'associated');
+    const process = runs.find((run) => run.text === 'process');
+    const finalized = runs.find((run) => run.text === 'finalized');
+    assert.equal(associated?.fontWeight, '700');
+    assert.equal(process?.fontStyle, 'italic');
+    assert.equal(finalized?.underline, true);
+    assert.equal(runs.some((run) => run.underline && /^\s|\s$/u.test(run.text)), false);
+    assert.equal(runs.find((run) => run.text.endsWith(' '))?.underline, false);
 });
 
 test('preserves a spaced suffix and source typography when promoted_1_8 is edited', () => {
@@ -221,6 +370,26 @@ test('preserves captured distributed-leader gaps when source markup is naturaliz
         preserveCapturedSpacing: true,
         userMutated: true,
     }), '  x');
+});
+
+test('keeps the captured hanging indent when a released row keeps its line break', () => {
+    assert.equal(sourceNaturalizedGapText({
+        atLineStart: true,
+        originalSpaceCount: 6,
+        preserveCapturedSpacing: true,
+        preserveLineStartIndent: true,
+    }), '      ');
+    assert.equal(sourceNaturalizedGapText({
+        atLineStart: true,
+        originalSpaceCount: 6,
+        preserveCapturedSpacing: false,
+        preserveLineStartIndent: true,
+    }), '      ');
+    assert.equal(sourceNaturalizedGapText({
+        atLineStart: true,
+        originalSpaceCount: 6,
+        preserveCapturedSpacing: true,
+    }), '');
 });
 
 test('clamps an expanded source mask to midpoint-owned neighbouring rows', () => {
@@ -366,6 +535,46 @@ test('moves only the words covered by a drawn PDF underline segment', () => {
     }])[0].underline, false);
 });
 
+test('projects ss-5 extracted underline data onto its wider PDF.js title run', () => {
+    const sourceSpan = {
+        text: 'LIMITS ON REPLACEMENT SOCIAL SECURITY CARDS',
+        bbox: [149.25900268555, 581.93334960938, 463.27499389648, 593.93334960938],
+        origin: [149.25900268555, 590.81298828125],
+        font_size: 12,
+        has_drawn_underline: true,
+        drawn_underline_segments: [{
+            x0: 149.25900268555,
+            x1: 463.26901245117,
+            y: 591.92401123047,
+            width: 0.4040000140667,
+        }],
+    };
+    const ranges = sourceSpanDrawnUnderlineRangesForRect(sourceSpan, {
+        x: 148.66776315789474,
+        w: 314.3120534796464,
+    });
+
+    assert.equal(ranges.length, 1);
+    assert.ok(ranges[0].start > 0 && ranges[0].start < 0.01);
+    assert.equal(ranges[0].end, 1);
+    const runs = splitSourceRunsAtDrawnUnderlineRanges([{
+        text: sourceSpan.text,
+        leftPx: 0,
+        rightPx: 314.3120534796464,
+        underlineRanges: ranges,
+        underlineRangesPrecise: true,
+        hasDrawnUnderline: true,
+    }]);
+    assert.equal(runs.length, 1);
+    assert.equal(runs[0].underline, true);
+    const exactRunRanges = sourceDrawnUnderlineRangesForRect(
+        sourceSpan.drawn_underline_segments,
+        { x: 149.25900268555, w: 314.01599121093 },
+    );
+    assert.equal(exactRunRanges[0].start, 0);
+    assert.ok(exactRunRanges[0].end > 0.9999 && exactRunRanges[0].end <= 1);
+});
+
 test('rejects a nearby f1040 form rule as a drawn text underline', () => {
     const sourceSpan = {
         text: '15 Add lines 9 through 12 and 14. Enter here and on Form 1040, 1040-SR, or 1040-NR, line 31',
@@ -404,6 +613,41 @@ test('preserves exact source line slots and recognizes a double-height break', (
     assert.ok(Math.abs(slots[1].slotHeightPx - 24.078) < 0.001);
     assert.equal(slots[1].breakCount, 1);
     assert.equal(slots[3].slotHeightPx, 0);
+});
+
+test('preserves the promoted_3_7 paragraph gap when extraction includes a blank-row bbox', () => {
+    const breakCounts = sourceVisualLineBreakCounts([
+        [18.575, 383.949, 570.687, 394.949],
+        [18.575, 397.149, 577.397, 408.149],
+        [18.575, 410.349, 284.566, 421.349],
+        // The extraction records the blank row geometrically, but its text is
+        // intentionally absent from the four live PDF.js source lines.
+        [18.575, 428.290, 18.575, 439.290],
+        [18.575, 439.290, 434.947, 450.290],
+    ], 4);
+
+    assert.deepEqual(breakCounts, [1, 1, 2]);
+    assert.equal(naturalSourceLineSeparator(
+        'to support the date of birth shown in item 4.',
+        '16. Show an address where you can receive your card 7 to 14 days from now.',
+        breakCounts[2],
+    ), '\n\n');
+});
+
+test('keeps source geometry for a same-length promoted paragraph correction', () => {
+    const source = '5. If you check the first line\nFederal, State, or local government agency';
+    assert.equal(promotedSourceLayoutCompatibleTextEdit(
+        '6. If you check the first line\nFederal, State, or local government agency',
+        source,
+    ), true);
+    assert.equal(promotedSourceLayoutCompatibleTextEdit(
+        '15. If you check the first line\nFederal, State, or local government agency',
+        source,
+    ), false);
+    assert.equal(promotedSourceLayoutCompatibleTextEdit(
+        '5.  If you check the first line\nFederal, State, or local government agency',
+        source,
+    ), false);
 });
 
 test('uses paragraph text rather than a larger bullet glyph as the source font reference', () => {

@@ -34487,6 +34487,38 @@
             const downloadConvertedBaseUrl = "{{ route('documents.downloadConverted') }}";
             const downloadPdfABaseUrl = "{{ route('documents.downloadPdfA') }}";
             const logExportUrl = "{{ route('documents.logExport', $document) }}";
+
+            async function waitForDocumentConversion(data, label) {
+                if (data?.download_token) return data;
+                const statusUrl = data?.status_url;
+                if (!statusUrl) throw new Error(`The server did not return a ${label} conversion status URL.`);
+
+                for (let attempt = 0; attempt < 900; attempt += 1) {
+                    const status = String(data?.status || '').toLowerCase();
+                    if (status === 'failed' || data?.success === false) {
+                        throw new Error(data?.message || `${label} conversion failed.`);
+                    }
+                    if (data?.download_token) return data;
+
+                    const workerProgress = Math.max(0, Math.min(100, Number(data?.progress) || 0));
+                    const displayedProgress = 25 + Math.round(workerProgress * 0.7);
+                    convertProgressBar.style.width = displayedProgress + '%';
+                    convertProgressPct.textContent = displayedProgress + '%';
+                    convertProgressLabel.textContent = status === 'processing'
+                        ? `Processing ${label} conversion...`
+                        : 'Waiting for a conversion worker...';
+
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    const response = await fetch(statusUrl, {
+                        credentials: 'same-origin',
+                        headers: { 'Accept': 'application/json' },
+                    });
+                    data = await response.json().catch(() => ({}));
+                    if (!response.ok) throw new Error(data.message || `${label} conversion status check failed.`);
+                }
+
+                throw new Error(`${label} conversion is taking longer than expected.`);
+            }
             const pdfaReportModal = document.getElementById('pdfa-report-modal');
             const pdfaReportIcon = document.getElementById('pdfa-report-icon');
             const pdfaReportTitle = document.getElementById('pdfa-report-title');
@@ -35312,8 +35344,9 @@
                             convertProgressPct.textContent = '70%';
                             convertProgressLabel.textContent = 'Processing Word conversion...';
 
-                            const data = await resp.json();
+                            let data = await resp.json();
                             if (!resp.ok || !data.success) throw new Error(data.message || 'Word conversion failed');
+                            data = await waitForDocumentConversion(data, 'Word');
 
                             convertProgressBar.style.width = '100%';
                             convertProgressPct.textContent = '100%';
@@ -35329,12 +35362,10 @@
                             document.body.removeChild(a);
 
                             setStatus('Word document exported successfully.', 'ok');
-                            logExportActivity('Convert to Word', 'word_export', { layout: wordLayout, include_images: wordImages, ocr: wordOcr }, 'success');
                             setTimeout(() => { convertModal.style.display = 'none'; }, 600);
                         } catch (err) {
                             console.error('Word conversion error:', err);
                             setStatus('Word export error: ' + err.message, 'err');
-                            logExportActivity('Convert to Word', 'word_export', { error: err.message }, 'failed');
                         } finally {
                             cvtExporting = false;
                             convertExportBtn.disabled = false;
@@ -35366,8 +35397,9 @@
                             convertProgressPct.textContent = '70%';
                             convertProgressLabel.textContent = 'Processing Excel conversion...';
 
-                            const data = await resp.json();
+                            let data = await resp.json();
                             if (!resp.ok || !data.success) throw new Error(data.message || 'Excel conversion failed');
+                            data = await waitForDocumentConversion(data, 'Excel');
 
                             convertProgressBar.style.width = '100%';
                             convertProgressPct.textContent = '100%';
@@ -35383,12 +35415,10 @@
                             document.body.removeChild(a);
 
                             setStatus('Excel spreadsheet exported successfully.', 'ok');
-                            logExportActivity('Convert to Excel', 'excel_export', { mode: excelMode, merge_cells: excelMergeCells, sheet_per_page: excelSheetPerPage }, 'success');
                             setTimeout(() => { convertModal.style.display = 'none'; }, 600);
                         } catch (err) {
                             console.error('Excel conversion error:', err);
                             setStatus('Excel export error: ' + err.message, 'err');
-                            logExportActivity('Convert to Excel', 'excel_export', { error: err.message }, 'failed');
                         } finally {
                             cvtExporting = false;
                             convertExportBtn.disabled = false;

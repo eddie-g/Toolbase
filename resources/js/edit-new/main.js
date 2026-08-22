@@ -108,7 +108,11 @@ import {
     sizeOverlayCanvas,
 } from './render/overlay-sizing.js';
 import { currentShapeDefaults } from './shapes/defaults.js';
-import { reflectShapeStateToInputs as _reflectShapeStateToInputs, readShapeInspectorState as _readShapeInspectorState } from './shapes/inspector-ui.js';
+import {
+    activateShapeFillFromInspector,
+    reflectShapeStateToInputs as _reflectShapeStateToInputs,
+    readShapeInspectorState as _readShapeInspectorState,
+} from './shapes/inspector-ui.js';
 import { drawShapePath } from './shapes/path.js';
 import { drawShapeAnnotation } from './shapes/draw-annotation.js';
 import { getStickyUiBottomEdge, updatePageCardWidth } from './util/chrome-layout.js';
@@ -235,6 +239,12 @@ import { ensureSignatureFontLoaded } from './signature/font-loader.js';
 import { readFileAsDataUrl, loadImageElement } from './util/image-load.js';
 import { normalizeImportedImageAsset } from './images/normalize-imported.js';
 import { paintSmoothStroke } from './draw/smooth-stroke.js';
+import { paintSmoothDrawCurve } from './draw/smooth-curve.js';
+import {
+    DIRECT_DRAW_TOOL_ERASER,
+    DIRECT_DRAW_TOOL_SMOOTH_CURVE,
+    normalizeDirectDrawTool,
+} from './draw/tool-type.js';
 import {
     positionShapeConstrainTip as _positionShapeConstrainTip,
     showShapeConstrainTip as _showShapeConstrainTip,
@@ -4736,9 +4746,11 @@ import {
             ftbDrawErase.title = editModeEnabled
                 ? 'Turn Edit Mode OFF to draw or erase annotations'
                 : (drawModeActive
-                    ? (drawToolType === 'eraser'
+                    ? (drawToolType === DIRECT_DRAW_TOOL_ERASER
                         ? 'Eraser active — drag over a drawing to remove parts of it'
-                        : 'Pen active — drag directly on the page to draw')
+                        : drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
+                            ? 'Smooth curve active — drag directly on the page to draw a fitted curve'
+                            : 'Pen active — drag directly on the page to draw')
                     : 'Draw & Erase — draw directly on the page or erase parts of an existing drawing');
         }
         if (ftbAddImage) {
@@ -4904,6 +4916,7 @@ import {
             color: drawStrokeColor,
             width: drawBrushSize,
             opacity: drawOpacity,
+            directDrawTool: normalizeDirectDrawTool(drawToolType),
             points: [point],
             lastMidPoint: { x: point.x, y: point.y },
             minX: point.x - (drawBrushSize / 2),
@@ -4928,9 +4941,14 @@ import {
         activeDrawSession.minY = Math.min(activeDrawSession.minY, point.y - (activeDrawSession.width / 2));
         activeDrawSession.maxX = Math.max(activeDrawSession.maxX, point.x + (activeDrawSession.width / 2));
         activeDrawSession.maxY = Math.max(activeDrawSession.maxY, point.y + (activeDrawSession.width / 2));
-        const midPoint = { x: (lastPoint.x + point.x) / 2, y: (lastPoint.y + point.y) / 2 };
-        paintDrawSegment(activeDrawSession.ctx, activeDrawSession.lastMidPoint, lastPoint, midPoint, activeDrawSession.width, activeDrawSession.color);
-        activeDrawSession.lastMidPoint = midPoint;
+        if (activeDrawSession.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
+            activeDrawSession.ctx.clearRect(0, 0, activeDrawSession.layer.width, activeDrawSession.layer.height);
+            paintSmoothDrawCurve(activeDrawSession.ctx, activeDrawSession, activeDrawSession.color, activeDrawSession.width);
+        } else {
+            const midPoint = { x: (lastPoint.x + point.x) / 2, y: (lastPoint.y + point.y) / 2 };
+            paintDrawSegment(activeDrawSession.ctx, activeDrawSession.lastMidPoint, lastPoint, midPoint, activeDrawSession.width, activeDrawSession.color);
+            activeDrawSession.lastMidPoint = midPoint;
+        }
         return true;
     }
 
@@ -4939,7 +4957,7 @@ import {
         if (event.pointerId !== activeDrawSession.pointerId) return false;
         const session = activeDrawSession;
         oc.releasePointerCapture?.(event.pointerId);
-        if (session.points.length > 1) {
+        if (session.points.length > 1 && session.directDrawTool !== DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
             const lastPoint = session.points[session.points.length - 1];
             paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, lastPoint, session.width, session.color);
         }
@@ -5011,7 +5029,18 @@ import {
             );
         }
         outputCtx.globalAlpha = session.opacity;
-        outputCtx.drawImage(session.layer, -uLeft, -uTop);
+        if (session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
+            paintSmoothDrawCurve(outputCtx, {
+                color: session.color,
+                width: session.width,
+                points: session.points.map((point) => ({
+                    x: point.x - uLeft,
+                    y: point.y - uTop,
+                })),
+            }, session.color, session.width);
+        } else {
+            outputCtx.drawImage(session.layer, -uLeft, -uTop);
+        }
         const pdfWidth = cropWidth / pageScale;
         const pdfHeight = cropHeight / pageScale;
         const pdfX = uLeft / pageScale;
@@ -5032,6 +5061,7 @@ import {
                 intrinsicWidth: outputCanvas.width,
                 intrinsicHeight: outputCanvas.height,
                 imageToolSource: 'direct-draw',
+                directDrawTool: session.directDrawTool,
                 drawStrokeColor: session.color,
                 pdfX,
                 pdfY,
@@ -5054,7 +5084,11 @@ import {
                 redrawOverlay(session.pi);
                 clearActiveAnnotation();
                 markDirty();
-                setDrawToolStatus('Drawing added. Keep drawing or switch to the eraser.');
+                setDrawToolStatus(
+                    session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE
+                        ? 'Smooth curve added. Keep drawing or switch tools.'
+                        : 'Drawing added. Keep drawing or switch to the eraser.',
+                );
                 return true;
             }
         }
@@ -5066,6 +5100,7 @@ import {
             fileName: 'drawing.png',
             mimeType: 'image/png',
             imageToolSource: 'direct-draw',
+            directDrawTool: session.directDrawTool,
             drawStrokeColor: session.color,
         }, {
             pdfX,
@@ -5076,7 +5111,11 @@ import {
         if (created) {
             created._drawCreatedAt = now;
             clearActiveAnnotation();
-            setDrawToolStatus('Drawing added. Keep drawing or switch to the eraser.');
+            setDrawToolStatus(
+                session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE
+                    ? 'Smooth curve added. Keep drawing or switch tools.'
+                    : 'Drawing added. Keep drawing or switch to the eraser.',
+            );
         }
         return true;
     }
@@ -6780,6 +6819,7 @@ import {
         centerXPts = null,
         centerYPts = null,
         imageToolSource = null,
+        directDrawTool = 'pen',
         drawStrokeColor = null,
     } = {}, pi) {
         const data = pageData[pi];
@@ -6832,6 +6872,9 @@ import {
                 ? cloneSerializableValue(signatureComposer, null)
                 : undefined,
             imageToolSource: imageToolSource || undefined,
+            directDrawTool: imageToolSource === 'direct-draw'
+                ? normalizeDirectDrawTool(directDrawTool)
+                : undefined,
             drawStrokeColor: imageToolSource === 'direct-draw' && drawStrokeColor
                 ? normalizeHexColor(drawStrokeColor, '#111827')
                 : undefined,
@@ -6858,6 +6901,7 @@ import {
         signatureSourceMode = 'draw',
         signatureComposer = null,
         imageToolSource = null,
+        directDrawTool = 'pen',
         drawStrokeColor = null,
     } = {}, pi) {
         const ann = normalizeImageAnnotation({
@@ -6886,6 +6930,9 @@ import {
                 ? cloneSerializableValue(signatureComposer, null)
                 : undefined,
             imageToolSource: imageToolSource || undefined,
+            directDrawTool: imageToolSource === 'direct-draw'
+                ? normalizeDirectDrawTool(directDrawTool)
+                : undefined,
             drawStrokeColor: imageToolSource === 'direct-draw' && drawStrokeColor
                 ? normalizeHexColor(drawStrokeColor, '#111827')
                 : undefined,
@@ -6911,6 +6958,7 @@ import {
             signatureSourceMode: asset.signatureSourceMode || 'draw',
             signatureComposer: asset.signatureComposer || null,
             imageToolSource: asset.imageToolSource || null,
+            directDrawTool: asset.directDrawTool || 'pen',
             drawStrokeColor: asset.drawStrokeColor || null,
             pdfX: box.pdfX,
             pdfY: box.pdfY,
@@ -6959,6 +7007,7 @@ import {
             centerXPts: centerPt?.x ?? null,
             centerYPts: centerPt?.y ?? null,
             imageToolSource: asset.imageToolSource || null,
+            directDrawTool: asset.directDrawTool || 'pen',
             drawStrokeColor: asset.drawStrokeColor || null,
         }, pi);
         if (!ann) return;
@@ -7461,7 +7510,7 @@ import {
                 return;
             }
             if (drawModeActive) {
-                if (drawToolType === 'eraser') {
+                if (drawToolType === DIRECT_DRAW_TOOL_ERASER) {
                     void beginDirectEraserStroke(e, oc, pi);
                 } else {
                     beginDirectPenStroke(e, oc, pi);
@@ -7572,7 +7621,7 @@ import {
             if (drawModeActive) {
                 const data = pageData[pi];
                 const pt = canvasPointFromEvent(e, oc);
-                const ann = (drawToolType === 'eraser' && data && pt)
+                const ann = (drawToolType === DIRECT_DRAW_TOOL_ERASER && data && pt)
                     ? findAnnotationAt(pt.x, pt.y, data.annotations, data.scale, data.canvasHeight)
                     : null;
                 const canErase = isDirectDrawAnnotation(ann) && !isAnnotationLocked(ann);
@@ -8829,6 +8878,7 @@ import {
     if (shapeFillColorInput) {
         shapeFillColorInput.addEventListener('input', () => {
             if (shapeFillHexInput) shapeFillHexInput.value = shapeFillColorInput.value;
+            activateShapeFillFromInspector({ shapeFillOpacityInput, shapeFillTransparentInput });
             commitShapeInspectorToActive({ pushHistory: false });
         });
         shapeFillColorInput.addEventListener('change', () => commitShapeInspectorToActive({ pushHistory: true }));
@@ -8837,6 +8887,7 @@ import {
         shapeFillHexInput.addEventListener('input', () => {
             const normalized = normalizeHexColor(shapeFillHexInput.value, currentShapeFillColor);
             if (shapeFillColorInput) shapeFillColorInput.value = normalized;
+            activateShapeFillFromInspector({ shapeFillOpacityInput, shapeFillTransparentInput });
             commitShapeInspectorToActive({ pushHistory: false });
         });
         shapeFillHexInput.addEventListener('change', () => commitShapeInspectorToActive({ pushHistory: true }));
@@ -8850,6 +8901,7 @@ import {
     if (shapeFillOpacityInput) {
         shapeFillOpacityInput.addEventListener('input', () => {
             if (shapeFillOpacityValue) shapeFillOpacityValue.textContent = `${shapeFillOpacityInput.value}%`;
+            activateShapeFillFromInspector({ shapeFillOpacityInput, shapeFillTransparentInput });
             commitShapeInspectorToActive({ pushHistory: false });
         });
         shapeFillOpacityInput.addEventListener('change', () => commitShapeInspectorToActive({ pushHistory: true }));

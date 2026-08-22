@@ -46,6 +46,11 @@ class Document extends Model
         return $this->hasMany(UserActivity::class);
     }
 
+    public function conversions()
+    {
+        return $this->hasMany(DocumentConversion::class);
+    }
+
     public function notes()
     {
         return $this->hasMany(DocumentNote::class);

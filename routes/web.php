@@ -120,8 +120,11 @@ Route::post('/documents/{document}/convert-html-to-pdf', [DocumentController::cl
 Route::post('/documents/{document}/save-guided-form', [DocumentController::class, 'saveGuidedFormData'])->name('documents.saveGuidedForm');
 Route::post('/documents/{document}/screenshot', [DocumentController::class, 'takeScreenshot'])->name('documents.takeScreenshot');
 Route::post('/documents/{document}/convert-to-pdfa', [DocumentController::class, 'convertToPdfA'])->name('documents.convertToPdfA');
-Route::post('/documents/{document}/convert-to-word', [DocumentController::class, 'convertToWord'])->middleware('auth:web,admin')->name('documents.convertToWord');
-Route::post('/documents/{document}/convert-to-excel', [DocumentController::class, 'convertToExcel'])->middleware('auth:web,admin')->name('documents.convertToExcel');
+Route::post('/documents/{document}/convert-to-word', [DocumentController::class, 'queueWordConversion'])->middleware('auth:web,admin')->name('documents.convertToWord');
+Route::post('/documents/{document}/convert-to-excel', [DocumentController::class, 'queueExcelConversion'])->middleware('auth:web,admin')->name('documents.convertToExcel');
+Route::get('/documents/{document}/conversions/{conversion}', [DocumentController::class, 'conversionStatus'])
+    ->middleware('auth:web,admin')
+    ->name('documents.conversions.status');
 Route::post('/documents/{document}/pdf-password/unlock', [DocumentController::class, 'unlockPdfPassword'])
     ->middleware('throttle:10,1')
     ->name('documents.unlockPdfPassword');

@@ -7,6 +7,7 @@ use App\Models\Document;
 use App\Models\PdfState;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class AdminOwnedDocumentsTest extends TestCase
@@ -111,6 +112,32 @@ class AdminOwnedDocumentsTest extends TestCase
             'user_email' => null,
             'state' => 'not_saved',
         ]);
+    }
+
+    public function test_blank_pdf_opens_in_the_pdfjs_editor(): void
+    {
+        Storage::fake('local');
+
+        $admin = $this->createAdmin('blank-owner@example.com');
+        $response = $this->actingAs($admin, 'admin')
+            ->post(route('documents.createBlank'), [
+                'page_size' => 'Letter',
+                'orientation' => 'portrait',
+            ]);
+
+        $document = Document::query()
+            ->where('admin_id', $admin->id)
+            ->latest('id')
+            ->firstOrFail();
+
+        $response->assertRedirectToRoute('documents.editPdfjs', $document);
+
+        $this->actingAs($admin, 'admin')
+            ->get(route('documents.editPdfjs', $document))
+            ->assertRedirect(route('documents.editNew', [
+                'document' => $document,
+                'pdfjs' => 1,
+            ]));
     }
 
     private function createAdmin(string $email): Admin
