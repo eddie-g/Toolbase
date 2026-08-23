@@ -42,6 +42,7 @@ import {
     installSignatureTabKeyboard,
 } from '../edit-new/signature/saved-view.js';
 import {
+    canvasBackdropForInk,
     readSignaturePreferences,
     writeSignaturePreferences,
 } from '../edit-new/signature/preferences.js';
@@ -193,6 +194,20 @@ export function installSignatureFeature(deps) {
     const clearSignatureCanvas = () => _clearSignatureCanvas(signatureCanvas);
     const clearSignatureDrawingState = () => _clearSignatureDrawingState(signatureCanvas);
     const renderDrawSignaturePreview = () => _renderDrawSignaturePreview(signatureCanvas, signatureSmoothingInput);
+    /**
+     * Tint the canvas so the ink always has something to read against.
+     * Applied as CSS only — the bitmap stays transparent.
+     */
+    const syncCanvasBackdrop = () => {
+        if (!signatureCanvas) return;
+        const ink = signatureMode === 'type'
+            ? signatureTypeColorInput?.value
+            : signatureColorInput?.value;
+        const backdrop = canvasBackdropForInk(ink);
+        signatureCanvas.style.background = backdrop.background;
+        signatureCanvas.dataset.inkTone = backdrop.tone;
+    };
+
     const syncSignatureColorLabels = () => _syncSignatureColorLabels({
         signatureColorValue, signatureColorInput,
         signatureTypeColorValue, signatureTypeColorInput,
@@ -227,6 +242,7 @@ export function installSignatureFeature(deps) {
                 : (signatureMode === 'type' ? `${verb} typed signature` : `${verb} signature`);
         }
         if (signatureCanvas) signatureCanvas.style.cursor = signatureMode === 'draw' ? 'crosshair' : 'default';
+        syncCanvasBackdrop();
         if (signatureMode === 'draw') {
             renderDrawSignaturePreview();
             setSignatureDirtyState(hasSignatureDrawContent());
@@ -654,6 +670,7 @@ export function installSignatureFeature(deps) {
     if (signatureColorInput) {
         signatureColorInput.addEventListener('input', () => {
             persistPrefs({ color: signatureColorInput.value });
+            syncCanvasBackdrop();
             syncSignatureColorLabels();
             if (signatureMode === 'draw' && signatureActiveStroke) {
                 signatureActiveStroke.color = signatureColorInput.value || '#111827';
@@ -681,6 +698,7 @@ export function installSignatureFeature(deps) {
     if (signatureTypeColorInput) {
         signatureTypeColorInput.addEventListener('input', () => {
             persistPrefs({ typeColor: signatureTypeColorInput.value });
+            syncCanvasBackdrop();
             syncSignatureColorLabels();
             if (signatureMode === 'type') renderTypedSignaturePreview();
         });
@@ -1133,6 +1151,7 @@ export function installSignatureFeature(deps) {
     }
     void loadAccountLibrary();
     syncSignatureColorLabels();
+    syncCanvasBackdrop();
 
     return {
         isSignatureAnnotation,

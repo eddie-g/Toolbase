@@ -9,7 +9,7 @@
         "test:pdfa-export": "node --test resources/js/edit-new-pdfjs/pdfa-export.test.mjs",
         "test:word-export": "node --test resources/js/edit-new-pdfjs/converted-export.test.mjs",
         "test:excel-export": "node --test resources/js/edit-new-pdfjs/converted-export.test.mjs",
-        "test:pdf-source-regressions": "node --test resources/js/edit-new-pdfjs/runtime-element-state.test.mjs resources/js/edit-new-pdfjs/source-edit-contract.test.mjs && node tests/OverlayEditor/run_promoted_single_span_title_regression.cjs && node tests/OverlayEditor/run_pdfjs_moved_source_title_regression.cjs"
+        "test:pdf-source-regressions": "node --test resources/js/edit-new-pdfjs/runtime-element-state.test.mjs resources/js/edit-new-pdfjs/canvas-backdrop.test.mjs resources/js/edit-new-pdfjs/source-edit-contract.test.mjs && node tests/OverlayEditor/run_promoted_single_span_title_regression.cjs && node tests/OverlayEditor/run_pdfjs_moved_source_title_regression.cjs"
     },
     "devDependencies": {
         "@playwright/test": "^1.58.2",
