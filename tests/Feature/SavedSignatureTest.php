@@ -101,6 +101,60 @@ class SavedSignatureTest extends TestCase
             ->assertJsonPath('success', false);
     }
 
+    public function test_a_signature_can_be_renamed(): void
+    {
+        $admin = $this->admin();
+        $signature = SavedSignature::query()->create([
+            'admin_id' => $admin->id,
+            'name' => 'Signature 1',
+            'source_mode' => 'draw',
+            'data_url' => self::PNG,
+        ]);
+
+        $this->actingAs($admin, 'admin')
+            ->patchJson('/saved-signatures/'.$signature->id, ['name' => '  Client contracts  '])
+            ->assertOk()
+            ->assertJsonPath('signature.name', 'Client contracts');
+
+        $this->assertSame('Client contracts', $signature->fresh()->name);
+    }
+
+    public function test_rename_rejects_an_empty_name(): void
+    {
+        $admin = $this->admin();
+        $signature = SavedSignature::query()->create([
+            'admin_id' => $admin->id,
+            'name' => 'Signature 1',
+            'source_mode' => 'draw',
+            'data_url' => self::PNG,
+        ]);
+
+        $this->actingAs($admin, 'admin')
+            ->patchJson('/saved-signatures/'.$signature->id, ['name' => '   '])
+            ->assertStatus(422);
+
+        $this->assertSame('Signature 1', $signature->fresh()->name);
+    }
+
+    public function test_accounts_cannot_rename_each_others_signatures(): void
+    {
+        $owner = $this->admin('owner@example.com');
+        $other = $this->admin('other@example.com');
+
+        $signature = SavedSignature::query()->create([
+            'admin_id' => $owner->id,
+            'name' => 'Private',
+            'source_mode' => 'draw',
+            'data_url' => self::PNG,
+        ]);
+
+        $this->actingAs($other, 'admin')
+            ->patchJson('/saved-signatures/'.$signature->id, ['name' => 'Hijacked'])
+            ->assertNotFound();
+
+        $this->assertSame('Private', $signature->fresh()->name);
+    }
+
     public function test_accounts_cannot_see_or_delete_each_others_signatures(): void
     {
         $owner = $this->admin('owner@example.com');

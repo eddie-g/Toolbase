@@ -51,11 +51,8 @@ const COMPOSER_DEFAULTS = {
     imageName: 'No file selected',
 };
 
-const MODE_HINTS = {
-    draw: 'Draw mode: click and drag to sign.',
-    type: 'Type mode: edit your name and preview it live.',
-    upload: 'Upload mode: choose an image and preview the stamp.',
-};
+// NK_Dev_5 removed every line of subtext under the live preview, so there is
+// no hint element left to assert on — its absence is asserted instead.
 
 const APPLY_LABELS = {
     draw: 'Use signature',
@@ -76,7 +73,8 @@ const PAGE_HEIGHT_PTS = 792;
 // Placement sizing rules from buildSignatureAnnotationAt() in
 // resources/js/edit-new-pdfjs/signature.js.
 const PLACEMENT = {
-    preferredWidthPts: 180,
+    minWidthPts: 24,
+    minHeightPts: 8,
     maxWidthFraction: 0.34,
     maxHeightFraction: 0.18,
     edgeMarginPts: 12,
@@ -203,6 +201,30 @@ const TESTS = [
         number: '20',
         title: 'Save and reload persistence via /save-annotation-state',
         run: testSavePersistence,
+    },
+    {
+        id: '24-modal-chrome',
+        number: '24',
+        title: 'Modal chrome: retired copy, stroke range and preview sizing',
+        run: testModalChrome,
+    },
+    {
+        id: '25-remembered-settings',
+        number: '25',
+        title: 'Remembered tab and composer settings',
+        run: testRememberedSettings,
+    },
+    {
+        id: '26-saved-layout-search',
+        number: '26',
+        title: 'Saved tab: grid/row layout, typeahead search and rename',
+        run: testSavedTabLayoutAndSearch,
+    },
+    {
+        id: '27-font-size-placement',
+        number: '27',
+        title: 'Font size determines the placed signature size',
+        run: testFontSizeDrivesPlacement,
     },
     {
         id: '21-burn-export',
@@ -469,16 +491,19 @@ function readModalState(page) {
 }
 
 /** Draw a short stroke across the signature canvas using real pointer input. */
-async function drawStroke(page) {
+async function drawStroke(page, { large = false } = {}) {
     const box = await page.locator('#signature-canvas').boundingBox();
     if (!box) throw new Error('Signature canvas has no bounding box');
 
     const y = box.y + (box.height / 2);
+    // A taller mark places a taller box, which the resize test needs so the
+    // eight handles are not crowded on top of each other.
+    const amp = large ? box.height * 0.34 : 24;
     await page.mouse.move(box.x + (box.width * 0.25), y);
     await page.mouse.down();
-    await page.mouse.move(box.x + (box.width * 0.40), y - 24, { steps: 8 });
-    await page.mouse.move(box.x + (box.width * 0.55), y + 18, { steps: 8 });
-    await page.mouse.move(box.x + (box.width * 0.70), y - 10, { steps: 8 });
+    await page.mouse.move(box.x + (box.width * 0.40), y - amp, { steps: 8 });
+    await page.mouse.move(box.x + (box.width * 0.55), y + amp, { steps: 8 });
+    await page.mouse.move(box.x + (box.width * 0.70), y - (amp * 0.6), { steps: 8 });
     await page.mouse.up();
     await page.waitForTimeout(120);
 }
@@ -538,10 +563,17 @@ function measureCanvasInk(page) {
     });
 }
 
-/** Open the modal and draw a compact mark. Leaves the modal open and dirty. */
-async function composeDrawnMark(page) {
+/**
+ * Open the modal and draw a compact mark. Leaves the modal open and dirty.
+ *
+ * Explicitly selects the Draw tab: since NK_Dev_5 the modal reopens on
+ * whichever tab was last used, so this cannot assume Draw.
+ */
+async function composeDrawnMark(page, { large = false } = {}) {
     await openSignatureModal(page);
-    await drawStroke(page);
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(200);
+    await drawStroke(page, { large });
 }
 
 /** Open the modal, switch to Type, and enter text. Leaves the modal open. */
@@ -674,8 +706,8 @@ async function findOffPagePoint(page) {
 }
 
 /** Compose a drawn signature and place it in one step. */
-async function placeDrawnSignature(page, { pageNumber = 1, fx = 0.5, fy = 0.5 } = {}) {
-    await composeDrawnMark(page);
+async function placeDrawnSignature(page, { pageNumber = 1, fx = 0.5, fy = 0.5, large = false } = {}) {
+    await composeDrawnMark(page, { large });
     await armPlacement(page);
     return clickPageFraction(page, pageNumber, fx, fy);
 }
@@ -1134,8 +1166,9 @@ async function testSignButtonOpensModal(page, ctx) {
         'Draw panel is visible; Type and Upload panels are hidden',
         `active panels: ${modal.activePanels.join(', ') || 'none'}`);
 
-    r.equals('draw-hint', modal.hint, MODE_HINTS.draw,
-        'Hint shows the draw-mode copy');
+    r.assert('no-preview-subtext', modal.hint === null,
+        'No subtext is rendered under the live preview (NK_Dev_5)',
+        `hint element present=${modal.hint !== null}`);
 
     r.equals('default-status', modal.status, DRAW_IDLE_STATUS,
         'Status shows the draw-mode idle prompt');
@@ -1219,8 +1252,6 @@ async function testModalShell(page, ctx) {
             `${mode} tab activates its own panel and hides the others`,
             `active=${state.activeMode}, panels=${JSON.stringify(state.panelVisibility)}`);
 
-        r.equals(`tab-${mode}-hint`, state.hint, MODE_HINTS[mode],
-            `${mode} tab shows its hint copy`);
 
         r.equals(`tab-${mode}-apply-label`, state.applyLabel, APPLY_LABELS[mode],
             `${mode} tab shows the "${APPLY_LABELS[mode]}" button label`);
@@ -1319,21 +1350,23 @@ async function testModalShell(page, ctx) {
         `apply=${reset.applyDisabled} save=${reset.saveDisabled}`);
 
     const resetValues = reset.values;
-    const resetOk = resetValues.font === COMPOSER_DEFAULTS.font
-        && resetValues.text === COMPOSER_DEFAULTS.text
+    // The font was changed to Pacifico before cancelling: settings persist,
+    // content does not.
+    const resetOk = resetValues.font === 'Pacifico'
+        && resetValues.text === ''
         && resetValues.color === COMPOSER_DEFAULTS.color
         && resetValues.width === COMPOSER_DEFAULTS.width
         && resetValues.smoothing === COMPOSER_DEFAULTS.smoothing
         && resetValues.typeSize === COMPOSER_DEFAULTS.typeSize;
-    r.assert('reset-controls-default', resetOk,
-        'Reopening restores every composer control to its default',
+    r.assert('reset-remembers-settings', resetOk,
+        'Reopening remembers the settings the user chose (NK_Dev_5) while clearing content',
         `font=${resetValues.font} text=${JSON.stringify(resetValues.text)} ink=${resetValues.color} width=${resetValues.width} smoothing=${resetValues.smoothing} size=${resetValues.typeSize}`);
 
     r.equals('reset-status', reset.status, DRAW_IDLE_STATUS,
         'Reopening restores the draw-mode idle status message');
 
-    r.equals('reset-mode-draw', reset.activeMode, 'draw',
-        'Reopening returns to the Draw tab');
+    r.equals('reset-remembers-tab', reset.activeMode, 'draw',
+        'Reopening returns to the tab the user last used');
 
     const resetArtifact = await capture(page, '03-modal-shell', 'reopened-clean-state');
 
@@ -2158,7 +2191,7 @@ async function renderEditorAsSignedIn(page, docId) {
  * driven without touching the database.
  */
 async function stubAccountEndpoint(page, initial = [], options = {}) {
-    const state = { entries: [...initial], posted: [], deleted: [], nextId: 100 };
+    const state = { entries: [...initial], posted: [], patched: [], deleted: [], nextId: 100 };
 
     await page.route(/\/saved-signatures(\/.*)?$/, async (route) => {
         const request = route.request();
@@ -2208,6 +2241,22 @@ async function stubAccountEndpoint(page, initial = [], options = {}) {
                 status: 201,
                 contentType: 'application/json',
                 body: JSON.stringify({ success: true, signature: created }),
+            });
+        }
+
+        if (method === 'PATCH') {
+            const id = decodeURIComponent(request.url().split('/').pop());
+            let body = {};
+            try { body = JSON.parse(request.postData() || '{}'); } catch (_) { body = {}; }
+            state.patched.push({ id, name: body.name });
+            state.entries = state.entries.map((entry) => (
+                String(entry.id) === String(id) ? { ...entry, name: body.name } : entry
+            ));
+            const updated = state.entries.find((entry) => String(entry.id) === String(id));
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ success: true, signature: updated }),
             });
         }
 
@@ -2498,15 +2547,15 @@ async function testPlacementSizing(page, ctx) {
         const maxW = PAGE_WIDTH_PTS * PLACEMENT.maxWidthFraction;
         const maxH = PAGE_HEIGHT_PTS * PLACEMENT.maxHeightFraction;
 
-        r.assert('size-width-cap', w <= Math.min(PLACEMENT.preferredWidthPts, maxW) + 0.5,
-            `Width respects the ${PLACEMENT.preferredWidthPts}pt target and the 34% page-width cap`,
-            `w=${w.toFixed(1)} cap=${Math.min(PLACEMENT.preferredWidthPts, maxW).toFixed(1)}`);
+        r.assert('size-width-cap', w <= maxW + 0.5,
+            'Width respects the 34% page-width cap',
+            `w=${w.toFixed(1)} cap=${maxW.toFixed(1)}`);
 
         r.assert('size-height-cap', h <= maxH + 0.5,
             'Height respects the 18% page-height cap',
             `h=${h.toFixed(1)} cap=${maxH.toFixed(1)}`);
 
-        r.assert('size-positive', w >= 48 && h >= 24,
+        r.assert('size-positive', w >= PLACEMENT.minWidthPts - 0.5 && h >= PLACEMENT.minHeightPts - 0.5,
             'Placed box keeps the documented minimum dimensions',
             `w=${w.toFixed(1)} h=${h.toFixed(1)}`);
 
@@ -2738,7 +2787,7 @@ async function testPlacementZoomScroll(page, ctx) {
 
 async function testMoveResizeLock(page, ctx) {
     const r = ctx.recorder;
-    await placeDrawnSignature(page, { pageNumber: 1, fx: 0.45, fy: 0.45 });
+    await placeDrawnSignature(page, { pageNumber: 1, fx: 0.45, fy: 0.45, large: true });
 
     // --- selection exposes the signature-only menu ------------------------
     await selectSignatureBox(page);
@@ -3534,6 +3583,346 @@ async function testRegressionAndLoad(page, ctx) {
     await page.keyboard.press('Escape');
 
     const artifact = await capture(page, '23-regression-load', 'bulk');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 24 — NK_Dev_5: modal chrome, stroke range and preview sizing
+// ---------------------------------------------------------------------------
+
+async function testModalChrome(page, ctx) {
+    const r = ctx.recorder;
+    await openSignatureModal(page);
+
+    const removedStrings = [
+        'This preview becomes the annotation that gets placed into the document.',
+        'Draw mode: click and drag to sign.',
+        'Upload mode: choose an image and preview the stamp.',
+        'Pick a saved signature to load it into the composer.',
+    ];
+    const modalText = await page.evaluate(() => document.getElementById('signature-modal').textContent || '');
+    const stillPresent = removedStrings.filter((line) => modalText.includes(line));
+    r.assert('retired-copy-removed', stillPresent.length === 0,
+        'The four retired lines of copy are gone from the modal',
+        stillPresent.length ? stillPresent.join(' | ') : 'all four removed');
+
+    const subtext = await page.evaluate(() => ({
+        hint: !!document.getElementById('signature-hint'),
+        copy: !!document.querySelector('.signature-stage__copy'),
+        stageHints: document.querySelectorAll('.signature-stage__hint').length,
+    }));
+    r.assert('no-subtext-under-preview',
+        !subtext.hint && !subtext.copy && subtext.stageHints === 0,
+        'No subtext is rendered under the live preview',
+        `hint=${subtext.hint} copy=${subtext.copy} stageHints=${subtext.stageHints}`);
+
+    const width = await page.evaluate(() => {
+        const el = document.getElementById('signature-width');
+        return { min: el.min, max: el.max, value: el.value };
+    });
+    r.assert('stroke-width-range-raised', Number(width.max) >= 24,
+        'Stroke width allows a much heavier stroke than before',
+        `min=${width.min} max=${width.max}`);
+
+    // The heaviest stroke must actually paint heavier than the lightest.
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(200);
+    await setRange(page, 'signature-width', 1);
+    await drawStroke(page);
+    const thin = (await canvasFingerprint(page)).inked;
+    await page.click('#signature-clear');
+    await page.waitForTimeout(200);
+    await setRange(page, 'signature-width', Number(width.max));
+    await drawStroke(page);
+    const thick = (await canvasFingerprint(page)).inked;
+    r.assert('max-stroke-paints-heavier', thick > thin * 3,
+        'The new maximum stroke width paints a much heavier line',
+        `1px=${thin} vs ${width.max}px=${thick} inked px`);
+
+    const layout = await page.evaluate(() => {
+        const stage = document.querySelector('.signature-stage');
+        const shell = document.querySelector('.signature-stage__canvas-shell');
+        const canvas = document.getElementById('signature-canvas');
+        return {
+            stagePad: parseFloat(getComputedStyle(stage).paddingTop),
+            shellPad: parseFloat(getComputedStyle(shell).paddingTop),
+            canvasHeight: Math.round(canvas.getBoundingClientRect().height),
+            shellHeight: Math.round(shell.getBoundingClientRect().height),
+        };
+    });
+    r.assert('preview-larger-padding-smaller',
+        layout.canvasHeight >= 280 && layout.stagePad <= 12 && layout.shellPad <= 10,
+        'The white preview area is larger and the surrounding padding reduced',
+        `canvas=${layout.canvasHeight}px stagePad=${layout.stagePad}px shellPad=${layout.shellPad}px`);
+
+    const artifact = await capture(page, '24-modal-chrome', 'chrome');
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 25 — NK_Dev_5: remembered tab and settings
+// ---------------------------------------------------------------------------
+
+async function testRememberedSettings(page, ctx) {
+    const r = ctx.recorder;
+
+    await openSignatureModal(page);
+    const first = await readModalState(page);
+    r.assert('first-open-defaults', first.activeMode === 'draw' && first.values.width === '3',
+        'A fresh browser opens on Draw with factory defaults',
+        `mode=${first.activeMode} width=${first.values.width}`);
+
+    // Change tab and several settings.
+    await page.click('[data-signature-mode="type"]');
+    await page.waitForTimeout(250);
+    await page.selectOption('#signature-font', 'Pacifico');
+    await setRange(page, 'signature-type-size', 96);
+    await setColour(page, 'signature-type-color', '#aa2266');
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(200);
+    await setRange(page, 'signature-width', 11);
+    await setRange(page, 'signature-smoothing', 20);
+    await setColour(page, 'signature-color', '#227744');
+    await page.click('[data-signature-mode="type"]');
+    await page.waitForTimeout(250);
+    await page.fill('#signature-text', 'Remembered');
+    await page.waitForTimeout(400);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+
+    // Reopen without reloading.
+    await openSignatureModal(page);
+    const reopened = await readModalState(page);
+    r.assert('remembers-tab', reopened.activeMode === 'type',
+        'Reopening returns to the tab that was last used',
+        `mode=${reopened.activeMode}`);
+    r.assert('remembers-settings',
+        reopened.values.font === 'Pacifico'
+        && reopened.values.typeSize === '96'
+        && reopened.values.width === '11'
+        && reopened.values.smoothing === '20'
+        && reopened.values.color === '#227744'
+        && reopened.values.typeColor === '#aa2266',
+        'Reopening restores every chosen setting',
+        `font=${reopened.values.font} size=${reopened.values.typeSize} width=${reopened.values.width} `
+        + `smoothing=${reopened.values.smoothing} ink=${reopened.values.color}/${reopened.values.typeColor}`);
+    r.assert('content-not-remembered',
+        reopened.values.text === '' && reopened.canvasBlank === true && reopened.applyDisabled === true,
+        'The previous signature CONTENT is still cleared, so it is never reused by accident',
+        `text=${JSON.stringify(reopened.values.text)} blank=${reopened.canvasBlank}`);
+
+    // And across a full reload.
+    await page.keyboard.press('Escape');
+    await openEditor(page, ctx.docId);
+    await openSignatureModal(page);
+    const afterReload = await readModalState(page);
+    r.assert('remembers-across-reload',
+        afterReload.activeMode === 'type'
+        && afterReload.values.font === 'Pacifico'
+        && afterReload.values.width === '11',
+        'Settings and tab survive a full page reload',
+        `mode=${afterReload.activeMode} font=${afterReload.values.font} width=${afterReload.values.width}`);
+
+    const artifact = await capture(page, '25-remembered-settings', 'remembered');
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 26 — NK_Dev_5: Saved tab grid/row layout, search and rename
+// ---------------------------------------------------------------------------
+
+async function testSavedTabLayoutAndSearch(page, ctx) {
+    const r = ctx.recorder;
+
+    const entries = [
+        { ...TYPED_ENTRY, id: '1', name: 'Client contracts' },
+        { ...TYPED_ENTRY, id: '2', name: 'Internal approvals' },
+        { ...TYPED_ENTRY, id: '3', name: 'Invoice sign-off' },
+    ];
+    const store = await stubAccountEndpoint(page, entries);
+    await renderEditorAsSignedIn(page, ctx.docId);
+    await openSignatureModal(page);
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(700);
+
+    // --- grid by default ---------------------------------------------------
+    const initial = await page.evaluate(() => {
+        const list = document.getElementById('signature-account-list');
+        return {
+            grid: list.classList.contains('is-grid'),
+            row: list.classList.contains('is-row'),
+            columns: getComputedStyle(list).gridTemplateColumns,
+            gridPressed: document.querySelector('[data-signature-view-mode="grid"]')?.getAttribute('aria-pressed'),
+        };
+    });
+    r.assert('starts-in-grid', initial.grid && !initial.row && initial.gridPressed === 'true',
+        'The saved list starts in grid mode',
+        `grid=${initial.grid} columns="${initial.columns}"`);
+    r.assert('grid-has-multiple-columns', (initial.columns || '').trim().split(/\s+/).length > 1,
+        'Grid mode lays entries out in multiple columns',
+        `columns="${initial.columns}"`);
+
+    // --- switch to row ------------------------------------------------------
+    await page.click('[data-signature-view-mode="row"]');
+    await page.waitForTimeout(400);
+    const rowMode = await page.evaluate(() => {
+        const list = document.getElementById('signature-account-list');
+        return {
+            row: list.classList.contains('is-row'),
+            grid: list.classList.contains('is-grid'),
+            rowPressed: document.querySelector('[data-signature-view-mode="row"]')?.getAttribute('aria-pressed'),
+        };
+    });
+    r.assert('switches-to-row', rowMode.row && !rowMode.grid && rowMode.rowPressed === 'true',
+        'The layout can be switched to row', `row=${rowMode.row} grid=${rowMode.grid}`);
+
+    // The chosen layout is a preference too.
+    await page.keyboard.press('Escape');
+    await openSignatureModal(page);
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(500);
+    const remembered = await page.evaluate(
+        () => document.getElementById('signature-account-list').classList.contains('is-row'),
+    );
+    r.assert('remembers-layout', remembered,
+        'The chosen layout is remembered between opens', `row=${remembered}`);
+    await page.click('[data-signature-view-mode="grid"]');
+    await page.waitForTimeout(300);
+
+    // --- typeahead search ---------------------------------------------------
+    const countRows = () => page.locator('#signature-account-list .signature-library__item').count();
+    r.assert('all-entries-listed', (await countRows()) === 3,
+        'All saved signatures are listed before filtering');
+
+    await page.fill('#signature-account-search', 'inv');
+    await page.waitForTimeout(400);
+    const narrowed = await countRows();
+    const narrowedText = await page.locator('#signature-account-list').textContent();
+    r.assert('typeahead-narrows', narrowed === 1 && /Invoice sign-off/.test(narrowedText),
+        'Typing narrows the list as you type, matching case-insensitively',
+        `${narrowed} row(s) for "inv"`);
+
+    await page.fill('#signature-account-search', 'c');
+    await page.waitForTimeout(400);
+    r.assert('typeahead-widens', (await countRows()) >= 2,
+        'Deleting characters widens the results again', `${await countRows()} row(s) for "c"`);
+
+    await page.fill('#signature-account-search', 'zzzz');
+    await page.waitForTimeout(400);
+    const emptyState = await page.evaluate(
+        () => !!document.querySelector('.signature-account__empty-search'),
+    );
+    r.assert('no-match-state', emptyState && (await countRows()) === 0,
+        'A query with no matches shows a dedicated empty state', `emptyState=${emptyState}`);
+
+    await page.fill('#signature-account-search', '');
+    await page.waitForTimeout(400);
+    r.assert('clearing-restores', (await countRows()) === 3,
+        'Clearing the search restores every entry');
+
+    // --- rename --------------------------------------------------------------
+    await page.locator('#signature-account-list [data-account-signature-action="rename"]').first().click();
+    await page.waitForTimeout(400);
+    const editing = await page.evaluate(() => {
+        const input = document.querySelector('[data-account-signature-rename-input]');
+        return { present: !!input, focused: document.activeElement === input, value: input?.value };
+    });
+    r.assert('rename-opens-inline-editor', editing.present && editing.focused,
+        'Rename opens a focused inline field pre-filled with the current name',
+        `present=${editing.present} focused=${editing.focused} value="${editing.value}"`);
+
+    await page.fill('[data-account-signature-rename-input]', 'Renamed by test');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(900);
+    r.assert('rename-sends-patch',
+        store.patched.some((entry) => entry.name === 'Renamed by test'),
+        'Committing sends the new name to the server',
+        `patched=${JSON.stringify(store.patched)}`);
+    const afterRename = await page.locator('#signature-account-list').textContent();
+    r.assert('rename-shows-in-list', /Renamed by test/.test(afterRename),
+        'The list shows the new name');
+
+    // Escape abandons a rename.
+    await page.locator('#signature-account-list [data-account-signature-action="rename"]').first().click();
+    await page.waitForTimeout(350);
+    await page.fill('[data-account-signature-rename-input]', 'Should not stick');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(600);
+    const afterEscape = await page.locator('#signature-account-list').textContent();
+    r.assert('escape-abandons-rename', !/Should not stick/.test(afterEscape),
+        'Escape abandons a rename without saving it',
+        afterEscape.replace(/\s+/g, ' ').trim().slice(0, 70));
+
+    const artifact = await capture(page, '26-saved-layout-search', 'saved-tab');
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 27 — NK_Dev_5: font size determines the placed signature size
+// ---------------------------------------------------------------------------
+
+async function testFontSizeDrivesPlacement(page, ctx) {
+    const r = ctx.recorder;
+
+    /** Compose a typed mark at `size` and place it, returning both geometries. */
+    const placeAt = async (size, fy) => {
+        await openSignatureModal(page);
+        await page.click('[data-signature-mode="type"]');
+        await page.waitForTimeout(250);
+        await page.fill('#signature-text', 'Ada Lovelace');
+        await setRange(page, 'signature-type-size', size);
+        await page.waitForTimeout(700);
+        const ink = await measureCanvasInk(page);
+        await armPlacement(page);
+        await clickPageFraction(page, 1, 0.5, fy);
+        return ink;
+    };
+
+    const smallInk = await placeAt(48, 0.3);
+    const largeInk = await placeAt(180, 0.6);
+    const saved = await captureAutosave(page, ctx.saveRecorder);
+
+    r.assert('both-placed', saved.signatures.length === 2,
+        'Both typed signatures were placed', `${saved.signatures.length} placed`);
+
+    const sorted = saved.signatures.slice().sort((a, b) => num(a.pdfWidth) - num(b.pdfWidth));
+    const [small, large] = sorted;
+
+    r.assert('smaller-font-places-smaller',
+        !!small && !!large && num(small.pdfWidth) < num(large.pdfWidth) * 0.6,
+        'A 48px font places a genuinely smaller signature than a 180px font',
+        small && large ? `${num(small.pdfWidth).toFixed(1)}pt vs ${num(large.pdfWidth).toFixed(1)}pt` : 'missing');
+
+    r.assert('composer-size-affects-mark',
+        !!smallInk && !!largeInk && smallInk.boxWidth < largeInk.boxWidth,
+        'The composed mark itself is smaller at the smaller font size',
+        `${smallInk?.boxWidth}px vs ${largeInk?.boxWidth}px on the canvas`);
+
+    // The old bug: every signature was scaled to the same width, so a small
+    // mark was stretched up and looked blurry. Placed size should now track
+    // the composed pixels one-for-one.
+    const scales = sorted.map((entry) => (
+        num(entry.pdfWidth) / (num(entry.intrinsicWidth) * (208 / 900))
+    ));
+    r.assert('no-upscaling-blur', scales.every((scale) => scale > 0.9 && scale < 1.15),
+        'Placed size tracks the composed mark instead of stretching it to a fixed width',
+        `placed/intrinsic scale = ${scales.map((x) => x.toFixed(2)).join(', ')}`);
+
+    // Aspect must survive, including for the small mark.
+    const aspectErrors = sorted.filter((entry) => {
+        const placed = num(entry.pdfWidth) / num(entry.pdfHeight);
+        const source = num(entry.intrinsicWidth) / num(entry.intrinsicHeight);
+        return Math.abs(placed - source) / source > 0.05;
+    });
+    r.assert('aspect-preserved-at-every-size', aspectErrors.length === 0,
+        'Small and large signatures keep their aspect ratio (no squashing by the size floors)',
+        sorted.map((entry) => `${(num(entry.pdfWidth) / num(entry.pdfHeight)).toFixed(2)} vs `
+            + `${(num(entry.intrinsicWidth) / num(entry.intrinsicHeight)).toFixed(2)}`).join(' | '));
+
+    const artifact = await capture(page, '27-font-size-placement', 'sizes');
     return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
 }
 

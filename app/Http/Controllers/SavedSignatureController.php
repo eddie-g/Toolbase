@@ -100,6 +100,44 @@ class SavedSignatureController extends Controller
         ], 201);
     }
 
+    /** Rename one of the account's signatures (NK_Dev_5). */
+    public function update(Request $request, string $savedSignature): JsonResponse
+    {
+        $ownership = $this->currentOwnership();
+        if (! $this->isSignedIn($ownership)) {
+            return $this->guestResponse();
+        }
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:120',
+        ]);
+
+        $name = trim($validated['name']);
+        if ($name === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Give the signature a name.',
+            ], 422);
+        }
+
+        // Scoped by owner so one account can never rename another's.
+        $signature = SavedSignature::query()
+            ->forOwner($ownership)
+            ->whereKey($savedSignature)
+            ->first();
+
+        if ($signature === null) {
+            return response()->json(['success' => false, 'message' => 'Signature not found.'], 404);
+        }
+
+        $signature->update(['name' => $name]);
+
+        return response()->json([
+            'success' => true,
+            'signature' => $signature->fresh()->toModalPayload(),
+        ]);
+    }
+
     public function destroy(string $savedSignature): JsonResponse
     {
         $ownership = $this->currentOwnership();

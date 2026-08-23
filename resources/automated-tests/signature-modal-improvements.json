@@ -1,0 +1,133 @@
+{
+    "suite": {
+        "key": "signature-modal-improvements",
+        "name": "Signature modal improvements",
+        "tool_label": "Signature modal (NK_Dev_5)",
+        "target_url": "/documents/{document}/edit-new?pdfjs=1",
+        "runner": "tests/AutomatedTests/Signature/run_signature_tests.cjs",
+        "asana": {
+            "task_gid": "1217754901732372",
+            "task_name": "[QA] - Signature modal improvements (NK_Dev_5)",
+            "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752/task/1217754901732372",
+            "workspace": "My workspace",
+            "project": "Netkit",
+            "section": "Claude QA Agent",
+            "instructions": [
+                "Start from a blank PDF project at edit-new?pdfjs=1",
+                "Several changes are per-browser preferences: use a fresh profile for first-run behaviour"
+            ]
+        },
+        "tests": [
+            {
+                "number": "01",
+                "id": "24-modal-chrome",
+                "gid": "1217754864496096",
+                "area": "Chrome",
+                "title": "Retired copy is gone from the modal",
+                "summary": "None of the four retired lines appear on any tab, in the footer status, or after drawing, clearing and switching tabs.",
+                "automated": true,
+                "automation_note": "Covered by runner test 24-modal-chrome (check retired-copy-removed)."
+            },
+            {
+                "number": "02",
+                "id": "24-modal-chrome",
+                "gid": "1217754910957532",
+                "area": "Chrome",
+                "title": "No subtext under the live preview",
+                "summary": "No hint line, no paragraph under the Live preview heading and no smoothing helper text; the heading, Save and Clear all remain.",
+                "automated": true,
+                "automation_note": "Covered by runner test 24-modal-chrome (check no-subtext-under-preview)."
+            },
+            {
+                "number": "03",
+                "id": "24-modal-chrome",
+                "gid": "1217754910956854",
+                "area": "Draw",
+                "title": "Stroke width supports a much heavier maximum",
+                "summary": "The slider runs 1-24, the maximum paints a visibly heavier line, extremes are safe, and the choice is remembered.",
+                "automated": true,
+                "automation_note": "Covered by 24-modal-chrome (stroke-width-range-raised, max-stroke-paints-heavier) and 05-draw-controls."
+            },
+            {
+                "number": "04",
+                "id": "24-modal-chrome",
+                "gid": "1217754910963666",
+                "area": "Chrome",
+                "title": "Live preview area is larger with less surrounding padding",
+                "summary": "The white drawing rectangle is materially taller and the padding around it reduced, without pushing the footer off or overlapping the actions.",
+                "automated": true,
+                "automation_note": "Measured by 24-modal-chrome (preview-larger-padding-smaller). Small-viewport and 200%-zoom layout remain a manual look."
+            },
+            {
+                "number": "05",
+                "id": "25-remembered-settings",
+                "gid": "1217754911009541",
+                "area": "Preferences",
+                "title": "Modal reopens on the tab you last used",
+                "summary": "The last tab is restored on reopen and across a reload, a fresh profile still starts on Draw, and edit mode still overrides it.",
+                "automated": true,
+                "automation_note": "Covered by 25-remembered-settings (remembers-tab, remembers-across-reload); the edit-mode override is covered by 18-edit-round-trip."
+            },
+            {
+                "number": "06",
+                "id": "25-remembered-settings",
+                "gid": "1217754901879954",
+                "area": "Preferences",
+                "title": "Composer settings are remembered, content is not",
+                "summary": "Ink, stroke width, smoothing, font, size and layout persist; the drawn/typed/uploaded content is always cleared so a signature is never reused by accident.",
+                "automated": true,
+                "automation_note": "Covered by 25-remembered-settings (remembers-settings, content-not-remembered). Blocked storage and corrupt preference values remain manual."
+            },
+            {
+                "number": "07",
+                "id": "26-saved-layout-search",
+                "gid": "1217754864609663",
+                "area": "Saved",
+                "title": "Saved tab starts in grid and can switch to row",
+                "summary": "Grid is the default multi-column layout, the toggle switches to rows, aria-pressed follows, and the choice is remembered.",
+                "automated": true,
+                "automation_note": "Covered by 26-saved-layout-search. Narrow widths and long names remain a manual look."
+            },
+            {
+                "number": "08",
+                "id": "26-saved-layout-search",
+                "gid": "1217754911064189",
+                "area": "Saved",
+                "title": "Typeahead search filters saved signatures as you type",
+                "summary": "Filtering happens per keystroke, matches case-insensitively anywhere in the name, widens as characters are deleted, and shows a dedicated no-match state.",
+                "automated": true,
+                "automation_note": "Covered by 26-saved-layout-search. Regex-like characters in names remain manual."
+            },
+            {
+                "number": "09",
+                "id": "26-saved-layout-search",
+                "gid": "1217754826720426",
+                "area": "Saved",
+                "title": "Rename a saved signature",
+                "summary": "Inline rename opens focused and pre-filled; Enter and blur commit, Escape abandons, empty names are refused, and the new name survives a reload.",
+                "automated": true,
+                "automation_note": "Client flow covered by 26-saved-layout-search; server rules (empty name, cross-account 404) by tests/Feature/SavedSignatureTest.php; escaping by 13-library-storage-failures."
+            },
+            {
+                "number": "10",
+                "id": "27-font-size-placement",
+                "gid": "1217754911097916",
+                "area": "Placement",
+                "title": "Font size determines how large the signature is placed",
+                "summary": "A 48px font places a genuinely small signature rather than a blurry one scaled to a fixed width; page caps and margins still hold.",
+                "automated": true,
+                "automation_note": "Covered by 27-font-size-placement. Perceived sharpness in an exported PDF remains a manual look."
+            },
+            {
+                "number": "11",
+                "id": "27-font-size-placement",
+                "gid": "1217769030497987",
+                "area": "Placement",
+                "title": "Aspect ratio is preserved at every placed size",
+                "summary": "Both axes scale by the same factor, so small and large marks keep their proportions instead of being squashed by the size floors.",
+                "automated": true,
+                "automation_note": "Covered by 27-font-size-placement (aspect-preserved-at-every-size). Visual comparison against the preview and the export remains manual."
+            }
+        ]
+    }
+}

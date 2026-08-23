@@ -1,20 +1,22 @@
 <x-filament-panels::page>
     <div
         x-data="automatedTests({
-            suiteUrl: @js(url('/automated-tests/signature-tool/suite')),
-            runUrl: @js(url('/automated-tests/signature-tool/run')),
-            artifactBase: @js(url('/automated-tests/signature-tool/artifacts')),
+            base: @js(url('/automated-tests')),
+            suites: @js($this->getSuites()),
         })"
         x-init="load()"
         class="at-root"
     >
         {{-- ── Suite switcher ─────────────────────────────────────────── --}}
         <nav class="at-tabs" aria-label="Test suites">
-            <button type="button" class="at-tab is-active">
-                <span class="at-tab__dot"></span>
-                Signature tool
-            </button>
-            <span class="at-tab is-disabled" title="Not automated yet">Text tool</span>
+            <template x-for="entry in suites" :key="entry.key">
+                <button type="button" class="at-tab"
+                        :class="{ 'is-active': entry.key === activeSuite }"
+                        x-on:click="selectSuite(entry.key)">
+                    <span class="at-tab__dot" x-show="entry.key === activeSuite"></span>
+                    <span x-text="entry.label"></span>
+                </button>
+            </template>
         </nav>
 
         {{-- ── Loading / error ────────────────────────────────────────── --}}
@@ -73,7 +75,7 @@
                         <h3>Automated run</h3>
                         <p>
                             Executes tests
-                            <template x-for="(test, index) in automatedTests" :key="test.id">
+                            <template x-for="(test, index) in automatedTests" :key="rowKey(test)">
                                 <span><span x-text="test.number"></span><span x-show="index < automatedTests.length - 1">, </span></span>
                             </template>
                             in headless Chromium against a fresh blank PDF.
@@ -125,12 +127,12 @@
                         <div class="at-group">
                             <div class="at-group__label" x-text="group.area"></div>
 
-                            <template x-for="test in group.tests" :key="test.id">
+                            <template x-for="test in group.tests" :key="rowKey(test)">
                                 <article
                                     class="at-test"
                                     :class="{
                                         'is-automated': test.automated,
-                                        'is-open': expanded[test.id],
+                                        'is-open': isExpanded(test),
                                         'is-pass': resultFor(test.id)?.status === 'passed',
                                         'is-fail': resultFor(test.id)?.status === 'failed',
                                         'is-error': resultFor(test.id)?.status === 'error',
@@ -141,7 +143,7 @@
                                         type="button"
                                         class="at-test__head"
                                         x-on:click="toggle(test)"
-                                        :aria-expanded="expanded[test.id] ? 'true' : 'false'"
+                                        :aria-expanded="isExpanded(test) ? 'true' : 'false'"
                                     >
                                         <span class="at-test__num" x-text="test.number"></span>
 
@@ -180,7 +182,7 @@
                                         </span>
                                     </button>
 
-                                    <div class="at-test__detail" x-show="expanded[test.id]" x-cloak>
+                                    <div class="at-test__detail" x-show="isExpanded(test)" x-cloak>
                                         <div class="at-test__links">
                                             <a :href="asanaSubtaskUrl(test)" target="_blank" rel="noopener">Subtask <span x-text="test.number"></span> in Asana ↗</a>
                                             <template x-if="resultFor(test.id)?.document_id">
@@ -248,9 +250,9 @@
     <script>
             function automatedTests(config) {
                 return {
-                    suiteUrl: config.suiteUrl,
-                    runUrl: config.runUrl,
-                    artifactBase: config.artifactBase,
+                    base: config.base,
+                    suites: config.suites || [],
+                    activeSuite: (config.suites && config.suites[0]) ? config.suites[0].key : null,
 
                     suite: null,
                     loadError: null,
@@ -259,6 +261,28 @@
                     results: {},
                     summary: null,
                     expanded: {},
+
+                    get suiteUrl() { return `${this.base}/${this.activeSuite}/suite`; },
+                    get runUrl() { return `${this.base}/${this.activeSuite}/run`; },
+                    get artifactBase() { return `${this.base}/${this.activeSuite}/artifacts`; },
+
+                    /** Switch suites, discarding the previous run's results. */
+                    async selectSuite(key) {
+                        if (key === this.activeSuite) return;
+                        this.activeSuite = key;
+                        this.suite = null;
+                        this.results = {};
+                        this.summary = null;
+                        this.expanded = {};
+                        this.loadError = null;
+                        this.runError = null;
+                        await this.load();
+                    },
+
+                    /** Runner ids repeat when several subtasks share one test. */
+                    get automatedTestIds() {
+                        return [...new Set(this.automatedTests.map((test) => test.id))];
+                    },
 
                     get automatedTests() {
                         return (this.suite?.tests || []).filter((test) => test.automated);
@@ -287,8 +311,17 @@
                         return `${base}/task/${test.gid}`;
                     },
 
+                    rowKey(test) {
+                        return `${test.number}:${test.id}`;
+                    },
+
                     toggle(test) {
-                        this.expanded[test.id] = !this.expanded[test.id];
+                        const key = this.rowKey(test);
+                        this.expanded[key] = !this.expanded[key];
+                    },
+
+                    isExpanded(test) {
+                        return !!this.expanded[this.rowKey(test)] || !!this.expanded[test.id];
                     },
 
                     async load() {
@@ -324,7 +357,7 @@
                                     Accept: 'application/json',
                                     ...(token ? { 'X-CSRF-TOKEN': token } : {}),
                                 },
-                                body: JSON.stringify({ tests: this.automatedTests.map((test) => test.id) }),
+                                body: JSON.stringify({ tests: this.automatedTestIds }),
                             });
 
                             const data = await response.json();

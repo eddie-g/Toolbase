@@ -32,6 +32,11 @@ class AutomatedTests extends Page
                 'label' => 'Signature tool',
                 'available' => true,
             ],
+            [
+                'key' => 'signature-modal-improvements',
+                'label' => 'Signature modal (NK_Dev_5)',
+                'available' => true,
+            ],
         ];
     }
 }

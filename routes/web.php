@@ -161,6 +161,7 @@ Route::post('/shapes/run-all-tests', [ShapeTestController::class, 'runAllTests']
 // a 401 + message rather than a redirect, since these are fetched by JS.
 Route::get('/saved-signatures', [SavedSignatureController::class, 'index'])->name('savedSignatures.index');
 Route::post('/saved-signatures', [SavedSignatureController::class, 'store'])->name('savedSignatures.store');
+Route::patch('/saved-signatures/{savedSignature}', [SavedSignatureController::class, 'update'])->name('savedSignatures.update');
 Route::delete('/saved-signatures/{savedSignature}', [SavedSignatureController::class, 'destroy'])->name('savedSignatures.destroy');
 
 Route::middleware('auth:admin')

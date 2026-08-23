@@ -23,6 +23,11 @@ class AutomatedTestController extends Controller
             'runner' => 'tests/AutomatedTests/Signature/run_signature_tests.cjs',
             'artifacts' => 'tests/AutomatedTests/Signature/artifacts',
         ],
+        'signature-modal-improvements' => [
+            'catalogue' => 'automated-tests/signature-modal-improvements.json',
+            'runner' => 'tests/AutomatedTests/Signature/run_signature_tests.cjs',
+            'artifacts' => 'tests/AutomatedTests/Signature/artifacts',
+        ],
     ];
 
     /** Playwright drives a real browser per test — allow generous headroom. */
@@ -185,10 +190,13 @@ class AutomatedTestController extends Controller
         $decoded = json_decode((string) file_get_contents($path), true);
         $tests = $decoded['suite']['tests'] ?? [];
 
+        // A catalogue may map several QA subtasks onto one runner test, so the
+        // allowlist is de-duplicated before it reaches the process.
         return collect(is_array($tests) ? $tests : [])
             ->filter(fn ($test) => ($test['automated'] ?? false) === true)
             ->pluck('id')
             ->filter(fn ($id) => is_string($id) && $id !== '')
+            ->unique()
             ->values()
             ->all();
     }

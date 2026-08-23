@@ -57,6 +57,30 @@ class AutomatedTestsPageTest extends TestCase
         }
     }
 
+    public function test_the_nk_dev_5_suite_is_catalogued(): void
+    {
+        $response = $this->actingAs($this->admin(), 'admin')
+            ->getJson('/automated-tests/signature-modal-improvements/suite')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('suite.asana.task_gid', '1217754901732372');
+
+        $tests = $response->json('suite.tests');
+        $this->assertCount(11, $tests, 'Every NK_Dev_5 QA subtask should be catalogued');
+
+        foreach ($tests as $test) {
+            $this->assertTrue($test['automated'], "{$test['number']} should be automated");
+            $this->assertNotEmpty($test['gid'], 'Each entry links back to its Asana subtask');
+        }
+
+        // Several subtasks intentionally share one runner test.
+        $this->assertLessThan(
+            count($tests),
+            count(array_unique(array_column($tests, 'id'))),
+            'Subtasks are expected to map onto a smaller set of runner tests',
+        );
+    }
+
     public function test_unknown_suite_is_rejected(): void
     {
         $this->actingAs($this->admin(), 'admin')
