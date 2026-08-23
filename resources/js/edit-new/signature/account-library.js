@@ -14,7 +14,22 @@ import { signatureModeLabel } from '../annotations/types.js';
 
 /** In-memory mirror of the account list, per editor instance. */
 export function createAccountLibraryStore() {
-    return { signedIn: false, entries: [], loaded: false };
+    return {
+        signedIn: false,
+        entries: [],
+        loaded: false,
+        // NK_Dev_5: Saved tab starts in grid, with a typeahead filter.
+        viewMode: 'grid',
+        query: '',
+        renamingId: null,
+    };
+}
+
+/** Entries matching the current typeahead query, in list order. */
+export function visibleAccountEntries(store) {
+    const query = String(store.query || '').trim().toLowerCase();
+    if (!query) return store.entries;
+    return store.entries.filter((entry) => String(entry.name || '').toLowerCase().includes(query));
 }
 
 function csrfToken() {
@@ -91,6 +106,27 @@ export async function saveAccountSignature(url, store, asset, name) {
     return { ok: true, signature: payload.signature };
 }
 
+/** Rename one of the account's signatures (NK_Dev_5). */
+export async function renameAccountSignature(baseUrl, store, id, name) {
+    const { ok, status, payload } = await request(`${baseUrl}/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name }),
+    });
+
+    if (status === 401) {
+        store.signedIn = false;
+        return { ok: false, message: payload?.message || 'Sign in to manage your saved signatures.' };
+    }
+    if (!ok || !payload?.success) {
+        return { ok: false, message: payload?.message || 'Could not rename that signature.' };
+    }
+
+    store.entries = store.entries.map((entry) => (
+        String(entry.id) === String(id) ? payload.signature : entry
+    ));
+    return { ok: true, signature: payload.signature };
+}
+
 /** Remove one of the account's signatures. */
 export async function deleteAccountSignature(baseUrl, store, id) {
     const { ok, status, payload } = await request(`${baseUrl}/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -111,31 +147,55 @@ export async function deleteAccountSignature(baseUrl, store, id) {
  * Paint the account list. Entry names come from user input, so every value is
  * escaped before it reaches innerHTML.
  */
-export function renderAccountLibrary(store, { listEl, copyEl }) {
+export function renderAccountLibrary(store, { listEl, copyEl, searchEl, viewButtons }) {
     if (!listEl) return;
+
+    // Layout toggle state lives on the list so CSS can switch the grid.
+    listEl.classList.toggle('is-grid', store.viewMode !== 'row');
+    listEl.classList.toggle('is-row', store.viewMode === 'row');
+    (viewButtons || []).forEach((button) => {
+        const active = button.dataset.signatureViewMode === (store.viewMode || 'grid');
+        button.classList.toggle('is-active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
 
     if (!store.signedIn) {
         listEl.innerHTML = '<div class="signature-library__empty">Sign in to save signatures to your account.</div>';
         if (copyEl) copyEl.textContent = 'Account signatures follow you to any browser you sign in on.';
+        if (searchEl) searchEl.disabled = true;
         return;
     }
 
     if (copyEl) {
         copyEl.textContent = 'Signatures saved to your account are available on any browser you sign in on.';
     }
+    if (searchEl) searchEl.disabled = false;
 
     if (!store.entries.length) {
         listEl.innerHTML = '<div class="signature-library__empty">No account signatures yet.</div>';
         return;
     }
 
-    listEl.innerHTML = store.entries.map((entry) => {
+    const visible = visibleAccountEntries(store);
+    if (!visible.length) {
+        listEl.innerHTML = `<div class="signature-account__empty-search">No signatures match “${escapeHtml(String(store.query || ''))}”.</div>`;
+        return;
+    }
+
+    listEl.innerHTML = visible.map((entry) => {
         const id = escapeHtml(String(entry.id || ''));
         const label = String(entry.name || 'Signature');
         const mode = signatureModeLabel(entry.sourceMode || entry.composer?.mode || 'draw');
         const preview = String(entry.dataUrl || '').trim();
         const updated = entry.updatedAt ? new Date(entry.updatedAt) : null;
         const updatedLabel = updated && !Number.isNaN(updated.getTime()) ? updated.toLocaleDateString() : 'Saved';
+        const renaming = String(store.renamingId || '') === String(entry.id);
+
+        const nameMarkup = renaming
+            ? `<input class="signature-library__rename" type="text" value="${escapeHtml(label)}"
+                      data-account-signature-rename-input aria-label="Signature name">`
+            : `<div class="signature-library__name-text" title="${escapeHtml(label)}"
+                    data-account-signature-action="rename">${escapeHtml(label)}</div>`;
 
         return (
             `<div class="signature-library__item" data-account-signature-id="${id}">`
@@ -143,16 +203,24 @@ export function renderAccountLibrary(store, { listEl, copyEl }) {
                     + (preview ? `<img src="${escapeHtml(preview)}" alt="${escapeHtml(label)}">` : '')
                 + `</div>`
                 + `<div class="signature-library__meta">`
-                    + `<div class="signature-library__name-text" title="${escapeHtml(label)}">${escapeHtml(label)}</div>`
+                    + nameMarkup
                     + `<div class="signature-library__detail">${escapeHtml(mode)} signature • ${escapeHtml(updatedLabel)}</div>`
                     + `<div class="signature-library__actions">`
                         + `<button type="button" class="signature-library__btn" data-account-signature-action="load">Load</button>`
+                        + `<button type="button" class="signature-library__btn is-rename" data-account-signature-action="rename">Rename</button>`
                         + `<button type="button" class="signature-library__btn is-danger" data-account-signature-action="delete">Delete</button>`
                     + `</div>`
                 + `</div>`
             + `</div>`
         );
     }).join('');
+
+    // Focus the field as soon as a rename starts.
+    const renameInput = listEl.querySelector('[data-account-signature-rename-input]');
+    if (renameInput) {
+        renameInput.focus();
+        renameInput.select();
+    }
 }
 
 /** Shape an account entry so the existing composer loader can consume it. */

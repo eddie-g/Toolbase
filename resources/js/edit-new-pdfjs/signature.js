@@ -42,9 +42,15 @@ import {
     installSignatureTabKeyboard,
 } from '../edit-new/signature/saved-view.js';
 import {
+    canvasBackdropForInk,
+    readSignaturePreferences,
+    writeSignaturePreferences,
+} from '../edit-new/signature/preferences.js';
+import {
     createAccountLibraryStore,
     fetchAccountSignatures,
     saveAccountSignature,
+    renameAccountSignature,
     deleteAccountSignature,
     renderAccountLibrary,
     accountEntryAsAnnotation,
@@ -77,6 +83,22 @@ import {
     setSignatureCtx,
     bumpSignatureTypedRenderToken,
 } from '../edit-new/store/signature-state.js';
+
+/**
+ * Points of PDF page width per composer-canvas pixel.
+ *
+ * The composer canvas is 900px wide and represents roughly a third of a Letter
+ * page (612pt * 0.34 = 208pt), so 208/900 keeps placed signatures at a natural
+ * size while making the font-size slider actually change how big the signature
+ * lands.
+ */
+const CANVAS_PX_TO_PDF_PTS = 208 / 900;
+
+/** Placement caps and floors, in PDF points / page fractions. */
+const PLACEMENT_MAX_WIDTH_FRACTION = 0.34;
+const PLACEMENT_MAX_HEIGHT_FRACTION = 0.18;
+const PLACEMENT_MIN_WIDTH_PTS = 24;
+const PLACEMENT_MIN_HEIGHT_PTS = 8;
 
 export function isSignatureAnnotation(annotation) {
     return !!annotation && String(annotation.type || '').toLowerCase() === 'signature';
@@ -144,7 +166,13 @@ export function installSignatureFeature(deps) {
     const signatureAccountSaveBtn = document.getElementById('signature-save-account');
     const signatureAccountList = document.getElementById('signature-account-list');
     const signatureAccountCopy = document.getElementById('signature-account-copy');
+    const signatureAccountSearch = document.getElementById('signature-account-search');
+    const signatureAccountViewButtons = Array.from(document.querySelectorAll('[data-signature-view-mode]'));
     const accountLibrary = createAccountLibraryStore();
+    // NK_Dev_5: remembered tab + control settings, per browser.
+    let signaturePrefs = readSignaturePreferences();
+    accountLibrary.viewMode = signaturePrefs.accountViewMode;
+    const persistPrefs = (patch) => { signaturePrefs = writeSignaturePreferences(signaturePrefs, patch); };
     const accountSignaturesUrl = signatureModal?.dataset.accountSignaturesUrl || '';
     // Read lazily rather than captured at install: the session can change
     // under a long-lived editor tab, and it keeps the flag honest.
@@ -166,6 +194,20 @@ export function installSignatureFeature(deps) {
     const clearSignatureCanvas = () => _clearSignatureCanvas(signatureCanvas);
     const clearSignatureDrawingState = () => _clearSignatureDrawingState(signatureCanvas);
     const renderDrawSignaturePreview = () => _renderDrawSignaturePreview(signatureCanvas, signatureSmoothingInput);
+    /**
+     * Tint the canvas so the ink always has something to read against.
+     * Applied as CSS only — the bitmap stays transparent.
+     */
+    const syncCanvasBackdrop = () => {
+        if (!signatureCanvas) return;
+        const ink = signatureMode === 'type'
+            ? signatureTypeColorInput?.value
+            : signatureColorInput?.value;
+        const backdrop = canvasBackdropForInk(ink);
+        signatureCanvas.style.background = backdrop.background;
+        signatureCanvas.dataset.inkTone = backdrop.tone;
+    };
+
     const syncSignatureColorLabels = () => _syncSignatureColorLabels({
         signatureColorValue, signatureColorInput,
         signatureTypeColorValue, signatureTypeColorInput,
@@ -200,6 +242,7 @@ export function installSignatureFeature(deps) {
                 : (signatureMode === 'type' ? `${verb} typed signature` : `${verb} signature`);
         }
         if (signatureCanvas) signatureCanvas.style.cursor = signatureMode === 'draw' ? 'crosshair' : 'default';
+        syncCanvasBackdrop();
         if (signatureMode === 'draw') {
             renderDrawSignaturePreview();
             setSignatureDirtyState(hasSignatureDrawContent());
@@ -221,6 +264,7 @@ export function installSignatureFeature(deps) {
 
     function setSignatureMode(nextMode) {
         setSignatureModeValue(['draw', 'type', 'upload'].includes(String(nextMode)) ? String(nextMode) : 'draw');
+        persistPrefs({ mode: signatureMode, savedView: false });
         // Choosing a composer mode always leaves the Saved tab.
         showSavedView(false);
         updateSignatureModeUi();
@@ -234,9 +278,7 @@ export function installSignatureFeature(deps) {
             viewTabs: signatureViewTabs,
             restoreModeUi: updateSignatureModeUi,
         });
-        if (active) {
-            setSignatureStatus('Pick a saved signature to load it into the composer.');
-        }
+        persistPrefs({ savedView: !!active });
     }
 
     async function renderTypedSignaturePreview() {
@@ -340,8 +382,15 @@ export function installSignatureFeature(deps) {
         setSignatureStatus('Uploaded signature ready to place.', 'ready');
     }
 
+    /**
+     * Clear the composer content and restore the remembered settings.
+     *
+     * NK_Dev_5: settings (tab, ink, stroke width, smoothing, font, size) now
+     * persist between opens. The drawn/typed/uploaded CONTENT is still cleared
+     * every time, so a previous signature is never silently reused.
+     */
     function resetSignatureComposer() {
-        setSignatureModeValue('draw');
+        setSignatureModeValue(signaturePrefs.mode || 'draw');
         showSavedView(false);
         setSignatureImageAsset(null);
         setSignatureEditTarget(null);
@@ -349,19 +398,19 @@ export function installSignatureFeature(deps) {
         if (signatureTextInput) signatureTextInput.value = '';
         if (signatureImageInput) signatureImageInput.value = '';
         if (signatureImageName) signatureImageName.textContent = 'No file selected';
-        if (signatureColorInput) signatureColorInput.value = '#111827';
-        if (signatureTypeColorInput) signatureTypeColorInput.value = '#111827';
-        if (signatureTypeSizeInput) signatureTypeSizeInput.value = '136';
-        if (signatureWidthInput) signatureWidthInput.value = '3';
-        if (signatureSmoothingInput) signatureSmoothingInput.value = '58';
-        if (signatureFontInput) signatureFontInput.value = 'Great Vibes';
+        if (signatureColorInput) signatureColorInput.value = signaturePrefs.color;
+        if (signatureTypeColorInput) signatureTypeColorInput.value = signaturePrefs.typeColor;
+        if (signatureTypeSizeInput) signatureTypeSizeInput.value = signaturePrefs.typeSize;
+        if (signatureWidthInput) signatureWidthInput.value = signaturePrefs.width;
+        if (signatureSmoothingInput) signatureSmoothingInput.value = signaturePrefs.smoothing;
+        if (signatureFontInput) signatureFontInput.value = signaturePrefs.font;
         syncSignatureColorLabels();
         syncSignatureTypeSizeLabel();
         clearSignatureDrawingState();
         setSignatureDirtyState(false);
         setSignatureStatus('Create a signature, then place it on the current page.');
         updateSignatureModalCopy();
-        void ensureSignatureFontLoaded(signatureFontInput?.value || 'Great Vibes');
+        void ensureSignatureFontLoaded(signatureFontInput?.value || signaturePrefs.font);
     }
 
     function buildCurrentSignatureAsset() {
@@ -473,14 +522,21 @@ export function installSignatureFeature(deps) {
         setSignatureStatus('Signature loaded. Replace it or save it back to the page.', signatureDirty ? 'ready' : 'default');
     }
 
-    function openSignatureModal(initialMode = 'draw') {
+    function openSignatureModal(initialMode = null) {
         if (!signatureModal) return;
+        // Read the remembered view BEFORE resetting: resetSignatureComposer()
+        // leaves the Saved tab (and persists that), which would otherwise wipe
+        // the very preference we are about to restore.
+        const wantSavedView = signaturePrefs.savedView === true;
         cancelSignaturePlacement();
         resetSignatureComposer();
+        if (initialMode === null) initialMode = signaturePrefs.mode || 'draw';
         signatureModal.classList.add('is-open');
         signatureModal.setAttribute('aria-hidden', 'false');
         document.body.classList.add('signature-modal-open');
         setSignatureMode(initialMode);
+        // Reopen on the Saved tab if that is where the user left off.
+        if (wantSavedView) showSavedView(true);
     }
 
     async function openSignatureEditModalForAnnotation(ann) {
@@ -583,7 +639,7 @@ export function installSignatureFeature(deps) {
     if (ftbSign) {
         ftbSign.addEventListener('click', () => {
             cancelSignaturePlacement();
-            openSignatureModal('draw');
+            openSignatureModal();
         });
     }
     signatureTabs.forEach((tab) => {
@@ -613,6 +669,8 @@ export function installSignatureFeature(deps) {
     }
     if (signatureColorInput) {
         signatureColorInput.addEventListener('input', () => {
+            persistPrefs({ color: signatureColorInput.value });
+            syncCanvasBackdrop();
             syncSignatureColorLabels();
             if (signatureMode === 'draw' && signatureActiveStroke) {
                 signatureActiveStroke.color = signatureColorInput.value || '#111827';
@@ -622,6 +680,7 @@ export function installSignatureFeature(deps) {
     }
     if (signatureWidthInput) {
         signatureWidthInput.addEventListener('input', () => {
+            persistPrefs({ width: signatureWidthInput.value });
             syncSignatureColorLabels();
             if (signatureMode === 'draw' && signatureActiveStroke) {
                 signatureActiveStroke.width = Math.max(1, Number(signatureWidthInput.value) || 3);
@@ -631,18 +690,22 @@ export function installSignatureFeature(deps) {
     }
     if (signatureSmoothingInput) {
         signatureSmoothingInput.addEventListener('input', () => {
+            persistPrefs({ smoothing: signatureSmoothingInput.value });
             syncSignatureColorLabels();
             if (signatureMode === 'draw') renderDrawSignaturePreview();
         });
     }
     if (signatureTypeColorInput) {
         signatureTypeColorInput.addEventListener('input', () => {
+            persistPrefs({ typeColor: signatureTypeColorInput.value });
+            syncCanvasBackdrop();
             syncSignatureColorLabels();
             if (signatureMode === 'type') renderTypedSignaturePreview();
         });
     }
     if (signatureTypeSizeInput) {
         signatureTypeSizeInput.addEventListener('input', () => {
+            persistPrefs({ typeSize: signatureTypeSizeInput.value });
             syncSignatureTypeSizeLabel();
             if (signatureMode === 'type') renderTypedSignaturePreview();
         });
@@ -651,7 +714,10 @@ export function installSignatureFeature(deps) {
         signatureTextInput.addEventListener('input', () => { renderTypedSignaturePreview(); });
     }
     if (signatureFontInput) {
-        signatureFontInput.addEventListener('change', () => { renderTypedSignaturePreview(); });
+        signatureFontInput.addEventListener('change', () => {
+            persistPrefs({ font: signatureFontInput.value });
+            renderTypedSignaturePreview();
+        });
     }
     if (signatureImageInput) {
         signatureImageInput.addEventListener('change', async () => {
@@ -762,18 +828,28 @@ export function installSignatureFeature(deps) {
         if (!asset || !info) return null;
         const intrinsicW = Math.max(1, Number(asset.width || asset.intrinsicWidth) || 1);
         const intrinsicH = Math.max(1, Number(asset.height || asset.intrinsicHeight) || 1);
-        const aspect = intrinsicW / intrinsicH;
-        const preferredWPts = 180;
-        const maxWPts = info.pageWPts * 0.34;
-        const maxHPts = info.pageHPts * 0.18;
-        let pdfWidth = Math.max(72, Math.min(preferredWPts, maxWPts));
-        let pdfHeight = pdfWidth / Math.max(0.01, aspect);
-        if (pdfHeight > maxHPts) {
-            pdfHeight = maxHPts;
-            pdfWidth = pdfHeight * Math.max(0.01, aspect);
-        }
-        pdfWidth = Math.max(48, Math.min(pdfWidth, info.pageWPts - 24));
-        pdfHeight = Math.max(24, Math.min(pdfHeight, info.pageHPts - 24));
+        // NK_Dev_5: size the placement from the composed mark instead of always
+        // targeting 180pt. Previously every signature was scaled to the same
+        // width, so a smaller font produced a blurrier signature rather than a
+        // smaller one.
+        //
+        // Both axes are scaled by the SAME factor throughout, so the aspect
+        // ratio is exact — clamping width and height independently used to
+        // squash small marks (a 7:1 signature came out 3:1).
+        let pdfWidth = intrinsicW * CANVAS_PX_TO_PDF_PTS;
+        let pdfHeight = intrinsicH * CANVAS_PX_TO_PDF_PTS;
+
+        const maxWPts = info.pageWPts * PLACEMENT_MAX_WIDTH_FRACTION;
+        const maxHPts = info.pageHPts * PLACEMENT_MAX_HEIGHT_FRACTION;
+        const shrink = Math.min(1, maxWPts / pdfWidth, maxHPts / pdfHeight);
+        pdfWidth *= shrink;
+        pdfHeight *= shrink;
+
+        // Keep a tiny mark legible without distorting it.
+        const grow = Math.max(1, PLACEMENT_MIN_WIDTH_PTS / pdfWidth, PLACEMENT_MIN_HEIGHT_PTS / pdfHeight);
+        pdfWidth = Math.min(pdfWidth * grow, info.pageWPts - 24);
+        pdfHeight = Math.min(pdfHeight * grow, info.pageHPts - 24);
+
         const pdfX = Math.max(12, Math.min(info.pageWPts - pdfWidth - 12, info.pdfX - (pdfWidth / 2)));
         const pdfY = Math.max(12, Math.min(info.pageHPts - pdfHeight - 12, info.pdfY - (pdfHeight / 2)));
         const id = generateAnnotationId();
@@ -907,6 +983,8 @@ export function installSignatureFeature(deps) {
     const refreshAccountLibraryUi = () => renderAccountLibrary(accountLibrary, {
         listEl: signatureAccountList,
         copyEl: signatureAccountCopy,
+        searchEl: signatureAccountSearch,
+        viewButtons: signatureAccountViewButtons,
     });
 
     async function loadAccountLibrary() {
@@ -980,6 +1058,26 @@ export function installSignatureFeature(deps) {
         }
     }
 
+    async function commitRename(entryId, nextName) {
+        if (!entryId || accountLibrary.renamingId === null) return;
+        accountLibrary.renamingId = null;
+
+        const entry = accountLibrary.entries.find((item) => String(item.id) === String(entryId));
+        const trimmed = String(nextName || '').trim();
+        // Nothing to do if it was cleared or left unchanged.
+        if (!entry || trimmed === '' || trimmed === entry.name) {
+            refreshAccountLibraryUi();
+            return;
+        }
+
+        const result = await renameAccountSignature(accountSignaturesUrl, accountLibrary, entryId, trimmed);
+        refreshAccountLibraryUi();
+        setSignatureStatus(
+            result.ok ? `Renamed to "${result.signature.name}".` : result.message,
+            result.ok ? 'ready' : 'error',
+        );
+    }
+
     async function removeAccountSignature(entryId) {
         const result = await deleteAccountSignature(accountSignaturesUrl, accountLibrary, entryId);
         refreshAccountLibraryUi();
@@ -992,7 +1090,42 @@ export function installSignatureFeature(deps) {
     if (signatureAccountSaveBtn) {
         signatureAccountSaveBtn.addEventListener('click', () => { void saveSignatureToAccount(); });
     }
+    if (signatureAccountSearch) {
+        signatureAccountSearch.addEventListener('input', () => {
+            accountLibrary.query = signatureAccountSearch.value;
+            accountLibrary.renamingId = null;
+            refreshAccountLibraryUi();
+        });
+    }
+    signatureAccountViewButtons.forEach((button) => {
+        button.addEventListener('click', () => {
+            accountLibrary.viewMode = button.dataset.signatureViewMode === 'row' ? 'row' : 'grid';
+            persistPrefs({ accountViewMode: accountLibrary.viewMode });
+            refreshAccountLibraryUi();
+        });
+    });
     if (signatureAccountList) {
+        // Commit a rename on Enter, abandon it on Escape.
+        signatureAccountList.addEventListener('keydown', async (event) => {
+            const input = event.target;
+            if (!(input instanceof HTMLElement) || !input.hasAttribute('data-account-signature-rename-input')) return;
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                accountLibrary.renamingId = null;
+                refreshAccountLibraryUi();
+                return;
+            }
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            const row = input.closest('[data-account-signature-id]');
+            await commitRename(String(row?.getAttribute('data-account-signature-id') || ''), input.value);
+        });
+        signatureAccountList.addEventListener('focusout', async (event) => {
+            const input = event.target;
+            if (!(input instanceof HTMLElement) || !input.hasAttribute('data-account-signature-rename-input')) return;
+            const row = input.closest('[data-account-signature-id]');
+            await commitRename(String(row?.getAttribute('data-account-signature-id') || ''), input.value);
+        });
         signatureAccountList.addEventListener('click', async (event) => {
             const button = event.target instanceof HTMLElement
                 ? event.target.closest('[data-account-signature-action]')
@@ -1001,8 +1134,12 @@ export function installSignatureFeature(deps) {
             const row = button.closest('[data-account-signature-id]');
             const entryId = String(row?.getAttribute('data-account-signature-id') || '');
             if (!entryId) return;
-            if (button.dataset.accountSignatureAction === 'load') await loadAccountSignature(entryId);
-            else await removeAccountSignature(entryId);
+            const action = button.dataset.accountSignatureAction;
+            if (action === 'load') await loadAccountSignature(entryId);
+            else if (action === 'rename') {
+                accountLibrary.renamingId = entryId;
+                refreshAccountLibraryUi();
+            } else await removeAccountSignature(entryId);
         });
     }
 
@@ -1014,6 +1151,7 @@ export function installSignatureFeature(deps) {
     }
     void loadAccountLibrary();
     syncSignatureColorLabels();
+    syncCanvasBackdrop();
 
     return {
         isSignatureAnnotation,

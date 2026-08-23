@@ -3,7 +3,10 @@
 namespace Tests\Feature;
 
 use App\Models\Admin;
+use App\Models\MonthlyPlan;
 use App\Models\SavedSignature;
+use App\Models\User;
+use App\Models\UserSubscription;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
@@ -86,7 +89,7 @@ class SavedSignatureTest extends TestCase
     {
         $admin = $this->admin();
 
-        for ($i = 0; $i < SavedSignature::PER_ACCOUNT_LIMIT; $i++) {
+        for ($i = 0; $i < SavedSignature::SUBSCRIBER_ACCOUNT_LIMIT; $i++) {
             SavedSignature::query()->create([
                 'admin_id' => $admin->id,
                 'name' => "Signature {$i}",
@@ -99,6 +102,208 @@ class SavedSignatureTest extends TestCase
             ->postJson('/saved-signatures', ['data_url' => self::PNG])
             ->assertStatus(422)
             ->assertJsonPath('success', false);
+    }
+
+    private function user(string $email = 'standard@example.com'): User
+    {
+        return User::query()->create([
+            'name' => 'Standard User',
+            'email' => $email,
+            'password' => Hash::make('password'),
+        ]);
+    }
+
+    private function subscribe(User $user): void
+    {
+        $plan = MonthlyPlan::query()->firstOrCreate(
+            ['product_key' => 'pdf-editor'],
+            ['name' => 'PDF Editor', 'price' => 9.99, 'active' => true],
+        );
+
+        UserSubscription::query()->create([
+            'user_id' => $user->id,
+            'monthly_plan_id' => $plan->id,
+            'status' => 'active',
+        ]);
+    }
+
+    private function fillLibrary(User $user, int $count): void
+    {
+        for ($i = 0; $i < $count; $i++) {
+            SavedSignature::query()->create([
+                'user_id' => $user->id,
+                'name' => "Signature {$i}",
+                'source_mode' => 'draw',
+                'data_url' => self::PNG,
+            ]);
+        }
+    }
+
+    public function test_a_standard_account_is_limited_to_five(): void
+    {
+        $user = $this->user();
+
+        $this->assertSame(5, SavedSignature::STANDARD_ACCOUNT_LIMIT);
+        $this->assertSame(
+            SavedSignature::STANDARD_ACCOUNT_LIMIT,
+            SavedSignature::limitForOwner(['user_id' => $user->id, 'admin_id' => null]),
+        );
+
+        $this->actingAs($user)
+            ->getJson('/saved-signatures')
+            ->assertOk()
+            ->assertJsonPath('limit', SavedSignature::STANDARD_ACCOUNT_LIMIT);
+
+        $this->fillLibrary($user, SavedSignature::STANDARD_ACCOUNT_LIMIT);
+
+        $this->actingAs($user)
+            ->postJson('/saved-signatures', ['data_url' => self::PNG])
+            ->assertStatus(422)
+            ->assertJsonPath('limit', SavedSignature::STANDARD_ACCOUNT_LIMIT)
+            ->assertJsonPath('success', false);
+    }
+
+    public function test_a_standard_account_can_still_save_below_the_limit(): void
+    {
+        $user = $this->user();
+        $this->fillLibrary($user, SavedSignature::STANDARD_ACCOUNT_LIMIT - 1);
+
+        $this->actingAs($user)
+            ->postJson('/saved-signatures', ['data_url' => self::PNG])
+            ->assertCreated();
+    }
+
+    public function test_a_subscriber_gets_the_higher_limit(): void
+    {
+        $user = $this->user('subscriber@example.com');
+        $this->subscribe($user);
+
+        $this->assertSame(
+            SavedSignature::SUBSCRIBER_ACCOUNT_LIMIT,
+            SavedSignature::limitForOwner(['user_id' => $user->id, 'admin_id' => null]),
+        );
+
+        // Past the standard ceiling, where a standard account would be refused.
+        $this->fillLibrary($user, SavedSignature::STANDARD_ACCOUNT_LIMIT);
+
+        $this->actingAs($user)
+            ->postJson('/saved-signatures', ['data_url' => self::PNG])
+            ->assertCreated();
+
+        $this->actingAs($user)
+            ->getJson('/saved-signatures')
+            ->assertOk()
+            ->assertJsonPath('limit', SavedSignature::SUBSCRIBER_ACCOUNT_LIMIT);
+    }
+
+    public function test_an_inactive_subscription_does_not_raise_the_limit(): void
+    {
+        $user = $this->user('lapsed@example.com');
+        $plan = MonthlyPlan::query()->firstOrCreate(
+            ['product_key' => 'pdf-editor'],
+            ['name' => 'PDF Editor', 'price' => 9.99, 'active' => true],
+        );
+        UserSubscription::query()->create([
+            'user_id' => $user->id,
+            'monthly_plan_id' => $plan->id,
+            'status' => 'cancelled',
+        ]);
+
+        $this->assertSame(
+            SavedSignature::STANDARD_ACCOUNT_LIMIT,
+            SavedSignature::limitForOwner(['user_id' => $user->id, 'admin_id' => null]),
+        );
+    }
+
+    public function test_a_subscription_to_another_product_does_not_raise_the_limit(): void
+    {
+        $user = $this->user('other-product@example.com');
+        $plan = MonthlyPlan::query()->firstOrCreate(
+            ['product_key' => 'logo-generator'],
+            ['name' => 'Logo Generator', 'price' => 4.99, 'active' => true],
+        );
+        UserSubscription::query()->create([
+            'user_id' => $user->id,
+            'monthly_plan_id' => $plan->id,
+            'status' => 'active',
+        ]);
+
+        $this->assertSame(
+            SavedSignature::STANDARD_ACCOUNT_LIMIT,
+            SavedSignature::limitForOwner(['user_id' => $user->id, 'admin_id' => null]),
+        );
+    }
+
+    public function test_admins_are_not_throttled_by_a_customer_plan(): void
+    {
+        $admin = $this->admin('staff@example.com');
+
+        $this->assertSame(
+            SavedSignature::SUBSCRIBER_ACCOUNT_LIMIT,
+            SavedSignature::limitForOwner(['user_id' => null, 'admin_id' => $admin->id]),
+        );
+    }
+
+    public function test_a_guest_owner_falls_back_to_the_standard_limit(): void
+    {
+        $this->assertSame(
+            SavedSignature::STANDARD_ACCOUNT_LIMIT,
+            SavedSignature::limitForOwner(['user_id' => null, 'admin_id' => null]),
+        );
+    }
+
+    public function test_a_signature_can_be_renamed(): void
+    {
+        $admin = $this->admin();
+        $signature = SavedSignature::query()->create([
+            'admin_id' => $admin->id,
+            'name' => 'Signature 1',
+            'source_mode' => 'draw',
+            'data_url' => self::PNG,
+        ]);
+
+        $this->actingAs($admin, 'admin')
+            ->patchJson('/saved-signatures/'.$signature->id, ['name' => '  Client contracts  '])
+            ->assertOk()
+            ->assertJsonPath('signature.name', 'Client contracts');
+
+        $this->assertSame('Client contracts', $signature->fresh()->name);
+    }
+
+    public function test_rename_rejects_an_empty_name(): void
+    {
+        $admin = $this->admin();
+        $signature = SavedSignature::query()->create([
+            'admin_id' => $admin->id,
+            'name' => 'Signature 1',
+            'source_mode' => 'draw',
+            'data_url' => self::PNG,
+        ]);
+
+        $this->actingAs($admin, 'admin')
+            ->patchJson('/saved-signatures/'.$signature->id, ['name' => '   '])
+            ->assertStatus(422);
+
+        $this->assertSame('Signature 1', $signature->fresh()->name);
+    }
+
+    public function test_accounts_cannot_rename_each_others_signatures(): void
+    {
+        $owner = $this->admin('owner@example.com');
+        $other = $this->admin('other@example.com');
+
+        $signature = SavedSignature::query()->create([
+            'admin_id' => $owner->id,
+            'name' => 'Private',
+            'source_mode' => 'draw',
+            'data_url' => self::PNG,
+        ]);
+
+        $this->actingAs($other, 'admin')
+            ->patchJson('/saved-signatures/'.$signature->id, ['name' => 'Hijacked'])
+            ->assertNotFound();
+
+        $this->assertSame('Private', $signature->fresh()->name);
     }
 
     public function test_accounts_cannot_see_or_delete_each_others_signatures(): void

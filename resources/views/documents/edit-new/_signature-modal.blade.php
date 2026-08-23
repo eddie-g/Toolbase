@@ -52,7 +52,7 @@
                     <div class="signature-field">
                         <span class="signature-field__label">Stroke width</span>
                         <div class="signature-field__row">
-                            <input id="signature-width" type="range" min="1" max="8" step="1" value="3" aria-label="Signature stroke width">
+                            <input id="signature-width" type="range" min="1" max="24" step="1" value="3" aria-label="Signature stroke width">
                             <span class="signature-slider-readout" id="signature-width-value">3px</span>
                         </div>
                     </div>
@@ -63,7 +63,6 @@
                                 <input id="signature-smoothing" type="range" min="0" max="100" step="1" value="58" aria-label="Signature stroke smoothing">
                                 <span class="signature-slider-readout" id="signature-smoothing-value">58%</span>
                             </div>
-                            <span class="signature-stage__hint">Lower keeps the raw stroke. Higher softens corners.</span>
                         </div>
                     </div>
                 </div>
@@ -139,6 +138,32 @@
                             <h3 class="signature-library__title">Saved signatures</h3>
                             <p class="signature-library__copy" id="signature-account-copy">Signatures saved to your account are available on any browser you sign in on.</p>
                         </div>
+                        <div class="signature-account__toolbar">
+                            <div class="signature-account__search">
+                                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                                    <circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path>
+                                </svg>
+                                <input id="signature-account-search" type="search" autocomplete="off"
+                                       placeholder="Search saved signatures" aria-label="Search saved signatures">
+                            </div>
+                            <div class="signature-account__views" role="group" aria-label="Saved signature layout">
+                                <button type="button" class="signature-account__view is-active" data-signature-view-mode="grid"
+                                        aria-pressed="true" title="Grid view">
+                                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                        <rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect>
+                                        <rect x="3" y="14" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect>
+                                    </svg>
+                                    <span class="signature-account__view-label">Grid</span>
+                                </button>
+                                <button type="button" class="signature-account__view" data-signature-view-mode="row"
+                                        aria-pressed="false" title="Row view">
+                                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                                        <path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path>
+                                    </svg>
+                                    <span class="signature-account__view-label">Row</span>
+                                </button>
+                            </div>
+                        </div>
                         <div class="signature-library__list" id="signature-account-list">
                             <div class="signature-library__empty">No account signatures yet.</div>
                         </div>
@@ -149,7 +174,6 @@
                 <div class="signature-stage__header">
                     <div>
                         <h3 class="signature-stage__title">Live preview</h3>
-                        <p class="signature-stage__copy">This preview becomes the annotation that gets placed into the document.</p>
                     </div>
                     <div class="signature-stage__actions">
                         <button type="button" class="signature-stage__save-btn" id="signature-save-account" disabled>Save</button>
@@ -159,7 +183,6 @@
                 <div class="signature-stage__canvas-shell">
                     <canvas id="signature-canvas" class="signature-canvas" width="900" height="300"></canvas>
                 </div>
-                <div class="signature-stage__hint" id="signature-hint">Draw mode: click and drag to sign.</div>
             </div>
         </div>
         <div class="signature-modal__footer">

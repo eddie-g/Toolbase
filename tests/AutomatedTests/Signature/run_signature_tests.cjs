@@ -51,11 +51,8 @@ const COMPOSER_DEFAULTS = {
     imageName: 'No file selected',
 };
 
-const MODE_HINTS = {
-    draw: 'Draw mode: click and drag to sign.',
-    type: 'Type mode: edit your name and preview it live.',
-    upload: 'Upload mode: choose an image and preview the stamp.',
-};
+// NK_Dev_5 removed every line of subtext under the live preview, so there is
+// no hint element left to assert on — its absence is asserted instead.
 
 const APPLY_LABELS = {
     draw: 'Use signature',
@@ -76,7 +73,8 @@ const PAGE_HEIGHT_PTS = 792;
 // Placement sizing rules from buildSignatureAnnotationAt() in
 // resources/js/edit-new-pdfjs/signature.js.
 const PLACEMENT = {
-    preferredWidthPts: 180,
+    minWidthPts: 24,
+    minHeightPts: 8,
     maxWidthFraction: 0.34,
     maxHeightFraction: 0.18,
     edgeMarginPts: 12,
@@ -203,6 +201,84 @@ const TESTS = [
         number: '20',
         title: 'Save and reload persistence via /save-annotation-state',
         run: testSavePersistence,
+    },
+    {
+        id: 'nk5-01-retired-copy',
+        number: 'NK5-01',
+        title: 'Retired copy is gone from the modal',
+        run: nk5RetiredCopy,
+    },
+    {
+        id: 'nk5-02-no-subtext',
+        number: 'NK5-02',
+        title: 'No subtext under the live preview',
+        run: nk5NoSubtext,
+    },
+    {
+        id: 'nk5-03-stroke-width',
+        number: 'NK5-03',
+        title: 'Stroke width supports a much heavier maximum',
+        run: nk5StrokeWidth,
+    },
+    {
+        id: 'nk5-04-preview-size',
+        number: 'NK5-04',
+        title: 'Live preview is larger with less surrounding padding',
+        run: nk5PreviewSize,
+    },
+    {
+        id: 'nk5-05-remembered-tab',
+        number: 'NK5-05',
+        title: 'Modal reopens on the tab you last used',
+        run: nk5RememberedTab,
+    },
+    {
+        id: 'nk5-06-remembered-settings',
+        number: 'NK5-06',
+        title: 'Composer settings are remembered, content is not',
+        run: nk5RememberedSettings,
+    },
+    {
+        id: 'nk5-07-grid-row',
+        number: 'NK5-07',
+        title: 'Saved tab starts in grid and can switch to row',
+        run: nk5GridRow,
+    },
+    {
+        id: 'nk5-08-search',
+        number: 'NK5-08',
+        title: 'Typeahead search filters saved signatures as you type',
+        run: nk5Search,
+    },
+    {
+        id: 'nk5-09-rename',
+        number: 'NK5-09',
+        title: 'Rename a saved signature',
+        run: nk5Rename,
+    },
+    {
+        id: 'nk5-10-font-size-placement',
+        number: 'NK5-10',
+        title: 'Font size determines how large the signature is placed',
+        run: nk5FontSizePlacement,
+    },
+    {
+        id: 'nk5-11-aspect-preserved',
+        number: 'NK5-11',
+        title: 'Aspect ratio is preserved at every placed size',
+        run: nk5AspectPreserved,
+    },
+    {
+        id: 'nk5-12-canvas-backdrop',
+        number: 'NK5-12',
+        title: 'Canvas is tinted for contrast with the ink colour',
+        run: nk5CanvasBackdrop,
+    },
+    {
+        id: 'nk5-13-standard-limit',
+        number: 'NK5-13',
+        title: 'Standard accounts are limited to five saved signatures',
+        run: nk5StandardAccountLimit,
     },
     {
         id: '21-burn-export',
@@ -469,16 +545,19 @@ function readModalState(page) {
 }
 
 /** Draw a short stroke across the signature canvas using real pointer input. */
-async function drawStroke(page) {
+async function drawStroke(page, { large = false } = {}) {
     const box = await page.locator('#signature-canvas').boundingBox();
     if (!box) throw new Error('Signature canvas has no bounding box');
 
     const y = box.y + (box.height / 2);
+    // A taller mark places a taller box, which the resize test needs so the
+    // eight handles are not crowded on top of each other.
+    const amp = large ? box.height * 0.34 : 24;
     await page.mouse.move(box.x + (box.width * 0.25), y);
     await page.mouse.down();
-    await page.mouse.move(box.x + (box.width * 0.40), y - 24, { steps: 8 });
-    await page.mouse.move(box.x + (box.width * 0.55), y + 18, { steps: 8 });
-    await page.mouse.move(box.x + (box.width * 0.70), y - 10, { steps: 8 });
+    await page.mouse.move(box.x + (box.width * 0.40), y - amp, { steps: 8 });
+    await page.mouse.move(box.x + (box.width * 0.55), y + amp, { steps: 8 });
+    await page.mouse.move(box.x + (box.width * 0.70), y - (amp * 0.6), { steps: 8 });
     await page.mouse.up();
     await page.waitForTimeout(120);
 }
@@ -538,10 +617,17 @@ function measureCanvasInk(page) {
     });
 }
 
-/** Open the modal and draw a compact mark. Leaves the modal open and dirty. */
-async function composeDrawnMark(page) {
+/**
+ * Open the modal and draw a compact mark. Leaves the modal open and dirty.
+ *
+ * Explicitly selects the Draw tab: since NK_Dev_5 the modal reopens on
+ * whichever tab was last used, so this cannot assume Draw.
+ */
+async function composeDrawnMark(page, { large = false } = {}) {
     await openSignatureModal(page);
-    await drawStroke(page);
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(200);
+    await drawStroke(page, { large });
 }
 
 /** Open the modal, switch to Type, and enter text. Leaves the modal open. */
@@ -674,8 +760,8 @@ async function findOffPagePoint(page) {
 }
 
 /** Compose a drawn signature and place it in one step. */
-async function placeDrawnSignature(page, { pageNumber = 1, fx = 0.5, fy = 0.5 } = {}) {
-    await composeDrawnMark(page);
+async function placeDrawnSignature(page, { pageNumber = 1, fx = 0.5, fy = 0.5, large = false } = {}) {
+    await composeDrawnMark(page, { large });
     await armPlacement(page);
     return clickPageFraction(page, pageNumber, fx, fy);
 }
@@ -1134,8 +1220,9 @@ async function testSignButtonOpensModal(page, ctx) {
         'Draw panel is visible; Type and Upload panels are hidden',
         `active panels: ${modal.activePanels.join(', ') || 'none'}`);
 
-    r.equals('draw-hint', modal.hint, MODE_HINTS.draw,
-        'Hint shows the draw-mode copy');
+    r.assert('no-preview-subtext', modal.hint === null,
+        'No subtext is rendered under the live preview (NK_Dev_5)',
+        `hint element present=${modal.hint !== null}`);
 
     r.equals('default-status', modal.status, DRAW_IDLE_STATUS,
         'Status shows the draw-mode idle prompt');
@@ -1219,8 +1306,6 @@ async function testModalShell(page, ctx) {
             `${mode} tab activates its own panel and hides the others`,
             `active=${state.activeMode}, panels=${JSON.stringify(state.panelVisibility)}`);
 
-        r.equals(`tab-${mode}-hint`, state.hint, MODE_HINTS[mode],
-            `${mode} tab shows its hint copy`);
 
         r.equals(`tab-${mode}-apply-label`, state.applyLabel, APPLY_LABELS[mode],
             `${mode} tab shows the "${APPLY_LABELS[mode]}" button label`);
@@ -1319,21 +1404,23 @@ async function testModalShell(page, ctx) {
         `apply=${reset.applyDisabled} save=${reset.saveDisabled}`);
 
     const resetValues = reset.values;
-    const resetOk = resetValues.font === COMPOSER_DEFAULTS.font
-        && resetValues.text === COMPOSER_DEFAULTS.text
+    // The font was changed to Pacifico before cancelling: settings persist,
+    // content does not.
+    const resetOk = resetValues.font === 'Pacifico'
+        && resetValues.text === ''
         && resetValues.color === COMPOSER_DEFAULTS.color
         && resetValues.width === COMPOSER_DEFAULTS.width
         && resetValues.smoothing === COMPOSER_DEFAULTS.smoothing
         && resetValues.typeSize === COMPOSER_DEFAULTS.typeSize;
-    r.assert('reset-controls-default', resetOk,
-        'Reopening restores every composer control to its default',
+    r.assert('reset-remembers-settings', resetOk,
+        'Reopening remembers the settings the user chose (NK_Dev_5) while clearing content',
         `font=${resetValues.font} text=${JSON.stringify(resetValues.text)} ink=${resetValues.color} width=${resetValues.width} smoothing=${resetValues.smoothing} size=${resetValues.typeSize}`);
 
     r.equals('reset-status', reset.status, DRAW_IDLE_STATUS,
         'Reopening restores the draw-mode idle status message');
 
-    r.equals('reset-mode-draw', reset.activeMode, 'draw',
-        'Reopening returns to the Draw tab');
+    r.equals('reset-remembers-tab', reset.activeMode, 'draw',
+        'Reopening returns to the tab the user last used');
 
     const resetArtifact = await capture(page, '03-modal-shell', 'reopened-clean-state');
 
@@ -2158,7 +2245,7 @@ async function renderEditorAsSignedIn(page, docId) {
  * driven without touching the database.
  */
 async function stubAccountEndpoint(page, initial = [], options = {}) {
-    const state = { entries: [...initial], posted: [], deleted: [], nextId: 100 };
+    const state = { entries: [...initial], posted: [], patched: [], deleted: [], nextId: 100 };
 
     await page.route(/\/saved-signatures(\/.*)?$/, async (route) => {
         const request = route.request();
@@ -2176,7 +2263,12 @@ async function stubAccountEndpoint(page, initial = [], options = {}) {
             return route.fulfill({
                 status: 200,
                 contentType: 'application/json',
-                body: JSON.stringify({ success: true, signed_in: true, limit: 20, signatures: state.entries }),
+                body: JSON.stringify({
+                    success: true,
+                    signed_in: true,
+                    limit: options.limit ?? 20,
+                    signatures: state.entries,
+                }),
             });
         }
 
@@ -2189,7 +2281,11 @@ async function stubAccountEndpoint(page, initial = [], options = {}) {
                 return route.fulfill({
                     status: 422,
                     contentType: 'application/json',
-                    body: JSON.stringify({ success: false, message: 'You have reached the 20 saved signature limit. Delete one first.' }),
+                    body: JSON.stringify({
+                        success: false,
+                        limit: options.limit ?? 20,
+                        message: `You have reached the ${options.limit ?? 20} saved signature limit. Delete one first.`,
+                    }),
                 });
             }
 
@@ -2208,6 +2304,22 @@ async function stubAccountEndpoint(page, initial = [], options = {}) {
                 status: 201,
                 contentType: 'application/json',
                 body: JSON.stringify({ success: true, signature: created }),
+            });
+        }
+
+        if (method === 'PATCH') {
+            const id = decodeURIComponent(request.url().split('/').pop());
+            let body = {};
+            try { body = JSON.parse(request.postData() || '{}'); } catch (_) { body = {}; }
+            state.patched.push({ id, name: body.name });
+            state.entries = state.entries.map((entry) => (
+                String(entry.id) === String(id) ? { ...entry, name: body.name } : entry
+            ));
+            const updated = state.entries.find((entry) => String(entry.id) === String(id));
+            return route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({ success: true, signature: updated }),
             });
         }
 
@@ -2498,15 +2610,15 @@ async function testPlacementSizing(page, ctx) {
         const maxW = PAGE_WIDTH_PTS * PLACEMENT.maxWidthFraction;
         const maxH = PAGE_HEIGHT_PTS * PLACEMENT.maxHeightFraction;
 
-        r.assert('size-width-cap', w <= Math.min(PLACEMENT.preferredWidthPts, maxW) + 0.5,
-            `Width respects the ${PLACEMENT.preferredWidthPts}pt target and the 34% page-width cap`,
-            `w=${w.toFixed(1)} cap=${Math.min(PLACEMENT.preferredWidthPts, maxW).toFixed(1)}`);
+        r.assert('size-width-cap', w <= maxW + 0.5,
+            'Width respects the 34% page-width cap',
+            `w=${w.toFixed(1)} cap=${maxW.toFixed(1)}`);
 
         r.assert('size-height-cap', h <= maxH + 0.5,
             'Height respects the 18% page-height cap',
             `h=${h.toFixed(1)} cap=${maxH.toFixed(1)}`);
 
-        r.assert('size-positive', w >= 48 && h >= 24,
+        r.assert('size-positive', w >= PLACEMENT.minWidthPts - 0.5 && h >= PLACEMENT.minHeightPts - 0.5,
             'Placed box keeps the documented minimum dimensions',
             `w=${w.toFixed(1)} h=${h.toFixed(1)}`);
 
@@ -2738,7 +2850,7 @@ async function testPlacementZoomScroll(page, ctx) {
 
 async function testMoveResizeLock(page, ctx) {
     const r = ctx.recorder;
-    await placeDrawnSignature(page, { pageNumber: 1, fx: 0.45, fy: 0.45 });
+    await placeDrawnSignature(page, { pageNumber: 1, fx: 0.45, fy: 0.45, large: true });
 
     // --- selection exposes the signature-only menu ------------------------
     await selectSignatureBox(page);
@@ -3231,6 +3343,1044 @@ async function testSavePersistence(page, ctx) {
     return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
 }
 
+// ===========================================================================
+// [QA] Signature modal improvements (NK_Dev_5) — one test per subtask
+// ===========================================================================
+
+const RETIRED_COPY = [
+    'This preview becomes the annotation that gets placed into the document.',
+    'Draw mode: click and drag to sign.',
+    'Upload mode: choose an image and preview the stamp.',
+    'Pick a saved signature to load it into the composer.',
+];
+
+/** Text currently rendered inside the modal. */
+const modalText = (page) => page.evaluate(
+    () => document.getElementById('signature-modal')?.textContent || '',
+);
+
+// --- 01 · Retired copy is gone from the modal --------------------------------
+
+async function nk5RetiredCopy(page, ctx) {
+    const r = ctx.recorder;
+    await openSignatureModal(page);
+
+    // Every tab, since the strings lived in different panels.
+    for (const mode of ['draw', 'type', 'upload']) {
+        await page.click(`[data-signature-mode="${mode}"]`);
+        await page.waitForTimeout(250);
+        const text = await modalText(page);
+        const found = RETIRED_COPY.filter((line) => text.includes(line));
+        r.assert(`no-retired-copy-${mode}`, found.length === 0,
+            `None of the retired lines appear on the ${mode} tab`,
+            found.length ? found.join(' | ') : 'clean');
+    }
+
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(400);
+    const savedText = await modalText(page);
+    const savedFound = RETIRED_COPY.filter((line) => savedText.includes(line));
+    r.assert('no-retired-copy-saved', savedFound.length === 0,
+        'None of the retired lines appear on the Saved tab',
+        savedFound.length ? savedFound.join(' | ') : 'clean');
+
+    // The Saved-view status used to carry the fourth string.
+    const savedStatus = await page.evaluate(
+        () => document.getElementById('signature-status')?.textContent?.trim() || '',
+    );
+    r.assert('saved-status-not-retired', !savedStatus.includes(RETIRED_COPY[3]),
+        'The footer status on the Saved tab no longer shows the retired prompt',
+        `status="${savedStatus}"`);
+
+    // And after drawing / clearing, where the status changes again.
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+    await drawStroke(page);
+    const afterDraw = await modalText(page);
+    await page.click('#signature-clear');
+    await page.waitForTimeout(250);
+    const afterClear = await modalText(page);
+    const leaked = RETIRED_COPY.filter((line) => afterDraw.includes(line) || afterClear.includes(line));
+    r.assert('no-retired-copy-after-actions', leaked.length === 0,
+        'The retired lines do not reappear after drawing or clearing',
+        leaked.length ? leaked.join(' | ') : 'clean');
+
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- 02 · No subtext under the live preview ---------------------------------
+
+async function nk5NoSubtext(page, ctx) {
+    const r = ctx.recorder;
+    await openSignatureModal(page);
+
+    const probe = () => page.evaluate(() => ({
+        hint: !!document.getElementById('signature-hint'),
+        stageCopy: !!document.querySelector('.signature-stage__copy'),
+        stageHints: document.querySelectorAll('.signature-stage__hint').length,
+        title: document.querySelector('.signature-stage__title')?.textContent?.trim() || null,
+        clear: !!document.getElementById('signature-clear'),
+        save: !!document.getElementById('signature-save-account'),
+    }));
+
+    for (const mode of ['draw', 'type', 'upload']) {
+        await page.click(`[data-signature-mode="${mode}"]`);
+        await page.waitForTimeout(250);
+        const state = await probe();
+        r.assert(`no-subtext-${mode}`,
+            !state.hint && !state.stageCopy && state.stageHints === 0,
+            `No subtext under the live preview on the ${mode} tab`,
+            `hint=${state.hint} copy=${state.stageCopy} helpers=${state.stageHints}`);
+    }
+
+    const kept = await probe();
+    r.assert('preview-controls-kept', kept.title === 'Live preview' && kept.clear && kept.save,
+        'The Live preview heading, Save and Clear all remain',
+        `title="${kept.title}" clear=${kept.clear} save=${kept.save}`);
+
+    // With the hint gone, the active tab must still make the mode obvious.
+    await page.click('[data-signature-mode="type"]');
+    await page.waitForTimeout(250);
+    const discoverable = await page.evaluate(() => {
+        const tab = document.querySelector('[data-signature-mode].is-active');
+        return {
+            mode: tab?.dataset.signatureMode,
+            selected: tab?.getAttribute('aria-selected'),
+            apply: document.getElementById('signature-apply')?.textContent?.trim(),
+        };
+    });
+    r.assert('mode-still-discoverable',
+        discoverable.mode === 'type' && discoverable.selected === 'true' && /typed/i.test(discoverable.apply || ''),
+        'The active tab and Apply label still communicate the current mode',
+        `mode=${discoverable.mode} apply="${discoverable.apply}"`);
+
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- 03 · Stroke width supports a much heavier maximum ----------------------
+
+async function nk5StrokeWidth(page, ctx) {
+    const r = ctx.recorder;
+    await openSignatureModal(page);
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+
+    const range = await page.evaluate(() => {
+        const el = document.getElementById('signature-width');
+        return { min: Number(el.min), max: Number(el.max), step: Number(el.step) };
+    });
+    r.assert('range-raised', range.max >= 24 && range.min === 1,
+        'Stroke width runs from 1 to at least 24', `min=${range.min} max=${range.max}`);
+
+    await setRange(page, 'signature-width', range.max);
+    const readout = await page.evaluate(
+        () => document.getElementById('signature-width-value')?.textContent?.trim(),
+    );
+    r.equals('readout-tracks-max', readout, `${range.max}px`, 'The readout tracks the maximum');
+
+    await setRange(page, 'signature-width', 1);
+    await drawStroke(page);
+    const thin = (await canvasFingerprint(page)).inked;
+    await page.click('#signature-clear');
+    await page.waitForTimeout(200);
+    await setRange(page, 'signature-width', range.max);
+    await drawStroke(page);
+    const thick = (await canvasFingerprint(page)).inked;
+    r.assert('max-paints-heavier', thick > thin * 3,
+        'The maximum width paints a far heavier line than the minimum',
+        `1px=${thin} vs ${range.max}px=${thick} inked px`);
+
+    const state = await readModalState(page);
+    r.assert('extremes-safe', state.applyDisabled === false && thick > 0,
+        'The extremes leave a usable, placeable preview',
+        `apply disabled=${state.applyDisabled}`);
+
+    // A heavy stroke must still trim and place correctly.
+    await armPlacement(page);
+    await clickPageFraction(page, 1, 0.5, 0.45);
+    const saved = await captureAutosave(page, ctx.saveRecorder);
+    const placed = saved.signatures[0];
+    r.assert('heavy-stroke-places', !!placed
+        && num(placed.pdfWidth) > 0 && num(placed.pdfHeight) > 0
+        && num(placed.intrinsicWidth) < 900,
+        'A heavy stroke still trims to its ink and places correctly',
+        placed ? `${geom(placed)} intrinsic=${placed.intrinsicWidth}x${placed.intrinsicHeight}` : 'not placed');
+    r.assert('heavy-stroke-composer-width',
+        !!placed && Number(placed.signatureComposer?.strokeWidth) === range.max,
+        'The chosen width is persisted with the annotation for later editing',
+        `strokeWidth=${placed?.signatureComposer?.strokeWidth}`);
+
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- 04 · Live preview area is larger with less surrounding padding ---------
+
+async function nk5PreviewSize(page, ctx) {
+    const r = ctx.recorder;
+    await openSignatureModal(page);
+
+    const layout = await page.evaluate(() => {
+        const stage = document.querySelector('.signature-stage');
+        const shell = document.querySelector('.signature-stage__canvas-shell');
+        const canvas = document.getElementById('signature-canvas');
+        const footer = document.querySelector('.signature-modal__footer');
+        const card = document.querySelector('.signature-modal__card');
+        return {
+            stagePad: parseFloat(getComputedStyle(stage).paddingTop),
+            shellPad: parseFloat(getComputedStyle(shell).paddingTop),
+            canvasHeight: Math.round(canvas.getBoundingClientRect().height),
+            shellHeight: Math.round(shell.getBoundingClientRect().height),
+            shellBottom: Math.round(shell.getBoundingClientRect().bottom),
+            footerTop: Math.round(footer.getBoundingClientRect().top),
+            cardBottom: Math.round(card.getBoundingClientRect().bottom),
+            viewportHeight: window.innerHeight,
+        };
+    });
+
+    r.assert('canvas-enlarged', layout.canvasHeight >= 280,
+        'The white drawing rectangle is materially taller than before',
+        `canvas=${layout.canvasHeight}px, shell=${layout.shellHeight}px`);
+    r.assert('padding-reduced', layout.stagePad <= 12 && layout.shellPad <= 10,
+        'Padding around the stage and inside the shell is reduced',
+        `stage=${layout.stagePad}px shell=${layout.shellPad}px`);
+    r.assert('preview-does-not-overlap-footer', layout.shellBottom <= layout.footerTop + 1,
+        'The enlarged preview does not overlap the footer actions',
+        `shell bottom=${layout.shellBottom} footer top=${layout.footerTop}`);
+    r.assert('card-fits-viewport', layout.cardBottom <= layout.viewportHeight + 1,
+        'The dialog still fits inside the viewport',
+        `card bottom=${layout.cardBottom} viewport=${layout.viewportHeight}`);
+
+    // On the Saved tab the preview is hidden and the list takes the full width.
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(400);
+    const savedLayout = await page.evaluate(() => {
+        const stage = document.querySelector('.signature-stage');
+        const panel = document.querySelector('.signature-modal__panel--saved');
+        const body = document.querySelector('.signature-modal__body');
+        return {
+            stageVisible: stage.getBoundingClientRect().width > 0,
+            panelWidth: Math.round(panel.getBoundingClientRect().width),
+            bodyWidth: Math.round(body.getBoundingClientRect().width),
+        };
+    });
+    r.assert('saved-tab-full-width',
+        !savedLayout.stageVisible && savedLayout.panelWidth >= savedLayout.bodyWidth - 4,
+        'The Saved tab hides the preview and uses the full dialog width',
+        `panel=${savedLayout.panelWidth}px of body=${savedLayout.bodyWidth}px`);
+
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- 05 · Modal reopens on the tab you last used ---------------------------
+
+async function nk5RememberedTab(page, ctx) {
+    const r = ctx.recorder;
+
+    // A fresh browser profile starts on Draw.
+    await openSignatureModal(page);
+    const first = await readModalState(page);
+    r.equals('fresh-profile-draw', first.activeMode, 'draw',
+        'A fresh browser profile opens on the Draw tab');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+
+    for (const mode of ['type', 'upload']) {
+        await openSignatureModal(page);
+        await page.click(`[data-signature-mode="${mode}"]`);
+        await page.waitForTimeout(250);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(250);
+        await openSignatureModal(page);
+        const state = await readModalState(page);
+        r.equals(`remembers-${mode}`, state.activeMode, mode,
+            `Reopening returns to the ${mode} tab`);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(200);
+    }
+
+    // The Saved tab is a view, not a mode, and is remembered too.
+    await openSignatureModal(page);
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(350);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+    await openSignatureModal(page);
+    const savedAgain = await page.evaluate(
+        () => document.getElementById('signature-modal').classList.contains('is-saved-view'),
+    );
+    r.assert('remembers-saved-view', savedAgain,
+        'Reopening returns to the Saved tab when that is where the user left off');
+
+    // Back to a composer mode, then check it survives a full reload.
+    await page.click('[data-signature-mode="type"]');
+    await page.waitForTimeout(250);
+    await page.keyboard.press('Escape');
+    await openEditor(page, ctx.docId);
+    await openSignatureModal(page);
+    const afterReload = await readModalState(page);
+    r.equals('survives-reload', afterReload.activeMode, 'type',
+        'The remembered tab survives a full page reload');
+
+    // Editing an existing signature must override the remembered tab.
+    await page.keyboard.press('Escape');
+    await placeDrawnSignature(page, { pageNumber: 1, fx: 0.45, fy: 0.4 });
+    await dblclickSignatureBox(page);
+    await page.waitForTimeout(1100);
+    const editing = await readModalState(page);
+    r.equals('edit-overrides-remembered-tab', editing.activeMode, 'draw',
+        'Editing a drawn signature opens on Draw even though Type was remembered');
+
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- 06 · Composer settings are remembered, content is not -----------------
+
+async function nk5RememberedSettings(page, ctx) {
+    const r = ctx.recorder;
+
+    await openSignatureModal(page);
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(200);
+    await setRange(page, 'signature-width', 13);
+    await setRange(page, 'signature-smoothing', 22);
+    await setColour(page, 'signature-color', '#227744');
+    await page.click('[data-signature-mode="type"]');
+    await page.waitForTimeout(250);
+    await page.selectOption('#signature-font', 'Pacifico');
+    await setRange(page, 'signature-type-size', 96);
+    await setColour(page, 'signature-type-color', '#aa2266');
+    await page.fill('#signature-text', 'Should not persist');
+    await page.waitForTimeout(400);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+
+    await openSignatureModal(page);
+    const reopened = await readModalState(page);
+    r.assert('settings-persist',
+        reopened.values.width === '13'
+        && reopened.values.smoothing === '22'
+        && reopened.values.color === '#227744'
+        && reopened.values.font === 'Pacifico'
+        && reopened.values.typeSize === '96'
+        && reopened.values.typeColor === '#aa2266',
+        'Ink, stroke width, smoothing, font and size all persist',
+        `width=${reopened.values.width} smoothing=${reopened.values.smoothing} ink=${reopened.values.color} `
+        + `font=${reopened.values.font} size=${reopened.values.typeSize} typeInk=${reopened.values.typeColor}`);
+
+    r.assert('content-cleared',
+        reopened.values.text === '' && reopened.canvasBlank === true
+        && reopened.applyDisabled === true && reopened.saveDisabled === true,
+        'The previous CONTENT is cleared and the actions are disabled again',
+        `text=${JSON.stringify(reopened.values.text)} blank=${reopened.canvasBlank} apply=${reopened.applyDisabled}`);
+
+    // Clear resets content without wiping the remembered settings.
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(200);
+    await drawStroke(page);
+    await page.click('#signature-clear');
+    await page.waitForTimeout(300);
+    const afterClear = await readModalState(page);
+    r.assert('clear-keeps-settings',
+        afterClear.canvasBlank === true && afterClear.values.width === '13' && afterClear.values.color === '#227744',
+        'Clear wipes the content but keeps the chosen settings',
+        `blank=${afterClear.canvasBlank} width=${afterClear.values.width} ink=${afterClear.values.color}`);
+
+    // Corrupt preferences must degrade to defaults rather than break the modal.
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => {
+        try { window.localStorage.setItem('edit_new_signature_prefs_v1', '{not valid json'); } catch (_) { /* ignore */ }
+    });
+    await openEditor(page, ctx.docId);
+    await openSignatureModal(page);
+    const recovered = await readModalState(page);
+    r.assert('corrupt-prefs-fall-back',
+        recovered.isOpen && recovered.activeMode === 'draw' && recovered.values.width === '3',
+        'A corrupt preferences value falls back to defaults instead of breaking the modal',
+        `mode=${recovered.activeMode} width=${recovered.values.width}`);
+
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- 07 · Saved tab starts in grid and can switch to row -------------------
+
+/** Three named entries, enough to prove a grid has more than one column. */
+const NK5_ENTRIES = [
+    { ...TYPED_ENTRY, id: '1', name: 'Client contracts' },
+    { ...TYPED_ENTRY, id: '2', name: 'Internal approvals' },
+    { ...TYPED_ENTRY, id: '3', name: 'Invoice sign-off (final)' },
+];
+
+let listRows = () => Promise.resolve(0);
+
+async function openSavedTabSignedIn(page, ctx, entries = NK5_ENTRIES, options = {}) {
+    // Bind the row counter to this page so tests can call it argument-free.
+    listRows = () => page.locator('#signature-account-list .signature-library__item').count();
+    const store = await stubAccountEndpoint(page, entries, options);
+    await renderEditorAsSignedIn(page, ctx.docId);
+    await openSignatureModal(page);
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(700);
+    return store;
+}
+
+async function nk5GridRow(page, ctx) {
+    const r = ctx.recorder;
+    await openSavedTabSignedIn(page, ctx);
+
+    const grid = await page.evaluate(() => {
+        const list = document.getElementById('signature-account-list');
+        const cards = Array.from(list.querySelectorAll('.signature-library__item'));
+        const tops = new Set(cards.map((card) => Math.round(card.getBoundingClientRect().top)));
+        return {
+            isGrid: list.classList.contains('is-grid'),
+            columns: getComputedStyle(list).gridTemplateColumns,
+            gridPressed: document.querySelector('[data-signature-view-mode="grid"]')?.getAttribute('aria-pressed'),
+            rowPressed: document.querySelector('[data-signature-view-mode="row"]')?.getAttribute('aria-pressed'),
+            distinctRows: tops.size,
+            cards: cards.length,
+        };
+    });
+    r.assert('starts-in-grid', grid.isGrid && grid.gridPressed === 'true' && grid.rowPressed === 'false',
+        'The saved list opens in grid mode with the toggle reflecting it',
+        `grid=${grid.isGrid} pressed=${grid.gridPressed}/${grid.rowPressed}`);
+    r.assert('grid-shares-rows', grid.cards === 3 && grid.distinctRows < grid.cards,
+        'Grid places several cards side by side rather than one per line',
+        `${grid.cards} cards on ${grid.distinctRows} visual row(s), columns="${grid.columns}"`);
+
+    await page.click('[data-signature-view-mode="row"]');
+    await page.waitForTimeout(450);
+    const row = await page.evaluate(() => {
+        const list = document.getElementById('signature-account-list');
+        const cards = Array.from(list.querySelectorAll('.signature-library__item'));
+        const tops = new Set(cards.map((card) => Math.round(card.getBoundingClientRect().top)));
+        return {
+            isRow: list.classList.contains('is-row'),
+            isGrid: list.classList.contains('is-grid'),
+            rowPressed: document.querySelector('[data-signature-view-mode="row"]')?.getAttribute('aria-pressed'),
+            distinctRows: tops.size,
+            cards: cards.length,
+        };
+    });
+    r.assert('switches-to-row', row.isRow && !row.isGrid && row.rowPressed === 'true',
+        'The toggle switches the list to row mode', `row=${row.isRow} grid=${row.isGrid}`);
+    r.assert('row-is-one-per-line', row.distinctRows === row.cards,
+        'Row mode stacks one entry per line',
+        `${row.cards} cards on ${row.distinctRows} visual row(s)`);
+
+    // Layout is a remembered preference.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+    await openSignatureModal(page);
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(500);
+    r.assert('layout-remembered',
+        await page.evaluate(() => document.getElementById('signature-account-list').classList.contains('is-row')),
+        'The chosen layout is remembered on the next open');
+
+    // Every action still works in row mode, and again in grid.
+    for (const mode of ['row', 'grid']) {
+        await page.click(`[data-signature-view-mode="${mode}"]`);
+        await page.waitForTimeout(350);
+        const actions = await page.evaluate(() => {
+            const card = document.querySelector('#signature-account-list .signature-library__item');
+            const names = Array.from(card?.querySelectorAll('[data-account-signature-action]') || [])
+                .map((el) => el.dataset.accountSignatureAction);
+            return { load: names.includes('load'), rename: names.includes('rename'), del: names.includes('delete') };
+        });
+        r.assert(`actions-present-${mode}`, actions.load && actions.rename && actions.del,
+            `Load, Rename and Delete are all available in ${mode} mode`,
+            JSON.stringify(actions));
+    }
+
+    // The empty state renders sensibly in both layouts.
+    await page.unroute(/\/saved-signatures(\/.*)?$/);
+    await openSavedTabSignedIn(page, ctx, []);
+    const emptyGrid = await page.locator('#signature-account-list').textContent();
+    await page.click('[data-signature-view-mode="row"]');
+    await page.waitForTimeout(350);
+    const emptyRow = await page.locator('#signature-account-list').textContent();
+    r.assert('empty-state-both-layouts',
+        /no account signatures/i.test(emptyGrid) && /no account signatures/i.test(emptyRow),
+        'The empty state renders in both layouts',
+        `grid="${emptyGrid.trim().slice(0, 30)}" row="${emptyRow.trim().slice(0, 30)}"`);
+
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- 08 · Typeahead search filters saved signatures as you type ------------
+
+async function nk5Search(page, ctx) {
+    const r = ctx.recorder;
+    const store = await openSavedTabSignedIn(page, ctx);
+
+    r.assert('all-listed-initially', (await listRows()) === 3,
+        'Every saved signature is listed before filtering');
+
+    // Typing narrows per keystroke, with no Enter needed.
+    await page.locator('#signature-account-search').type('int', { delay: 60 });
+    await page.waitForTimeout(400);
+    const narrowedText = await page.locator('#signature-account-list').textContent();
+    r.assert('narrows-while-typing', (await listRows()) === 1 && /Internal approvals/.test(narrowedText),
+        'Typing narrows the list without pressing Enter', `${await listRows()} row(s) for "int"`);
+
+    // Case-insensitive, and matches anywhere in the name rather than the start.
+    await page.fill('#signature-account-search', 'APPROVALS');
+    await page.waitForTimeout(400);
+    r.assert('case-insensitive-substring', (await listRows()) === 1,
+        'Matching is case-insensitive and matches mid-name, not just the prefix',
+        `${await listRows()} row(s) for "APPROVALS"`);
+
+    await page.fill('#signature-account-search', 'c');
+    await page.waitForTimeout(400);
+    r.assert('widens-as-deleted', (await listRows()) >= 2,
+        'Removing characters widens the results again', `${await listRows()} row(s) for "c"`);
+
+    // Regex-ish characters must be treated as literal text.
+    await page.fill('#signature-account-search', '(final)');
+    await page.waitForTimeout(400);
+    r.assert('regex-chars-literal', (await listRows()) === 1,
+        'Regex-like characters in the query are matched literally',
+        `${await listRows()} row(s) for "(final)"`);
+    await page.fill('#signature-account-search', '.*');
+    await page.waitForTimeout(400);
+    r.assert('regex-wildcard-not-interpreted', (await listRows()) === 0,
+        'A regex wildcard matches nothing rather than everything',
+        `${await listRows()} row(s) for ".*"`);
+
+    await page.fill('#signature-account-search', 'zzzz');
+    await page.waitForTimeout(400);
+    r.assert('no-match-state',
+        await page.evaluate(() => !!document.querySelector('.signature-account__empty-search')),
+        'A query with no matches shows a dedicated empty state');
+
+    await page.fill('#signature-account-search', '');
+    await page.waitForTimeout(400);
+    r.assert('clearing-restores', (await listRows()) === 3,
+        'Clearing the search restores every entry');
+
+    // Search works in row mode too.
+    await page.click('[data-signature-view-mode="row"]');
+    await page.waitForTimeout(350);
+    await page.fill('#signature-account-search', 'invoice');
+    await page.waitForTimeout(400);
+    r.assert('search-in-row-mode', (await listRows()) === 1,
+        'Search works the same in row mode', `${await listRows()} row(s)`);
+
+    // Actions act on the right entry while a filter is applied.
+    await page.locator('#signature-account-list [data-account-signature-action="delete"]').first().click();
+    await page.waitForTimeout(900);
+    r.assert('filtered-action-hits-right-entry',
+        store.deleted.includes('3') && !store.deleted.includes('1') && !store.deleted.includes('2'),
+        'Deleting while filtered removes the filtered entry, not the first in the full list',
+        `deleted=[${store.deleted.join(',')}]`);
+
+    // Signed out, the field is disabled rather than misleading.
+    await page.unroute(/\/saved-signatures(\/.*)?$/);
+    await openSavedTabSignedIn(page, ctx, [], { unauthorised: true });
+    r.assert('disabled-when-signed-out',
+        await page.evaluate(() => document.getElementById('signature-account-search')?.disabled === true),
+        'The search field is disabled when signed out');
+
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- 09 · Rename a saved signature ------------------------------------------
+
+async function nk5Rename(page, ctx) {
+    const r = ctx.recorder;
+
+    /**
+     * Click a rename trigger, scrolling it inside the Saved panel first.
+     *
+     * The panel scrolls independently, so a row can be laid out below the
+     * visible area and get covered even though it has a bounding box.
+     */
+    /** Reopen the modal on the Saved tab so each scenario starts clean. */
+    const reopenSavedTab = async () => {
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(300);
+        await openSignatureModal(page);
+        await page.click('[data-signature-view="saved"]');
+        await page.waitForTimeout(600);
+    };
+
+    const clickRename = async () => {
+        const button = page.locator('#signature-account-list button[data-account-signature-action="rename"]').first();
+        const visible = await button.isVisible().catch(() => false);
+        if (!visible) {
+            const why = await page.evaluate(() => {
+                const list = document.getElementById('signature-account-list');
+                const modal = document.getElementById('signature-modal');
+                const btn = list?.querySelector('button[data-account-signature-action="rename"]');
+                const cs = btn ? getComputedStyle(btn) : null;
+                const parent = btn?.closest('.signature-modal__panel--saved');
+                return {
+                    modalOpen: !!modal?.classList.contains('is-open'),
+                    savedView: !!modal?.classList.contains('is-saved-view'),
+                    rows: list?.querySelectorAll('.signature-library__item').length ?? null,
+                    listHtmlHead: (list?.innerHTML || '').replace(/\s+/g, ' ').slice(0, 120),
+                    btnExists: !!btn,
+                    btnDisplay: cs?.display,
+                    btnVisibility: cs?.visibility,
+                    panelDisplay: parent ? getComputedStyle(parent).display : null,
+                };
+            }).catch(() => null);
+            throw new Error(`Rename button not visible: ${JSON.stringify(why)}`);
+        }
+        await button.scrollIntoViewIfNeeded({ timeout: 8000 });
+        await page.waitForTimeout(250);
+        await button.click({ timeout: 8000 });
+        await page.waitForTimeout(400);
+    };
+    const store = await openSavedTabSignedIn(page, ctx);
+
+    // The Rename action opens a focused, pre-filled field.
+    await clickRename();
+    const editor = await page.evaluate(() => {
+        const input = document.querySelector('[data-account-signature-rename-input]');
+        return { present: !!input, focused: document.activeElement === input, value: input?.value };
+    });
+    r.assert('rename-opens-focused', editor.present && editor.focused && editor.value === 'Client contracts',
+        'Rename opens a focused field pre-filled with the current name',
+        `focused=${editor.focused} value="${editor.value}"`);
+
+    await page.fill('[data-account-signature-rename-input]', 'Renamed via Enter');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(900);
+    r.assert('enter-commits',
+        store.patched.some((entry) => entry.name === 'Renamed via Enter')
+        && /Renamed via Enter/.test(await page.locator('#signature-account-list').textContent()),
+        'Enter commits the rename and the list repaints',
+        `patched=${JSON.stringify(store.patched)}`);
+
+    const status = await page.evaluate(
+        () => document.getElementById('signature-status')?.textContent?.trim(),
+    );
+    r.assert('rename-confirmed-in-status', /renamed/i.test(status || ''),
+        'The status line confirms the rename', `status="${status}"`);
+
+    // Clicking the name itself also starts a rename; blur commits it.
+    await page.locator('#signature-account-list .signature-library__name-text').first().click();
+    await page.waitForTimeout(400);
+    const viaName = await page.evaluate(
+        () => !!document.querySelector('[data-account-signature-rename-input]'),
+    );
+    r.assert('name-click-starts-rename', viaName,
+        'Clicking the name itself starts a rename');
+
+    await page.fill('[data-account-signature-rename-input]', 'Renamed via blur');
+    // Blur with the keyboard: a mouse click can land on the scrim if the list
+    // re-renders under the cursor, which would close the dialog instead.
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(900);
+    r.assert('blur-commits', store.patched.some((entry) => entry.name === 'Renamed via blur'),
+        'Moving focus away commits the rename, consistent with Enter',
+        `patched=${JSON.stringify(store.patched.map((entry) => entry.name))}`);
+    r.assert('commit-keeps-modal-open',
+        await page.evaluate(() => !!document.querySelector('#signature-modal.is-open')),
+        'Committing a rename leaves the dialog open');
+
+    // Escape abandons.
+    await reopenSavedTab();
+
+    const beforeEscape = store.patched.length;
+    await clickRename();
+    await page.fill('[data-account-signature-rename-input]', 'Should not stick');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(700);
+    const afterEscape = await page.locator('#signature-account-list').textContent();
+    r.assert('escape-abandons',
+        store.patched.length === beforeEscape && !/Should not stick/.test(afterEscape),
+        'Escape abandons the rename without sending anything',
+        `patched ${beforeEscape} -> ${store.patched.length}`);
+
+    // An empty name is refused client-side and the original kept.
+    await reopenSavedTab();
+    const beforeEmpty = store.patched.length;
+    await clickRename();
+    await page.fill('[data-account-signature-rename-input]', '   ');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(800);
+    const afterEmpty = await page.locator('#signature-account-list').textContent();
+    r.assert('empty-name-refused',
+        store.patched.length === beforeEmpty && /Renamed via blur/.test(afterEmpty),
+        'A whitespace-only name is refused and the original kept',
+        `patched ${beforeEmpty} -> ${store.patched.length}`);
+
+    // The renamed entry is still complete and loadable.
+    const rowIntact = await page.evaluate(() => {
+        const card = document.querySelector('#signature-account-list .signature-library__item');
+        return {
+            thumb: !!card?.querySelector('.signature-library__thumb img'),
+            detail: card?.querySelector('.signature-library__detail')?.textContent?.trim(),
+        };
+    });
+    r.assert('renamed-entry-intact',
+        rowIntact.thumb && /signature/i.test(rowIntact.detail || ''),
+        'The renamed entry keeps its thumbnail and mode label',
+        `thumb=${rowIntact.thumb} detail="${rowIntact.detail}"`);
+
+    // A hostile name renders as text.
+    await page.unroute(/\/saved-signatures(\/.*)?$/);
+    let dialogFired = false;
+    page.once('dialog', async (dialog) => { dialogFired = true; await dialog.dismiss(); });
+    await openSavedTabSignedIn(page, ctx, [{
+        ...TYPED_ENTRY, id: '7', name: '<img src=x onerror="window.__renameXss=true">',
+    }]);
+    const xss = await page.evaluate(() => ({
+        flagged: !!window.__renameXss,
+        injected: !!document.querySelector('#signature-account-list img[src="x"]'),
+        text: document.getElementById('signature-account-list')?.textContent || '',
+    }));
+    r.assert('hostile-name-escaped',
+        !xss.flagged && !dialogFired && !xss.injected && xss.text.includes('<img src=x'),
+        'A hostile signature name renders as literal text and never executes',
+        `flagged=${xss.flagged} injected=${xss.injected}`);
+
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- 10 · Font size determines how large the signature is placed -----------
+
+async function nk5FontSizePlacement(page, ctx) {
+    const r = ctx.recorder;
+
+    const placeTyped = async (size, fy) => {
+        await openSignatureModal(page);
+        await page.click('[data-signature-mode="type"]');
+        await page.waitForTimeout(250);
+        await page.fill('#signature-text', 'Ada Lovelace');
+        await setRange(page, 'signature-type-size', size);
+        await page.waitForTimeout(700);
+        const ink = await measureCanvasInk(page);
+        await armPlacement(page);
+        await clickPageFraction(page, 1, 0.5, fy);
+        return ink;
+    };
+
+    const smallInk = await placeTyped(48, 0.3);
+    const largeInk = await placeTyped(180, 0.55);
+    const typed = await captureAutosave(page, ctx.saveRecorder);
+    const sorted = typed.signatures.slice().sort((a, b) => num(a.pdfWidth) - num(b.pdfWidth));
+
+    r.assert('both-typed-placed', sorted.length === 2, 'Both typed signatures were placed');
+    r.assert('smaller-font-smaller-signature',
+        sorted.length === 2 && num(sorted[0].pdfWidth) < num(sorted[1].pdfWidth) * 0.6,
+        'A 48px font places a genuinely smaller signature than a 180px font',
+        sorted.length === 2 ? `${num(sorted[0].pdfWidth).toFixed(1)}pt vs ${num(sorted[1].pdfWidth).toFixed(1)}pt` : 'n/a');
+    r.assert('composer-mark-also-smaller',
+        !!smallInk && !!largeInk && smallInk.boxWidth < largeInk.boxWidth,
+        'The composed mark itself is smaller at the smaller size',
+        `${smallInk?.boxWidth}px vs ${largeInk?.boxWidth}px on the canvas`);
+
+    const scales = sorted.map((entry) => num(entry.pdfWidth) / (num(entry.intrinsicWidth) * (208 / 900)));
+    r.assert('no-upscaling-blur', scales.every((scale) => scale > 0.9 && scale < 1.15),
+        'Placed size tracks the composed mark rather than stretching it to a fixed width',
+        `scale = ${scales.map((x) => x.toFixed(2)).join(', ')}`);
+
+    // A small DRAWN mark must place small too, not just typed ones.
+    await openSignatureModal(page);
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(200);
+    const canvasBox = await page.locator('#signature-canvas').boundingBox();
+    await page.mouse.move(canvasBox.x + (canvasBox.width * 0.45), canvasBox.y + (canvasBox.height * 0.48));
+    await page.mouse.down();
+    await page.mouse.move(canvasBox.x + (canvasBox.width * 0.52), canvasBox.y + (canvasBox.height * 0.52), { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(300);
+    await armPlacement(page);
+    await clickPageFraction(page, 1, 0.3, 0.75);
+    const withDrawn = await captureAutosave(page, ctx.saveRecorder);
+    const drawnSmall = withDrawn.signatures
+        .slice()
+        .sort((a, b) => num(a.pdfWidth) - num(b.pdfWidth))[0];
+    r.assert('small-drawn-mark-places-small',
+        !!drawnSmall && num(drawnSmall.pdfWidth) < num(sorted[1].pdfWidth) * 0.5,
+        'A small drawn mark also places small rather than being scaled up',
+        drawnSmall ? geom(drawnSmall) : 'missing');
+
+    // Caps and margins still hold at every size.
+    const violations = withDrawn.signatures.filter((entry) => (
+        num(entry.pdfWidth) > PAGE_WIDTH_PTS * 0.34 + 0.5
+        || num(entry.pdfHeight) > PAGE_HEIGHT_PTS * 0.18 + 0.5
+        || num(entry.pdfX) < PLACEMENT.edgeMarginPts - 0.5
+        || num(entry.pdfY) < PLACEMENT.edgeMarginPts - 0.5
+    ));
+    r.assert('caps-still-hold', violations.length === 0,
+        'Page-size caps and the 12pt margin still hold at every size',
+        violations.length ? violations.map(geom).join(' | ') : `${withDrawn.signatures.length} checked`);
+
+    r.assert('minimum-size-usable',
+        withDrawn.signatures.every((entry) => num(entry.pdfWidth) >= PLACEMENT.minWidthPts - 0.5
+            && num(entry.pdfHeight) >= PLACEMENT.minHeightPts - 0.5),
+        'Even the smallest mark is placed at a usable minimum rather than vanishing',
+        withDrawn.signatures.map((entry) => `${num(entry.pdfWidth).toFixed(1)}x${num(entry.pdfHeight).toFixed(1)}`).join(', '));
+
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- 11 · Aspect ratio is preserved at every placed size -------------------
+
+async function nk5AspectPreserved(page, ctx) {
+    const r = ctx.recorder;
+
+    /** Place a mark and return the composed vs placed aspect ratios. */
+    const placeAndCompare = async (label, compose, fy) => {
+        await openSignatureModal(page);
+        await compose();
+        const ink = await measureCanvasInk(page);
+        await armPlacement(page);
+        await clickPageFraction(page, 1, 0.5, fy);
+        return { label, ink };
+    };
+
+    const canvasPoint = async (fx, fy) => {
+        const box = await page.locator('#signature-canvas').boundingBox();
+        return { x: box.x + (box.width * fx), y: box.y + (box.height * fy) };
+    };
+
+    // Wide and short: a long name at a small size.
+    const wide = await placeAndCompare('wide', async () => {
+        await page.click('[data-signature-mode="type"]');
+        await page.waitForTimeout(250);
+        await page.fill('#signature-text', 'Bartholomew Featherstonehaugh');
+        await setRange(page, 'signature-type-size', 48);
+        await page.waitForTimeout(700);
+    }, 0.28);
+
+    // Tall and narrow: a near-vertical stroke.
+    const tall = await placeAndCompare('tall', async () => {
+        await page.click('[data-signature-mode="draw"]');
+        await page.waitForTimeout(250);
+        const top = await canvasPoint(0.5, 0.12);
+        const bottom = await canvasPoint(0.53, 0.88);
+        await page.mouse.move(top.x, top.y);
+        await page.mouse.down();
+        await page.mouse.move(bottom.x, bottom.y, { steps: 14 });
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+    }, 0.5);
+
+    // Tiny: small enough to hit the minimum-size floor.
+    const tiny = await placeAndCompare('tiny', async () => {
+        await page.click('[data-signature-mode="draw"]');
+        await page.waitForTimeout(250);
+        const from = await canvasPoint(0.48, 0.5);
+        const to = await canvasPoint(0.53, 0.51);
+        await page.mouse.move(from.x, from.y);
+        await page.mouse.down();
+        await page.mouse.move(to.x, to.y, { steps: 5 });
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+    }, 0.72);
+
+    // Huge: wide enough to hit the 34% page-width cap.
+    const huge = await placeAndCompare('huge', async () => {
+        await page.click('[data-signature-mode="type"]');
+        await page.waitForTimeout(250);
+        await page.fill('#signature-text', 'Wide Signature Example');
+        await setRange(page, 'signature-type-size', 180);
+        await page.waitForTimeout(700);
+    }, 0.86);
+
+    const saved = await captureAutosave(page, ctx.saveRecorder);
+    r.assert('all-four-placed', saved.signatures.length === 4,
+        'All four shapes were placed', `${saved.signatures.length} placed`);
+
+    // Compare each placement's aspect against its own source pixels.
+    const mismatches = [];
+    for (const entry of saved.signatures) {
+        const placed = num(entry.pdfWidth) / num(entry.pdfHeight);
+        const source = num(entry.intrinsicWidth) / num(entry.intrinsicHeight);
+        if (Math.abs(placed - source) / source > 0.05) {
+            mismatches.push(`${placed.toFixed(2)} vs ${source.toFixed(2)}`);
+        }
+    }
+    r.assert('aspect-preserved-everywhere', mismatches.length === 0,
+        'Every placement keeps the aspect ratio of the mark it came from',
+        mismatches.length ? mismatches.join(' | ') : `${saved.signatures.length} placements within 5%`);
+
+    const widths = saved.signatures.map((entry) => num(entry.pdfWidth));
+    const smallest = Math.min(...widths);
+    const largest = Math.max(...widths);
+    r.assert('floor-scales-uniformly',
+        smallest >= PLACEMENT.minWidthPts - 0.5,
+        'A mark that hits the minimum is scaled up uniformly, not stretched on one axis',
+        `smallest width ${smallest.toFixed(1)}pt, floor ${PLACEMENT.minWidthPts}pt`);
+    r.assert('cap-scales-uniformly',
+        largest <= (PAGE_WIDTH_PTS * 0.34) + 0.5,
+        'A mark that hits the width cap is scaled down uniformly',
+        `largest width ${largest.toFixed(1)}pt, cap ${(PAGE_WIDTH_PTS * 0.34).toFixed(1)}pt`);
+
+    r.assert('shapes-really-differed',
+        !!wide.ink && !!tall.ink && wide.ink.boxWidth / wide.ink.boxHeight > 3
+        && tall.ink.boxHeight / tall.ink.boxWidth > 2,
+        'The test really did compose a wide-short and a tall-narrow mark',
+        `wide=${(wide.ink.boxWidth / wide.ink.boxHeight).toFixed(1)}:1 `
+        + `tall=1:${(tall.ink.boxHeight / tall.ink.boxWidth).toFixed(1)}`);
+
+    void tiny;
+    void huge;
+    return { checks: r.checks, artifacts: [] };
+}
+
+// --- NK5-12 · Canvas is tinted for contrast with the ink -------------------
+
+async function nk5CanvasBackdrop(page, ctx) {
+    const r = ctx.recorder;
+    await openSignatureModal(page);
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+
+    const backdrop = () => page.evaluate(() => {
+        const canvas = document.getElementById('signature-canvas');
+        return {
+            tone: canvas?.dataset.inkTone || null,
+            background: getComputedStyle(canvas).backgroundColor,
+        };
+    });
+
+    // The composer default ink is near-black, so the canvas should open grey.
+    const initial = await backdrop();
+    r.assert('default-ink-gets-grey-canvas', initial.tone === 'grey',
+        'The canvas opens grey, because the default ink is black',
+        `tone=${initial.tone} background=${initial.background}`);
+    r.assert('grey-is-not-white',
+        !/rgba?\(\s*255,\s*255,\s*255/.test(initial.background || ''),
+        'The grey canvas is visibly not white', `background=${initial.background}`);
+
+    await setColour(page, 'signature-color', '#000000');
+    await page.waitForTimeout(300);
+    r.assert('pure-black-gets-grey', (await backdrop()).tone === 'grey',
+        'Pure black ink gets a grey canvas');
+
+    // Light ink would vanish on a light canvas, so it flips dark.
+    await setColour(page, 'signature-color', '#ffffff');
+    await page.waitForTimeout(300);
+    const light = await backdrop();
+    r.assert('light-ink-gets-dark-canvas', light.tone === 'dark',
+        'A white signature gets a dark canvas so it stays visible',
+        `tone=${light.tone} background=${light.background}`);
+
+    // The Type tab follows its own ink colour.
+    await page.click('[data-signature-mode="type"]');
+    await page.waitForTimeout(300);
+    await setColour(page, 'signature-type-color', '#111827');
+    await page.waitForTimeout(300);
+    r.assert('type-tab-follows-its-own-ink', (await backdrop()).tone === 'grey',
+        'The Type tab tints from the typed ink colour');
+    await setColour(page, 'signature-type-color', '#fde047');
+    await page.waitForTimeout(300);
+    r.assert('type-tab-light-ink', (await backdrop()).tone === 'dark',
+        'A pale typed ink also flips the canvas dark');
+
+    // The important part: this must be presentation only.
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+    await setColour(page, 'signature-color', '#111827');
+    await page.waitForTimeout(250);
+    await drawStroke(page);
+    const bitmap = await page.evaluate(() => {
+        const canvas = document.getElementById('signature-canvas');
+        const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+        let transparent = 0;
+        let opaque = 0;
+        for (let i = 3; i < data.length; i += 4) {
+            if (data[i] < 8) transparent++;
+            else if (data[i] > 240) opaque++;
+        }
+        return { transparent, opaque };
+    });
+    r.assert('bitmap-stays-transparent', bitmap.transparent > bitmap.opaque,
+        'The tint is CSS only — the canvas bitmap is still mostly transparent',
+        `${bitmap.transparent} transparent px vs ${bitmap.opaque} opaque`);
+
+    await armPlacement(page);
+    await clickPageFraction(page, 1, 0.5, 0.45);
+    const saved = await captureAutosave(page, ctx.saveRecorder);
+    const placed = saved.signatures[0];
+    r.assert('placed-signature-has-no-backdrop',
+        !!placed && num(placed.intrinsicWidth) < 900,
+        'The placed signature is still trimmed to its ink, not to a filled canvas',
+        placed ? `intrinsic ${placed.intrinsicWidth}x${placed.intrinsicHeight}` : 'not placed');
+
+    const artifact = await capture(page, 'nk5-12-canvas-backdrop', 'tinted-canvas');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// --- NK5-13 · Standard accounts are limited to five saved signatures -------
+
+async function nk5StandardAccountLimit(page, ctx) {
+    const r = ctx.recorder;
+
+    // Five saved already, with the server reporting the standard allowance.
+    const atLimit = Array.from({ length: 5 }, (_, index) => ({
+        ...TYPED_ENTRY,
+        id: String(index + 1),
+        name: `Signature ${index + 1}`,
+    }));
+
+    const store = await stubAccountEndpoint(page, atLimit, { limitReached: true, limit: 5 });
+    await renderEditorAsSignedIn(page, ctx.docId);
+    await openSignatureModal(page);
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(700);
+
+    const rows = await page.locator('#signature-account-list .signature-library__item').count();
+    r.assert('five-listed', rows === 5,
+        'A standard account at its allowance lists five signatures', `${rows} rows`);
+
+    // Saving a sixth must be refused, and the reason has to reach the user.
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+    await drawStroke(page);
+    await page.click('#signature-save-account');
+    const status = await waitForStatus(page, /reached the .*limit|Could not save|^Saved "/i, 9000);
+
+    r.assert('sixth-save-refused', /limit/i.test(status),
+        'Saving a sixth signature is refused with the limit explained',
+        `status="${status}"`);
+    r.assert('limit-message-names-five', /\b5\b/.test(status),
+        'The message tells the user what the allowance actually is',
+        `status="${status}"`);
+    r.assert('refusal-came-from-the-server', store.posted.length === 1,
+        'The client still asked the server rather than guessing the limit itself',
+        `${store.posted.length} POST(s)`);
+
+    // The composer must survive a refusal.
+    const after = await readModalState(page);
+    r.assert('composer-survives-refusal', after.isOpen && after.applyDisabled === false,
+        'After a refusal the signature can still be placed on the page',
+        `open=${after.isOpen} apply disabled=${after.applyDisabled}`);
+
+    // Deleting one frees a slot: the server then accepts a save.
+    await page.unroute(/\/saved-signatures(\/.*)?$/);
+    const freed = await stubAccountEndpoint(page, atLimit.slice(0, 4), { limit: 5 });
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(400);
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+    await drawStroke(page);
+    await page.click('#signature-save-account');
+    const okStatus = await waitForStatus(page, /^Saved "|reached the .*limit|Could not save/i, 9000);
+    r.assert('save-allowed-under-the-limit', /^Saved "/i.test(okStatus),
+        'Once below the allowance a save is accepted again',
+        `status="${okStatus}"`);
+    r.assert('freed-slot-posted', freed.posted.length === 1,
+        'The accepted save reached the server', `${freed.posted.length} POST(s)`);
+
+    const artifact = await capture(page, 'nk5-13-standard-limit', 'limit-reached');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
 // ---------------------------------------------------------------------------
 // Test 21 — Burn into the PDF and download
 // ---------------------------------------------------------------------------
@@ -3534,6 +4684,652 @@ async function testRegressionAndLoad(page, ctx) {
     await page.keyboard.press('Escape');
 
     const artifact = await capture(page, '23-regression-load', 'bulk');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 21 — Burn into the PDF and download
+// ---------------------------------------------------------------------------
+
+async function testBurnAndExport(page, ctx) {
+    const r = ctx.recorder;
+
+    await placeDrawnSignature(page, { pageNumber: 1, fx: 0.45, fy: 0.45 });
+    const beforeExport = await captureAutosave(page, ctx.saveRecorder);
+    r.assert('placed-before-export', beforeExport.signatures.length === 1,
+        'A signature is on the page before exporting');
+
+    // --- burn is deliberately NOT offered for signatures --------------------
+    // canBurnAnnotation() allows only shapes and direct-draw strokes, so the
+    // subtask's "burn the signature" step does not match the implementation.
+    // Assert the real contract so a future change to it is noticed.
+    await selectSignatureBox(page);
+    const burnVisible = await page.locator('#enpv-ann-menu [data-action="burn"]').isVisible().catch(() => false);
+    r.assert('burn-not-offered-for-signatures', burnVisible === false,
+        'Burn is not offered for signatures (only shapes and freehand draw are burnable)',
+        `burn visible=${burnVisible}`);
+
+    // --- download the annotated PDF -----------------------------------------
+    // The endpoint validates an annotations array, so send the same payload
+    // the editor itself saves.
+    const annotations = beforeExport.all;
+    const download = await page.evaluate(async ({ docId, payload }) => {
+        const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+        const response = await fetch(`/documents/${docId}/download-annotated-pdf`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-TOKEN': token,
+                Accept: 'application/pdf',
+            },
+            body: JSON.stringify({ annotations: payload, acro_form_entries: [] }),
+        });
+        const buffer = await response.arrayBuffer();
+        return {
+            status: response.status,
+            contentType: response.headers.get('content-type'),
+            bytes: buffer.byteLength,
+            head: new TextDecoder().decode(new Uint8Array(buffer.slice(0, 8))),
+        };
+    }, { docId: ctx.docId, payload: annotations });
+
+    r.assert('download-returns-pdf',
+        download.status === 200 && download.head.startsWith('%PDF'),
+        'Downloading the annotated document returns a real PDF',
+        `HTTP ${download.status}, ${download.bytes} bytes, header "${download.head.trim()}", type=${download.contentType}`);
+
+    // A page carrying an embedded signature image should be materially larger
+    // than the near-empty source document.
+    r.assert('export-embeds-signature', download.bytes > 3000,
+        'The exported PDF is large enough to contain the embedded signature image',
+        `${download.bytes} bytes`);
+
+    // --- exporting must not disturb the editor ------------------------------
+    const stillThere = await signatureBoxes(page).count();
+    r.assert('export-leaves-editor-intact', stillThere === 1,
+        'Exporting leaves the placed signature untouched in the editor',
+        `${stillThere} box(es) after download`);
+
+    const artifact = await capture(page, '21-burn-export', 'exported');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 22 — Accessibility and keyboard behaviour
+// ---------------------------------------------------------------------------
+
+async function testAccessibility(page, ctx) {
+    const r = ctx.recorder;
+    await openSignatureModal(page);
+
+    // --- dialog semantics ----------------------------------------------------
+    const dialog = await page.evaluate(() => {
+        const modal = document.getElementById('signature-modal');
+        const card = modal?.querySelector('.signature-modal__card');
+        const title = document.getElementById('signature-modal-title');
+        return {
+            role: card?.getAttribute('role'),
+            modal: card?.getAttribute('aria-modal'),
+            labelledBy: card?.getAttribute('aria-labelledby'),
+            titleId: title?.id,
+            ariaHidden: modal?.getAttribute('aria-hidden'),
+            bodyLocked: document.body.classList.contains('signature-modal-open'),
+        };
+    });
+    r.assert('dialog-semantics',
+        dialog.role === 'dialog' && dialog.modal === 'true'
+        && dialog.labelledBy === dialog.titleId && dialog.ariaHidden === 'false',
+        'The modal is an aria-modal dialog labelled by its title',
+        `role=${dialog.role} aria-modal=${dialog.modal} labelledby=${dialog.labelledBy}`);
+    r.assert('background-locked', dialog.bodyLocked,
+        'The page behind the modal is locked from scrolling');
+
+    // --- tablist semantics ----------------------------------------------------
+    const tabs = await page.evaluate(() => {
+        const list = document.querySelector('.signature-modal__tabs');
+        const items = Array.from(document.querySelectorAll('.signature-modal__tab'));
+        return {
+            listRole: list?.getAttribute('role'),
+            listLabel: list?.getAttribute('aria-label'),
+            wired: items.every((tab) => {
+                const panel = document.getElementById(tab.getAttribute('aria-controls'));
+                return !!panel && panel.getAttribute('role') === 'tabpanel'
+                    && panel.getAttribute('aria-labelledby') === tab.id;
+            }),
+            inTabOrder: items.filter((tab) => tab.tabIndex === 0).length,
+            selected: items.filter((tab) => tab.getAttribute('aria-selected') === 'true').length,
+        };
+    });
+    r.assert('tablist-wired',
+        tabs.listRole === 'tablist' && !!tabs.listLabel && tabs.wired,
+        'Tabs are a labelled tablist, each wired to its own tabpanel',
+        `role=${tabs.listRole} label="${tabs.listLabel}" wired=${tabs.wired}`);
+    r.assert('roving-tabindex', tabs.inTabOrder === 1 && tabs.selected === 1,
+        'Exactly one tab is in the tab order and marked selected',
+        `${tabs.inTabOrder} tabbable, ${tabs.selected} selected`);
+
+    // --- keyboard reaches every control ---------------------------------------
+    await page.focus('#signature-tab-draw');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(300);
+    const arrowMoved = await page.evaluate(() => document.activeElement?.id);
+    r.assert('arrow-keys-move-tabs', arrowMoved === 'signature-tab-type',
+        'Arrow keys move between tabs', `focus=${arrowMoved}`);
+
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+    const reachable = await page.evaluate(() => {
+        const wanted = ['signature-color', 'signature-width', 'signature-smoothing',
+            'signature-clear', 'signature-save-account', 'signature-cancel', 'signature-apply'];
+        return wanted.filter((id) => {
+            const el = document.getElementById(id);
+            if (!el) return true;
+            // Negative tabindex or disabled-and-unreachable are the failures.
+            return el.tabIndex < 0;
+        });
+    });
+    r.assert('controls-keyboard-reachable', reachable.length === 0,
+        'Draw-mode controls and the footer actions are keyboard reachable',
+        reachable.length ? `unreachable: ${reachable.join(', ')}` : 'all reachable');
+
+    // The upload input must stay focusable despite being visually hidden.
+    await page.click('[data-signature-mode="upload"]');
+    await page.waitForTimeout(250);
+    const uploadFocus = await page.evaluate(() => {
+        const input = document.getElementById('signature-image-input');
+        input.focus();
+        return {
+            focused: document.activeElement === input,
+            display: getComputedStyle(input).display,
+            label: !!document.querySelector('label[for="signature-image-input"]'),
+        };
+    });
+    r.assert('hidden-file-input-focusable',
+        uploadFocus.focused && uploadFocus.display !== 'none' && uploadFocus.label,
+        'The visually hidden file input is still focusable and has a label',
+        `focused=${uploadFocus.focused} display=${uploadFocus.display} label=${uploadFocus.label}`);
+
+    // --- Esc closes ------------------------------------------------------------
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    const closed = await readModalState(page);
+    r.assert('esc-closes', !closed.isOpen && closed.ariaHidden === 'true',
+        'Esc closes the dialog and restores aria-hidden');
+
+    // --- placed annotations expose a name --------------------------------------
+    await placeDrawnSignature(page, { pageNumber: 1, fx: 0.5, fy: 0.5 });
+    const boxA11y = await page.evaluate(() => {
+        const box = document.querySelector('.enpv-annotation-box[data-annotation-type="signature"]');
+        const img = box?.querySelector('img');
+        const label = box?.querySelector('.enpv-signature-selection-label');
+        return { alt: img?.getAttribute('alt'), label: label?.textContent?.trim() };
+    });
+    r.assert('placed-signature-labelled',
+        !!boxA11y.alt && /signature/i.test(boxA11y.alt) && /signature/i.test(boxA11y.label || ''),
+        'A placed signature exposes an accessible name',
+        `alt="${boxA11y.alt}" label="${boxA11y.label}"`);
+
+    // --- known gaps, asserted so they are visible rather than assumed ----------
+    await openSignatureModal(page);
+    const liveRegion = await page.evaluate(() => {
+        const status = document.getElementById('signature-status');
+        return {
+            ariaLive: status?.getAttribute('aria-live'),
+            role: status?.getAttribute('role'),
+        };
+    });
+    r.assert('status-is-announced',
+        !!liveRegion.ariaLive || liveRegion.role === 'status' || liveRegion.role === 'alert',
+        'Status messages sit in a live region so screen readers announce them',
+        `aria-live=${liveRegion.ariaLive} role=${liveRegion.role}`);
+
+    const focusTrapped = await page.evaluate(async () => {
+        const modal = document.getElementById('signature-modal');
+        const focusables = Array.from(modal.querySelectorAll(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        )).filter((el) => !el.disabled && el.offsetParent !== null);
+        if (!focusables.length) return false;
+        focusables[focusables.length - 1].focus();
+        return document.activeElement === focusables[focusables.length - 1];
+    });
+    r.assert('focus-starts-inside', focusTrapped,
+        'Focus can be placed on the dialog\'s own controls',
+        `focusable=${focusTrapped}`);
+
+    await page.keyboard.press('Escape');
+    const artifact = await capture(page, '22-accessibility', 'a11y');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 23 — Regression: cross-tool interference and load
+// ---------------------------------------------------------------------------
+
+async function testRegressionAndLoad(page, ctx) {
+    const r = ctx.recorder;
+
+    // --- signature placement must not break the other tools -------------------
+    await placeDrawnSignature(page, { pageNumber: 1, fx: 0.35, fy: 0.3 });
+    const toolsAlive = await page.evaluate(() => {
+        const ids = ['ftb-sign', 'ftb-add-text', 'ftb-add-shape'];
+        return ids.map((id) => {
+            const el = document.getElementById(id);
+            return { id, present: !!el, disabled: el ? !!el.disabled : null };
+        });
+    });
+    r.assert('other-tools-still-usable',
+        toolsAlive.every((tool) => tool.present && tool.disabled !== true),
+        'The text and shape tools are still usable after placing a signature',
+        toolsAlive.map((tool) => `${tool.id}=${tool.present ? 'ok' : 'missing'}`).join(', '));
+
+    // --- switching tools cancels a pending placement --------------------------
+    await composeDrawnMark(page);
+    await armPlacement(page);
+    const armedBefore = await page.evaluate(() => document.body.classList.contains('enpv-signature-placing'));
+    await page.click('#ftb-add-text');
+    await page.waitForTimeout(600);
+    const armedAfter = await page.evaluate(() => document.body.classList.contains('enpv-signature-placing'));
+    r.assert('tool-switch-cancels-placement', armedBefore && !armedAfter,
+        'Switching to another tool cancels a pending signature placement',
+        `armed before=${armedBefore} after=${armedAfter}`);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+
+    // --- signature annotations vs signature form fields -----------------------
+    const distinct = await page.evaluate(() => {
+        const sigs = document.querySelectorAll('.enpv-annotation-box[data-annotation-type="signature"]').length;
+        const fields = document.querySelectorAll('.enpv-annotation-box[data-annotation-type="field"]').length;
+        return { sigs, fields };
+    });
+    r.assert('signature-vs-field-distinct', distinct.sigs >= 1,
+        'Signature annotations are typed distinctly from signature form fields',
+        `signature boxes=${distinct.sigs}, field boxes=${distinct.fields}`);
+
+    // --- load: many signatures stay responsive --------------------------------
+    const start = Date.now();
+    for (let i = 0; i < 7; i++) {
+        await placeDrawnSignature(page, {
+            pageNumber: 1,
+            fx: 0.2 + ((i % 4) * 0.18),
+            fy: 0.25 + (Math.floor(i / 4) * 0.22),
+        });
+    }
+    const placeMs = Date.now() - start;
+    const total = await signatureBoxes(page).count();
+    r.assert('bulk-placement', total >= 8,
+        'Eight signatures can be placed on one page',
+        `${total} boxes in ${(placeMs / 1000).toFixed(1)}s`);
+
+    const zoomStart = Date.now();
+    await stepZoom(page, 'in', 2);
+    await stepZoom(page, 'out', 2);
+    const zoomMs = Date.now() - zoomStart;
+    const afterZoom = await signatureBoxes(page).count();
+    r.assert('responsive-under-load', afterZoom === total && zoomMs < 20000,
+        'Zooming with many signatures keeps all of them and stays responsive',
+        `${afterZoom} boxes, zoom round trip ${(zoomMs / 1000).toFixed(1)}s`);
+
+    const saved = await captureAutosave(page, ctx.saveRecorder, { timeout: 45000 });
+    r.assert('bulk-save', saved.signatures.length === total,
+        'Every signature survives the save at this volume',
+        `${saved.signatures.length} saved of ${total}`);
+
+    // --- repeated modal cycles must not leak listeners -------------------------
+    for (let i = 0; i < 8; i++) {
+        await openSignatureModal(page);
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(120);
+    }
+    await openSignatureModal(page);
+    await drawStroke(page);
+    const afterCycles = await readModalState(page);
+    r.assert('no-listener-leak', afterCycles.modalCount === 1 && afterCycles.applyDisabled === false,
+        'Opening and closing the modal repeatedly leaves it working with one instance',
+        `modals=${afterCycles.modalCount} apply disabled=${afterCycles.applyDisabled}`);
+    await page.keyboard.press('Escape');
+
+    const artifact = await capture(page, '23-regression-load', 'bulk');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 24 — NK_Dev_5: modal chrome, stroke range and preview sizing
+// ---------------------------------------------------------------------------
+
+async function testModalChrome(page, ctx) {
+    const r = ctx.recorder;
+    await openSignatureModal(page);
+
+    const removedStrings = [
+        'This preview becomes the annotation that gets placed into the document.',
+        'Draw mode: click and drag to sign.',
+        'Upload mode: choose an image and preview the stamp.',
+        'Pick a saved signature to load it into the composer.',
+    ];
+    const modalText = await page.evaluate(() => document.getElementById('signature-modal').textContent || '');
+    const stillPresent = removedStrings.filter((line) => modalText.includes(line));
+    r.assert('retired-copy-removed', stillPresent.length === 0,
+        'The four retired lines of copy are gone from the modal',
+        stillPresent.length ? stillPresent.join(' | ') : 'all four removed');
+
+    const subtext = await page.evaluate(() => ({
+        hint: !!document.getElementById('signature-hint'),
+        copy: !!document.querySelector('.signature-stage__copy'),
+        stageHints: document.querySelectorAll('.signature-stage__hint').length,
+    }));
+    r.assert('no-subtext-under-preview',
+        !subtext.hint && !subtext.copy && subtext.stageHints === 0,
+        'No subtext is rendered under the live preview',
+        `hint=${subtext.hint} copy=${subtext.copy} stageHints=${subtext.stageHints}`);
+
+    const width = await page.evaluate(() => {
+        const el = document.getElementById('signature-width');
+        return { min: el.min, max: el.max, value: el.value };
+    });
+    r.assert('stroke-width-range-raised', Number(width.max) >= 24,
+        'Stroke width allows a much heavier stroke than before',
+        `min=${width.min} max=${width.max}`);
+
+    // The heaviest stroke must actually paint heavier than the lightest.
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(200);
+    await setRange(page, 'signature-width', 1);
+    await drawStroke(page);
+    const thin = (await canvasFingerprint(page)).inked;
+    await page.click('#signature-clear');
+    await page.waitForTimeout(200);
+    await setRange(page, 'signature-width', Number(width.max));
+    await drawStroke(page);
+    const thick = (await canvasFingerprint(page)).inked;
+    r.assert('max-stroke-paints-heavier', thick > thin * 3,
+        'The new maximum stroke width paints a much heavier line',
+        `1px=${thin} vs ${width.max}px=${thick} inked px`);
+
+    const layout = await page.evaluate(() => {
+        const stage = document.querySelector('.signature-stage');
+        const shell = document.querySelector('.signature-stage__canvas-shell');
+        const canvas = document.getElementById('signature-canvas');
+        return {
+            stagePad: parseFloat(getComputedStyle(stage).paddingTop),
+            shellPad: parseFloat(getComputedStyle(shell).paddingTop),
+            canvasHeight: Math.round(canvas.getBoundingClientRect().height),
+            shellHeight: Math.round(shell.getBoundingClientRect().height),
+        };
+    });
+    r.assert('preview-larger-padding-smaller',
+        layout.canvasHeight >= 280 && layout.stagePad <= 12 && layout.shellPad <= 10,
+        'The white preview area is larger and the surrounding padding reduced',
+        `canvas=${layout.canvasHeight}px stagePad=${layout.stagePad}px shellPad=${layout.shellPad}px`);
+
+    const artifact = await capture(page, '24-modal-chrome', 'chrome');
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 25 — NK_Dev_5: remembered tab and settings
+// ---------------------------------------------------------------------------
+
+async function testRememberedSettings(page, ctx) {
+    const r = ctx.recorder;
+
+    await openSignatureModal(page);
+    const first = await readModalState(page);
+    r.assert('first-open-defaults', first.activeMode === 'draw' && first.values.width === '3',
+        'A fresh browser opens on Draw with factory defaults',
+        `mode=${first.activeMode} width=${first.values.width}`);
+
+    // Change tab and several settings.
+    await page.click('[data-signature-mode="type"]');
+    await page.waitForTimeout(250);
+    await page.selectOption('#signature-font', 'Pacifico');
+    await setRange(page, 'signature-type-size', 96);
+    await setColour(page, 'signature-type-color', '#aa2266');
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(200);
+    await setRange(page, 'signature-width', 11);
+    await setRange(page, 'signature-smoothing', 20);
+    await setColour(page, 'signature-color', '#227744');
+    await page.click('[data-signature-mode="type"]');
+    await page.waitForTimeout(250);
+    await page.fill('#signature-text', 'Remembered');
+    await page.waitForTimeout(400);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+
+    // Reopen without reloading.
+    await openSignatureModal(page);
+    const reopened = await readModalState(page);
+    r.assert('remembers-tab', reopened.activeMode === 'type',
+        'Reopening returns to the tab that was last used',
+        `mode=${reopened.activeMode}`);
+    r.assert('remembers-settings',
+        reopened.values.font === 'Pacifico'
+        && reopened.values.typeSize === '96'
+        && reopened.values.width === '11'
+        && reopened.values.smoothing === '20'
+        && reopened.values.color === '#227744'
+        && reopened.values.typeColor === '#aa2266',
+        'Reopening restores every chosen setting',
+        `font=${reopened.values.font} size=${reopened.values.typeSize} width=${reopened.values.width} `
+        + `smoothing=${reopened.values.smoothing} ink=${reopened.values.color}/${reopened.values.typeColor}`);
+    r.assert('content-not-remembered',
+        reopened.values.text === '' && reopened.canvasBlank === true && reopened.applyDisabled === true,
+        'The previous signature CONTENT is still cleared, so it is never reused by accident',
+        `text=${JSON.stringify(reopened.values.text)} blank=${reopened.canvasBlank}`);
+
+    // And across a full reload.
+    await page.keyboard.press('Escape');
+    await openEditor(page, ctx.docId);
+    await openSignatureModal(page);
+    const afterReload = await readModalState(page);
+    r.assert('remembers-across-reload',
+        afterReload.activeMode === 'type'
+        && afterReload.values.font === 'Pacifico'
+        && afterReload.values.width === '11',
+        'Settings and tab survive a full page reload',
+        `mode=${afterReload.activeMode} font=${afterReload.values.font} width=${afterReload.values.width}`);
+
+    const artifact = await capture(page, '25-remembered-settings', 'remembered');
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 26 — NK_Dev_5: Saved tab grid/row layout, search and rename
+// ---------------------------------------------------------------------------
+
+async function testSavedTabLayoutAndSearch(page, ctx) {
+    const r = ctx.recorder;
+
+    const entries = [
+        { ...TYPED_ENTRY, id: '1', name: 'Client contracts' },
+        { ...TYPED_ENTRY, id: '2', name: 'Internal approvals' },
+        { ...TYPED_ENTRY, id: '3', name: 'Invoice sign-off' },
+    ];
+    const store = await stubAccountEndpoint(page, entries);
+    await renderEditorAsSignedIn(page, ctx.docId);
+    await openSignatureModal(page);
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(700);
+
+    // --- grid by default ---------------------------------------------------
+    const initial = await page.evaluate(() => {
+        const list = document.getElementById('signature-account-list');
+        return {
+            grid: list.classList.contains('is-grid'),
+            row: list.classList.contains('is-row'),
+            columns: getComputedStyle(list).gridTemplateColumns,
+            gridPressed: document.querySelector('[data-signature-view-mode="grid"]')?.getAttribute('aria-pressed'),
+        };
+    });
+    r.assert('starts-in-grid', initial.grid && !initial.row && initial.gridPressed === 'true',
+        'The saved list starts in grid mode',
+        `grid=${initial.grid} columns="${initial.columns}"`);
+    r.assert('grid-has-multiple-columns', (initial.columns || '').trim().split(/\s+/).length > 1,
+        'Grid mode lays entries out in multiple columns',
+        `columns="${initial.columns}"`);
+
+    // --- switch to row ------------------------------------------------------
+    await page.click('[data-signature-view-mode="row"]');
+    await page.waitForTimeout(400);
+    const rowMode = await page.evaluate(() => {
+        const list = document.getElementById('signature-account-list');
+        return {
+            row: list.classList.contains('is-row'),
+            grid: list.classList.contains('is-grid'),
+            rowPressed: document.querySelector('[data-signature-view-mode="row"]')?.getAttribute('aria-pressed'),
+        };
+    });
+    r.assert('switches-to-row', rowMode.row && !rowMode.grid && rowMode.rowPressed === 'true',
+        'The layout can be switched to row', `row=${rowMode.row} grid=${rowMode.grid}`);
+
+    // The chosen layout is a preference too.
+    await page.keyboard.press('Escape');
+    await openSignatureModal(page);
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(500);
+    const remembered = await page.evaluate(
+        () => document.getElementById('signature-account-list').classList.contains('is-row'),
+    );
+    r.assert('remembers-layout', remembered,
+        'The chosen layout is remembered between opens', `row=${remembered}`);
+    await page.click('[data-signature-view-mode="grid"]');
+    await page.waitForTimeout(300);
+
+    // --- typeahead search ---------------------------------------------------
+    const countRows = () => page.locator('#signature-account-list .signature-library__item').count();
+    r.assert('all-entries-listed', (await countRows()) === 3,
+        'All saved signatures are listed before filtering');
+
+    await page.fill('#signature-account-search', 'inv');
+    await page.waitForTimeout(400);
+    const narrowed = await countRows();
+    const narrowedText = await page.locator('#signature-account-list').textContent();
+    r.assert('typeahead-narrows', narrowed === 1 && /Invoice sign-off/.test(narrowedText),
+        'Typing narrows the list as you type, matching case-insensitively',
+        `${narrowed} row(s) for "inv"`);
+
+    await page.fill('#signature-account-search', 'c');
+    await page.waitForTimeout(400);
+    r.assert('typeahead-widens', (await countRows()) >= 2,
+        'Deleting characters widens the results again', `${await countRows()} row(s) for "c"`);
+
+    await page.fill('#signature-account-search', 'zzzz');
+    await page.waitForTimeout(400);
+    const emptyState = await page.evaluate(
+        () => !!document.querySelector('.signature-account__empty-search'),
+    );
+    r.assert('no-match-state', emptyState && (await countRows()) === 0,
+        'A query with no matches shows a dedicated empty state', `emptyState=${emptyState}`);
+
+    await page.fill('#signature-account-search', '');
+    await page.waitForTimeout(400);
+    r.assert('clearing-restores', (await countRows()) === 3,
+        'Clearing the search restores every entry');
+
+    // --- rename --------------------------------------------------------------
+    await page.locator('#signature-account-list [data-account-signature-action="rename"]').first().click();
+    await page.waitForTimeout(400);
+    const editing = await page.evaluate(() => {
+        const input = document.querySelector('[data-account-signature-rename-input]');
+        return { present: !!input, focused: document.activeElement === input, value: input?.value };
+    });
+    r.assert('rename-opens-inline-editor', editing.present && editing.focused,
+        'Rename opens a focused inline field pre-filled with the current name',
+        `present=${editing.present} focused=${editing.focused} value="${editing.value}"`);
+
+    await page.fill('[data-account-signature-rename-input]', 'Renamed by test');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(900);
+    r.assert('rename-sends-patch',
+        store.patched.some((entry) => entry.name === 'Renamed by test'),
+        'Committing sends the new name to the server',
+        `patched=${JSON.stringify(store.patched)}`);
+    const afterRename = await page.locator('#signature-account-list').textContent();
+    r.assert('rename-shows-in-list', /Renamed by test/.test(afterRename),
+        'The list shows the new name');
+
+    // Escape abandons a rename.
+    await page.locator('#signature-account-list [data-account-signature-action="rename"]').first().click();
+    await page.waitForTimeout(350);
+    await page.fill('[data-account-signature-rename-input]', 'Should not stick');
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(600);
+    const afterEscape = await page.locator('#signature-account-list').textContent();
+    r.assert('escape-abandons-rename', !/Should not stick/.test(afterEscape),
+        'Escape abandons a rename without saving it',
+        afterEscape.replace(/\s+/g, ' ').trim().slice(0, 70));
+
+    const artifact = await capture(page, '26-saved-layout-search', 'saved-tab');
+    await page.keyboard.press('Escape');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 27 — NK_Dev_5: font size determines the placed signature size
+// ---------------------------------------------------------------------------
+
+async function testFontSizeDrivesPlacement(page, ctx) {
+    const r = ctx.recorder;
+
+    /** Compose a typed mark at `size` and place it, returning both geometries. */
+    const placeAt = async (size, fy) => {
+        await openSignatureModal(page);
+        await page.click('[data-signature-mode="type"]');
+        await page.waitForTimeout(250);
+        await page.fill('#signature-text', 'Ada Lovelace');
+        await setRange(page, 'signature-type-size', size);
+        await page.waitForTimeout(700);
+        const ink = await measureCanvasInk(page);
+        await armPlacement(page);
+        await clickPageFraction(page, 1, 0.5, fy);
+        return ink;
+    };
+
+    const smallInk = await placeAt(48, 0.3);
+    const largeInk = await placeAt(180, 0.6);
+    const saved = await captureAutosave(page, ctx.saveRecorder);
+
+    r.assert('both-placed', saved.signatures.length === 2,
+        'Both typed signatures were placed', `${saved.signatures.length} placed`);
+
+    const sorted = saved.signatures.slice().sort((a, b) => num(a.pdfWidth) - num(b.pdfWidth));
+    const [small, large] = sorted;
+
+    r.assert('smaller-font-places-smaller',
+        !!small && !!large && num(small.pdfWidth) < num(large.pdfWidth) * 0.6,
+        'A 48px font places a genuinely smaller signature than a 180px font',
+        small && large ? `${num(small.pdfWidth).toFixed(1)}pt vs ${num(large.pdfWidth).toFixed(1)}pt` : 'missing');
+
+    r.assert('composer-size-affects-mark',
+        !!smallInk && !!largeInk && smallInk.boxWidth < largeInk.boxWidth,
+        'The composed mark itself is smaller at the smaller font size',
+        `${smallInk?.boxWidth}px vs ${largeInk?.boxWidth}px on the canvas`);
+
+    // The old bug: every signature was scaled to the same width, so a small
+    // mark was stretched up and looked blurry. Placed size should now track
+    // the composed pixels one-for-one.
+    const scales = sorted.map((entry) => (
+        num(entry.pdfWidth) / (num(entry.intrinsicWidth) * (208 / 900))
+    ));
+    r.assert('no-upscaling-blur', scales.every((scale) => scale > 0.9 && scale < 1.15),
+        'Placed size tracks the composed mark instead of stretching it to a fixed width',
+        `placed/intrinsic scale = ${scales.map((x) => x.toFixed(2)).join(', ')}`);
+
+    // Aspect must survive, including for the small mark.
+    const aspectErrors = sorted.filter((entry) => {
+        const placed = num(entry.pdfWidth) / num(entry.pdfHeight);
+        const source = num(entry.intrinsicWidth) / num(entry.intrinsicHeight);
+        return Math.abs(placed - source) / source > 0.05;
+    });
+    r.assert('aspect-preserved-at-every-size', aspectErrors.length === 0,
+        'Small and large signatures keep their aspect ratio (no squashing by the size floors)',
+        sorted.map((entry) => `${(num(entry.pdfWidth) / num(entry.pdfHeight)).toFixed(2)} vs `
+            + `${(num(entry.intrinsicWidth) / num(entry.intrinsicHeight)).toFixed(2)}`).join(' | '));
+
+    const artifact = await capture(page, '27-font-size-placement', 'sizes');
     return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
 }
 
