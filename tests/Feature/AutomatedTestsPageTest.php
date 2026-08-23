@@ -73,11 +73,11 @@ class AutomatedTestsPageTest extends TestCase
             $this->assertNotEmpty($test['gid'], 'Each entry links back to its Asana subtask');
         }
 
-        // Several subtasks intentionally share one runner test.
-        $this->assertLessThan(
+        // Each subtask has its own dedicated runner test.
+        $this->assertCount(
             count($tests),
-            count(array_unique(array_column($tests, 'id'))),
-            'Subtasks are expected to map onto a smaller set of runner tests',
+            array_unique(array_column($tests, 'id')),
+            'Every NK_Dev_5 subtask should map to its own runner test',
         );
     }
 

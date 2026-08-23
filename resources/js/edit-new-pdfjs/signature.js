@@ -508,6 +508,10 @@ export function installSignatureFeature(deps) {
 
     function openSignatureModal(initialMode = null) {
         if (!signatureModal) return;
+        // Read the remembered view BEFORE resetting: resetSignatureComposer()
+        // leaves the Saved tab (and persists that), which would otherwise wipe
+        // the very preference we are about to restore.
+        const wantSavedView = signaturePrefs.savedView === true;
         cancelSignaturePlacement();
         resetSignatureComposer();
         if (initialMode === null) initialMode = signaturePrefs.mode || 'draw';
@@ -516,7 +520,7 @@ export function installSignatureFeature(deps) {
         document.body.classList.add('signature-modal-open');
         setSignatureMode(initialMode);
         // Reopen on the Saved tab if that is where the user left off.
-        if (signaturePrefs.savedView) showSavedView(true);
+        if (wantSavedView) showSavedView(true);
     }
 
     async function openSignatureEditModalForAnnotation(ann) {
