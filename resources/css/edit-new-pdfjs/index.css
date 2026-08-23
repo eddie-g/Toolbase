@@ -5492,6 +5492,32 @@ body.enpv-body .signature-modal textarea,
 body.enpv-body .image-import-modal input[type='file'] {
     cursor: text !important;
 }
+/* NK_Dev_4: keep the account "Save signature" button's disabled state
+   readable under the blanket modal-control rules above. */
+body.enpv-body .signature-modal .signature-stage__save-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed !important;
+}
+
+/* NK_Dev_4: the blanket `.signature-modal input { opacity: 1 }` rule above
+   also hit the upload file input, so the native "Choose File / No file chosen"
+   control painted on top of the styled drop zone. Keep it hidden here while
+   leaving it focusable and clickable via its label. */
+body.enpv-body .signature-modal .signature-upload__input {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    border: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    opacity: 0;
+    cursor: pointer !important;
+}
+
 body.enpv-body .signature-modal button:disabled,
 body.enpv-body .signature-modal input:disabled,
 body.enpv-body .signature-modal select:disabled,

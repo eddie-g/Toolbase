@@ -7,6 +7,8 @@ use App\Http\Controllers\GeneratedImagePreviewController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\BrowseLogosController;
 use App\Http\Controllers\ComplianceController;
+use App\Http\Controllers\AutomatedTestController;
+use App\Http\Controllers\SavedSignatureController;
 use App\Http\Controllers\CreditController;
 use App\Http\Controllers\OverlayEditorTestController;
 use App\Http\Controllers\PdfTestController;
@@ -153,6 +155,22 @@ Route::post('/overlay-editor/run-single-test', [OverlayEditorTestController::cla
 Route::get('/shapes/test-files', [ShapeTestController::class, 'getTestFiles'])->name('shapes.testFiles');
 Route::post('/shapes/run-single-test', [ShapeTestController::class, 'runSingleTest'])->name('shapes.runSingleTest');
 Route::post('/shapes/run-all-tests', [ShapeTestController::class, 'runAllTests'])->name('shapes.runAllTests');
+
+// Account-scoped saved signatures for the signature modal (NK_Dev_4).
+// The controller resolves the web/admin guard itself and answers guests with
+// a 401 + message rather than a redirect, since these are fetched by JS.
+Route::get('/saved-signatures', [SavedSignatureController::class, 'index'])->name('savedSignatures.index');
+Route::post('/saved-signatures', [SavedSignatureController::class, 'store'])->name('savedSignatures.store');
+Route::delete('/saved-signatures/{savedSignature}', [SavedSignatureController::class, 'destroy'])->name('savedSignatures.destroy');
+
+Route::middleware('auth:admin')
+    ->prefix('/automated-tests')
+    ->name('automatedTests.')
+    ->group(function () {
+        Route::get('/{suite}/suite', [AutomatedTestController::class, 'suite'])->name('suite');
+        Route::post('/{suite}/run', [AutomatedTestController::class, 'run'])->name('run');
+        Route::get('/{suite}/artifacts/{filename}', [AutomatedTestController::class, 'artifact'])->name('artifact');
+    });
 
 Route::get('/pdf-tests/test-files', [PdfTestController::class, 'getTestFiles'])->name('pdfTests.testFiles');
 Route::post('/pdf-tests/run-single-test', [PdfTestController::class, 'runSingleTest'])->name('pdfTests.runSingleTest');

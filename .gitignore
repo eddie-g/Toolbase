@@ -44,10 +44,17 @@ Thumbs.db
 !/tests/OverlayEditor/fixtures/
 /tests/OverlayEditor/fixtures/*
 !/tests/OverlayEditor/fixtures/ast_sci_data_tables_sample.pdf
+!/tests/AutomatedTests/
+/tests/AutomatedTests/*
+!/tests/AutomatedTests/Signature/
+/tests/AutomatedTests/Signature/*
+!/tests/AutomatedTests/Signature/run_signature_tests.cjs
 !/tests/Feature/
 /tests/Feature/*
 !/tests/Feature/PdfPasswordProtectionTest.php
 !/tests/Feature/DocumentConversionQueueTest.php
+!/tests/Feature/AutomatedTestsPageTest.php
+!/tests/Feature/SavedSignatureTest.php
 !/tests/Unit/
 /tests/Unit/*
 !/tests/Unit/RecraftPromptBuilderTest.php

@@ -16219,6 +16219,7 @@ function setDrawMode(active) {
     if (nextActive && document.body.classList.contains('enpv-shape-on')) setShapeMode(false);
     if (nextActive && highlightModeActive) setHighlightMode(false);
     if (nextActive) cancelFieldPlacement({ showStatus: false });
+    if (nextActive) signatureFeature?.cancelSignaturePlacement?.();
     if (nextActive) {
         closeNotesPanel();
         hideAnnotationFormatBar();
@@ -16348,6 +16349,7 @@ function setHighlightMode(active) {
     if (nextActive && document.body.classList.contains('enpv-shape-on')) setShapeMode(false);
     if (nextActive && drawModeActive) setDrawMode(false);
     if (nextActive) cancelFieldPlacement({ showStatus: false });
+    if (nextActive) signatureFeature?.cancelSignaturePlacement?.();
     if (nextActive) {
         closeNotesPanel();
         hideAnnotationFormatBar();
@@ -28340,6 +28342,9 @@ function setShapeMode(on, options = {}) {
     if (active && drawModeActive) setDrawMode(false);
     if (active && highlightModeActive) setHighlightMode(false);
     if (active) cancelFieldPlacement({ showStatus: false });
+    // A pending signature placement would otherwise stay armed and swallow
+    // the next page click.
+    if (active) signatureFeature?.cancelSignaturePlacement?.();
     if (active) {
         closeNotesPanel();
         hideAnnotationFormatBar();
@@ -28380,6 +28385,7 @@ function setAddTextMode(on, options = {}) {
         setHighlightMode(false);
     }
     if (active) cancelFieldPlacement({ showStatus: false });
+    if (active) signatureFeature?.cancelSignaturePlacement?.();
     if (!active) removeAddTextPreview();
     document.body.classList.toggle('enpv-add-text-on', active);
     for (const button of addTextButtons) {

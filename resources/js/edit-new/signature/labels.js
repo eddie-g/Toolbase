@@ -7,7 +7,7 @@
  * wrappers so existing call sites stay unchanged.
  */
 
-import { signatureEditTarget, savedSignatureLibrary } from '../store/signature-state.js';
+import { signatureEditTarget } from '../store/signature-state.js';
 
 export function syncSignatureColorLabels({
     signatureColorValue,
@@ -35,10 +35,4 @@ export function updateSignatureModalCopy({ signatureModalTitle, signatureModalSu
             ? 'Adjust the selected signature or replace it with a new one, then save it back into the document.'
             : 'Create a clean signature mark for this PDF. Draw it freehand, type it in a script style, or upload an existing signature image.';
     }
-}
-
-export function makeSavedSignatureName(signatureSaveNameInput) {
-    const explicitName = String(signatureSaveNameInput?.value || '').trim();
-    if (explicitName) return explicitName;
-    return `Signature ${savedSignatureLibrary.length + 1}`;
 }
