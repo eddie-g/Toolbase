@@ -21,6 +21,10 @@
                 <button type="button" class="draw-tool-btn" id="draw-tool-eraser" data-draw-direct-tool="eraser" title="Eraser" aria-label="Eraser">
                     <svg viewBox="0 0 24 24"><path d="m7 21-4-4 11.5-11.5a2.8 2.8 0 0 1 4 4L7 21Z"></path><path d="m11 9 4 4"></path><path d="M7 21h13"></path></svg>
                 </button>
+                <button type="button" class="draw-tool-btn draw-tool-btn--labeled" id="draw-tool-smooth-curve" data-draw-direct-tool="smooth-curve" title="Smooth curve" aria-label="Smooth curve">
+                    <svg viewBox="0 0 24 24"><path d="M3 17c4-10 9-10 12-4s5 3 6-6"></path></svg>
+                    <span>Smooth curve</span>
+                </button>
             </div>
         </div>
         <div class="afb-divider"></div>

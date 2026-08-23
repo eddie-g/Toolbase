@@ -1437,6 +1437,20 @@
             stroke-linejoin: round;
             pointer-events: none;
         }
+        .draw-tool-btn--labeled {
+            width: auto;
+            min-width: 108px;
+            gap: 6px;
+            padding: 0 8px;
+        }
+        .draw-tool-btn--labeled span {
+            color: inherit;
+            font-size: 11px;
+            font-weight: 700;
+            line-height: 1;
+            white-space: nowrap;
+            pointer-events: none;
+        }
         .draw-tool-panel__section-label {
             width: auto;
             font-size: 11px;
@@ -2002,14 +2016,6 @@
             justify-content: space-between;
             gap: 18px;
         }
-        .signature-modal__eyebrow {
-            margin: 0 0 6px;
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.14em;
-            text-transform: uppercase;
-            color: #2563eb;
-        }
         .signature-modal__title {
             margin: 0;
             font-size: 28px;
@@ -2017,13 +2023,6 @@
             font-weight: 700;
             letter-spacing: -0.03em;
             color: #0f172a;
-        }
-        .signature-modal__subtitle {
-            margin: 8px 0 0;
-            font-size: 14px;
-            line-height: 1.5;
-            color: #475569;
-            max-width: 540px;
         }
         .signature-modal__close {
             appearance: none;
@@ -2045,29 +2044,49 @@
             border-color: #cbd5e1;
         }
         .signature-modal__tabs {
-            display: inline-flex;
-            align-self: flex-start;
-            gap: 6px;
-            padding: 5px;
-            border-radius: 999px;
-            background: #e2e8f0;
+            display: flex;
+            align-self: stretch;
+            gap: 8px;
+            padding: 6px;
+            border-radius: 16px;
+            background: #eef2f7;
+            border: 1px solid #dbe3ee;
         }
         .signature-modal__tab {
             appearance: none;
-            border: none;
-            border-radius: 999px;
+            flex: 1 1 0;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            border: 1px solid transparent;
+            border-radius: 12px;
             background: transparent;
             color: #475569;
-            font-size: 13px;
-            font-weight: 600;
-            padding: 10px 16px;
+            font-size: 14px;
+            font-weight: 700;
+            padding: 12px 18px;
             cursor: pointer;
-            transition: background .16s ease, color .16s ease, box-shadow .16s ease;
+            transition: background .16s ease, color .16s ease, box-shadow .16s ease, border-color .16s ease;
+        }
+        .signature-modal__tab-icon {
+            flex: none;
+            opacity: 0.8;
+        }
+        .signature-modal__tab:hover:not(.is-active) {
+            background: rgba(255, 255, 255, 0.72);
+            color: #1e293b;
         }
         .signature-modal__tab.is-active {
-            background: #ffffff;
-            color: #0f172a;
-            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+            background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+            border-color: #1d4ed8;
+            color: #ffffff;
+            box-shadow: 0 8px 18px rgba(37, 99, 235, 0.28);
+        }
+        .signature-modal__tab.is-active .signature-modal__tab-icon { opacity: 1; }
+        .signature-modal__tab:focus-visible {
+            outline: 2px solid #2563eb;
+            outline-offset: 2px;
         }
         .signature-modal__body {
             display: grid;
@@ -2193,25 +2212,60 @@
             position: relative;
             display: flex;
             flex-direction: column;
+            gap: 10px;
+        }
+        /* Visually hidden but still focusable, so the native
+           "Choose File / No file chosen" control never paints over the
+           styled drop zone. */
+        .signature-upload__input {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            border: 0;
+            overflow: hidden;
+            white-space: nowrap;
+            clip: rect(0 0 0 0);
+            clip-path: inset(50%);
+            opacity: 0;
+        }
+        .signature-upload__drop {
+            display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 8px;
-            min-height: 152px;
-            padding: 18px;
-            border: 1px dashed #93c5fd;
+            gap: 10px;
+            min-height: 168px;
+            padding: 22px 18px;
+            border: 1.5px dashed #93c5fd;
             border-radius: 18px;
             background:
-                radial-gradient(circle at top, rgba(191, 219, 254, 0.55), transparent 65%),
-                #eff6ff;
+                radial-gradient(circle at top, rgba(191, 219, 254, 0.5), transparent 70%),
+                #f5f9ff;
             text-align: center;
             cursor: pointer;
-            overflow: hidden;
+            transition: border-color .16s ease, background .16s ease, box-shadow .16s ease;
         }
-        .signature-upload input[type="file"] {
-            position: absolute;
-            inset: 0;
-            opacity: 0;
-            cursor: pointer;
+        .signature-upload__drop:hover {
+            border-color: #3b82f6;
+            background:
+                radial-gradient(circle at top, rgba(191, 219, 254, 0.75), transparent 70%),
+                #eff6ff;
+            box-shadow: 0 8px 20px rgba(37, 99, 235, 0.12);
+        }
+        .signature-upload__input:focus-visible + .signature-upload__drop {
+            outline: 2px solid #2563eb;
+            outline-offset: 2px;
+        }
+        .signature-upload__cta {
+            margin-top: 2px;
+            padding: 8px 18px;
+            border-radius: 999px;
+            background: #2563eb;
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 700;
         }
         .signature-upload__icon {
             width: 46px;
@@ -2235,10 +2289,108 @@
             max-width: 220px;
         }
         .signature-upload__meta {
+            margin: 0;
+            text-align: center;
             font-size: 12px;
             font-weight: 600;
-            color: #1d4ed8;
+            color: #64748b;
+            word-break: break-word;
         }
+        /* -----------------------------------------------------------------
+           NK_Dev_4 — account-scoped signatures: the "Save signature" button
+           beside Clear, and the account list in the Saved tab.
+           ----------------------------------------------------------------- */
+        .signature-stage__actions {
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            flex: none;
+        }
+        /* Let the heading text shrink so the actions never get squeezed into
+           a two-line label. */
+        .signature-stage__header { gap: 12px; }
+        .signature-stage__header > div { min-width: 0; }
+        .signature-stage__save-btn {
+            appearance: none;
+            height: 34px;
+            padding: 0 18px;
+            border-radius: 10px;
+            border: 1px solid #15803d;
+            background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+            color: #ffffff;
+            font-size: 13px;
+            font-weight: 700;
+            white-space: nowrap;
+            cursor: pointer;
+            transition: filter .16s ease, opacity .16s ease;
+        }
+        .signature-stage__save-btn:hover:not(:disabled) { filter: brightness(1.07); }
+        .signature-stage__save-btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+        .signature-stage__save-btn:focus-visible {
+            outline: 2px solid #15803d;
+            outline-offset: 2px;
+        }
+        .signature-account {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            flex: 1;
+            min-height: 0;
+        }
+        .signature-modal__panel--saved #signature-account-list {
+            flex: 1;
+            min-height: 120px;
+            overflow-y: auto;
+        }
+
+        /* -----------------------------------------------------------------
+           NK_Dev_4 — Saved signatures moved into their own "Saved" tab.
+           The composer panels and the saved panel are mutually exclusive.
+           ----------------------------------------------------------------- */
+        .signature-modal__panel--saved { display: none; }
+        .signature-modal.is-saved-view .signature-modal__sidebar [data-signature-panel] {
+            display: none;
+        }
+        .signature-modal.is-saved-view .signature-modal__panel--saved {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+            /* Account + browser lists can both be long; keep them scrolling
+               inside the card instead of sliding under the footer. */
+            overflow-y: auto;
+        }
+        /* Saved gets the whole dialog: the live preview belongs to the
+           composer modes, and loading an entry jumps back to its own tab. */
+        .signature-modal.is-saved-view .signature-modal__body {
+            grid-template-columns: minmax(0, 1fr);
+        }
+        .signature-modal.is-saved-view .signature-stage { display: none; }
+        .signature-modal.is-saved-view .signature-modal__sidebar {
+            overflow: visible;
+            padding-right: 0;
+        }
+        /* The panel already supplies the card chrome — drop the library's own
+           border so the Saved tab is not a box inside a box. */
+        .signature-modal__panel--saved .signature-library {
+            flex: 1;
+            min-height: 0;
+            padding: 0;
+            border: 0;
+            background: none;
+            box-shadow: none;
+        }
+        .signature-modal__panel--saved .signature-library__list {
+            flex: 1;
+            min-height: 140px;
+        }
+        .signature-modal__panel--saved .signature-library__load-row,
+        .signature-modal__panel--saved .signature-library__save-row {
+            max-width: 620px;
+        }
+
         .signature-library {
             display: flex;
             flex-direction: column;
@@ -2407,6 +2559,96 @@
             font-size: 11px;
             color: #64748b;
             text-transform: capitalize;
+        }
+
+        /* -----------------------------------------------------------------
+           NK_Dev_4 — restyle of the saved-signature ("use saved") section.
+           ----------------------------------------------------------------- */
+        .signature-library__header { gap: 4px; }
+        .signature-library__title {
+            font-size: 16px;
+            font-weight: 800;
+            color: #0f172a;
+        }
+        .signature-library__copy {
+            font-size: 13px;
+            line-height: 1.5;
+            color: #64748b;
+        }
+        .signature-library__load-row,
+        .signature-library__save-row {
+            display: flex;
+            gap: 8px;
+            align-items: stretch;
+        }
+        .signature-library__select,
+        .signature-library__name {
+            flex: 1;
+            min-width: 0;
+            height: 40px;
+            padding: 0 12px;
+            border-radius: 10px;
+            border: 1px solid #d5deeb;
+            background: #ffffff;
+            font-size: 13px;
+            color: #0f172a;
+        }
+        .signature-library__cta {
+            flex: none;
+            height: 40px;
+            padding: 0 16px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-weight: 700;
+        }
+        .signature-library__load-btn:not(:disabled) {
+            background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+            border-color: #1d4ed8;
+            color: #ffffff;
+        }
+        .signature-library__list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            overflow-y: auto;
+            padding-right: 2px;
+        }
+        .signature-library__item {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            padding: 10px;
+            border-radius: 14px;
+            border: 1px solid #e2e8f0;
+            background: #ffffff;
+            transition: border-color .16s ease, box-shadow .16s ease;
+        }
+        .signature-library__item:hover {
+            border-color: #bfdbfe;
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.07);
+        }
+        .signature-library__thumb {
+            flex: none;
+            width: 92px;
+            height: 52px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 10px;
+            border: 1px solid #eef2f7;
+            background:
+                linear-gradient(45deg, #f8fafc 25%, transparent 25%, transparent 75%, #f8fafc 75%) 0 0/12px 12px,
+                #ffffff;
+            overflow: hidden;
+        }
+        .signature-library__empty {
+            padding: 22px 14px;
+            border-radius: 14px;
+            border: 1px dashed #dbe3ee;
+            background: #f8fafc;
+            text-align: center;
+            font-size: 13px;
+            color: #64748b;
         }
         .signature-library__actions {
             display: flex;

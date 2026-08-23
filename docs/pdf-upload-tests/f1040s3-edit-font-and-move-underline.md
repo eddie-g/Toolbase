@@ -63,6 +63,26 @@ drag rendering now derives its horizontal fit from the complete captured
 PDF.js glyph union. The resulting live-drag transform is approximately
 `scaleX(1.00799)` and the rendered advance exactly matches the source.
 
+## Title underline survives PDF export
+
+- Reported target: `pdfjs_5304_0_0:2`
+- Runtime suffix: `0_0:2`
+- Exact text: `Additional Income and Adjustments to Income`
+- JavaScript scenario: `f1040s3_page1_title_underline_export`
+
+The scenario selects the real PDF.js title box, clicks the production
+underline control, and calls `downloadAnnotatedPdf()`. It verifies that:
+
+- the editor applies whole-annotation underline state to the `:2` title;
+- the download payload retains `underline=true` on that exact annotation;
+- the downloaded PDF contains the title at its saved coordinates; and
+- a new vector underline spans the title baseline and was not already present
+  in the source PDF.
+
+This specifically guards exact-source-span export. Original span metadata may
+still contain `underline=false`; that source value cannot override the newer
+whole-annotation formatting selected by the user.
+
 ## Move without a false underline
 
 - Test ID: `d8813591-1371-4bb2-b416-89b1c7a79c4c`

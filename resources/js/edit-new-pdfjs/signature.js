@@ -14,11 +14,6 @@
  */
 
 import {
-    SIGNATURE_LIBRARY_LIMIT,
-    readSignatureLibrary,
-    writeSignatureLibrary,
-} from '../edit-new/persistence/signature-library.js';
-import {
     normalizeSignatureSourceMode,
     signatureModeLabel,
 } from '../edit-new/annotations/types.js';
@@ -37,18 +32,29 @@ import {
 import {
     syncSignatureColorLabels as _syncSignatureColorLabels,
     updateSignatureModalCopy as _updateSignatureModalCopy,
-    makeSavedSignatureName as _makeSavedSignatureName,
 } from '../edit-new/signature/labels.js';
 import { closeSignatureModal as _closeSignatureModal } from '../edit-new/signature/modal.js';
 import { cancelSignaturePlacement as _cancelSignaturePlacement } from '../edit-new/signature/placement.js';
-import {
-    updateSignatureLibraryLoadUi as _updateSignatureLibraryLoadUi,
-    renderSavedSignatureLibrary as _renderSavedSignatureLibrary,
-    persistSavedSignatureLibrary as _persistSavedSignatureLibrary,
-    loadSavedSignatureLibrary as _loadSavedSignatureLibrary,
-    deleteSavedSignatureFromLibrary as _deleteSavedSignatureFromLibrary,
-} from '../edit-new/signature/library-ui.js';
 import { ensureSignatureFontLoaded } from '../edit-new/signature/font-loader.js';
+import {
+    setSavedViewActive,
+    paintSignatureTabs,
+    installSignatureTabKeyboard,
+} from '../edit-new/signature/saved-view.js';
+import {
+    createAccountLibraryStore,
+    fetchAccountSignatures,
+    saveAccountSignature,
+    deleteAccountSignature,
+    renderAccountLibrary,
+    accountEntryAsAnnotation,
+} from '../edit-new/signature/account-library.js';
+import {
+    pdfRectToViewportRect,
+    viewportPdfDimensions,
+    viewportPointToPdfPoint,
+    viewportRotatedContentFrame,
+} from './page-geometry.js';
 import {
     signatureMode,
     signatureDirty,
@@ -57,7 +63,6 @@ import {
     signatureActiveStroke,
     signatureImageAsset,
     signatureEditTarget,
-    savedSignatureLibrary,
     signaturePlacementState,
     signatureCtx,
     signatureTypedRenderToken,
@@ -68,7 +73,6 @@ import {
     setSignatureActiveStroke,
     setSignatureImageAsset,
     setSignatureEditTarget,
-    setSavedSignatureLibrary,
     setSignaturePlacementState,
     setSignatureCtx,
     bumpSignatureTypedRenderToken,
@@ -115,6 +119,7 @@ export function installSignatureFeature(deps) {
     const signatureModalTitle = document.getElementById('signature-modal-title');
     const signatureModalSubtitle = signatureModal?.querySelector('.signature-modal__subtitle') || null;
     const signatureTabs = Array.from(document.querySelectorAll('[data-signature-mode]'));
+    const signatureViewTabs = Array.from(document.querySelectorAll('[data-signature-view]'));
     const signaturePanels = Array.from(document.querySelectorAll('[data-signature-panel]'));
     const signatureCanvas = document.getElementById('signature-canvas');
     const signatureClearBtn = document.getElementById('signature-clear');
@@ -136,11 +141,14 @@ export function installSignatureFeature(deps) {
     const signatureTypeSizeValue = document.getElementById('signature-type-size-value');
     const signatureImageInput = document.getElementById('signature-image-input');
     const signatureImageName = document.getElementById('signature-image-name');
-    const signatureLibrarySelect = document.getElementById('signature-library-select');
-    const signatureLibraryLoadBtn = document.getElementById('signature-library-load-btn');
-    const signatureSaveNameInput = document.getElementById('signature-save-name');
-    const signatureSaveBtn = document.getElementById('signature-save-btn');
-    const signatureLibraryList = document.getElementById('signature-library-list');
+    const signatureAccountSaveBtn = document.getElementById('signature-save-account');
+    const signatureAccountList = document.getElementById('signature-account-list');
+    const signatureAccountCopy = document.getElementById('signature-account-copy');
+    const accountLibrary = createAccountLibraryStore();
+    const accountSignaturesUrl = signatureModal?.dataset.accountSignaturesUrl || '';
+    // Read lazily rather than captured at install: the session can change
+    // under a long-lived editor tab, and it keeps the flag honest.
+    const accountSignaturesEnabled = () => signatureModal?.dataset.accountSignatures === '1';
     const ftbSign = document.getElementById('ftb-sign');
 
     if (signatureCanvas?.getContext) {
@@ -152,10 +160,8 @@ export function installSignatureFeature(deps) {
     const setSignatureDirtyState = (dirty) => {
         setSignatureDirty(!!dirty);
         if (signatureApplyBtn) signatureApplyBtn.disabled = !signatureDirty;
-        if (signatureSaveBtn) signatureSaveBtn.disabled = !signatureDirty;
-    };
-    const updateSignatureLibrarySaveUi = () => {
-        if (signatureSaveBtn) signatureSaveBtn.disabled = !signatureDirty;
+        // The account save button follows the same dirty gate.
+        if (signatureAccountSaveBtn) signatureAccountSaveBtn.disabled = !signatureDirty;
     };
     const clearSignatureCanvas = () => _clearSignatureCanvas(signatureCanvas);
     const clearSignatureDrawingState = () => _clearSignatureDrawingState(signatureCanvas);
@@ -167,11 +173,6 @@ export function installSignatureFeature(deps) {
         signatureSmoothingValue, signatureSmoothingInput,
     });
     const updateSignatureModalCopy = () => _updateSignatureModalCopy({ signatureModalTitle, signatureModalSubtitle });
-    const updateSignatureLibraryLoadUi = () => _updateSignatureLibraryLoadUi({ signatureLibrarySelect, signatureLibraryLoadBtn });
-    const renderSavedSignatureLibrary = () => _renderSavedSignatureLibrary({ signatureLibraryList, signatureLibrarySelect, signatureLibraryLoadBtn });
-    const persistSavedSignatureLibrary = _persistSavedSignatureLibrary;
-    const loadSavedSignatureLibrary = () => _loadSavedSignatureLibrary({ signatureLibraryList, signatureLibrarySelect, signatureLibraryLoadBtn });
-    const makeSavedSignatureName = () => _makeSavedSignatureName(signatureSaveNameInput);
     const typedSignatureFontSize = () => Math.max(24, Math.min(240, Number(signatureTypeSizeInput?.value) || 136));
     const syncSignatureTypeSizeLabel = () => {
         if (signatureTypeSizeValue) signatureTypeSizeValue.textContent = `${Math.round(typedSignatureFontSize())}px`;
@@ -181,6 +182,7 @@ export function installSignatureFeature(deps) {
         signatureTabs.forEach((tab) => {
             tab.classList.toggle('is-active', tab.dataset.signatureMode === signatureMode);
         });
+        paintSignatureTabs([...signatureTabs, ...signatureViewTabs]);
         signaturePanels.forEach((panel) => {
             panel.classList.toggle('is-active', panel.dataset.signaturePanel === signatureMode);
         });
@@ -219,7 +221,22 @@ export function installSignatureFeature(deps) {
 
     function setSignatureMode(nextMode) {
         setSignatureModeValue(['draw', 'type', 'upload'].includes(String(nextMode)) ? String(nextMode) : 'draw');
+        // Choosing a composer mode always leaves the Saved tab.
+        showSavedView(false);
         updateSignatureModeUi();
+    }
+
+    /** Toggle the Saved tab. Saved is a view, never a composer mode. */
+    function showSavedView(active) {
+        setSavedViewActive(active, {
+            signatureModal,
+            modeTabs: signatureTabs,
+            viewTabs: signatureViewTabs,
+            restoreModeUi: updateSignatureModeUi,
+        });
+        if (active) {
+            setSignatureStatus('Pick a saved signature to load it into the composer.');
+        }
     }
 
     async function renderTypedSignaturePreview() {
@@ -325,10 +342,10 @@ export function installSignatureFeature(deps) {
 
     function resetSignatureComposer() {
         setSignatureModeValue('draw');
+        showSavedView(false);
         setSignatureImageAsset(null);
         setSignatureEditTarget(null);
         bumpSignatureTypedRenderToken();
-        if (signatureSaveNameInput) signatureSaveNameInput.value = '';
         if (signatureTextInput) signatureTextInput.value = '';
         if (signatureImageInput) signatureImageInput.value = '';
         if (signatureImageName) signatureImageName.textContent = 'No file selected';
@@ -344,7 +361,6 @@ export function installSignatureFeature(deps) {
         setSignatureDirtyState(false);
         setSignatureStatus('Create a signature, then place it on the current page.');
         updateSignatureModalCopy();
-        updateSignatureLibrarySaveUi();
         void ensureSignatureFontLoaded(signatureFontInput?.value || 'Great Vibes');
     }
 
@@ -526,87 +542,6 @@ export function installSignatureFeature(deps) {
         setStatus('Click on a page to place the signature. Press Esc to cancel.');
     }
 
-    // ---- Signature library entry build / save ---------------------------
-    function buildSignatureLibraryEntry() {
-        const currentAsset = buildCurrentSignatureAsset();
-        if (!currentAsset) return null;
-        const snapshotDataUrl = signatureCanvas?.toDataURL('image/png') || currentAsset.dataUrl || '';
-        const nextAsset = cloneSerializableValue(currentAsset, null);
-        if (!nextAsset || !snapshotDataUrl) return null;
-        nextAsset.dataUrl = snapshotDataUrl;
-        nextAsset.src = '';
-        if (nextAsset.signatureSourceMode === 'upload') {
-            if (nextAsset.signatureComposer?.imageAsset && typeof nextAsset.signatureComposer.imageAsset === 'object') {
-                nextAsset.signatureComposer.imageAsset.dataUrl = nextAsset.signatureComposer.imageAsset.dataUrl || snapshotDataUrl;
-                nextAsset.signatureComposer.imageAsset.src = '';
-                delete nextAsset.signatureComposer.imageAsset.assetPath;
-            }
-            delete nextAsset.assetPath;
-            delete nextAsset.imagePath;
-        }
-        return {
-            id: `saved-signature-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-            name: makeSavedSignatureName(),
-            previewDataUrl: snapshotDataUrl,
-            asset: nextAsset,
-            updatedAt: new Date().toISOString(),
-        };
-    }
-
-    function saveCurrentSignatureToLibrary() {
-        const entry = buildSignatureLibraryEntry();
-        if (!entry) {
-            setSignatureStatus('Create a signature before saving it.', 'error');
-            return;
-        }
-        const previousLibrary = savedSignatureLibrary.slice();
-        setSavedSignatureLibrary([entry, ...savedSignatureLibrary].slice(0, SIGNATURE_LIBRARY_LIMIT));
-        if (!persistSavedSignatureLibrary()) {
-            setSavedSignatureLibrary(previousLibrary);
-            setSignatureStatus('Unable to save signature in this browser.', 'error');
-            return;
-        }
-        renderSavedSignatureLibrary();
-        if (signatureSaveNameInput) signatureSaveNameInput.value = '';
-        setSignatureStatus(`Saved "${entry.name}" to your signature library.`, 'ready');
-    }
-
-    async function loadSavedSignatureFromLibrary(entryId) {
-        const entry = savedSignatureLibrary.find((item) => String(item.id || '') === String(entryId || ''));
-        if (!entry?.asset) return;
-        resetSignatureComposer();
-        setSignatureEditTarget(null);
-        updateSignatureModalCopy();
-        updateSignatureModeUi();
-        try {
-            await loadSignatureComposerFromAnnotation({
-                type: 'signature',
-                signatureSourceMode: entry.asset.signatureSourceMode || entry.asset.signatureComposer?.mode || 'draw',
-                signatureComposer: cloneSerializableValue(entry.asset.signatureComposer || null, null),
-                dataUrl: entry.asset.dataUrl || '',
-                src: entry.asset.src || '',
-                fileName: entry.asset.fileName || 'signature.png',
-                mimeType: entry.asset.mimeType || 'image/png',
-                intrinsicWidth: entry.asset.width || entry.asset.intrinsicWidth || signatureCanvas?.width || 1,
-                intrinsicHeight: entry.asset.height || entry.asset.intrinsicHeight || signatureCanvas?.height || 1,
-                assetPath: entry.asset.assetPath || null,
-            });
-            setSignatureStatus(`Loaded "${entry.name}".`, 'ready');
-        } catch (error) {
-            setSignatureStatus(error?.message || 'Failed to load saved signature.', 'error');
-            setSignatureDirtyState(false);
-        }
-    }
-
-    function deleteSavedSignatureFromLibrary(entryId) {
-        _deleteSavedSignatureFromLibrary(entryId, {
-            signatureLibraryList,
-            signatureLibrarySelect,
-            signatureLibraryLoadBtn,
-            signatureStatus: signatureStatusEl,
-        });
-    }
-
     // ---- Modal stroke handlers (draw mode) ------------------------------
     function getSignatureCanvasPoint(event) {
         return rawCanvasPointFromEvent(signatureCanvas, event);
@@ -654,6 +589,14 @@ export function installSignatureFeature(deps) {
     signatureTabs.forEach((tab) => {
         tab.addEventListener('click', () => setSignatureMode(tab.dataset.signatureMode || 'draw'));
     });
+    signatureViewTabs.forEach((tab) => {
+        tab.addEventListener('click', () => showSavedView(true));
+    });
+    // role="tab" promises arrow-key navigation across the whole tablist.
+    installSignatureTabKeyboard([...signatureTabs, ...signatureViewTabs], (tab) => {
+        if (tab.dataset.signatureView === 'saved') showSavedView(true);
+        else setSignatureMode(tab.dataset.signatureMode || 'draw');
+    });
     if (signatureModalScrim) signatureModalScrim.addEventListener('click', () => closeSignatureModal());
     if (signatureModalClose) signatureModalClose.addEventListener('click', () => closeSignatureModal());
     if (signatureCancelBtn) signatureCancelBtn.addEventListener('click', () => closeSignatureModal());
@@ -666,43 +609,6 @@ export function installSignatureFeature(deps) {
             if (signatureImageName) signatureImageName.textContent = 'No file selected';
             setSignatureDirtyState(false);
             setSignatureStatus('Preview cleared.');
-        });
-    }
-    if (signatureSaveBtn) {
-        signatureSaveBtn.addEventListener('click', () => saveCurrentSignatureToLibrary());
-    }
-    if (signatureLibrarySelect) {
-        signatureLibrarySelect.addEventListener('change', () => {
-            if (signatureLibraryLoadBtn) signatureLibraryLoadBtn.disabled = !signatureLibrarySelect.value;
-        });
-    }
-    if (signatureLibraryLoadBtn) {
-        signatureLibraryLoadBtn.addEventListener('click', async () => {
-            const entryId = String(signatureLibrarySelect?.value || '');
-            if (!entryId) return;
-            await loadSavedSignatureFromLibrary(entryId);
-        });
-    }
-    if (signatureSaveNameInput) {
-        signatureSaveNameInput.addEventListener('keydown', (event) => {
-            if (event.key !== 'Enter') return;
-            event.preventDefault();
-            if (!signatureDirty) return;
-            saveCurrentSignatureToLibrary();
-        });
-    }
-    if (signatureLibraryList) {
-        signatureLibraryList.addEventListener('click', async (event) => {
-            const button = event.target instanceof HTMLElement
-                ? event.target.closest('[data-signature-library-action]')
-                : null;
-            if (!(button instanceof HTMLElement)) return;
-            const action = String(button.dataset.signatureLibraryAction || '');
-            const row = button.closest('[data-signature-library-id]');
-            const entryId = String(row?.getAttribute('data-signature-library-id') || '');
-            if (!entryId) return;
-            if (action === 'load') { await loadSavedSignatureFromLibrary(entryId); return; }
-            if (action === 'delete') deleteSavedSignatureFromLibrary(entryId);
         });
     }
     if (signatureColorInput) {
@@ -840,12 +746,15 @@ export function installSignatureFeature(deps) {
         const pageRect = pageDiv.getBoundingClientRect();
         const xPx = ev.clientX - pageRect.left;
         const yPx = ev.clientY - pageRect.top;
+        const pdfPoint = viewportPointToPdfPoint(xPx, yPx, viewport, scale);
+        if (!pdfPoint) return null;
+        const pageSize = viewportPdfDimensions(viewport, scale);
         return {
             pi,
-            pdfX: xPx / scale,
-            pdfY: (Number(viewport.height) - yPx) / scale, // y-flip
-            pageWPts: Number(viewport.width) / scale,
-            pageHPts: Number(viewport.height) / scale,
+            pdfX: pdfPoint.x,
+            pdfY: pdfPoint.y,
+            pageWPts: pageSize.width,
+            pageHPts: pageSize.height,
         };
     }
 
@@ -926,15 +835,6 @@ export function installSignatureFeature(deps) {
     }, true);
 
     // ---- Box rendering helper (called from main.js renderer) ------------
-    function pdfRectToCanvasRect(pdfRect, viewport, scale) {
-        if (!pdfRect || !viewport || !scale) return null;
-        return {
-            left: pdfRect.x * scale,
-            top: Number(viewport.height) - ((pdfRect.y + pdfRect.h) * scale),
-            width: pdfRect.w * scale,
-            height: pdfRect.h * scale,
-        };
-    }
     function createSignatureBoxElement(annotation, pageIndex, viewport, scale, editModeOn, hooks) {
         if (!isSignatureAnnotation(annotation)) return null;
         const pdfRect = {
@@ -943,7 +843,7 @@ export function installSignatureFeature(deps) {
             w: Number(annotation.pdfWidth) || 1,
             h: Number(annotation.pdfHeight) || 1,
         };
-        const rect = pdfRectToCanvasRect(pdfRect, viewport, scale);
+        const rect = pdfRectToViewportRect(pdfRect, viewport, scale);
         if (!rect || rect.width <= 0 || rect.height <= 0) return null;
         const box = document.createElement('div');
         box.className = 'enpv-annotation-box enpv-signature-box is-persisted-overlay';
@@ -953,7 +853,7 @@ export function installSignatureFeature(deps) {
         box.dataset.annotationType = 'signature';
         box.dataset.locked = annotation.locked ? '1' : '0';
         box.dataset.zIndex = String(Number(annotation.zIndex) || 6);
-        box.dataset.basePageHeight = String(Number(viewport.height) / scale);
+        box.dataset.basePageHeight = String(viewportPdfDimensions(viewport, scale).height);
         box.style.left = `${rect.left}px`;
         box.style.top = `${rect.top}px`;
         box.style.width = `${Math.max(1, rect.width)}px`;
@@ -967,6 +867,14 @@ export function installSignatureFeature(deps) {
         const src = String(annotation.dataUrl || annotation.src || annotation.assetPath || annotation.imagePath || '').trim();
         if (src) img.src = src;
         img.alt = 'Signature';
+        const pageFrame = viewportRotatedContentFrame(viewport, rect.width, rect.height);
+        img.style.position = 'absolute';
+        img.style.left = '0';
+        img.style.top = '0';
+        img.style.width = `${Math.max(1, pageFrame.width)}px`;
+        img.style.height = `${Math.max(1, pageFrame.height)}px`;
+        img.style.transformOrigin = '0 0';
+        img.style.transform = pageFrame.transform;
         box.appendChild(img);
         const label = document.createElement('span');
         label.className = 'enpv-signature-selection-label';
@@ -994,8 +902,117 @@ export function installSignatureFeature(deps) {
         return box;
     }
 
-    // Hydrate library on first open + initial load
-    loadSavedSignatureLibrary();
+
+    // ---- Account-scoped saved signatures (NK_Dev_4) ---------------------
+    const refreshAccountLibraryUi = () => renderAccountLibrary(accountLibrary, {
+        listEl: signatureAccountList,
+        copyEl: signatureAccountCopy,
+    });
+
+    async function loadAccountLibrary() {
+        if (!accountSignaturesUrl) return;
+        if (!accountSignaturesEnabled()) {
+            // Guest: there is no account to query, so skip the request that
+            // would only 401 and log a console error. The list still renders
+            // its sign-in prompt.
+            accountLibrary.signedIn = false;
+            accountLibrary.loaded = true;
+            refreshAccountLibraryUi();
+            return;
+        }
+        try {
+            await fetchAccountSignatures(accountSignaturesUrl, accountLibrary);
+        } catch (_) {
+            // A failed fetch just leaves the list empty; never block the modal.
+        }
+        refreshAccountLibraryUi();
+    }
+
+    async function saveSignatureToAccount() {
+        if (!signatureDirty) {
+            setSignatureStatus('Create a signature before saving it.', 'error');
+            return;
+        }
+        if (!accountSignaturesEnabled()) {
+            setSignatureStatus('Sign in to save signatures to your account.', 'error');
+            return;
+        }
+
+        const asset = buildCurrentSignatureAsset();
+        if (!asset?.dataUrl) {
+            setSignatureStatus('Create a signature before saving it.', 'error');
+            return;
+        }
+
+        setSignatureStatus('Saving signature to your account…');
+        const result = await saveAccountSignature(
+            accountSignaturesUrl,
+            accountLibrary,
+            asset,
+            // The name field went away with the browser library; the server
+            // assigns "Signature N" from the account's own count.
+            '',
+        );
+
+        if (!result.ok) {
+            setSignatureStatus(result.message, 'error');
+            refreshAccountLibraryUi();
+            return;
+        }
+
+        refreshAccountLibraryUi();
+        setSignatureStatus(`Saved "${result.signature.name}" to your account.`, 'ready');
+    }
+
+    async function loadAccountSignature(entryId) {
+        const entry = accountLibrary.entries.find((item) => String(item.id) === String(entryId));
+        if (!entry) return;
+
+        resetSignatureComposer();
+        setSignatureEditTarget(null);
+        updateSignatureModalCopy();
+        try {
+            await loadSignatureComposerFromAnnotation(accountEntryAsAnnotation(entry));
+            setSignatureStatus(`Loaded "${entry.name}" from your account.`, 'ready');
+        } catch (error) {
+            setSignatureStatus(error?.message || 'Failed to load that signature.', 'error');
+            setSignatureDirtyState(false);
+        }
+    }
+
+    async function removeAccountSignature(entryId) {
+        const result = await deleteAccountSignature(accountSignaturesUrl, accountLibrary, entryId);
+        refreshAccountLibraryUi();
+        setSignatureStatus(
+            result.ok ? 'Signature removed from your account.' : result.message,
+            result.ok ? 'default' : 'error',
+        );
+    }
+
+    if (signatureAccountSaveBtn) {
+        signatureAccountSaveBtn.addEventListener('click', () => { void saveSignatureToAccount(); });
+    }
+    if (signatureAccountList) {
+        signatureAccountList.addEventListener('click', async (event) => {
+            const button = event.target instanceof HTMLElement
+                ? event.target.closest('[data-account-signature-action]')
+                : null;
+            if (!(button instanceof HTMLElement)) return;
+            const row = button.closest('[data-account-signature-id]');
+            const entryId = String(row?.getAttribute('data-account-signature-id') || '');
+            if (!entryId) return;
+            if (button.dataset.accountSignatureAction === 'load') await loadAccountSignature(entryId);
+            else await removeAccountSignature(entryId);
+        });
+    }
+
+    // Hydrate the account library on first load.
+    if (signatureAccountSaveBtn) {
+        signatureAccountSaveBtn.title = accountSignaturesEnabled()
+            ? 'Save this signature to your account'
+            : 'Sign in to save signatures to your account';
+    }
+    void loadAccountLibrary();
     syncSignatureColorLabels();
 
     return {

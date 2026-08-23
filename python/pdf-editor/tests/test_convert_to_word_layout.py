@@ -3,12 +3,15 @@ import os
 import subprocess
 import tempfile
 import unittest
+import io
 from pathlib import Path
 from zipfile import ZipFile
 
+import fitz
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from lxml import etree
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -19,7 +22,8 @@ DRYLAB_FIXTURE = ROOT / "tests" / "OverlayEditor" / "drylab.pdf"
 
 
 class WordLayoutConversionTest(unittest.TestCase):
-    def convert(self, source, output):
+    def convert(self, source, output, extra_args=None):
+        extra_args = list(extra_args or [])
         result = subprocess.run(
             [
                 str(PYTHON),
@@ -29,6 +33,7 @@ class WordLayoutConversionTest(unittest.TestCase):
                 "--layout",
                 "exact",
                 "--images",
+                *extra_args,
                 "--json",
             ],
             cwd=ROOT,
@@ -108,6 +113,38 @@ class WordLayoutConversionTest(unittest.TestCase):
                 './/w:sectPr/w:cols[@w:num="2"]', namespaces=namespaces
             )
             self.assertGreaterEqual(len(two_column_sections), 3)
+
+    def test_visual_fidelity_exact_preserves_rotated_page_paint(self):
+        with tempfile.TemporaryDirectory(prefix="toolbase_word_visual_test_") as directory:
+            source = Path(directory) / "edited-rotated.pdf"
+            output = Path(directory) / "edited-rotated.docx"
+            pdf = fitz.open()
+            page = pdf.new_page(width=460, height=300)
+            page.insert_text((40, 55), "VISIBLE EDITED TEXT", fontsize=18, color=(1, 0, 0))
+            page.draw_line((30, 80), (420, 240), color=(1, 0.25, 0), width=8)
+            page.set_rotation(90)
+            pdf.save(source)
+            pdf.close()
+
+            result = self.convert(source, output, ["--visual-fidelity"])
+
+            self.assertEqual(result["engine"], "toolbase_visual")
+            self.assertTrue(result["visual_fidelity"])
+            self.assertEqual(result["rendered_pages"], 1)
+            document = Document(output)
+            self.assertEqual(len(document.inline_shapes), 1)
+            self.assertAlmostEqual(document.sections[0].page_width.pt, 300, delta=1)
+            self.assertAlmostEqual(document.sections[0].page_height.pt, 460, delta=1)
+
+            with ZipFile(output) as archive:
+                image_name = next(name for name in archive.namelist() if name.startswith("word/media/"))
+                rendered = Image.open(io.BytesIO(archive.read(image_name))).convert("RGB")
+            red_pixels = sum(
+                1
+                for red, green, blue in rendered.getdata()
+                if red > 180 and green < 120 and blue < 120
+            )
+            self.assertGreater(red_pixels, 100)
 
 
 if __name__ == "__main__":

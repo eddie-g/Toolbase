@@ -122,6 +122,30 @@
         </div>
     </div>
     <div class="afb-divider"></div>
+    @if(request()->boolean('pdfjs'))
+    <div class="afb-control-group afb-link-group">
+        <label class="afb-control-label" for="afb-link-url">Hyperlink</label>
+        <input
+            class="afb-link-url"
+            id="afb-link-url"
+            type="text"
+            inputmode="url"
+            autocomplete="url"
+            spellcheck="false"
+            placeholder="https://example.com"
+            aria-describedby="afb-link-help"
+        >
+        <div class="afb-control-row">
+            <button type="button" class="afb-link-action" id="afb-link-apply" title="Apply hyperlink to selected text">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.07.07l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15"></path><path d="M14 11a5 5 0 0 0-7.07-.07l-2 2A5 5 0 0 0 12 20l1.15-1.15"></path></svg>
+                Apply link
+            </button>
+            <button type="button" class="afb-link-action is-secondary" id="afb-link-remove" title="Remove hyperlink from selected text">Remove</button>
+        </div>
+        <p class="afb-link-help" id="afb-link-help">Select text in the PDF, then enter its destination.</p>
+    </div>
+    <div class="afb-divider"></div>
+    @endif
     <div class="afb-control-group afb-align-group">
         <span class="afb-control-label">Alignment</span>
         <div class="afb-control-row">

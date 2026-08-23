@@ -28,7 +28,7 @@ except ImportError:
 try:
     from docx import Document
     from docx.shared import Pt, Inches, RGBColor, Emu
-    from docx.enum.text import WD_BREAK, WD_LINE_SPACING
+    from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK, WD_LINE_SPACING
     from docx.enum.section import WD_SECTION
     from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_ROW_HEIGHT_RULE, WD_TABLE_ALIGNMENT
     from docx.oxml import OxmlElement
@@ -531,6 +531,55 @@ def convert_exact_layout(pdf_doc, word_doc, include_images=True):
             previous_bottom = max(previous_bottom, event["bbox"][3])
 
 
+def convert_visual_exact_layout(pdf_doc, word_doc):
+    """Place the final rendered appearance of every PDF page into Word.
+
+    Semantic PDF converters commonly rebuild only the original text/content
+    streams and discard later editor paint streams. Rendering the completed
+    page is the only exact representation that also retains drawings,
+    highlights, source replacements, and mixed page rotations.
+    """
+    rendered_pages = 0
+    for page_idx in range(len(pdf_doc)):
+        page = pdf_doc[page_idx]
+        page_width = float(page.rect.width)
+        page_height = float(page.rect.height)
+
+        if page_idx == 0:
+            section = word_doc.sections[0]
+            paragraph = word_doc.add_paragraph()
+        else:
+            section = word_doc.add_section(WD_SECTION.NEW_PAGE)
+            paragraph = word_doc.add_paragraph()
+
+        section.page_width = Emu(int(page_width / 72 * 914400))
+        section.page_height = Emu(int(page_height / 72 * 914400))
+        section.left_margin = Pt(2)
+        section.right_margin = Pt(2)
+        section.top_margin = Pt(2)
+        section.bottom_margin = Pt(2)
+        section.header_distance = Pt(0)
+        section.footer_distance = Pt(0)
+
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.paragraph_format.space_before = Pt(0)
+        paragraph.paragraph_format.space_after = Pt(0)
+        paragraph.paragraph_format.line_spacing = Pt(1)
+        paragraph.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False, annots=True)
+        image = io.BytesIO(pixmap.tobytes("png"))
+        run = paragraph.add_run()
+        run.add_picture(
+            image,
+            width=Pt(max(1, page_width - 4)),
+            height=Pt(max(1, page_height - 4)),
+        )
+        rendered_pages += 1
+
+    return rendered_pages
+
+
 def perform_ocr_on_page(page):
     """Use Tesseract OCR on a page image to extract text."""
     try:
@@ -573,6 +622,8 @@ def main():
                         help="Exclude images from output")
     parser.add_argument("--ocr", action="store_true", default=False,
                         help="Use OCR for scanned pages")
+    parser.add_argument("--visual-fidelity", action="store_true", default=False,
+                        help="Render exact pages as images so all editor paint is retained")
     parser.add_argument("--json", action="store_true", default=False,
                         help="Output result as JSON")
     
@@ -591,6 +642,29 @@ def main():
             total_pages = len(source_pdf)
 
         warnings = []
+
+        if args.layout == "exact" and args.include_images and args.visual_fidelity:
+            pdf_doc = fitz.open(args.input_pdf)
+            word_doc = Document()
+            rendered_pages = convert_visual_exact_layout(pdf_doc, word_doc)
+            word_doc.save(args.output_docx)
+            pdf_doc.close()
+            file_size = os.path.getsize(args.output_docx)
+            result = {
+                "success": True,
+                "output": args.output_docx,
+                "pages": total_pages,
+                "file_size": file_size,
+                "layout": args.layout,
+                "engine": "toolbase_visual",
+                "visual_fidelity": True,
+                "rendered_pages": rendered_pages,
+            }
+            if args.json:
+                print(json.dumps(result))
+            else:
+                print(f"Rendered {total_pages} pages to {args.output_docx} ({file_size} bytes)")
+            return
 
         # The dedicated layout engine reconstructs Word sections and columns,
         # which is essential for newsletters, brochures, and other designed

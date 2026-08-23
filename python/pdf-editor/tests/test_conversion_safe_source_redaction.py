@@ -102,6 +102,123 @@ class ConversionSafeSourceRedactionTest(unittest.TestCase):
         self.assertEqual(0, text.count("Alpha source paragraph"))
         self.assertEqual(1, text.count("Omega neighbor paragraph"))
 
+    def test_rotated_page_uses_unrotated_source_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "rotated-source.pdf"
+            document = fitz.open()
+            page = document.new_page(width=460, height=300)
+            page.insert_text((40, 50), "Rotated source heading", fontsize=12)
+            page.set_rotation(90)
+            document.save(path)
+            document.close()
+
+            annotation = {
+                "id": "pdfjs_rotated_0_0:1",
+                "type": "text",
+                "pageIndex": 0,
+                "text": "Rotated replacement heading",
+                "originalText": "Rotated source heading",
+                "pdfjsSourceText": "Rotated source heading",
+                "pdfX": 40,
+                "pdfY": 245,
+                "pdfWidth": 180,
+                "pdfHeight": 20,
+                "pdfjsSourceX": 40,
+                "pdfjsSourceY": 245,
+                "pdfjsSourceW": 180,
+                "pdfjsSourceH": 20,
+                "pdfjsSourceMaskX": 40,
+                "pdfjsSourceMaskY": 245,
+                "pdfjsSourceMaskW": 180,
+                "pdfjsSourceMaskH": 20,
+                "fontFamily": "Helvetica",
+                "fontSize": 12,
+                "lineHeight": 14,
+                "textColor": "#000000",
+                "savedTextOverlay": True,
+                "styleDirty": True,
+                "userAuthored": True,
+            }
+
+            apply_annotations(str(path), [annotation])
+            document = fitz.open(path)
+            try:
+                page = document[0]
+                text = page.get_text("text")
+                replacement_matches = page.search_for("Rotated replacement heading")
+                self.assertEqual(90, page.rotation)
+            finally:
+                document.close()
+
+        self.assertNotIn("Rotated source heading", text)
+        self.assertEqual(1, len(replacement_matches), text)
+
+    def test_ligature_source_row_is_removed_when_remote_short_label_also_matches(self) -> None:
+        """A remote `Name` row must not steal source ownership from the edit.
+
+        PDF.js emits the final `ff` in this fixture as the U+FB00 ligature,
+        while PyMuPDF extracts the source as two ASCII characters. Before this
+        regression guard, the page-wide line matcher selected the unrelated
+        one-word `Name` row, treated the actual source row as collateral, and
+        returned success after redacting an empty sliver at the box edge.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "ligature-source-row.pdf"
+            document = fitz.open()
+            page = document.new_page(width=612, height=792)
+            page.insert_text(
+                (50, 45),
+                "Name: Emma Natalie Grigoreff | DOB: 11/24/2023 | MRN: 3003894750",
+                fontsize=12,
+            )
+            page.insert_text((230, 60), "Name: Emma Natalie Grigoreff", fontsize=12)
+            page.insert_text((50, 200), "Name", fontsize=12)
+            document.save(path)
+            document.close()
+
+            annotation = {
+                "id": "pdfjs_5302_0_0:3",
+                "type": "text",
+                "pageIndex": 0,
+                "text": "Name: Emma EDITED",
+                "originalText": "Name: Emma Natalie Grigore\ufb00",
+                "pdfjsSourceText": "Name: Emma Natalie Grigore\ufb00",
+                "pdfX": 230,
+                "pdfY": 729,
+                "pdfWidth": 154,
+                "pdfHeight": 16,
+                "pdfjsSourceX": 230,
+                "pdfjsSourceY": 729,
+                "pdfjsSourceW": 154,
+                "pdfjsSourceH": 16,
+                "pdfjsSourceMaskX": 230,
+                "pdfjsSourceMaskY": 729,
+                "pdfjsSourceMaskW": 154,
+                "pdfjsSourceMaskH": 16,
+                "pdfjsAnchorUid": "0:3",
+                "fontFamily": "Helvetica",
+                "fontSize": 12,
+                "lineHeight": 14,
+                "textColor": "#000000",
+                "savedTextOverlay": True,
+                "userAuthored": True,
+            }
+
+            apply_annotations(str(path), [annotation])
+            document = fitz.open(path)
+            try:
+                page = document[0]
+                original_matches = page.search_for("Name: Emma Natalie Grigoreff")
+                replacement_matches = page.search_for("Name: Emma EDITED")
+                isolated_name_matches = page.search_for("Name")
+                text = page.get_text("text")
+            finally:
+                document.close()
+
+        self.assertEqual(1, len(original_matches), text)
+        self.assertEqual(1, len(replacement_matches), text)
+        self.assertEqual(3, len(isolated_name_matches), text)
+
     def test_overlapping_title_survives_source_word_redaction(self) -> None:
         """A short edited row must not redact a taller overlapping heading."""
         with tempfile.TemporaryDirectory() as directory:

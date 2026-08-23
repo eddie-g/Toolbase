@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Document;
 use App\Models\OverlayEditorTest;
 use App\Models\PdfAcroForm;
@@ -17,6 +18,7 @@ use App\Services\PdfAnnotationAssetService;
 use App\Support\PdfAnnotationSuppression;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -377,6 +379,23 @@ class PdfTestController extends Controller
                 })
                 ->latest('id')
                 ->value('annotation_data');
+            $savedReferenceAnnotations = [];
+            if (($scenarioConfig['scenario'] ?? null) === 'drylab_page1_append_paragraph_preserves_layout') {
+                foreach ([[1, 'promoted_2_2'], [2, 'promoted_3_1']] as [$pageNumber, $annotationId]) {
+                    $referenceAnnotation = PdfState::query()
+                        ->where('document_id', $uploadFixture->document_id)
+                        ->where('page_number', $pageNumber)
+                        ->whereRaw(
+                            "JSON_UNQUOTE(JSON_EXTRACT(annotation_data, '$.id')) = ?",
+                            [$annotationId]
+                        )
+                        ->latest('id')
+                        ->value('annotation_data');
+                    if (is_array($referenceAnnotation)) {
+                        $savedReferenceAnnotations[] = $referenceAnnotation;
+                    }
+                }
+            }
 
             try {
                 File::put($uploadSourcePath, $uploadFixture->pdfContents());
@@ -398,6 +417,7 @@ class PdfTestController extends Controller
                     'saved_target_annotation' => is_array($savedTargetAnnotation)
                         ? $savedTargetAnnotation
                         : null,
+                    'saved_reference_annotations' => $savedReferenceAnnotations,
                     'delete_suffix' => '3_3:20',
                     'survivor_suffixes' => ['3_3:19', '3_3:21'],
                     'swap_primary_suffix' => $scenarioConfig['swap_primary_suffix'],
@@ -416,9 +436,11 @@ class PdfTestController extends Controller
                     'f1040_scroll_spacing_suffix' => '0_0:23',
                     'f1040_date_weight_suffix' => '0_0:119',
                     'f1040_scroll_geometry_suffix' => '0_0:34',
+                    'f1040_title_underline_suffix' => '0_0:2',
                     'f1040_move_suffix' => '0_0:115',
                     'f1040_delete_name_suffix' => '0_0:12',
                     'f1040_part_header_suffix' => '0_0:14',
+                    'f1040s1_part_header_suffix' => '0_0:18',
                     'move_down_suffix' => $scenarioConfig['move_down_suffix'],
                     'move_down_pixels' => $scenarioConfig['move_down_pixels'],
                     'drylab_title_suffix' => '0_0:0',
@@ -433,6 +455,8 @@ class PdfTestController extends Controller
                     'table_edit_expected_text' => $scenarioConfig['table_edit_expected_text'],
                     'table_edit_append_text' => $scenarioConfig['table_edit_append_text'],
                     'require_exact_document_font' => $scenarioConfig['require_exact_document_font'],
+                    'require_first_keystroke_font_stability' => $scenarioConfig['require_first_keystroke_font_stability'],
+                    'resolve_target_by_exact_text' => $scenarioConfig['resolve_target_by_exact_text'],
                     'table_export_page_number' => $scenarioConfig['table_export_page_number'],
                     'table_export_suffix' => $scenarioConfig['table_export_suffix'],
                     'table_export_expected_text' => $scenarioConfig['table_export_expected_text'],
@@ -450,6 +474,26 @@ class PdfTestController extends Controller
                         'YGTKSM+SegoeUI-Bold',
                     ],
                     'paragraph_shrink_ratio' => $scenarioConfig['paragraph_shrink_ratio'],
+                    'bookmark_registered_mark_characters' => $scenarioConfig['bookmark_registered_mark_characters'],
+                    'bookmark_paragraph_bold_phrases' => $scenarioConfig['bookmark_paragraph_bold_phrases'],
+                    'bookmark_paragraph_move_pixels' => $scenarioConfig['bookmark_paragraph_move_pixels'],
+                    'bookmark_split_primary_suffix' => $scenarioConfig['bookmark_split_primary_suffix'],
+                    'bookmark_split_partner_suffix' => $scenarioConfig['bookmark_split_partner_suffix'],
+                    'bookmark_split_primary_text' => $scenarioConfig['bookmark_split_primary_text'],
+                    'bookmark_split_source_word' => $scenarioConfig['bookmark_split_source_word'],
+                    'bookmark_font_change_annotation_id' => $scenarioConfig['bookmark_font_change_annotation_id'],
+                    'bookmark_font_change_font_family' => $scenarioConfig['bookmark_font_change_font_family'],
+                    'bookmark_font_change_expected_text' => $scenarioConfig['bookmark_font_change_expected_text'],
+                    'bookmark_baseline_target_suffix' => $scenarioConfig['bookmark_baseline_target_suffix'],
+                    'bookmark_baseline_reference_suffix' => $scenarioConfig['bookmark_baseline_reference_suffix'],
+                    'bookmark_baseline_target_text' => $scenarioConfig['bookmark_baseline_target_text'],
+                    'bookmark_baseline_reference_text' => $scenarioConfig['bookmark_baseline_reference_text'],
+                    'bookmark_baseline_gap_pixels' => $scenarioConfig['bookmark_baseline_gap_pixels'],
+                    'inline_bold_text' => $scenarioConfig['inline_bold_text'],
+                    'inline_italic_text' => $scenarioConfig['inline_italic_text'],
+                    'inline_color_text' => $scenarioConfig['inline_color_text'],
+                    'inline_text_color' => $scenarioConfig['inline_text_color'],
+                    'inline_underline_text' => $scenarioConfig['inline_underline_text'],
                     'f1040_edit_expected_text' => 'Total other payments or refundable credits. Add lines 13a through 13z',
                     'f1040_drag_spacing_expected_text' => 'Credit for previously owned clean vehicles. Attach Form 8936',
                     'f1040_move_glyph_inset_expected_text' => 'Credit for prior year minimum tax. Attach Form 8801',
@@ -458,9 +502,11 @@ class PdfTestController extends Controller
                     'f1040_scroll_spacing_expected_text' => 'Education credits from Form 8863, line 19',
                     'f1040_date_weight_expected_text' => 'Schedule 3 (Form 1040) 2025 Created 11/17/25',
                     'f1040_scroll_geometry_expected_text' => 'a',
+                    'f1040_title_underline_expected_text' => $uploadTestCase->target_text,
                     'f1040_move_expected_text' => '15 Add lines 9 through 12 and 14. Enter here and on Form 1040',
                     'f1040_delete_name_expected_text' => 'Name(s) shown on Form 1040, 1040-SR, or 1040-NR',
                     'f1040_part_header_expected_text' => 'Part I',
+                    'f1040s1_part_header_expected_text' => 'Part I',
                     'expected_text' => [
                         '3_3:19' => 'Paperwork Reduction Act Statement -This information collection meets the requirements of 44 U.S.C. § 3507, as',
                         '3_3:20' => 'amended by section 2 of the Paperwork Reduction Act of 1995. You do not need to answer these questions unless we',
@@ -4617,6 +4663,20 @@ PYTHON;
             $statesQuery->whereNotIn('page_number', array_map(fn($n) => $n - 1, $pagesExclude));
         }
         $states = $statesQuery->orderBy('id')->get();
+        $hasMaterializedExtraction = $states->contains(static function (PdfState $state): bool {
+            if ((string) $state->state !== 'extracted') {
+                return false;
+            }
+
+            $annotation = is_array($state->annotation_data) ? $state->annotation_data : [];
+
+            return filter_var(
+                $annotation['promotedFromExtraction'] ?? false,
+                FILTER_VALIDATE_BOOLEAN
+            );
+        });
+        $extractionPending = !$hasMaterializedExtraction
+            && Cache::has(ProcessUploadedDocumentJob::processingCacheKey($document->id));
         $deletedPromotedSourceKeys = [];
         foreach ($states as $state) {
             if ((string) $state->state !== 'deleted') {
@@ -4867,6 +4927,7 @@ PYTHON;
             ],
             'annotations'    => $annotations,
             'count'          => $annotations->count(),
+            'extraction_pending' => $extractionPending,
             'acro_form_entries' => $acroFormEntries,
             'has_acro_form_widgets' => $hasAcroFormWidgets,
             'embedded_fonts' => $embeddedFonts,
@@ -5220,6 +5281,12 @@ PYTHON;
             && Str::contains($normalizedComment, ['grow', 'geometry', 'bounding box'])
             && Str::contains($normalizedComment, ['lag', 'performance', 'rebuild']);
 
+        $isF1040TitleUnderlineExport = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:2')
+            && $normalizedTargetText !== ''
+            && Str::contains($normalizedComment, 'underline')
+            && Str::contains($normalizedComment, ['download', 'export', 'pdf']);
+
         $isF1040MoveWithoutFalseUnderline = (int) $testCase->page_index === 0
             && str_ends_with($savedRuntimeId, '_0_0:115')
             && (
@@ -5261,6 +5328,18 @@ PYTHON;
                 'visible',
             ]);
 
+        $isF1040s1MovePartHeaderClearsSourceGlyphs = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:18')
+            && $normalizedTargetText === 'Part I'
+            && Str::contains($normalizedComment, ['move', 'drag'])
+            && Str::contains($normalizedComment, [
+                'mask',
+                'residue',
+                'leftover',
+                'left behind',
+                'remaining',
+            ]);
+
         $moveDownPixels = null;
         if (preg_match('/\b(\d+)\s*(?:px|pixels?)\b/i', $normalizedComment, $distanceMatch)) {
             $moveDownPixels = (int) $distanceMatch[1];
@@ -5282,6 +5361,53 @@ PYTHON;
             && Str::contains($normalizedComment, ['move', 'drag'])
             && Str::contains($normalizedComment, ['download pdf', 'resulting pdf'])
             && Str::contains($normalizedComment, ['fragment', 'redact']);
+
+        $isDrylabParagraphSelectionMatchesSource = (int) $testCase->page_index === 0
+            && $savedRuntimeId === 'promoted_1_7'
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'the 2.05 MNOK loan from Innovation Norway'
+            )
+            && Str::contains($normalizedComment, 'ctrl+a')
+            && Str::contains($normalizedComment, ['select', 'selection'])
+            && Str::contains($normalizedComment, ['align', 'match'])
+            && Str::contains($normalizedComment, ['blue bar', 'detached']);
+
+        $isDrylabInlineStylesExportExactly = (int) $testCase->page_index === 0
+            && $savedRuntimeId === 'promoted_1_7'
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'the 2.05 MNOK loan from Innovation Norway'
+            )
+            && Str::contains($normalizedComment, 'associated')
+            && Str::contains($normalizedComment, 'bold')
+            && Str::contains($normalizedComment, 'process')
+            && Str::contains($normalizedComment, 'italic')
+            && Str::contains($normalizedComment, 'finalized')
+            && Str::contains($normalizedComment, 'underline')
+            && Str::contains($normalizedComment, ['download', 'export']);
+
+        $isDrylabParagraphAppendPreservesLayout = (int) $testCase->page_index === 0
+            && $savedRuntimeId === 'promoted_1_1'
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Welcome to our first newsletter of 2017!'
+            )
+            && Str::contains($normalizedComment, ['add', 'append'])
+            && Str::contains($normalizedComment, '123')
+            && Str::contains($normalizedComment, ['deselect', 'deselection'])
+            && Str::contains($normalizedComment, ['reflow', 'spacing', 'indent']);
+
+        $isDrylabInlineStylesPersistAfterDeselect = (int) $testCase->page_index === 2
+            && $savedRuntimeId === 'promoted_3_4'
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'The launch of Drylab 3.0 will take place'
+            )
+            && Str::contains($normalizedComment, 'bold')
+            && Str::contains($normalizedComment, 'italic')
+            && Str::contains($normalizedComment, ['color', 'colour'])
+            && Str::contains($normalizedComment, ['deselect', 'deselection']);
 
         $isTableHeaderMovePreservesEditorRules = (int) $testCase->page_index === 0
             && str_ends_with($savedRuntimeId, '_0_0:6')
@@ -5314,6 +5440,23 @@ PYTHON;
             && Str::contains($normalizedComment, ['jump', 'consistent'])
             && Str::contains($normalizedComment, ['document fonts', 'pdf font', 'exact font']);
 
+        $isMc0072AppendPreservesFontMetrics = (int) $testCase->page_index === 0
+            && $normalizedTargetText === 'Health Care Agent (Health Care Power of Attorney)'
+            && Str::contains($normalizedComment, ['add 1', 'append 1'])
+            && Str::contains($normalizedComment, ['deselect', 'deselection'])
+            && Str::contains($normalizedComment, ['font changes size', 'font size']);
+
+        $isMc0072InlineStylesExport = (int) $testCase->page_index === 0
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Mayo Clinic’s electronic medical record systems:'
+            )
+            && Str::contains($normalizedComment, 'bold')
+            && Str::contains($normalizedComment, 'electronic')
+            && Str::contains($normalizedComment, 'underline')
+            && Str::contains($normalizedComment, 'systems')
+            && Str::contains($normalizedComment, ['download pdf', 'downloaded version']);
+
         $isTableEdgeTightHeaderExport = (int) $testCase->page_index === 0
             && str_ends_with($savedRuntimeId, '_0_0:6')
             && Str::lower((string) $normalizedTargetText) === 'header 3'
@@ -5343,6 +5486,53 @@ PYTHON;
             && Str::contains($normalizedComment, ['50%', '50 percent'])
             && Str::contains($normalizedComment, ['downloaded pdf', 'download pdf']);
 
+        $isBookmarkParagraphMoveKeepsInlineRuns = (int) $testCase->page_index === 0
+            && $savedRuntimeId === 'promoted_1_7'
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'The left pane displays the available bookmarks for this PDF.'
+            )
+            && Str::contains($normalizedComment, ['move', 'drag'])
+            && Str::contains($normalizedComment, 'bold')
+            && Str::contains($normalizedComment, 'window')
+            && Str::contains($normalizedComment, 'show bookmarks')
+            && Str::contains($normalizedComment, ['copyright', 'left behind']);
+
+        $isBookmarkSourceSplitCoversUnderscore = (int) $testCase->page_index === 2
+            && str_ends_with($savedRuntimeId, '_2_2:26')
+            && $normalizedTargetText === 'Open the template design ap'
+            && Str::contains($normalizedComment, 'bounding')
+            && Str::contains($normalizedComment, 'include')
+            && Str::contains($normalizedComment, ':27');
+
+        $isBookmarkFontChangeKeepsTextInsideBox = (int) $testCase->page_index === 0
+            && $savedRuntimeId === 'promoted_1_8'
+            && str_starts_with(
+                (string) $normalizedTargetText,
+                'Note that the index has been sorted according to the specification in the bookmark file'
+            )
+            && Str::contains($normalizedComment, 'font')
+            && Str::contains($normalizedComment, 'verdana')
+            && Str::contains($normalizedComment, ['outside', 'inside', 'bounding']);
+
+        $isBookmarkMovedTextExportBaseline = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:3')
+            && Str::lower((string) $normalizedTargetText) === 'prepared by:'
+            && Str::contains($normalizedComment, ['move', 'drag'])
+            && Str::contains($normalizedComment, ['50 px', '50 pixels'])
+            && Str::contains($normalizedComment, 'right')
+            && Str::contains($normalizedComment, ':1')
+            && Str::contains($normalizedComment, ['save', 'saved', 'export', 'download'])
+            && Str::contains($normalizedComment, ['align', 'baseline']);
+
+        $isBookmarkShapeLayerOrder = (int) $testCase->page_index === 0
+            && str_ends_with($savedRuntimeId, '_0_0:12')
+            && $normalizedTargetText === 'Primary bookmarks in a PDF file.'
+            && Str::contains($normalizedComment, 'shape')
+            && Str::contains($normalizedComment, ['z-index', 'z index'])
+            && Str::contains($normalizedComment, ['move down', 'send to back'])
+            && Str::contains($normalizedComment, ['move up', 'bring to front']);
+
         return [
             'scenario' => match (true) {
                 $isUnderlineDeletion => 'ss5_page4_delete_underlined_neighbor',
@@ -5356,17 +5546,30 @@ PYTHON;
                 $isF1040ScrollPreservesEditedSpacing => 'f1040s3_page1_scroll_preserves_edited_spacing',
                 $isF1040DateEditPreservesMixedWeight => 'f1040s3_page1_date_edit_preserves_mixed_weight',
                 $isF1040ScrollPreservesUserSizedGeometry => 'f1040s3_page1_scroll_preserves_user_sized_geometry',
+                $isF1040TitleUnderlineExport => 'f1040s3_page1_title_underline_export',
                 $isF1040MoveWithoutFalseUnderline => 'f1040s3_page1_move_without_false_underline',
                 $isF1040DeleteNamePreservesFormArtwork => 'f1040s3_page1_delete_name_preserves_form_artwork',
                 $isF1040MovePartHeaderPreservesSourceTile => 'f1040s3_page1_move_part_header_preserves_source_tile',
+                $isF1040s1MovePartHeaderClearsSourceGlyphs => 'f1040s1_page1_move_part_header_clears_source_glyphs',
                 $isF1040MoveDownPreservesFontSize => 'f1040s3_page1_move_down_preserves_font_size',
                 $isDrylabTitleMovePreservesFooter => 'drylab_page1_move_title_preserves_footer',
+                $isDrylabParagraphSelectionMatchesSource => 'drylab_page1_select_paragraph_matches_source',
+                $isDrylabInlineStylesExportExactly => 'drylab_page1_inline_styles_export_exactly',
+                $isDrylabParagraphAppendPreservesLayout => 'drylab_page1_append_paragraph_preserves_layout',
+                $isDrylabInlineStylesPersistAfterDeselect => 'drylab_page3_inline_styles_persist_after_deselect',
                 $isTableHeaderMovePreservesEditorRules => 'table_examples_page1_move_header_preserves_editor_table',
                 $isTableEdgeTightHeaderExport => 'table_examples_page1_edge_tight_header_export',
                 $isTablePromotedEditEntryStable => 'table_examples_page1_promoted_edit_entry_stable',
                 $isTableTextEditPreservesGeometry => 'table_examples_page2_edit_text_preserves_geometry',
                 $isTableExactFontEditPreservesGeometry => 'table_examples_page3_exact_font_edit_preserves_geometry',
+                $isMc0072AppendPreservesFontMetrics => 'mc0072_page1_append_preserves_font_metrics',
+                $isMc0072InlineStylesExport => 'mc0072_page1_inline_styles_export',
                 $isParagraphShrinkAndExport => 'ss5_page3_shrink_paragraph_and_export',
+                $isBookmarkParagraphMoveKeepsInlineRuns => 'bookmark_sample_page1_move_paragraph_preserves_inline_runs',
+                $isBookmarkSourceSplitCoversUnderscore => 'bookmark_sample_page3_source_split_covers_underscore',
+                $isBookmarkFontChangeKeepsTextInsideBox => 'bookmark_sample_page1_font_change_keeps_text_inside_box',
+                $isBookmarkMovedTextExportBaseline => 'bookmark_sample_page1_moved_text_export_baseline',
+                $isBookmarkShapeLayerOrder => 'bookmark_sample_page1_shape_z_index_controls',
                 default => 'unsupported',
             },
             'swap_primary_suffix' => $savedSwapSuffix,
@@ -5380,13 +5583,21 @@ PYTHON;
             ],
             'move_down_suffix' => $moveDownSuffix,
             'move_down_pixels' => $moveDownPixels,
-            'table_edit_page_number' => $isTableExactFontEditPreservesGeometry ? 3 : 2,
-            'table_edit_suffix' => $isTableExactFontEditPreservesGeometry ? '2_2:35' : '1_1:31',
-            'table_edit_expected_text' => $isTableExactFontEditPreservesGeometry
-                ? 'Project 1'
-                : 'Best Practices: Separate two tables with header rows',
+            'table_edit_page_number' => $isMc0072AppendPreservesFontMetrics
+                ? 1
+                : ($isTableExactFontEditPreservesGeometry ? 3 : 2),
+            'table_edit_suffix' => $isMc0072AppendPreservesFontMetrics
+                ? '0_0:51'
+                : ($isTableExactFontEditPreservesGeometry ? '2_2:35' : '1_1:31'),
+            'table_edit_expected_text' => $isMc0072AppendPreservesFontMetrics
+                ? 'Health Care Agent (Health Care Power of Attorney)'
+                : ($isTableExactFontEditPreservesGeometry
+                    ? 'Project 1'
+                    : 'Best Practices: Separate two tables with header rows'),
             'table_edit_append_text' => $isTableExactFontEditPreservesGeometry ? '2' : '1',
             'require_exact_document_font' => $isTableExactFontEditPreservesGeometry,
+            'require_first_keystroke_font_stability' => $isMc0072AppendPreservesFontMetrics,
+            'resolve_target_by_exact_text' => $isMc0072AppendPreservesFontMetrics,
             'table_export_page_number' => $isTableEdgeTightHeaderExport ? 1 : null,
             'table_export_suffix' => $isTableEdgeTightHeaderExport ? '0_0:6' : null,
             'table_export_expected_text' => $isTableEdgeTightHeaderExport ? 'Header 3' : null,
@@ -5396,6 +5607,34 @@ PYTHON;
                 ? 'Use tables to organize data not format information'
                 : null,
             'paragraph_shrink_ratio' => $isParagraphShrinkAndExport ? 0.5 : null,
+            'paragraph_append_text' => $isDrylabParagraphAppendPreservesLayout ? '123' : null,
+            'inline_color_text' => $isDrylabInlineStylesPersistAfterDeselect ? 'pilot' : null,
+            'inline_text_color' => $isDrylabInlineStylesPersistAfterDeselect ? '#c62828' : null,
+            'inline_bold_text' => $isDrylabInlineStylesExportExactly
+                ? 'associated'
+                : ($isDrylabInlineStylesPersistAfterDeselect ? 'launch' : null),
+            'inline_italic_text' => $isDrylabInlineStylesExportExactly
+                ? 'process'
+                : ($isDrylabInlineStylesPersistAfterDeselect ? 'Drylab' : null),
+            'inline_underline_text' => $isDrylabInlineStylesExportExactly ? 'finalized' : null,
+            // The registered sign is drawn from the Symbol font as the private
+            // use character U+F8E8, so the exported PDF may legitimately carry
+            // either that code point or a real U+00AE after a font swap.
+            'bookmark_registered_mark_characters' => ["\u{F8E8}", "\u{00AE}"],
+            'bookmark_paragraph_bold_phrases' => ['Window', 'Show Bookmarks'],
+            'bookmark_paragraph_move_pixels' => 120,
+            'bookmark_split_primary_suffix' => '2_2:26',
+            'bookmark_split_partner_suffix' => '2_2:27',
+            'bookmark_split_primary_text' => 'Open the template design ap',
+            'bookmark_split_source_word' => 'ap_bookmark.IFD',
+            'bookmark_font_change_annotation_id' => 'promoted_1_8',
+            'bookmark_font_change_font_family' => 'Verdana',
+            'bookmark_font_change_expected_text' => 'Note that the index has been sorted according to the specification in the bookmark file, and that pages within the file are created according to the original order in the data file.',
+            'bookmark_baseline_target_suffix' => '0_0:3',
+            'bookmark_baseline_reference_suffix' => '0_0:1',
+            'bookmark_baseline_target_text' => 'Prepared by:',
+            'bookmark_baseline_reference_text' => 'Sample Date:',
+            'bookmark_baseline_gap_pixels' => 50,
         ];
     }
 }

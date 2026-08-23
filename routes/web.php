@@ -7,6 +7,8 @@ use App\Http\Controllers\GeneratedImagePreviewController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\BrowseLogosController;
 use App\Http\Controllers\ComplianceController;
+use App\Http\Controllers\AutomatedTestController;
+use App\Http\Controllers\SavedSignatureController;
 use App\Http\Controllers\CreditController;
 use App\Http\Controllers\OverlayEditorTestController;
 use App\Http\Controllers\PdfTestController;
@@ -120,8 +122,11 @@ Route::post('/documents/{document}/convert-html-to-pdf', [DocumentController::cl
 Route::post('/documents/{document}/save-guided-form', [DocumentController::class, 'saveGuidedFormData'])->name('documents.saveGuidedForm');
 Route::post('/documents/{document}/screenshot', [DocumentController::class, 'takeScreenshot'])->name('documents.takeScreenshot');
 Route::post('/documents/{document}/convert-to-pdfa', [DocumentController::class, 'convertToPdfA'])->name('documents.convertToPdfA');
-Route::post('/documents/{document}/convert-to-word', [DocumentController::class, 'convertToWord'])->middleware('auth:web,admin')->name('documents.convertToWord');
-Route::post('/documents/{document}/convert-to-excel', [DocumentController::class, 'convertToExcel'])->middleware('auth:web,admin')->name('documents.convertToExcel');
+Route::post('/documents/{document}/convert-to-word', [DocumentController::class, 'queueWordConversion'])->middleware('auth:web,admin')->name('documents.convertToWord');
+Route::post('/documents/{document}/convert-to-excel', [DocumentController::class, 'queueExcelConversion'])->middleware('auth:web,admin')->name('documents.convertToExcel');
+Route::get('/documents/{document}/conversions/{conversion}', [DocumentController::class, 'conversionStatus'])
+    ->middleware('auth:web,admin')
+    ->name('documents.conversions.status');
 Route::post('/documents/{document}/pdf-password/unlock', [DocumentController::class, 'unlockPdfPassword'])
     ->middleware('throttle:10,1')
     ->name('documents.unlockPdfPassword');
@@ -150,6 +155,22 @@ Route::post('/overlay-editor/run-single-test', [OverlayEditorTestController::cla
 Route::get('/shapes/test-files', [ShapeTestController::class, 'getTestFiles'])->name('shapes.testFiles');
 Route::post('/shapes/run-single-test', [ShapeTestController::class, 'runSingleTest'])->name('shapes.runSingleTest');
 Route::post('/shapes/run-all-tests', [ShapeTestController::class, 'runAllTests'])->name('shapes.runAllTests');
+
+// Account-scoped saved signatures for the signature modal (NK_Dev_4).
+// The controller resolves the web/admin guard itself and answers guests with
+// a 401 + message rather than a redirect, since these are fetched by JS.
+Route::get('/saved-signatures', [SavedSignatureController::class, 'index'])->name('savedSignatures.index');
+Route::post('/saved-signatures', [SavedSignatureController::class, 'store'])->name('savedSignatures.store');
+Route::delete('/saved-signatures/{savedSignature}', [SavedSignatureController::class, 'destroy'])->name('savedSignatures.destroy');
+
+Route::middleware('auth:admin')
+    ->prefix('/automated-tests')
+    ->name('automatedTests.')
+    ->group(function () {
+        Route::get('/{suite}/suite', [AutomatedTestController::class, 'suite'])->name('suite');
+        Route::post('/{suite}/run', [AutomatedTestController::class, 'run'])->name('run');
+        Route::get('/{suite}/artifacts/{filename}', [AutomatedTestController::class, 'artifact'])->name('artifact');
+    });
 
 Route::get('/pdf-tests/test-files', [PdfTestController::class, 'getTestFiles'])->name('pdfTests.testFiles');
 Route::post('/pdf-tests/run-single-test', [PdfTestController::class, 'runSingleTest'])->name('pdfTests.runSingleTest');

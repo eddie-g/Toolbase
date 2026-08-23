@@ -98,6 +98,7 @@ return [
 
     'waits' => [
         'redis:default' => 60,
+        'redis:document-conversion' => 120,
     ],
 
     /*
@@ -241,6 +242,21 @@ return [
             'timeout' => 300,
             'nice' => 0,
         ],
+
+        // Word / Excel exports can render many pages and call Adobe APIs.
+        'supervisor-document-conversions' => [
+            'connection' => 'redis',
+            'queue' => ['document-conversion'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 512,
+            'tries' => 1,
+            'timeout' => 900,
+            'nice' => 5,
+        ],
     ],
 
     'environments' => [
@@ -260,6 +276,11 @@ return [
                 'balanceMaxShift' => 3,
                 'balanceCooldown' => 3,
             ],
+            'supervisor-document-conversions' => [
+                'maxProcesses' => 4,
+                'balanceMaxShift' => 1,
+                'balanceCooldown' => 5,
+            ],
         ],
 
         'local' => [
@@ -271,6 +292,9 @@ return [
             ],
             'supervisor-logos' => [
                 'maxProcesses' => 5,
+            ],
+            'supervisor-document-conversions' => [
+                'maxProcesses' => 2,
             ],
         ],
     ],

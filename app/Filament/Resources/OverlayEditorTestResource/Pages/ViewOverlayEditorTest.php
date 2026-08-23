@@ -67,21 +67,37 @@ class ViewOverlayEditorTest extends ViewRecord
                     ->schema([
                         Infolists\Components\RepeatableEntry::make('checks')
                             ->label('')
+                            // Runners emit either `item`/`result`/`detail` or `name`/`status`/`message`;
+                            // normalise here because repeater children resolve keys off the item state.
+                            ->state(fn ($record) => collect($record->checks ?? [])
+                                ->map(fn ($check) => [
+                                    'item' => $check['item'] ?? $check['name'] ?? '-',
+                                    'result' => strtoupper((string) ($check['result'] ?? $check['status'] ?? '')),
+                                    'description' => $check['description'] ?? '',
+                                    'detail' => $check['detail'] ?? $check['message'] ?? '-',
+                                ])
+                                ->all())
                             ->schema([
                                 Infolists\Components\TextEntry::make('item')
-                                    ->getStateUsing(fn ($record) => $record['item'] ?? $record['name'] ?? '-')
-                                    ->label('Check'),
+                                    ->label('Check')
+                                    ->weight('medium'),
                                 Infolists\Components\TextEntry::make('result')
                                     ->label('Result')
                                     ->badge()
-                                    ->getStateUsing(fn ($record) => strtoupper((string) ($record['result'] ?? $record['status'] ?? '')))
-                                    ->color(fn ($state) => strtoupper((string) $state) === 'PASS' ? 'success' : 'danger'),
+                                    ->color(fn ($state) => $state === 'PASS' ? 'success' : 'danger'),
+                                Infolists\Components\TextEntry::make('description')
+                                    ->label('Assertion')
+                                    ->placeholder('-')
+                                    ->columnSpanFull(),
                                 Infolists\Components\TextEntry::make('detail')
-                                    ->getStateUsing(fn ($record) => $record['detail'] ?? $record['message'] ?? '-')
-                                    ->label('Details'),
+                                    ->label('Details')
+                                    ->placeholder('-')
+                                    ->copyable()
+                                    ->columnSpanFull(),
                             ])
-                            ->columns(3),
-                    ]),
+                            ->columns(2),
+                    ])
+                    ->visible(fn ($record) => ! empty($record->checks)),
                 Infolists\Components\Section::make('Error Details')
                     ->schema([
                         Infolists\Components\TextEntry::make('error')
