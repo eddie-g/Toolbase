@@ -29,6 +29,7 @@ import {
 import html2canvas from 'html2canvas';
 import { generateUuidV4 } from '../edit-new/util/uuid.js';
 import { sliderValueToFontPt, fontPtToSliderValue } from '../edit-new/text/font-slider.js';
+import { composeTextDecorationLine, decorationTokensFromValue } from '../edit-new/text/decoration.js';
 import { computeLineBoxGeometry, constrainLineEndpointTo45, normalizeRotationDegrees } from '../edit-new/util/geometry.js';
 import {
     correctionToKeepPaintedAxisInside,
@@ -335,6 +336,7 @@ const afbOpacity = document.getElementById('afb-opacity');
 const afbBold = document.getElementById('afb-bold');
 const afbItalic = document.getElementById('afb-italic');
 const afbUnderline = document.getElementById('afb-underline');
+const afbStrikeout = document.getElementById('afb-strikeout');
 const afbLinkUrl = document.getElementById('afb-link-url');
 const afbLinkApply = document.getElementById('afb-link-apply');
 const afbLinkRemove = document.getElementById('afb-link-remove');
@@ -4272,6 +4274,7 @@ function normalizedRichTextRunStyle(node, renderScale) {
         fontStyle,
         color: cssColorToHex(cs.color || element.style?.color || '', '#000000'),
         underline: decoration.includes('underline') || isUnderlineElement(element),
+        strikeout: decoration.includes('line-through') || isStrikeoutElement(element),
         linkUrl: linkUrl || undefined,
     };
 }
@@ -4286,6 +4289,7 @@ function richTextRunStyleKey(style) {
         style?.fontStyle || '',
         style?.color || '',
         style?.underline ? '1' : '0',
+        style?.strikeout ? '1' : '0',
         style?.linkUrl || '',
     ].join('|');
 }
@@ -4392,7 +4396,8 @@ function canonicalRichTextHtmlFromRuns(runs) {
         if (run.fontWeight) span.style.fontWeight = String(run.fontWeight);
         if (run.fontStyle) span.style.fontStyle = String(run.fontStyle);
         if (run.color) span.style.color = String(run.color);
-        if (run.underline) span.style.textDecorationLine = 'underline';
+        const runDecorationLine = composeTextDecorationLine(run.underline, run.strikeout);
+        if (runDecorationLine !== 'none') span.style.textDecorationLine = runDecorationLine;
         if (linkUrl) {
             span.href = linkUrl;
             span.target = '_blank';
@@ -4477,7 +4482,8 @@ function renderRichTextRunsIntoElement(root, runs, renderScale, expectedText = '
             span.dataset.sourcePdfFontName = documentFont.pdfFontName;
         }
         if (run.color) span.style.color = cssColorToHex(run.color, '#000000');
-        if (run.underline) span.style.textDecorationLine = 'underline';
+        const runDecorationLine = composeTextDecorationLine(run.underline, run.strikeout);
+        if (runDecorationLine !== 'none') span.style.textDecorationLine = runDecorationLine;
         if (linkUrl) {
             span.href = linkUrl;
             span.target = '_blank';
@@ -5746,6 +5752,9 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     const underline = box.dataset.underline != null
         ? box.dataset.underline === '1'
         : boolish(existingAnnotation?.underline);
+    const strikeout = box.dataset.strikeout != null
+        ? box.dataset.strikeout === '1'
+        : boolish(existingAnnotation?.strikeout);
     const textAlign = normalizeTextAlign(
         box.dataset.textAlign
         || box.style.getPropertyValue('--enpv-text-align')
@@ -5863,6 +5872,7 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         color: textColor,
         backgroundColor,
         underline,
+        strikeout,
         textAlign,
         verticalAlign,
         userSizedTextBox: box.dataset.userSizedTextBox === '1' || boolish(existingAnnotation?.userSizedTextBox),
@@ -7006,9 +7016,12 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     box.style.opacity = String(opacity);
     box.style.setProperty('--enpv-opacity', String(opacity));
     const underline = boolish(annotation?.underline);
+    const strikeout = boolish(annotation?.strikeout);
+    const decorationLine = composeTextDecorationLine(underline, strikeout);
     box.dataset.underline = underline ? '1' : '0';
-    box.style.setProperty('--enpv-text-decoration-line', underline ? 'underline' : 'none');
-    box.style.setProperty('--enpv-text-decoration', underline ? 'underline' : 'none');
+    box.dataset.strikeout = strikeout ? '1' : '0';
+    box.style.setProperty('--enpv-text-decoration-line', decorationLine);
+    box.style.setProperty('--enpv-text-decoration', decorationLine);
     const textAlign = normalizeTextAlign(annotation?.textAlign);
     box.dataset.textAlign = textAlign;
     box.style.setProperty('--enpv-text-align', textAlign);
@@ -23053,11 +23066,16 @@ function updateAnnotationFormatBarForBox(box) {
         ? box.dataset.underline === '1'
         : boolish(existing?.underline);
     setToggleControl(afbUnderline, isUnderline);
+    const isStrikeout = box.dataset.strikeout != null
+        ? box.dataset.strikeout === '1'
+        : boolish(existing?.strikeout);
+    setToggleControl(afbStrikeout, isStrikeout);
     const inlineState = inlineSelectionStyleState(box);
     if (inlineState) {
         setToggleControl(afbBold, inlineState.bold);
         setToggleControl(afbItalic, inlineState.italic);
         setToggleControl(afbUnderline, inlineState.underline);
+        setToggleControl(afbStrikeout, inlineState.strikeout);
         if (afbTextColor && inlineState.color) afbTextColor.value = inlineState.color;
         if (inlineState.fontFamily) {
             const inlineFont = ensureFormatBarFontOption(inlineState.fontFamily);
@@ -23074,7 +23092,7 @@ function updateAnnotationFormatBarForBox(box) {
     if (afbAlign) afbAlign.value = normalizeTextAlign(box.dataset.textAlign || box.style.getPropertyValue('--enpv-text-align') || existing?.textAlign || cs?.textAlign);
     if (afbValign) afbValign.value = normalizeVerticalAlign(box.dataset.verticalAlign || existing?.verticalAlign);
     const locked = isAnnBoxLocked(box);
-    [afbFont, afbSize, afbTextColor, afbBgColor, afbOpacity, afbBold, afbItalic, afbUnderline, afbAlign, afbValign, afbCopy, afbDelete].forEach((control) => {
+    [afbFont, afbSize, afbTextColor, afbBgColor, afbOpacity, afbBold, afbItalic, afbUnderline, afbStrikeout, afbAlign, afbValign, afbCopy, afbDelete].forEach((control) => {
         if (control) control.disabled = locked;
     });
     if (afbLinkUrl) afbLinkUrl.disabled = locked || !inlineState;
@@ -23086,6 +23104,22 @@ function updateAnnotationFormatBarForBox(box) {
     closeNotesPanel();
     annFormatBar.classList.add('is-visible');
     requestAnimationFrame(() => positionAnnotationFormatBarUnderMenu(box));
+}
+
+// NK_7: strip one named inline format (and only that one) from every run in the
+// box. Used for the decoration toggles, where removing the whole CSS property
+// would clear the sibling token too.
+function stripInlineFormatsFromBox(box, formats) {
+    const list = Array.isArray(formats) ? formats.filter(Boolean) : [];
+    if (!list.length) return;
+    const tc = selectedBoxTextElement(box);
+    if (!tc) return;
+    list.forEach((format) => {
+        [tc, ...Array.from(tc.querySelectorAll('*'))].forEach((element) => {
+            if (!element?.isConnected && element !== tc) return;
+            removeFormatFromElement(element, format);
+        });
+    });
 }
 
 function stripInlineStylePropertiesFromBox(box, properties) {
@@ -23217,6 +23251,7 @@ function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     }
     mutator(box);
     stripInlineStylePropertiesFromBox(box, options.stripInlineProps);
+    stripInlineFormatsFromBox(box, options.stripInlineFormats);
     fitTextBoxAfterStyleMutation(box, options);
     box.dataset.styleDirty = '1';
     box.dataset.pendingEdit = '1';
@@ -23403,16 +23438,43 @@ function applyItalicToSelectedBox(active) {
     }, { reason: 'font-style', stripInlineProps: ['font-style'] });
 }
 
+function applyDecorationTokenToSelectedBox(kind, active) {
+    const isUnderline = kind === 'underline';
+    const label = isUnderline ? 'underline' : 'strikeout';
+    if (applyInlineStyleToSelectedText(`change selected text ${label}`, (span) => {
+        const tokens = decorationTokensFromValue(
+            `${span.style.textDecorationLine || ''} ${span.style.textDecoration || ''}`,
+        );
+        if (isUnderline) tokens.underline = active;
+        else tokens.strikeout = active;
+        const next = composeTextDecorationLine(tokens.underline, tokens.strikeout);
+        span.style.textDecorationLine = next;
+        span.style.textDecoration = next;
+    }, { reason: label, fit: false, format: isUnderline ? 'underline' : 'strikeout', active })) return;
+    applyStyleToSelectedBox(`change annotation ${label}`, (box) => {
+        const dataset = isUnderline ? 'underline' : 'strikeout';
+        box.dataset[dataset] = active ? '1' : '0';
+        const next = composeTextDecorationLine(
+            box.dataset.underline === '1',
+            box.dataset.strikeout === '1',
+        );
+        box.style.setProperty('--enpv-text-decoration-line', next);
+        box.style.setProperty('--enpv-text-decoration', next);
+    }, {
+        reason: label,
+        fit: false,
+        // Not stripInlineProps: clearing the whole text-decoration property would
+        // take the other token's inline spans with it (NK_7).
+        stripInlineFormats: [isUnderline ? 'underline' : 'strikeout'],
+    });
+}
+
 function applyUnderlineToSelectedBox(active) {
-    if (applyInlineStyleToSelectedText('change selected text underline', (span) => {
-        span.style.textDecorationLine = active ? 'underline' : 'none';
-        span.style.textDecoration = active ? 'underline' : 'none';
-    }, { reason: 'underline', fit: false, format: 'underline', active })) return;
-    applyStyleToSelectedBox('change annotation underline', (box) => {
-        box.dataset.underline = active ? '1' : '0';
-        box.style.setProperty('--enpv-text-decoration-line', active ? 'underline' : 'none');
-        box.style.setProperty('--enpv-text-decoration', active ? 'underline' : 'none');
-    }, { reason: 'underline', fit: false, stripInlineProps: ['text-decoration', 'text-decoration-line'] });
+    applyDecorationTokenToSelectedBox('underline', active);
+}
+
+function applyStrikeoutToSelectedBox(active) {
+    applyDecorationTokenToSelectedBox('strikeout', active);
 }
 
 function applyHyperlinkToSelectedText(value) {
@@ -23668,6 +23730,32 @@ function isItalicElement(element) {
     return value === 'italic' || value === 'oblique';
 }
 
+// NK_7: underline and strikeout are two tokens of one CSS property, so clearing
+// a decoration works token by token — toggling one must never drop the other.
+function removeDecorationTokenFromElement(element, token) {
+    if (!element?.style) return;
+    const tokens = decorationTokensFromValue(
+        `${element.style.textDecorationLine || ''} ${element.style.textDecoration || ''}`,
+    );
+    if (token === 'underline') tokens.underline = false;
+    if (token === 'line-through') tokens.strikeout = false;
+    const next = composeTextDecorationLine(tokens.underline, tokens.strikeout);
+    element.style.textDecoration = '';
+    element.style.textDecorationLine = '';
+    if (next !== 'none') {
+        element.style.textDecorationLine = next;
+        element.style.textDecoration = next;
+    }
+}
+
+function isStrikeoutElement(element) {
+    if (!element) return false;
+    if (element.tagName === 'S' || element.tagName === 'STRIKE' || element.tagName === 'DEL') return true;
+    const inline = `${element.style?.textDecoration || ''} ${element.style?.textDecorationLine || ''}`.toLowerCase();
+    if (inline.includes('line-through')) return true;
+    return String(window.getComputedStyle(element).textDecorationLine || '').toLowerCase().includes('line-through');
+}
+
 function isUnderlineElement(element) {
     if (!element) return false;
     if (element.tagName === 'U') return true;
@@ -23687,6 +23775,8 @@ function closestFormatElement(node, root, format) {
         ? isBoldElement
         : format === 'italic'
         ? isItalicElement
+        : format === 'strikeout'
+        ? isStrikeoutElement
         : format === 'hyperlink'
         ? isHyperlinkElement
         : isUnderlineElement;
@@ -23719,6 +23809,7 @@ function inlineSelectionStyleState(box) {
         bold: closestFormatElement(probeNode, tc, 'bold') != null || weight === 'bold' || Number.parseInt(weight, 10) >= 600,
         italic: closestFormatElement(probeNode, tc, 'italic') != null || style === 'italic' || style === 'oblique',
         underline: closestFormatElement(probeNode, tc, 'underline') != null || decoration.includes('underline'),
+        strikeout: closestFormatElement(probeNode, tc, 'strikeout') != null || decoration.includes('line-through'),
         linkUrl: normalizeHyperlinkDestination(hyperlink?.getAttribute?.('href') || ''),
         color: cssColorToHex(cs.color || '', ''),
         fontFamily: parseCssFontFamily(cs.fontFamily || element.style?.fontFamily || ''),
@@ -23754,9 +23845,13 @@ function removeFormatFromElement(element, format) {
         element.style.fontStyle = '';
         if (element.tagName === 'I' || element.tagName === 'EM') return unwrapElement(element);
     } else if (format === 'underline') {
-        element.style.textDecoration = '';
-        element.style.textDecorationLine = '';
+        removeDecorationTokenFromElement(element, 'underline');
         if (element.tagName === 'U') return unwrapElement(element);
+    } else if (format === 'strikeout') {
+        removeDecorationTokenFromElement(element, 'line-through');
+        if (element.tagName === 'S' || element.tagName === 'STRIKE' || element.tagName === 'DEL') {
+            return unwrapElement(element);
+        }
     } else if (format === 'hyperlink' && element.tagName === 'A') {
         return unwrapElement(element);
     }
@@ -26900,6 +26995,9 @@ afbItalic?.addEventListener('click', () => {
 });
 afbUnderline?.addEventListener('click', () => {
     applyUnderlineToSelectedBox(afbUnderline.getAttribute('aria-pressed') !== 'true');
+});
+afbStrikeout?.addEventListener('click', () => {
+    applyStrikeoutToSelectedBox(afbStrikeout.getAttribute('aria-pressed') !== 'true');
 });
 afbLinkApply?.addEventListener('click', () => {
     applyHyperlinkToSelectedText(afbLinkUrl?.value || '');

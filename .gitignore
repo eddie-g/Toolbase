@@ -55,6 +55,7 @@ Thumbs.db
 !/tests/Feature/DocumentConversionQueueTest.php
 !/tests/Feature/AutomatedTestsPageTest.php
 !/tests/Feature/SavedSignatureTest.php
+!/tests/Feature/TextFormatBarTest.php
 !/tests/Unit/
 /tests/Unit/*
 !/tests/Unit/RecraftPromptBuilderTest.php

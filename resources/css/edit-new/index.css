@@ -3415,6 +3415,19 @@
         .ann-format-bar .afb-control-label {
             display: none;
         }
+        /* NK_7 gave each colour swatch a caption for the pdf.js side panel. This
+         * legacy bar is a compact horizontal toolbar that already hides its group
+         * labels and relies on tooltips, so the captions stay hidden here too. */
+        .ann-format-bar .afb-color-field {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            flex: 0 0 auto;
+        }
+        /* Scoped away from the pdf.js side panel, which shares this class. */
+        body:not(.enpv-body) .ann-format-bar .afb-color-caption {
+            display: none;
+        }
         .ann-format-bar.is-visible { display: flex; }
         .afb-divider {
             width: 1px;

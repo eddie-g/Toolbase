@@ -851,14 +851,14 @@ body.enpv-body #ann-format-bar .afb-btn {
     height: 36px;
     flex: 0 0 auto;
 }
-body.enpv-body #ann-format-bar .afb-align-group .afb-control-row,
-body.enpv-body #ann-format-bar .afb-action-group .afb-control-row {
+body.enpv-body #ann-format-bar .afb-align-group .afb-control-row {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
 }
+/* NK_7: bold / italic / underline / strikeout. */
 body.enpv-body #ann-format-bar .afb-style-group .afb-control-row {
     display: grid;
-    grid-template-columns: repeat(3, 36px);
+    grid-template-columns: repeat(4, 36px);
 }
 body.enpv-body #ann-format-bar .afb-link-group .afb-control-row {
     display: grid;
@@ -911,9 +911,21 @@ body.enpv-body #ann-format-bar .afb-link-help {
     font-size: 11px;
     line-height: 1.35;
 }
+/* NK_7: this row now carries the case transforms, duplicate and delete, plus the
+ * admin-only debug button. The count varies with the viewer's role, so lay it out
+ * from the buttons themselves rather than a fixed column count. */
 body.enpv-body #ann-format-bar .afb-text-tools-group .afb-control-row {
-    display: grid;
-    grid-template-columns: repeat(3, 36px);
+    display: flex;
+    flex-wrap: nowrap;
+    align-items: center;
+    gap: 8px;
+}
+body.enpv-body #ann-format-bar .afb-text-tools-group .afb-btn.is-danger {
+    color: #b91c1c;
+}
+body.enpv-body #ann-format-bar .afb-text-tools-group .afb-btn.is-danger:hover,
+body.enpv-body #ann-format-bar .afb-text-tools-group .afb-btn.is-danger:focus-visible {
+    background: #fef2f2;
 }
 body.enpv-body #ann-format-bar .afb-debug {
     color: #7c3aed;
@@ -945,9 +957,36 @@ body.enpv-body #ann-format-bar .afb-annotation-id:focus {
     outline: none;
     box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.14);
 }
+/* NK_7: two unlabelled swatches side by side gave no clue which one was the
+ * background. Same row, but each swatch now owns a captioned cell and the two are
+ * split by a rule. */
 body.enpv-body #ann-format-bar .afb-color-group .afb-control-row {
     display: grid;
-    grid-template-columns: repeat(2, 44px);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    align-items: stretch;
+}
+body.enpv-body #ann-format-bar .afb-color-field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    padding: 0 12px 0 0;
+}
+body.enpv-body #ann-format-bar .afb-color-field.is-background {
+    padding: 0 0 0 14px;
+    border-left: 1px solid #e5e7eb;
+}
+body.enpv-body #ann-format-bar .afb-color-caption {
+    display: inline-block;
+    min-width: 0;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 body.enpv-body #ann-format-bar button,
 body.enpv-body #ann-format-bar input,
