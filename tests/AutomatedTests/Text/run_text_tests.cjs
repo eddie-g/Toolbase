@@ -249,6 +249,39 @@ async function openEditor(page, docId) {
     return consoleErrors;
 }
 
+/**
+ * Render the editor as a signed-in user.
+ *
+ * Edit mode is a premium feature, and a committed user-created text box is only
+ * interactive while edit mode or the Add Text tool is on. A guest therefore
+ * cannot re-select a box they have just committed, which blocks every case
+ * about restyling or reselecting existing text. The editor reads its own
+ * authentication from one data attribute, so the response is rewritten the same
+ * way the signature suite does it — see renderEditorAsSignedIn there.
+ *
+ * This is a shim for the premium gate only. Tests that are about the guest
+ * experience (01-08) must NOT use it.
+ */
+async function openEditorAsSignedIn(page, docId) {
+    await page.route(/\/documents\/\d+\/edit-new/, async (route) => {
+        const response = await route.fetch();
+        const body = (await response.text()).replace(
+            'data-editor-authenticated="0"',
+            'data-editor-authenticated="1"',
+        );
+        await route.fulfill({ response, body });
+    });
+
+    const consoleErrors = await openEditor(page, docId);
+
+    const flag = await page.evaluate(() => document
+        .getElementById('edit-new-root')?.dataset?.editorAuthenticated
+        ?? document.querySelector('[data-editor-authenticated]')?.dataset?.editorAuthenticated);
+    if (flag !== '1') throw new Error(`Editor did not render as signed in (flag=${flag})`);
+
+    return consoleErrors;
+}
+
 // ---------------------------------------------------------------------------
 // Editor probes
 // ---------------------------------------------------------------------------
@@ -260,6 +293,37 @@ function viewerScale(page) {
 
 function addTextModeOn(page) {
     return page.evaluate(() => document.body.classList.contains('enpv-add-text-on'));
+}
+
+function editModeOn(page) {
+    return page.evaluate(() => document.body.classList.contains('enpv-edit-on'));
+}
+
+/**
+ * Toggle edit mode through its real control.
+ *
+ * A committed user-created text box is only interactive while edit mode or the
+ * Add Text tool is on — see the allowInteraction test in renderAnnotationBoxLayer
+ * — so anything that re-selects a box has to turn one of them on first.
+ */
+async function setEditMode(page, on) {
+    if ((await editModeOn(page)) === on) return;
+    // Same story as the add-text control: the top bar collapses at narrower
+    // widths, so fall back to the floating toolbar's toggle.
+    const selector = await page.evaluate(() => {
+        const top = document.getElementById('edit-mode-toggle');
+        if (top && top.offsetParent) return '#edit-mode-toggle';
+        const floating = document.getElementById('ftb-edit-mode');
+        return floating && floating.offsetParent ? '#ftb-edit-mode' : null;
+    });
+    if (!selector) throw new Error('No visible edit-mode control');
+    await page.click(selector);
+    await page.waitForFunction(
+        (wanted) => document.body.classList.contains('enpv-edit-on') === wanted,
+        on,
+        { timeout: 15000 },
+    );
+    await page.waitForTimeout(700);
 }
 
 /**
@@ -447,6 +511,52 @@ async function commitAndDeselect(page) {
     await page.waitForTimeout(250);
 }
 
+/**
+ * Click an empty spot on the page, away from every placed box.
+ *
+ * This is what "click elsewhere on the page" means for a commit — clicking the
+ * document body outside the viewer is a different gesture.
+ */
+async function clickEmptyPageSpot(page) {
+    const fractions = [[0.85, 0.85], [0.85, 0.15], [0.15, 0.85], [0.5, 0.9]];
+    for (const [fx, fy] of fractions) {
+        // eslint-disable-next-line no-await-in-loop
+        const point = await pointOnPage(page, 1, fx, fy).catch(() => null);
+        if (!point) continue;
+        // eslint-disable-next-line no-await-in-loop
+        const clear = await page.evaluate(({ x, y, selector }) => Array.from(
+            document.querySelectorAll(selector),
+        ).every((box) => {
+            const r = box.getBoundingClientRect();
+            return x < r.left - 12 || x > r.right + 12 || y < r.top - 12 || y > r.bottom + 12;
+        }), { x: point.x, y: point.y, selector: TEXT_BOX_SELECTOR });
+        if (!clear) continue;
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.click(point.x, point.y);
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(500);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Place a box at the first of several page positions that is actually
+ * clickable. Floating chrome moves around, so a single fraction can be covered.
+ */
+async function clickPlaceSomewhere(page, fractions) {
+    let lastError = null;
+    for (const [fx, fy] of fractions) {
+        try {
+            // eslint-disable-next-line no-await-in-loop
+            return await clickPlace(page, fx, fy);
+        } catch (error) {
+            lastError = error;
+        }
+    }
+    throw lastError || new Error('No fraction was clickable');
+}
+
 /** Place a box with a single click, returning the point that was clicked. */
 async function clickPlace(page, fx, fy, prefer = 'auto') {
     await setAddTextMode(page, true, prefer);
@@ -472,6 +582,335 @@ async function dragPlace(page, fx, fy, dx, dy) {
         start,
         end: { relX: start.relX + dx, relY: start.relY + dy },
     };
+}
+
+/** Watch the annotation-state saves so persistence tests need no fixed sleep. */
+function attachSaveRecorder(page) {
+    const recorder = { saves: [] };
+    page.on('response', async (response) => {
+        try {
+            if (!response.url().includes('/save-annotation-state')) return;
+            if (response.request().method() !== 'POST') return;
+            recorder.saves.push({ status: response.status(), ok: response.ok() });
+        } catch (_) {
+            // A response that vanishes mid-navigation must not break the run.
+        }
+    });
+    return recorder;
+}
+
+/** Save through the real Save control and wait for the request to land. */
+async function saveDocument(page, saveRecorder) {
+    const before = saveRecorder ? saveRecorder.saves.length : 0;
+    // #save-btn is display:none in the pdf.js viewer, so it is dispatched
+    // rather than clicked; it is still the same handler the editor uses.
+    await page.evaluate(() => document.getElementById('save-btn')?.click());
+    if (!saveRecorder) {
+        await page.waitForTimeout(4000);
+        return true;
+    }
+    const deadline = Date.now() + 20000;
+    while (saveRecorder.saves.length === before && Date.now() < deadline) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(200);
+    }
+    await page.waitForTimeout(500);
+    return saveRecorder.saves.length > before;
+}
+
+/** Save, hard-reload, and wait for the editor to come back. */
+async function saveAndReload(page, saveRecorder) {
+    const saved = await saveDocument(page, saveRecorder);
+    await page.reload({ waitUntil: 'load', timeout: 45000 });
+    await page.waitForSelector('#viewer .page canvas', { timeout: 30000 });
+    await page.waitForTimeout(1200);
+    return saved;
+}
+
+/** Current zoom, as the viewer reports it. */
+function readZoom(page) {
+    return page.evaluate(() => ({
+        scale: Number(window.__enpv?.pdfViewer?.currentScale) || 0,
+        label: document.getElementById('zoom-label')?.textContent?.trim() || '',
+    }));
+}
+
+/** Step the zoom and wait for the viewer to settle at a new scale. */
+async function stepZoom(page, direction, steps = 1) {
+    const selector = direction === 'in' ? '#zoom-in' : '#zoom-out';
+    for (let i = 0; i < steps; i++) {
+        const before = (await readZoom(page)).scale;
+        // eslint-disable-next-line no-await-in-loop
+        await page.click(selector);
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForFunction(
+            (previous) => Math.abs((Number(window.__enpv?.pdfViewer?.currentScale) || 0) - previous) > 0.001,
+            before,
+            { timeout: 8000 },
+        ).catch(() => {});
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(500);
+    }
+    return readZoom(page);
+}
+
+/** Rotation pdf.js is currently applying to a page. */
+function pageRotation(page, pageNumber = 1) {
+    return page.evaluate((number) => {
+        const view = window.__enpv?.pdfViewer?.getPageView(number - 1);
+        return Number(view?.viewport?.rotation) || 0;
+    }, pageNumber);
+}
+
+/**
+ * Rotate a page through the page manager, which is the only rotation UI.
+ * Rotation round-trips to the server and re-renders, so this waits for the
+ * viewport to actually report the new angle.
+ */
+async function rotatePage(page, pageNumber, direction = 'right') {
+    const before = await pageRotation(page, pageNumber);
+    await page.click('#enpv-page-manager-open');
+    await page.waitForSelector('.enpv-page-manager-item', { timeout: 15000 });
+    await page.waitForTimeout(400);
+    const button = `.enpv-page-manager-item:nth-of-type(${pageNumber}) .enpv-page-manager-rotate-${direction}`;
+    await page.click(button);
+    await page.waitForFunction(
+        ({ number, previous }) => {
+            const view = window.__enpv?.pdfViewer?.getPageView(number - 1);
+            const rotation = Number(view?.viewport?.rotation);
+            return Number.isFinite(rotation) && rotation !== previous;
+        },
+        { number: pageNumber, previous: before },
+        { timeout: 60000 },
+    );
+
+    // Read the "cannot edit" dialog before any cleanup: closing the page
+    // manager involves an Escape, which dismisses this dialog too.
+    let dialogShown = false;
+    let dialogMessage = '';
+    for (let attempt = 0; attempt < 10 && !dialogShown; attempt++) {
+        // eslint-disable-next-line no-await-in-loop
+        const state = await page.evaluate(() => {
+            const el = document.getElementById('enpv-rotated-edit-dialog');
+            return {
+                shown: !!el && el.hidden === false,
+                message: document.getElementById('enpv-rotated-edit-dialog-description')
+                    ?.textContent?.trim() || '',
+            };
+        });
+        dialogShown = state.shown;
+        dialogMessage = state.message;
+        // eslint-disable-next-line no-await-in-loop
+        if (!dialogShown) await page.waitForTimeout(200);
+    }
+    // Close the manager and make sure it really went away — a modal left open
+    // covers the page and every later click lands on it instead.
+    for (let attempt = 0; attempt < 3; attempt++) {
+        // eslint-disable-next-line no-await-in-loop
+        const open = await page.evaluate(
+            () => document.getElementById('enpv-page-manager-modal')?.hidden === false,
+        );
+        if (!open) break;
+        // eslint-disable-next-line no-await-in-loop
+        await page.click('#enpv-page-manager-close').catch(() => {});
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(500);
+        // eslint-disable-next-line no-await-in-loop
+        await page.keyboard.press('Escape').catch(() => {});
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(400);
+    }
+    // Rotating onto a rotated page raises the "cannot edit" dialog. It is
+    // reported back rather than just dismissed, because whether it appears is
+    // itself part of the contract test 07 asserts.
+    await page.evaluate(() => {
+        const el = document.getElementById('enpv-rotated-edit-dialog');
+        if (el && el.hidden === false) {
+            document.getElementById('enpv-rotated-edit-dialog-close')?.click();
+        }
+    });
+    await page.waitForTimeout(900);
+    return { rotation: await pageRotation(page, pageNumber), dialogShown, dialogMessage };
+}
+
+/** Read every Text Options control in one round trip. */
+function panelState(page) {
+    return page.evaluate(() => {
+        const value = (id) => document.getElementById(id)?.value ?? null;
+        const pressed = (id) => document.getElementById(id)?.getAttribute('aria-pressed') ?? null;
+        const disabled = (id) => document.getElementById(id)?.disabled ?? null;
+        const bar = document.getElementById('ann-format-bar');
+        return {
+            visible: !!bar && bar.classList.contains('is-visible'),
+            font: value('afb-font'),
+            size: value('afb-size'),
+            sizeLabel: document.getElementById('afb-size-value')?.textContent?.trim() ?? null,
+            textColor: value('afb-text-color'),
+            bgColor: value('afb-bg-color'),
+            opacity: value('afb-opacity'),
+            bold: pressed('afb-bold'),
+            italic: pressed('afb-italic'),
+            underline: pressed('afb-underline'),
+            strikeout: pressed('afb-strikeout'),
+            align: value('afb-align'),
+            valign: value('afb-valign'),
+            disabled: {
+                font: disabled('afb-font'),
+                size: disabled('afb-size'),
+                bold: disabled('afb-bold'),
+                align: disabled('afb-align'),
+                copy: disabled('afb-copy'),
+                delete: disabled('afb-delete'),
+            },
+        };
+    });
+}
+
+/**
+ * Set a colour input.
+ *
+ * The native colour picker is an OS dialog no headless browser can drive, so
+ * the value is written and the editor's own input/change handlers are fired.
+ */
+async function setColourInput(page, id, hex) {
+    await page.evaluate(({ target, value }) => {
+        const input = document.getElementById(target);
+        if (!input) return;
+        input.value = value;
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+    }, { target: id, value: hex });
+    await page.waitForTimeout(400);
+}
+
+/**
+ * Click inside a placed text box with a real pointer.
+ *
+ * Selection is driven by pointer events, so a programmatic element.click() does
+ * not select the box or open the Text Options panel. An unselected box is also
+ * `pointer-events: none` — the editor hit-tests page clicks against annotation
+ * geometry itself — so the point only has to land on the right page, over the
+ * box's rectangle.
+ */
+async function clickInsideBox(page, index = 0) {
+    // Nothing can be clicked on a committed text box without one of the two
+    // interaction modes being active.
+    if (!(await editModeOn(page)) && !(await addTextModeOn(page))) {
+        await setEditMode(page, true);
+    }
+    await page.evaluate(({ selector, at }) => {
+        const box = document.querySelectorAll(selector)[at];
+        if (box) box.scrollIntoView({ block: 'center', inline: 'center' });
+    }, { selector: TEXT_BOX_SELECTOR, at: index });
+    await page.waitForTimeout(400);
+
+    const viewport = page.viewportSize();
+    const point = await page.evaluate(({ selector, at, vw, vh }) => {
+        const box = document.querySelectorAll(selector)[at];
+        if (!box) return null;
+        const rect = box.getBoundingClientRect();
+        const candidates = [
+            [0.5, 0.5], [0.25, 0.5], [0.75, 0.5],
+            [0.5, 0.25], [0.5, 0.75], [0.1, 0.5], [0.9, 0.5],
+        ];
+        const pageDiv = box.closest('.page');
+        for (const [fx, fy] of candidates) {
+            const x = rect.left + (rect.width * fx);
+            const y = rect.top + (rect.height * fy);
+            if (x < 4 || y < 4 || x > vw - 4 || y > vh - 4) continue;
+            const el = document.elementFromPoint(x, y);
+            if (!el) continue;
+            // Either the box itself (when selected) or its page beneath it.
+            if (el === box || box.contains(el)) return { x, y };
+            if (pageDiv && el.closest('.page') === pageDiv) return { x, y };
+        }
+        return null;
+    }, { selector: TEXT_BOX_SELECTOR, at: index, vw: viewport.width, vh: viewport.height });
+
+    if (!point) throw new Error(`No clickable point inside text box ${index}`);
+    await page.mouse.click(point.x, point.y);
+    await page.waitForTimeout(500);
+    return point;
+}
+
+/** Select a placed text box. */
+async function selectTextBox(page, index = 0) {
+    return clickInsideBox(page, index);
+}
+
+/**
+ * Select the box containing some text, and confirm the right one took focus.
+ *
+ * Indices shift as boxes are added and removed, and a wrong-box selection
+ * shows up as a confusing style assertion rather than a selection failure.
+ */
+async function selectTextBoxByText(page, needle) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+        // eslint-disable-next-line no-await-in-loop
+        const boxes = await textBoxes(page);
+        const index = boxes.findIndex((box) => box.text.includes(needle));
+        if (index < 0) throw new Error(`No text box contains ${JSON.stringify(needle)}`);
+        // eslint-disable-next-line no-await-in-loop
+        await clickInsideBox(page, index);
+        // eslint-disable-next-line no-await-in-loop
+        const after = await textBoxes(page);
+        const selected = after.find((box) => box.selected);
+        if (selected && selected.text.includes(needle)) return selected;
+        // eslint-disable-next-line no-await-in-loop
+        await commitAndDeselect(page);
+    }
+    const boxes = await textBoxes(page);
+    throw new Error(
+        `Could not select the box containing ${JSON.stringify(needle)}; `
+        + `selected=${JSON.stringify(boxes.filter((b) => b.selected).map((b) => b.text))}`,
+    );
+}
+
+/** Trigger an annotation-menu action with a real pointer. */
+async function annotationMenuAction(page, action) {
+    const point = await page.evaluate((name) => {
+        const menu = document.getElementById('enpv-ann-menu');
+        if (!menu || menu.hidden) return null;
+        const button = menu.querySelector(`[data-action="${name}"]`);
+        if (!button) return null;
+        const rect = button.getBoundingClientRect();
+        if (!(rect.width > 0) || !(rect.height > 0)) return null;
+        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+    }, action);
+    if (!point) return false;
+    await page.mouse.click(point.x, point.y);
+    await page.waitForTimeout(600);
+    return true;
+}
+
+/** Rendered geometry of the text element inside a box, for wrap assertions. */
+function textMetrics(page, index = 0) {
+    return page.evaluate(({ selector, at }) => {
+        const box = document.querySelectorAll(selector)[at];
+        if (!box) return null;
+        const el = box.querySelector('.enpv-text-content') || box;
+        const rect = el.getBoundingClientRect();
+        const lineHeight = Number.parseFloat(box.style.getPropertyValue('--enpv-line-height'))
+            || Number.parseFloat(window.getComputedStyle(el).lineHeight)
+            || 0;
+        // Count laid-out line boxes rather than dividing heights.
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        const rects = Array.from(range.getClientRects())
+            .filter((r) => r.width > 0 && r.height > 0);
+        const tops = new Set(rects.map((r) => Math.round(r.top)));
+        return {
+            text: el.textContent || '',
+            html: el.innerHTML || '',
+            width: rect.width,
+            height: rect.height,
+            scrollWidth: el.scrollWidth,
+            clientWidth: el.clientWidth,
+            lineHeight,
+            lineCount: tops.size,
+            boxWidth: box.getBoundingClientRect().width,
+        };
+    }, { selector: TEXT_BOX_SELECTOR, at: index });
 }
 
 // ---------------------------------------------------------------------------
@@ -674,10 +1113,10 @@ async function testClickToPlaceDefaults(page, { recorder }) {
     recorder.assert('not-user-sized', !box.userSized,
         'A clicked box is not flagged as user-sized (only a drag sizes it)');
 
-    // A user-created box stays editable with edit mode off.
-    const editModeOff = await page.evaluate(() => !document.body.classList.contains('enpv-edit-on'));
+    // Placement selects and opens the box without edit mode having to be on.
+    const editModeOff = !(await editModeOn(page));
     recorder.assert('edit-mode-off', editModeOff,
-        'Edit mode is still off, so this box is interactive on its own merits');
+        'The box is placed and opened without edit mode being turned on');
     recorder.assert('selected', box.selected, 'The new box is selected');
 
     artifacts.push(await capture(page, '03-click-to-place-defaults', 'placed'));
@@ -784,6 +1223,27 @@ async function testPageClamping(page, { recorder }) {
     recorder.assert('drag-has-size', box.width > MIN_DRAG_PX.width / 2,
         'Clamping keeps a usable box rather than collapsing it', `width=${box.width.toFixed(1)}`);
 
+    // Regression: the annotation used to be clamped against a nominal one-line
+    // height while the box laid out taller, so a box placed hard against the
+    // bottom rendered off the page — and a save, which reads geometry back off
+    // the DOM, persisted the overhang. Sweep the last few percent of the page,
+    // which is where the clamp actually binds.
+    for (const fy of [0.999, 0.997, 0.995, 0.985]) {
+        // eslint-disable-next-line no-await-in-loop
+        await commitAndDeselect(page);
+        // eslint-disable-next-line no-await-in-loop
+        await deleteAllTextBoxes(page);
+        // eslint-disable-next-line no-await-in-loop
+        await clickPlace(page, 0.5, fy);
+        // eslint-disable-next-line no-await-in-loop
+        const placed = await singleTextBox(page);
+        const bottom = (placed.relTop + placed.height) / placed.renderScale;
+        const pageBottom = placed.annPageHeight || PAGE_HEIGHT_PTS;
+        recorder.assert(`rendered-inside-${fy}`, bottom <= pageBottom + 0.05,
+            `A box placed at ${(fy * 100).toFixed(1)}% down the page renders inside it`,
+            `renderedBottom=${bottom.toFixed(2)}pt page=${pageBottom}pt`);
+    }
+
     artifacts.push(await capture(page, '05-page-clamping', 'clamped'));
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
@@ -848,6 +1308,505 @@ async function testEditModeReady(page, { recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
+/** 06 — Placement stays accurate across zoom levels. */
+async function testZoomAccuracy(page, { recorder }) {
+    const artifacts = [];
+
+    // Where the click landed, expressed in page points, is what the annotation
+    // must agree with — so the assertion holds at any zoom by construction.
+    const placeAndCompare = async (label) => {
+        await deleteAllTextBoxes(page);
+        const point = await clickPlace(page, 0.32, 0.3);
+        const box = await singleTextBox(page);
+        const expectedLeft = point.relX / box.renderScale;
+        const expectedTop = point.relY / box.renderScale;
+        const actualTop = (box.annPageHeight || PAGE_HEIGHT_PTS) - (box.annY + box.annHeight);
+        recorder.near(`${label}-x`, box.annX, expectedLeft, 1,
+            `At ${label} the box lands under the pointer horizontally`);
+        recorder.near(`${label}-y`, actualTop, expectedTop, 1,
+            `At ${label} the box lands under the pointer vertically`);
+        await commitAndDeselect(page);
+        return { left: box.annX, top: actualTop };
+    };
+
+    const initial = await readZoom(page);
+    recorder.assert('zoom-readable', initial.scale > 0,
+        'The viewer reports a zoom level', `${initial.label} (scale ${initial.scale})`);
+
+    const atStart = await placeAndCompare('default zoom');
+
+    const zoomedIn = await stepZoom(page, 'in', 2);
+    recorder.assert('zoom-in-changed', zoomedIn.scale > initial.scale,
+        'Zooming in raises the scale', `${initial.label} -> ${zoomedIn.label}`);
+    const atZoomIn = await placeAndCompare('zoomed in');
+
+    const zoomedOut = await stepZoom(page, 'out', 4);
+    recorder.assert('zoom-out-changed', zoomedOut.scale < zoomedIn.scale,
+        'Zooming out lowers the scale', `${zoomedIn.label} -> ${zoomedOut.label}`);
+    const atZoomOut = await placeAndCompare('zoomed out');
+
+    // The same page fraction has to produce the same PDF coordinates whatever
+    // zoom it was placed at.
+    recorder.near('x-consistent-in', atZoomIn.left, atStart.left, 2,
+        'The same click point yields the same PDF x when zoomed in');
+    recorder.near('x-consistent-out', atZoomOut.left, atStart.left, 2,
+        'The same click point yields the same PDF x when zoomed out');
+    recorder.near('y-consistent-in', atZoomIn.top, atStart.top, 2,
+        'The same click point yields the same PDF y when zoomed in');
+    recorder.near('y-consistent-out', atZoomOut.top, atStart.top, 2,
+        'The same click point yields the same PDF y when zoomed out');
+
+    artifacts.push(await capture(page, '06-zoom-accuracy', 'zoomed-out'));
+
+    // An existing box must stay anchored to the page when the zoom changes.
+    await deleteAllTextBoxes(page);
+    await clickPlace(page, 0.4, 0.35);
+    await page.keyboard.type('Anchored');
+    await page.waitForTimeout(300);
+    await commitAndDeselect(page);
+    const before = await singleTextBox(page);
+    const beforeFraction = {
+        x: before.relLeft / before.pageWidth,
+        y: before.relTop / before.pageHeight,
+    };
+
+    await stepZoom(page, 'in', 2);
+    const after = await singleTextBox(page);
+    recorder.near('anchor-x', after.relLeft / after.pageWidth, beforeFraction.x, 0.005,
+        'A placed box keeps its horizontal position on the page across a zoom change');
+    recorder.near('anchor-y', after.relTop / after.pageHeight, beforeFraction.y, 0.005,
+        'A placed box keeps its vertical position on the page across a zoom change');
+    recorder.near('anchor-annotation-x', after.annX, before.annX, 0.5,
+        'Zooming does not move the annotation itself');
+
+    artifacts.push(await capture(page, '06-zoom-accuracy', 'anchored'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/**
+ * 07 — Rotated pages are not editable, and rotating back restores the tool.
+ *
+ * The QA case originally assumed text could be placed on a rotated page. It
+ * cannot: this build renders a rotated page as one flattened image so saved
+ * masks and edits stay aligned, tells the user so, and the Add Text tool places
+ * nothing there. That contract is what is asserted here, along with the round
+ * trip back to 0 degrees.
+ */
+async function testRotatedPages(page, { recorder }) {
+    const artifacts = [];
+
+    recorder.equals('starts-unrotated', await pageRotation(page, 1), 0,
+        'The page starts unrotated');
+
+    // Baseline: placement works before any rotation, and the box survives.
+    await clickPlace(page, 0.3, 0.3);
+    await page.keyboard.type('Before rotation');
+    await page.waitForTimeout(350);
+    await commitAndDeselect(page);
+    const before = await singleTextBox(page);
+    recorder.assert('baseline-placed', before.text.includes('Before rotation'),
+        'A box can be placed and typed into before the page is rotated');
+
+    // Rotate.
+    const rotated = await rotatePage(page, 1, 'right');
+    recorder.equals('rotated-90', rotated.rotation, 90, 'The page rotates to 90 degrees');
+
+    recorder.assert('rotation-blocks-editing', await page.evaluate(
+        () => document.body.classList.contains('enpv-edit-rotation-blocked'),
+    ), 'Rotating the page marks editing as unavailable');
+    recorder.assert('rotation-explained',
+        rotated.dialogShown && /rotated/i.test(rotated.dialogMessage),
+        'The editor explains why the rotated page cannot be edited',
+        rotated.dialogMessage.slice(0, 140));
+    recorder.assert('dialog-dismissable', await page.evaluate(
+        () => document.getElementById('enpv-rotated-edit-dialog')?.hidden === true,
+    ), 'The dialog can be dismissed');
+
+    artifacts.push(await capture(page, '07-rotated-pages', 'rotation-blocked'));
+
+    const countBefore = (await textBoxes(page)).length;
+    await setAddTextMode(page, true);
+    recorder.assert('add-text-still-toggles', await addTextModeOn(page),
+        'The Add Text tool can still be switched on');
+    const point = await pointOnPage(page, 1, 0.35, 0.3);
+    await page.mouse.click(point.x, point.y);
+    await page.waitForTimeout(800);
+    recorder.equals('no-placement-while-rotated', (await textBoxes(page)).length, countBefore,
+        'Clicking a rotated page places nothing');
+
+    // Rotate back and confirm the tool and the original box both come back.
+    await setAddTextMode(page, false).catch(() => {});
+    const restored = await rotatePage(page, 1, 'left');
+    recorder.equals('rotated-back', restored.rotation, 0, 'The page rotates back to 0 degrees');
+    recorder.assert('editing-unblocked', await page.evaluate(
+        () => !document.body.classList.contains('enpv-edit-rotation-blocked'),
+    ), 'Editing is available again once the page is upright');
+
+    const after = await singleTextBox(page);
+    recorder.assert('box-survives-round-trip', after.text.includes('Before rotation'),
+        'The existing box survives the rotation round trip', JSON.stringify(after.text));
+
+    // The top-left corner is the invariant. Width follows the content, and the
+    // round trip persists the box, at which point its height becomes the
+    // rendered one — so y shifts by exactly that difference while the top edge
+    // stays put.
+    const topEdge = (box) => (box.annPageHeight || PAGE_HEIGHT_PTS) - (box.annY + box.annHeight);
+    recorder.near('geometry-x-preserved', after.annX, before.annX, 0.5,
+        'The box keeps its left edge across the round trip');
+    recorder.near('geometry-top-preserved', topEdge(after), topEdge(before), 0.5,
+        'The box keeps its top edge across the round trip');
+
+    // ...and placement works again.
+    const placedAgain = await clickPlaceSomewhere(page, [[0.55, 0.5], [0.45, 0.45], [0.35, 0.6], [0.6, 0.35]]);
+    recorder.equals('placement-restored', (await textBoxes(page)).length, 2,
+        'Text can be placed again once the page is upright',
+        `clickedAt=${Math.round(placedAgain.relX)},${Math.round(placedAgain.relY)}`);
+
+    artifacts.push(await capture(page, '07-rotated-pages', 'restored'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 09 — Typing, multi-line entry, word wrap and box reflow. */
+async function testTypingAndWrap(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+
+    // A user-sized box gives wrapping a width to work against.
+    await dragPlace(page, 0.15, 0.2, 240, 120);
+    const paragraph = 'The quick brown fox jumps over the lazy dog while the '
+        + 'printer warms up and the coffee goes cold again.';
+    await page.keyboard.type(paragraph);
+    await page.waitForTimeout(600);
+
+    let metrics = await textMetrics(page);
+    recorder.assert('text-entered', metrics.text.replace(/\s+/g, ' ').includes('quick brown fox'),
+        'The typed paragraph is in the box', metrics.text.slice(0, 60));
+    recorder.assert('wraps-to-multiple-lines', metrics.lineCount > 1,
+        'A long paragraph wraps onto more than one line', `lines=${metrics.lineCount}`);
+    recorder.assert('no-horizontal-overflow', metrics.scrollWidth <= metrics.clientWidth + 2,
+        'Wrapped text does not overflow the box horizontally',
+        `scrollWidth=${metrics.scrollWidth} clientWidth=${metrics.clientWidth}`);
+
+    artifacts.push(await capture(page, '09-typing-and-wrap', 'paragraph'));
+
+    // A single word longer than the box must break rather than spill out.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await dragPlace(page, 0.15, 0.2, 200, 90);
+    await page.keyboard.type('Pneumonoultramicroscopicsilicovolcanoconiosis');
+    await page.waitForTimeout(600);
+    metrics = await textMetrics(page);
+    recorder.assert('long-word-no-overflow', metrics.scrollWidth <= metrics.clientWidth + 2,
+        'A word wider than the box is split rather than allowed to overflow',
+        `scrollWidth=${metrics.scrollWidth} clientWidth=${metrics.clientWidth}`);
+    recorder.assert('long-word-wraps', metrics.lineCount > 1,
+        'The over-long word occupies more than one line', `lines=${metrics.lineCount}`);
+
+    // Hard line breaks.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await dragPlace(page, 0.15, 0.2, 240, 140);
+    await page.keyboard.type('First line');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('Second line');
+    await page.waitForTimeout(500);
+    metrics = await textMetrics(page);
+    recorder.assert('hard-break-renders', metrics.lineCount >= 2,
+        'Enter produces a second rendered line', `lines=${metrics.lineCount}`);
+    recorder.assert('hard-break-markup', /<br|<div|\n/i.test(metrics.html),
+        'The break is represented in the box markup', metrics.html.slice(0, 80));
+
+    await commitAndDeselect(page);
+    const committed = await textMetrics(page);
+    recorder.assert('hard-break-survives-commit',
+        committed.text.includes('First line') && committed.text.includes('Second line'),
+        'Both lines survive the commit', JSON.stringify(committed.text));
+
+    await saveAndReload(page, saveRecorder);
+    const reloaded = await textMetrics(page);
+    recorder.assert('survives-reload',
+        !!reloaded && reloaded.text.includes('First line') && reloaded.text.includes('Second line'),
+        'Both lines survive a save and reload', JSON.stringify(reloaded && reloaded.text));
+    recorder.assert('lines-after-reload', !!reloaded && reloaded.lineCount >= 2,
+        'The break is still a break after reload', `lines=${reloaded && reloaded.lineCount}`);
+
+    artifacts.push(await capture(page, '09-typing-and-wrap', 'after-reload'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 10 — Commit and cancel paths, and what happens to an empty box. */
+async function testCommitPaths(page, { recorder }) {
+    const artifacts = [];
+
+    const placeAndType = async (text, fx, fy) => {
+        await clickPlace(page, fx, fy);
+        await page.keyboard.type(text);
+        await page.waitForTimeout(350);
+    };
+
+    // Commit by clicking elsewhere on the page.
+    await placeAndType('Alpha', 0.25, 0.2);
+    const clickedAway = await clickEmptyPageSpot(page);
+    recorder.assert('found-empty-spot', clickedAway,
+        'An empty spot on the page was available to click');
+    let boxes = await textBoxes(page);
+    recorder.assert('click-away-keeps-text', boxes.length === 1 && boxes[0].text.includes('Alpha'),
+        'Clicking away keeps the typed text', JSON.stringify(boxes.map((b) => b.text)));
+    recorder.assert('click-away-leaves-edit', boxes.length === 1 && !boxes[0].editing,
+        'Clicking away leaves edit mode');
+
+    // Commit with Escape — it must not delete the box or clear the text.
+    await deleteAllTextBoxes(page);
+    await placeAndType('Beta', 0.3, 0.3);
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+    boxes = await textBoxes(page);
+    recorder.assert('escape-keeps-box', boxes.length === 1,
+        'Escape does not delete the box', `count=${boxes.length}`);
+    recorder.assert('escape-keeps-text', boxes.length === 1 && boxes[0].text.includes('Beta'),
+        'Escape does not clear the text', JSON.stringify(boxes.map((b) => b.text)));
+    recorder.assert('escape-leaves-edit', boxes.length === 1 && !boxes[0].editing,
+        'Escape leaves edit mode');
+
+    // Commit by selecting another annotation.
+    await placeAndType('Gamma', 0.6, 0.45);
+    await selectTextBox(page, 0);
+    boxes = await textBoxes(page);
+    const gamma = boxes.find((box) => box.text.includes('Gamma'));
+    recorder.assert('select-other-commits', !!gamma && !gamma.editing,
+        'Selecting another annotation commits the one being edited',
+        JSON.stringify(boxes.map((b) => ({ text: b.text, editing: b.editing }))));
+    recorder.equals('both-boxes-kept', boxes.length, 2, 'Both boxes survive');
+
+    // Commit by switching to another tool.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await placeAndType('Delta', 0.3, 0.5);
+    const shapeButton = await page.evaluate(() => {
+        const candidates = ['#add-shape-btn', '#ftb-shapes', '#ftb-add-shape'];
+        return candidates.find((selector) => {
+            const el = document.querySelector(selector);
+            return !!el && !!el.offsetParent;
+        }) || null;
+    });
+    if (shapeButton) {
+        await page.click(shapeButton);
+        await page.waitForTimeout(600);
+        boxes = await textBoxes(page);
+        recorder.assert('tool-switch-keeps-text', boxes.length === 1 && boxes[0].text.includes('Delta'),
+            'Switching tools keeps the typed text', JSON.stringify(boxes.map((b) => b.text)));
+        recorder.assert('tool-switch-leaves-edit', boxes.length === 1 && !boxes[0].editing,
+            'Switching tools leaves edit mode');
+        await page.click(shapeButton).catch(() => {});
+        await page.waitForTimeout(400);
+    } else {
+        recorder.fail('tool-switch-keeps-text', 'No visible second tool to switch to');
+    }
+
+    artifacts.push(await capture(page, '10-commit-and-empty', 'committed'));
+
+    // An empty box is discarded rather than left behind as an invisible
+    // annotation. Confirmed as intended behaviour.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await clickPlace(page, 0.4, 0.6);
+    recorder.equals('empty-box-exists-while-editing', (await textBoxes(page)).length, 1,
+        'The box exists while it is being edited');
+    await commitAndDeselect(page);
+    recorder.equals('empty-box-discarded', (await textBoxes(page)).length, 0,
+        'A box committed with no text is discarded');
+
+    // Whitespace is invisible too, so it should be treated the same way.
+    await clickPlace(page, 0.45, 0.65);
+    await page.keyboard.type('   ');
+    await page.waitForTimeout(350);
+    await commitAndDeselect(page);
+    recorder.equals('whitespace-box-discarded', (await textBoxes(page)).length, 0,
+        'A box committed with only whitespace is discarded too');
+
+    artifacts.push(await capture(page, '10-commit-and-empty', 'empty-discarded'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 11 — Text Options panel opens for the selection and mirrors its state. */
+async function testPanelMirrorsSelection(page, { recorder }) {
+    const artifacts = [];
+
+    // Box A gets a distinctive set of styles, applied through the real panel.
+    await clickPlace(page, 0.25, 0.25);
+    await page.keyboard.type('Styled');
+    await page.waitForTimeout(300);
+    await commitAndDeselect(page);
+    await selectTextBox(page, 0);
+
+    let panel = await panelState(page);
+    recorder.assert('panel-opens', panel.visible,
+        'Selecting a box opens the Text Options panel');
+
+    await page.click('#afb-bold');
+    await page.waitForTimeout(400);
+    await page.selectOption('#afb-align', 'center');
+    await page.waitForTimeout(400);
+    await page.selectOption('#afb-opacity', '0.5');
+    await page.waitForTimeout(400);
+    await setColourInput(page, 'afb-text-color', '#ff0000');
+
+    panel = await panelState(page);
+    recorder.equals('a-bold', panel.bold, 'true', 'Bold reads as pressed after applying it');
+    recorder.equals('a-align', panel.align, 'center', 'Alignment reads back as centre');
+    recorder.equals('a-opacity', panel.opacity, '0.5', 'Opacity reads back as 50%');
+    recorder.equals('a-colour', String(panel.textColor).toLowerCase(), '#ff0000',
+        'Text colour reads back as the chosen red');
+
+    artifacts.push(await capture(page, '11-panel-mirrors-selection', 'styled-box'));
+
+    // Box B is left at defaults; selecting it must re-read every control.
+    await commitAndDeselect(page);
+    await clickPlace(page, 0.6, 0.55);
+    await page.keyboard.type('Plain');
+    await page.waitForTimeout(300);
+    await commitAndDeselect(page);
+
+    await selectTextBoxByText(page, 'Plain');
+    panel = await panelState(page);
+    recorder.equals('b-bold', panel.bold, 'false', 'Bold does not carry over to the next selection');
+    recorder.equals('b-align', panel.align, 'left', 'Alignment does not carry over');
+    recorder.equals('b-opacity', panel.opacity, '1', 'Opacity does not carry over');
+    recorder.equals('b-colour', String(panel.textColor).toLowerCase(), '#000000',
+        'Text colour does not carry over');
+    recorder.equals('b-valign', panel.valign, 'top', 'Vertical alignment reads its default');
+
+    // ...and switching back must restore the styled box's values.
+    await selectTextBoxByText(page, 'Styled');
+    panel = await panelState(page);
+    // KNOWN DEFECT: box-level bold is lost as soon as the annotation layer
+    // re-renders — placing a second text box is enough. The annotation is saved
+    // with fontWeight 700, so the loss is in the re-render, which replays the
+    // box's stored rich-text runs; those still carry the pre-bold weight and
+    // win over the box-level variable. Alignment is not a run-level property
+    // and does survive, which is why the next check passes.
+    recorder.equals('a-bold-again', panel.bold, 'true',
+        'Reselecting the styled box restores its bold state (known defect: box-level '
+        + 'bold is dropped when the layer re-renders)');
+    recorder.equals('a-align-again', panel.align, 'center', 'Reselecting restores its alignment');
+
+    // Close hides the panel without changing the annotation.
+    const findStyled = async () => (await textBoxes(page)).find((box) => box.text.includes('Styled'));
+    const beforeClose = await findStyled();
+    await page.click('#afb-close');
+    await page.waitForTimeout(400);
+    panel = await panelState(page);
+    recorder.assert('close-hides-panel', !panel.visible, 'The close button hides the panel');
+    const afterClose = await findStyled();
+    recorder.assert('close-preserves-annotation',
+        afterClose.text === beforeClose.text
+        && Math.abs(afterClose.annX - beforeClose.annX) < 0.01,
+        'Closing the panel does not change the annotation');
+
+    // Deselecting hides it too.
+    await selectTextBoxByText(page, 'Styled');
+    await commitAndDeselect(page);
+    panel = await panelState(page);
+    recorder.assert('deselect-hides-panel', !panel.visible, 'Deselecting hides the panel');
+
+    // A locked annotation disables the controls.
+    await selectTextBoxByText(page, 'Styled');
+    const locked = await annotationMenuAction(page, 'lock');
+    if (locked) {
+        panel = await panelState(page);
+        const boxNow = await findStyled();
+        recorder.assert('lock-applied', boxNow.locked, 'The annotation is locked');
+        recorder.assert('locked-disables-controls',
+            panel.disabled.font === true && panel.disabled.size === true
+            && panel.disabled.bold === true && panel.disabled.align === true,
+            'Every panel control is disabled on a locked annotation',
+            JSON.stringify(panel.disabled));
+    } else {
+        recorder.fail('locked-disables-controls', 'No lock control in the annotation menu');
+    }
+
+    artifacts.push(await capture(page, '11-panel-mirrors-selection', 'locked'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 12 — Font family: standard, Google and document-embedded fonts. */
+async function testFontFamily(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+
+    await clickPlace(page, 0.25, 0.25);
+    await page.keyboard.type('Font check');
+    await page.waitForTimeout(300);
+    await commitAndDeselect(page);
+    await selectTextBox(page, 0);
+
+    const options = await page.evaluate(() => Array.from(
+        document.querySelectorAll('#afb-font option'),
+    ).map((option) => ({ value: option.value, label: option.textContent.trim(), disabled: option.disabled })));
+
+    const separators = options.filter((option) => option.disabled);
+    recorder.assert('separator-disabled', separators.length > 0 && separators.every((s) => s.disabled),
+        'The Google Fonts separator is a disabled option that cannot be selected',
+        JSON.stringify(separators.map((s) => s.label)));
+    const fontBefore = (await singleTextBox(page)).fontFamily;
+    const selectedSeparator = await page.selectOption('#afb-font', separators[0].value)
+        .then(() => true)
+        .catch(() => false);
+    await page.waitForTimeout(400);
+    const fontAfter = (await singleTextBox(page)).fontFamily;
+    recorder.assert('separator-not-selectable', !selectedSeparator && fontAfter === fontBefore,
+        'The separator cannot be chosen and does not change the font',
+        `selected=${selectedSeparator} font=${fontBefore} -> ${fontAfter}`);
+
+    const standard = ['Georgia', 'Courier', 'TimesRoman'];
+    for (const font of standard) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.selectOption('#afb-font', font);
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(500);
+        // eslint-disable-next-line no-await-in-loop
+        const box = await singleTextBox(page);
+        recorder.equals(`applies-${font}`, box.fontFamily, font,
+            `Choosing ${font} records it on the annotation`);
+        // eslint-disable-next-line no-await-in-loop
+        const rendered = await page.evaluate((selector) => {
+            const el = document.querySelector(selector)?.querySelector('.enpv-text-content');
+            return el ? window.getComputedStyle(el).fontFamily : '';
+        }, TEXT_BOX_SELECTOR);
+        const family = font === 'TimesRoman' ? 'times' : font.toLowerCase();
+        recorder.assert(`renders-${font}`, rendered.toLowerCase().includes(family),
+            `The page text renders in ${font}`, rendered);
+    }
+
+    // A Google face: the value must be stored even though this container has no
+    // outbound route to fetch the webfont.
+    await page.selectOption('#afb-font', 'Roboto');
+    await page.waitForTimeout(500);
+    let box = await singleTextBox(page);
+    recorder.equals('applies-google-font', box.fontFamily, 'Roboto',
+        'Choosing a Google face records it on the annotation');
+
+    artifacts.push(await capture(page, '12-font-family', 'roboto'));
+
+    // The choice has to survive a save and reload.
+    await commitAndDeselect(page);
+    await page.selectOption('#afb-font', 'Georgia').catch(() => {});
+    await selectTextBox(page, 0);
+    await page.selectOption('#afb-font', 'Georgia');
+    await page.waitForTimeout(500);
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+
+    box = await singleTextBox(page);
+    recorder.equals('survives-reload', box.fontFamily, 'Georgia',
+        'The chosen font survives a save and reload');
+    await selectTextBox(page, 0);
+    const panel = await panelState(page);
+    recorder.equals('panel-reads-font', panel.font, 'Georgia',
+        'The panel reads the saved font back after a reload');
+
+    artifacts.push(await capture(page, '12-font-family', 'after-reload'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
 // ---------------------------------------------------------------------------
 // Small shared helpers used by the tests above
 // ---------------------------------------------------------------------------
@@ -875,29 +1834,43 @@ function previewRemoved(page) {
     return page.evaluate(() => document.querySelectorAll('.enpv-text-drag-selection, .text-drag-selection').length === 0);
 }
 
-/** Remove every placed text box so the next scenario starts clean. */
+/**
+ * Remove every placed text box so the next scenario starts clean.
+ *
+ * Deletion goes through the annotation menu rather than the Delete key: the
+ * caret is often inside the box, where Delete is a text edit rather than an
+ * annotation command.
+ */
 async function deleteAllTextBoxes(page) {
     /* eslint-disable no-await-in-loop */
-    for (let guard = 0; guard < 10; guard++) {
-        const remaining = await textBoxes(page);
-        if (remaining.length === 0) return;
-        await page.evaluate((selector) => {
-            const box = document.querySelector(selector);
-            if (box) box.click();
-        }, TEXT_BOX_SELECTOR);
-        await page.waitForTimeout(250);
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(150);
-        await page.evaluate((selector) => {
-            const box = document.querySelector(selector);
-            if (box) box.click();
-        }, TEXT_BOX_SELECTOR);
-        await page.waitForTimeout(250);
-        await page.keyboard.press('Delete');
-        await page.waitForTimeout(350);
+    for (let guard = 0; guard < 12; guard++) {
+        const before = (await textBoxes(page)).length;
+        if (before === 0) return;
+
+        await clickInsideBox(page, 0);
+        const clicked = await page.evaluate(() => {
+            const button = document.querySelector('#enpv-ann-menu [data-action="delete"]');
+            if (!button) return false;
+            button.click();
+            return true;
+        });
+        if (!clicked) throw new Error('Annotation menu has no delete action');
+        await page.waitForTimeout(450);
+
+        if ((await textBoxes(page)).length >= before) {
+            // Fall back to the keyboard once, in case the menu click was
+            // swallowed by an in-flight re-render.
+            await page.keyboard.press('Escape');
+            await page.waitForTimeout(200);
+            await clickInsideBox(page, 0).catch(() => {});
+            await page.keyboard.press('Delete');
+            await page.waitForTimeout(400);
+        }
     }
     /* eslint-enable no-await-in-loop */
-    throw new Error('Could not clear placed text boxes');
+    if ((await textBoxes(page)).length > 0) {
+        throw new Error('Could not clear placed text boxes');
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -936,10 +1909,54 @@ const TESTS = [
         run: testPageClamping,
     },
     {
+        id: '06-zoom-accuracy',
+        number: '06',
+        title: 'Placement stays accurate across zoom levels',
+        run: testZoomAccuracy,
+    },
+    {
+        id: '07-rotated-pages',
+        number: '07',
+        title: 'Rotated pages are not editable, and rotating back restores the tool',
+        run: testRotatedPages,
+    },
+    {
         id: '08-edit-mode-ready',
         number: '08',
         title: 'A newly placed box opens in edit mode with the caret ready',
         run: testEditModeReady,
+    },
+    {
+        id: '09-typing-and-wrap',
+        // Needs edit mode, which is premium-gated.
+        signedIn: true,
+        number: '09',
+        title: 'Typing, multi-line entry, word wrap and box reflow',
+        run: testTypingAndWrap,
+    },
+    {
+        id: '10-commit-and-empty',
+        // Needs edit mode, which is premium-gated.
+        signedIn: true,
+        number: '10',
+        title: 'Commit and cancel paths, and what happens to an empty box',
+        run: testCommitPaths,
+    },
+    {
+        id: '11-panel-mirrors-selection',
+        // Needs edit mode, which is premium-gated.
+        signedIn: true,
+        number: '11',
+        title: 'Text Options panel opens for the selection and mirrors its state',
+        run: testPanelMirrorsSelection,
+    },
+    {
+        id: '12-font-family',
+        // Needs edit mode, which is premium-gated.
+        signedIn: true,
+        number: '12',
+        title: 'Font family: standard, Google and document-embedded fonts',
+        run: testFontFamily,
     },
 ];
 
@@ -1008,11 +2025,14 @@ async function runTests(ids) {
                 });
 
                 const page = await context.newPage();
+                const saveRecorder = attachSaveRecorder(page);
                 const csrfToken = await fetchCsrfToken(page);
                 docId = await createBlankDocument(page, csrfToken, `Text tool test ${test.number}`, test.pages || 1);
-                const consoleErrors = await openEditor(page, docId);
+                const consoleErrors = test.signedIn
+                    ? await openEditorAsSignedIn(page, docId)
+                    : await openEditor(page, docId);
 
-                const outcome = await test.run(page, { consoleErrors, docId, recorder });
+                const outcome = await test.run(page, { consoleErrors, docId, recorder, saveRecorder });
                 results.push({
                     ...summarise(test, outcome.checks, outcome.artifacts, null, startedAt),
                     document_id: docId,

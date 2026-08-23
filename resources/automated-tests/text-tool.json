@@ -83,18 +83,20 @@
                 "area": "Placement",
                 "title": "Placement stays accurate across zoom levels",
                 "summary": "Click and drag placement at fit-width, 50%, 100%, 200% and an odd zoom must land under the pointer and produce identical PDF coordinates; an existing box must stay anchored when zoom changes.",
-                "automated": false,
-                "story": "text-tool"
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Zoom is driven through the +/- controls, so the levels are whatever the viewer steps to rather than named percentages."
             },
             {
                 "number": "07",
                 "id": "07-rotated-pages",
                 "gid": "1217756907391019",
                 "area": "Placement",
-                "title": "Placement stays accurate on rotated pages",
-                "summary": "Placement on 90/180/270 pages lands under the pointer, reads the right way up, and maps to the equivalent unrotated point. An existing box must not stretch, mirror or drift when the page is rotated again.",
-                "automated": false,
-                "story": "text-tool"
+                "title": "Rotated pages are not editable, and rotating back restores the tool",
+                "summary": "This build renders a rotated page as one flattened image so saved masks stay aligned, marks editing unavailable, and explains why in a dialog. The Add Text tool places nothing while the page is rotated. Rotating back to 0 degrees restores placement, and an existing box survives the round trip with its top-left corner intact.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "The original QA wording assumed text could be placed on a rotated page. Automation showed it cannot, so the case now covers the real contract. Placement accuracy at 90/180/270 cannot be tested until rotated pages become editable."
             },
             {
                 "number": "08",
@@ -113,8 +115,9 @@
                 "area": "Editing",
                 "title": "Typing, multi-line entry, word wrap and box reflow",
                 "summary": "Long paragraphs wrap inside the box width, an over-long word splits mid-word, hard line breaks survive a commit and reload, and reflow keeps text inside the box border at large font sizes.",
-                "automated": false,
-                "story": "text-tool"
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Wrapping, mid-word breaks and hard line breaks are automated through a save and reload. Behaviour at very large font sizes still needs a manual pass. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "10",
@@ -123,8 +126,9 @@
                 "area": "Editing",
                 "title": "Commit and cancel paths, and what happens to an empty box",
                 "summary": "Committing by click-away, Escape, selecting another annotation and switching tools all keep the text and leave edit mode cleanly. Also records what the editor does with an empty or whitespace-only box.",
-                "automated": false,
-                "story": "text-tool"
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Confirms that a box committed empty, or containing only whitespace, is discarded rather than persisted as an invisible annotation. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "11",
@@ -133,8 +137,9 @@
                 "area": "Formatting",
                 "title": "Text Options panel opens for the selection and mirrors its state",
                 "summary": "Every control is read from the selected box, re-reads fully when a differently styled box is selected, hides on close and deselect, and is disabled on a locked annotation.",
-                "automated": false,
-                "story": "text-tool"
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "FAILING: box-level bold does not survive a re-render of the annotation layer \u2014 placing a second text box reverts it, on the page as well as in the panel. The annotation is saved with fontWeight 700, so the loss is in the re-render replaying stored rich-text runs that still carry the pre-bold weight. Every other control in this case passes. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "12",
@@ -143,8 +148,9 @@
                 "area": "Formatting",
                 "title": "Font family: standard, Google and document-embedded fonts",
                 "summary": "Each font group re-renders the page text immediately and survives reload and download without falling back to Helvetica. The Google Fonts separator must not be selectable.",
-                "automated": false,
-                "story": "text-tool"
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "The standard PDF faces are asserted end to end. Google faces are asserted as far as the stored value only: the test container has no outbound route, so whether the webfont actually renders still needs a manual pass, as do document-embedded fonts. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "13",
