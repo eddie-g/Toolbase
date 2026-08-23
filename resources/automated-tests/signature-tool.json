@@ -17,7 +17,8 @@
                 "instructions": [
                     "Start with a blank pdf project for edit-new?pdfjs=1",
                     "click the sign tool"
-                ]
+                ],
+                "short": "Signature tool"
             },
             {
                 "key": "nk-dev-5",
@@ -27,7 +28,19 @@
                 "instructions": [
                     "Start from a blank PDF project at edit-new?pdfjs=1",
                     "Several changes are per-browser preferences: use a fresh profile for first-run behaviour"
-                ]
+                ],
+                "short": "NK_Dev_5"
+            },
+            {
+                "key": "nk-dev-6",
+                "task_gid": "1217756054188225",
+                "task_name": "[NK_DEV_6] Signature scaling",
+                "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752/task/1217756054188225",
+                "instructions": [
+                    "Add a signature to a new document, then scale it down with the resize handles",
+                    "The ink must stay inside the selection box at every stage"
+                ],
+                "short": "NK_DEV_6"
             }
         ],
         "tests": [
@@ -394,6 +407,17 @@
                 "automated": true,
                 "automation_note": "Fully automated across wide/short, tall/narrow, minimum-clamped and cap-clamped marks. Visual comparison against the preview and the export remains manual.",
                 "story": "nk-dev-5"
+            },
+            {
+                "number": "35",
+                "id": "nk6-stamp-follows-box",
+                "gid": "1217756051396473",
+                "area": "Editing",
+                "story": "nk-dev-6",
+                "title": "Resized signature stays inside its bounding box",
+                "summary": "The stamped image tracks its box while a resize handle is dragged and after the drag ends, with no spill below or beside the selection, growing as well as shrinking, and from corner and edge handles alike.",
+                "automated": true,
+                "automation_note": "Regression test for NK_DEV_6, verified to fail without the fix (6 of 8 checks, 60px spill). The sizing rule itself is unit tested in resources/js/edit-new-pdfjs/stamp-frame.test.mjs; rotated-page sizing is covered there rather than in the browser."
             }
         ]
     }

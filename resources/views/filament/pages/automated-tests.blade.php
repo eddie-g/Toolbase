@@ -141,8 +141,8 @@
                         <div class="at-group">
                             <div class="at-group__label">
                                 <span x-text="group.area"></span>
-                                <span class="at-group__story" x-show="group.story === 'nk-dev-5'"
-                                      x-cloak>NK_Dev_5</span>
+                                <span class="at-group__story" x-show="group.story && !isPrimaryStory(group.story)"
+                                      x-cloak x-text="storyShort(group.story)"></span>
                             </div>
 
                             <template x-for="test in group.tests" :key="rowKey(test)">
@@ -282,10 +282,17 @@
 
                     /** QA stories feeding this suite, with a short link label. */
                     get stories() {
-                        return (this.suite?.stories || []).map((story) => ({
-                            ...story,
-                            short: story.key === 'signature-tool' ? 'Signature tool' : 'NK_Dev_5',
-                        }));
+                        return this.suite?.stories || [];
+                    },
+
+                    /** Short label for a story key, for badges and links. */
+                    storyShort(key) {
+                        return this.stories.find((story) => story.key === key)?.short || '';
+                    },
+
+                    /** The first story is the suite's own; later ones are additions. */
+                    isPrimaryStory(key) {
+                        return this.stories.length > 0 && this.stories[0].key === key;
                     },
 
                     testsForStory(key) {

@@ -55,10 +55,11 @@ import {
     accountEntryAsAnnotation,
 } from '../edit-new/signature/account-library.js';
 import {
+    applyStampFrameStyle,
+    stampFrameStyle,
     pdfRectToViewportRect,
     viewportPdfDimensions,
     viewportPointToPdfPoint,
-    viewportRotatedContentFrame,
 } from './page-geometry.js';
 import {
     signatureMode,
@@ -925,14 +926,36 @@ export function installSignatureFeature(deps) {
         const src = String(annotation.dataUrl || annotation.src || annotation.assetPath || annotation.imagePath || '').trim();
         if (src) img.src = src;
         img.alt = 'Signature';
-        const pageFrame = viewportRotatedContentFrame(viewport, rect.width, rect.height);
         img.style.position = 'absolute';
         img.style.left = '0';
         img.style.top = '0';
-        img.style.width = `${Math.max(1, pageFrame.width)}px`;
-        img.style.height = `${Math.max(1, pageFrame.height)}px`;
         img.style.transformOrigin = '0 0';
-        img.style.transform = pageFrame.transform;
+
+        // NK_DEV_6: the stamp must stay inside the box while it is resized.
+        // On an unrotated page that means no inline sizing at all, so the
+        // stylesheet's 100%/100% applies and the image follows the box live;
+        // inline pixels were computed once and went stale mid-drag.
+        const applyStamp = () => applyStampFrameStyle(
+            img,
+            stampFrameStyle(viewport?.rotation, box.clientWidth || rect.width, box.clientHeight || rect.height),
+        );
+        applyStamp();
+
+        // A rotated page needs explicit pixel dimensions because the axes swap,
+        // so those have to be recomputed whenever the box changes size. The box
+        // is mutated directly during a drag without re-rendering the layer.
+        if (stampFrameStyle(viewport?.rotation, 1, 1).followsBox === false
+            && typeof ResizeObserver !== 'undefined') {
+            const observer = new ResizeObserver(() => {
+                if (!box.isConnected) {
+                    observer.disconnect();
+                    return;
+                }
+                applyStamp();
+            });
+            observer.observe(box);
+        }
+
         box.appendChild(img);
         const label = document.createElement('span');
         label.className = 'enpv-signature-selection-label';
