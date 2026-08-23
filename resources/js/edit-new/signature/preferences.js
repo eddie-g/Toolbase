@@ -59,3 +59,37 @@ export function writeSignaturePreferences(current, patch) {
     safeLocalStorageSet(PREFS_KEY, JSON.stringify(next));
     return next;
 }
+
+/**
+ * Background the composer canvas should use for a given ink colour.
+ *
+ * A black signature on a white canvas gives no sense of where the mark ends,
+ * and a pale signature on white is invisible. Both cases are the same problem —
+ * contrast — so the canvas is tinted from the ink's luminance: dark ink gets a
+ * grey canvas, light ink gets a dark one.
+ *
+ * This is a CSS background on the element only. The canvas BITMAP stays
+ * transparent, so trimming and the exported PNG are unaffected.
+ *
+ * @param {string} inkColor hex colour such as "#111827"
+ * @returns {{background: string, tone: 'grey'|'dark'}}
+ */
+export function canvasBackdropForInk(inkColor) {
+    const hex = String(inkColor || '').trim().replace('#', '');
+    const full = hex.length === 3
+        ? hex.split('').map((char) => char + char).join('')
+        : hex;
+
+    let luminance = 0;
+    if (/^[0-9a-f]{6}$/i.test(full)) {
+        const r = parseInt(full.slice(0, 2), 16) / 255;
+        const g = parseInt(full.slice(2, 4), 16) / 255;
+        const b = parseInt(full.slice(4, 6), 16) / 255;
+        // Rec. 709 luma: close enough to perceived brightness for this.
+        luminance = (0.2126 * r) + (0.7152 * g) + (0.0722 * b);
+    }
+
+    return luminance < 0.5
+        ? { background: '#d8dee9', tone: 'grey' }
+        : { background: '#3f4756', tone: 'dark' };
+}

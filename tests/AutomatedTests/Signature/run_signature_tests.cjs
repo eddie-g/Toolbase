@@ -269,6 +269,18 @@ const TESTS = [
         run: nk5AspectPreserved,
     },
     {
+        id: 'nk5-12-canvas-backdrop',
+        number: 'NK5-12',
+        title: 'Canvas is tinted for contrast with the ink colour',
+        run: nk5CanvasBackdrop,
+    },
+    {
+        id: 'nk5-13-standard-limit',
+        number: 'NK5-13',
+        title: 'Standard accounts are limited to five saved signatures',
+        run: nk5StandardAccountLimit,
+    },
+    {
         id: 'nk6-stamp-follows-box',
         number: 'NK6-01',
         title: 'Resized signature stays inside its bounding box',
@@ -2257,7 +2269,12 @@ async function stubAccountEndpoint(page, initial = [], options = {}) {
             return route.fulfill({
                 status: 200,
                 contentType: 'application/json',
-                body: JSON.stringify({ success: true, signed_in: true, limit: 20, signatures: state.entries }),
+                body: JSON.stringify({
+                    success: true,
+                    signed_in: true,
+                    limit: options.limit ?? 20,
+                    signatures: state.entries,
+                }),
             });
         }
 
@@ -2270,7 +2287,11 @@ async function stubAccountEndpoint(page, initial = [], options = {}) {
                 return route.fulfill({
                     status: 422,
                     contentType: 'application/json',
-                    body: JSON.stringify({ success: false, message: 'You have reached the 20 saved signature limit. Delete one first.' }),
+                    body: JSON.stringify({
+                        success: false,
+                        limit: options.limit ?? 20,
+                        message: `You have reached the ${options.limit ?? 20} saved signature limit. Delete one first.`,
+                    }),
                 });
             }
 
@@ -4215,6 +4236,155 @@ async function nk5AspectPreserved(page, ctx) {
     void tiny;
     void huge;
     return { checks: r.checks, artifacts: [] };
+}
+
+// --- NK5-12 · Canvas is tinted for contrast with the ink -------------------
+
+async function nk5CanvasBackdrop(page, ctx) {
+    const r = ctx.recorder;
+    await openSignatureModal(page);
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+
+    const backdrop = () => page.evaluate(() => {
+        const canvas = document.getElementById('signature-canvas');
+        return {
+            tone: canvas?.dataset.inkTone || null,
+            background: getComputedStyle(canvas).backgroundColor,
+        };
+    });
+
+    // The composer default ink is near-black, so the canvas should open grey.
+    const initial = await backdrop();
+    r.assert('default-ink-gets-grey-canvas', initial.tone === 'grey',
+        'The canvas opens grey, because the default ink is black',
+        `tone=${initial.tone} background=${initial.background}`);
+    r.assert('grey-is-not-white',
+        !/rgba?\(\s*255,\s*255,\s*255/.test(initial.background || ''),
+        'The grey canvas is visibly not white', `background=${initial.background}`);
+
+    await setColour(page, 'signature-color', '#000000');
+    await page.waitForTimeout(300);
+    r.assert('pure-black-gets-grey', (await backdrop()).tone === 'grey',
+        'Pure black ink gets a grey canvas');
+
+    // Light ink would vanish on a light canvas, so it flips dark.
+    await setColour(page, 'signature-color', '#ffffff');
+    await page.waitForTimeout(300);
+    const light = await backdrop();
+    r.assert('light-ink-gets-dark-canvas', light.tone === 'dark',
+        'A white signature gets a dark canvas so it stays visible',
+        `tone=${light.tone} background=${light.background}`);
+
+    // The Type tab follows its own ink colour.
+    await page.click('[data-signature-mode="type"]');
+    await page.waitForTimeout(300);
+    await setColour(page, 'signature-type-color', '#111827');
+    await page.waitForTimeout(300);
+    r.assert('type-tab-follows-its-own-ink', (await backdrop()).tone === 'grey',
+        'The Type tab tints from the typed ink colour');
+    await setColour(page, 'signature-type-color', '#fde047');
+    await page.waitForTimeout(300);
+    r.assert('type-tab-light-ink', (await backdrop()).tone === 'dark',
+        'A pale typed ink also flips the canvas dark');
+
+    // The important part: this must be presentation only.
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+    await setColour(page, 'signature-color', '#111827');
+    await page.waitForTimeout(250);
+    await drawStroke(page);
+    const bitmap = await page.evaluate(() => {
+        const canvas = document.getElementById('signature-canvas');
+        const data = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+        let transparent = 0;
+        let opaque = 0;
+        for (let i = 3; i < data.length; i += 4) {
+            if (data[i] < 8) transparent++;
+            else if (data[i] > 240) opaque++;
+        }
+        return { transparent, opaque };
+    });
+    r.assert('bitmap-stays-transparent', bitmap.transparent > bitmap.opaque,
+        'The tint is CSS only — the canvas bitmap is still mostly transparent',
+        `${bitmap.transparent} transparent px vs ${bitmap.opaque} opaque`);
+
+    await armPlacement(page);
+    await clickPageFraction(page, 1, 0.5, 0.45);
+    const saved = await captureAutosave(page, ctx.saveRecorder);
+    const placed = saved.signatures[0];
+    r.assert('placed-signature-has-no-backdrop',
+        !!placed && num(placed.intrinsicWidth) < 900,
+        'The placed signature is still trimmed to its ink, not to a filled canvas',
+        placed ? `intrinsic ${placed.intrinsicWidth}x${placed.intrinsicHeight}` : 'not placed');
+
+    const artifact = await capture(page, 'nk5-12-canvas-backdrop', 'tinted-canvas');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// --- NK5-13 · Standard accounts are limited to five saved signatures -------
+
+async function nk5StandardAccountLimit(page, ctx) {
+    const r = ctx.recorder;
+
+    // Five saved already, with the server reporting the standard allowance.
+    const atLimit = Array.from({ length: 5 }, (_, index) => ({
+        ...TYPED_ENTRY,
+        id: String(index + 1),
+        name: `Signature ${index + 1}`,
+    }));
+
+    const store = await stubAccountEndpoint(page, atLimit, { limitReached: true, limit: 5 });
+    await renderEditorAsSignedIn(page, ctx.docId);
+    await openSignatureModal(page);
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(700);
+
+    const rows = await page.locator('#signature-account-list .signature-library__item').count();
+    r.assert('five-listed', rows === 5,
+        'A standard account at its allowance lists five signatures', `${rows} rows`);
+
+    // Saving a sixth must be refused, and the reason has to reach the user.
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+    await drawStroke(page);
+    await page.click('#signature-save-account');
+    const status = await waitForStatus(page, /reached the .*limit|Could not save|^Saved "/i, 9000);
+
+    r.assert('sixth-save-refused', /limit/i.test(status),
+        'Saving a sixth signature is refused with the limit explained',
+        `status="${status}"`);
+    r.assert('limit-message-names-five', /\b5\b/.test(status),
+        'The message tells the user what the allowance actually is',
+        `status="${status}"`);
+    r.assert('refusal-came-from-the-server', store.posted.length === 1,
+        'The client still asked the server rather than guessing the limit itself',
+        `${store.posted.length} POST(s)`);
+
+    // The composer must survive a refusal.
+    const after = await readModalState(page);
+    r.assert('composer-survives-refusal', after.isOpen && after.applyDisabled === false,
+        'After a refusal the signature can still be placed on the page',
+        `open=${after.isOpen} apply disabled=${after.applyDisabled}`);
+
+    // Deleting one frees a slot: the server then accepts a save.
+    await page.unroute(/\/saved-signatures(\/.*)?$/);
+    const freed = await stubAccountEndpoint(page, atLimit.slice(0, 4), { limit: 5 });
+    await page.click('[data-signature-view="saved"]');
+    await page.waitForTimeout(400);
+    await page.click('[data-signature-mode="draw"]');
+    await page.waitForTimeout(250);
+    await drawStroke(page);
+    await page.click('#signature-save-account');
+    const okStatus = await waitForStatus(page, /^Saved "|reached the .*limit|Could not save/i, 9000);
+    r.assert('save-allowed-under-the-limit', /^Saved "/i.test(okStatus),
+        'Once below the allowance a save is accepted again',
+        `status="${okStatus}"`);
+    r.assert('freed-slot-posted', freed.posted.length === 1,
+        'The accepted save reached the server', `${freed.posted.length} POST(s)`);
+
+    const artifact = await capture(page, 'nk5-13-standard-limit', 'limit-reached');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
 }
 
 // --- NK_DEV_6 · The stamp stays inside the box while it is resized ---------

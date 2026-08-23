@@ -17,8 +17,7 @@
                 "instructions": [
                     "Start with a blank pdf project for edit-new?pdfjs=1",
                     "click the sign tool"
-                ],
-                "short": "Signature tool"
+                ]
             },
             {
                 "key": "nk-dev-5",
@@ -28,8 +27,7 @@
                 "instructions": [
                     "Start from a blank PDF project at edit-new?pdfjs=1",
                     "Several changes are per-browser preferences: use a fresh profile for first-run behaviour"
-                ],
-                "short": "NK_Dev_5"
+                ]
             },
             {
                 "key": "nk-dev-6",
@@ -410,6 +408,28 @@
             },
             {
                 "number": "35",
+                "id": "nk5-12-canvas-backdrop",
+                "gid": "1217756661635600",
+                "area": "Preview",
+                "story": "nk-dev-5",
+                "title": "Canvas is tinted for contrast with the ink colour",
+                "summary": "The composer canvas is grey for dark ink and dark for pale ink, judged perceptually, and the tint is CSS only so the bitmap stays transparent and the placed signature is still trimmed to its ink.",
+                "automated": true,
+                "automation_note": "Runner test nk5-12-canvas-backdrop plus 9 unit tests in canvas-backdrop.test.mjs. Appearance against a real PDF page remains a manual look."
+            },
+            {
+                "number": "36",
+                "id": "nk5-13-standard-limit",
+                "gid": "1217756661657044",
+                "area": "Saved",
+                "story": "nk-dev-5",
+                "title": "Standard accounts are limited to five saved signatures",
+                "summary": "A standard account keeps 5 and is refused a sixth by the server with the allowance named; an active pdf-editor subscription keeps 20. Lapsed and wrong-product subscriptions do not raise it.",
+                "automated": true,
+                "automation_note": "Runner test nk5-13-standard-limit for the browser flow, plus 7 server tests covering the tiers, lapsed and wrong-product subscriptions, admins and the guest fallback. The upgrade wording is worth a manual look."
+            },
+            {
+                "number": "37",
                 "id": "nk6-stamp-follows-box",
                 "gid": "1217756051396473",
                 "area": "Editing",

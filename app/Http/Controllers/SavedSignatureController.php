@@ -25,10 +25,12 @@ class SavedSignatureController extends Controller
             return $this->guestResponse();
         }
 
+        $limit = SavedSignature::limitForOwner($ownership);
+
         $signatures = SavedSignature::query()
             ->forOwner($ownership)
             ->orderByDesc('updated_at')
-            ->limit(SavedSignature::PER_ACCOUNT_LIMIT)
+            ->limit($limit)
             ->get()
             ->map(fn (SavedSignature $signature) => $signature->toModalPayload())
             ->all();
@@ -36,7 +38,7 @@ class SavedSignatureController extends Controller
         return response()->json([
             'success' => true,
             'signed_in' => true,
-            'limit' => SavedSignature::PER_ACCOUNT_LIMIT,
+            'limit' => $limit,
             'signatures' => $signatures,
         ]);
     }
@@ -71,11 +73,13 @@ class SavedSignatureController extends Controller
             ], 422);
         }
 
+        $limit = SavedSignature::limitForOwner($ownership);
         $existing = SavedSignature::query()->forOwner($ownership)->count();
-        if ($existing >= SavedSignature::PER_ACCOUNT_LIMIT) {
+        if ($existing >= $limit) {
             return response()->json([
                 'success' => false,
-                'message' => 'You have reached the '.SavedSignature::PER_ACCOUNT_LIMIT.' saved signature limit. Delete one first.',
+                'limit' => $limit,
+                'message' => 'You have reached the '.$limit.' saved signature limit. Delete one first.',
             ], 422);
         }
 
