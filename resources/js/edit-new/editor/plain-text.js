@@ -20,6 +20,8 @@
  *     preserve per-selection formatting.
  */
 
+import { annotationTextDecorationLine } from '../text/decoration.js';
+
 export function getEditorPlainText(editor) {
     if (!editor) return '';
     // Walk the DOM rather than using innerText. The source-flow editor
@@ -78,7 +80,7 @@ export function richHtmlHasInlineSelectionFormatting(html) {
  * Walks `[data-line-index]`, `[data-source-span]`,
  * `[data-line-content]` descendants and rewrites the relevant CSS
  * properties to flow-friendly defaults. When `ann` is supplied,
- * `textAlign` and `underline` from the annotation cascade into the
+ * `textAlign`, `underline` and `strikeout` from the annotation cascade into the
  * per-line elements so the layer matches the ann settings.
  */
 export function normalizeRichHtmlForDisplay(html, ann = null) {
@@ -87,7 +89,7 @@ export function normalizeRichHtmlForDisplay(html, ann = null) {
     const tmp = document.createElement('div');
     tmp.innerHTML = raw;
     const align = ann ? (ann.textAlign || 'left') : null;
-    const decoration = ann ? (ann.underline ? 'underline' : 'none') : null;
+    const decoration = ann ? annotationTextDecorationLine(ann) : null;
     tmp.querySelectorAll('[data-line-index]').forEach((el) => {
         el.style.lineHeight = 'inherit';
         el.style.minHeight = '0';

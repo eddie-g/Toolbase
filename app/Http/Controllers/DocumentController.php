@@ -4844,7 +4844,7 @@ class DocumentController extends Controller
             return false;
         }
 
-        if (!empty($annotation['underline'])) {
+        if (!empty($annotation['underline']) || !empty($annotation['strikeout'])) {
             return false;
         }
 
@@ -6415,6 +6415,7 @@ class DocumentController extends Controller
                 'backgroundColor' => 'transparent',
                 'opacity' => 1,
                 'underline' => false,
+                'strikeout' => false,
                 'textAlign' => 'left',
                 'verticalAlign' => $multiLine ? 'top' : 'middle',
                 'locked' => false,

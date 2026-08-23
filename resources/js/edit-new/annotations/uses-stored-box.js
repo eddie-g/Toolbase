@@ -4,7 +4,7 @@
  * A promoted-from-extraction annotation should keep rendering from
  * its original source-block geometry until the user makes a meaningful
  * change. After any of: text edit, dimension change, style change
- * (background, opacity, underline, alignment), user-authored flag, or
+ * (background, opacity, underline, strikeout, alignment), user-authored flag, or
  * presence of rich-html content, switch to the stored box for display.
  *
  * Pure: depends only on the annotation, the editedTexts slice, and a
@@ -28,6 +28,7 @@ export function annotationUsesStoredBoxForDisplay(ann) {
         (annBgColor && annBgColor !== '#ffffff' && annBgColor !== 'transparent')
         || annOpacity < 0.999
         || ann?.underline
+        || ann?.strikeout
         || (String(ann?.verticalAlign || 'top').toLowerCase() !== 'top')
         || (String(ann?.textAlign || 'left').toLowerCase() !== 'left')
     );
