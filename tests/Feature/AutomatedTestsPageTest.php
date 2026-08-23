@@ -37,48 +37,45 @@ class AutomatedTestsPageTest extends TestCase
             ->getJson('/automated-tests/signature-tool/suite')
             ->assertOk()
             ->assertJsonPath('success', true)
-            ->assertJsonPath('suite.asana.task_gid', '1217747812355475');
+            ->assertJsonPath('suite.stories.0.task_gid', '1217747812355475')
+            ->assertJsonPath('suite.stories.1.task_gid', '1217754901732372');
 
         $tests = $response->json('suite.tests');
 
-        $this->assertCount(23, $tests, 'Every Asana subtask should be catalogued');
+        $this->assertCount(34, $tests, 'Both QA stories\' subtasks should be catalogued');
 
         $automated = array_values(array_filter($tests, fn (array $test) => $test['automated'] === true));
         $this->assertCount(
-            23,
+            34,
             $automated,
-            'Every Asana subtask is now automated; the runner must implement all of them',
+            'Every catalogued subtask is automated; the runner must implement all of them',
         );
+
+        $this->assertCount(
+            34,
+            array_unique(array_column($tests, 'id')),
+            'Each subtask maps to its own runner test',
+        );
+
+        // Both stories must actually contribute cases.
+        $byStory = array_count_values(array_column($tests, 'story'));
+        $this->assertSame(23, $byStory['signature-tool'] ?? 0);
+        $this->assertSame(11, $byStory['nk-dev-5'] ?? 0);
 
         foreach ($tests as $test) {
             $this->assertNotEmpty($test['gid'], 'Each test links back to its Asana subtask');
             $this->assertNotEmpty($test['title']);
             $this->assertNotEmpty($test['area']);
+            $this->assertNotEmpty($test['story'], 'Each test records which QA story specified it');
         }
     }
 
-    public function test_the_nk_dev_5_suite_is_catalogued(): void
+    public function test_the_retired_nk_dev_5_suite_is_gone(): void
     {
-        $response = $this->actingAs($this->admin(), 'admin')
+        // Its cases were merged into the signature-tool suite.
+        $this->actingAs($this->admin(), 'admin')
             ->getJson('/automated-tests/signature-modal-improvements/suite')
-            ->assertOk()
-            ->assertJsonPath('success', true)
-            ->assertJsonPath('suite.asana.task_gid', '1217754901732372');
-
-        $tests = $response->json('suite.tests');
-        $this->assertCount(11, $tests, 'Every NK_Dev_5 QA subtask should be catalogued');
-
-        foreach ($tests as $test) {
-            $this->assertTrue($test['automated'], "{$test['number']} should be automated");
-            $this->assertNotEmpty($test['gid'], 'Each entry links back to its Asana subtask');
-        }
-
-        // Each subtask has its own dedicated runner test.
-        $this->assertCount(
-            count($tests),
-            array_unique(array_column($tests, 'id')),
-            'Every NK_Dev_5 subtask should map to its own runner test',
-        );
+            ->assertNotFound();
     }
 
     public function test_unknown_suite_is_rejected(): void
@@ -122,7 +119,7 @@ class AutomatedTestsPageTest extends TestCase
             ->assertOk()
             ->assertJsonPath('success', true);
 
-        $this->assertSame(23, $response->json('summary.tests_total'));
+        $this->assertSame(34, $response->json('summary.tests_total'));
         $this->assertSame(
             $response->json('summary.checks_total'),
             $response->json('summary.checks_passed'),

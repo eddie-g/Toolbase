@@ -8,7 +8,7 @@
         class="at-root"
     >
         {{-- ── Suite switcher ─────────────────────────────────────────── --}}
-        <nav class="at-tabs" aria-label="Test suites">
+        <nav class="at-tabs" aria-label="Test suites" x-show="suites.length > 1">
             <template x-for="entry in suites" :key="entry.key">
                 <button type="button" class="at-tab"
                         :class="{ 'is-active': entry.key === activeSuite }"
@@ -38,17 +38,30 @@
                                 <circle cx="12" cy="6" r="3.1"/><circle cx="5.6" cy="16.4" r="3.1"/><circle cx="18.4" cy="16.4" r="3.1"/>
                             </svg>
                             Asana ·
-                            <span x-text="suite.asana.project"></span> /
-                            <span x-text="suite.asana.section"></span>
+                            <span x-text="suite.project"></span> /
+                            <span x-text="suite.section"></span>
                         </div>
 
-                        <h2 class="at-source__title" x-text="suite.asana.task_name"></h2>
+                        <h2 class="at-source__title" x-text="suite.name"></h2>
 
-                        <ol class="at-source__steps">
-                            <template x-for="(line, index) in suite.asana.instructions" :key="index">
-                                <li x-text="line"></li>
+                        {{-- One suite can be specified by more than one QA story. --}}
+                        <div class="at-stories">
+                            <template x-for="story in stories" :key="story.key">
+                                <div class="at-story">
+                                    <a class="at-story__name" :href="story.permalink" target="_blank" rel="noopener"
+                                       x-text="story.task_name"></a>
+                                    <span class="at-story__count">
+                                        <span x-text="testsForStory(story.key).length"></span> case<span
+                                            x-show="testsForStory(story.key).length !== 1">s</span>
+                                    </span>
+                                    <ol class="at-source__steps">
+                                        <template x-for="(line, index) in story.instructions" :key="index">
+                                            <li x-text="line"></li>
+                                        </template>
+                                    </ol>
+                                </div>
                             </template>
-                        </ol>
+                        </div>
 
                         <div class="at-source__meta">
                             <code x-text="suite.target_url"></code>
@@ -56,12 +69,14 @@
                     </div>
 
                     <div class="at-source__side">
-                        <a class="at-link-btn" :href="suite.asana.permalink" target="_blank" rel="noopener">
-                            Open in Asana
-                            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                                <path d="M7 17 17 7M9 7h8v8"/>
-                            </svg>
-                        </a>
+                        <template x-for="story in stories" :key="story.key">
+                            <a class="at-link-btn" :href="story.permalink" target="_blank" rel="noopener">
+                                <span x-text="story.short"></span>
+                                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                    <path d="M7 17 17 7M9 7h8v8"/>
+                                </svg>
+                            </a>
+                        </template>
                         <div class="at-source__counts">
                             <div><strong x-text="suite.tests.length"></strong> specified</div>
                             <div><strong x-text="automatedTests.length"></strong> automated</div>
@@ -74,11 +89,9 @@
                     <div class="at-runbar__lead">
                         <h3>Automated run</h3>
                         <p>
-                            Executes tests
-                            <template x-for="(test, index) in automatedTests" :key="rowKey(test)">
-                                <span><span x-text="test.number"></span><span x-show="index < automatedTests.length - 1">, </span></span>
-                            </template>
-                            in headless Chromium against a fresh blank PDF.
+                            Executes all
+                            <span x-text="automatedTestIds.length"></span>
+                            automated tests in headless Chromium against a fresh blank PDF.
                         </p>
                     </div>
 
@@ -120,12 +133,17 @@
                 <section class="at-card at-list">
                     <header class="at-list__head">
                         <h3>Test plan</h3>
-                        <p>All <span x-text="suite.tests.length"></span> cases specified on the Asana task. Automated ones show live results.</p>
+                        <p>All <span x-text="suite.tests.length"></span> cases specified across
+                            <span x-text="stories.length"></span> QA stories. Automated ones show live results.</p>
                     </header>
 
-                    <template x-for="group in groupedTests" :key="group.area">
+                    <template x-for="group in groupedTests" :key="group.key">
                         <div class="at-group">
-                            <div class="at-group__label" x-text="group.area"></div>
+                            <div class="at-group__label">
+                                <span x-text="group.area"></span>
+                                <span class="at-group__story" x-show="group.story === 'nk-dev-5'"
+                                      x-cloak>NK_Dev_5</span>
+                            </div>
 
                             <template x-for="test in group.tests" :key="rowKey(test)">
                                 <article
@@ -262,6 +280,18 @@
                     summary: null,
                     expanded: {},
 
+                    /** QA stories feeding this suite, with a short link label. */
+                    get stories() {
+                        return (this.suite?.stories || []).map((story) => ({
+                            ...story,
+                            short: story.key === 'signature-tool' ? 'Signature tool' : 'NK_Dev_5',
+                        }));
+                    },
+
+                    testsForStory(key) {
+                        return (this.suite?.tests || []).filter((test) => test.story === key);
+                    },
+
                     get suiteUrl() { return `${this.base}/${this.activeSuite}/suite`; },
                     get runUrl() { return `${this.base}/${this.activeSuite}/run`; },
                     get artifactBase() { return `${this.base}/${this.activeSuite}/artifacts`; },
@@ -293,11 +323,14 @@
                         const groups = [];
                         const index = new Map();
                         for (const test of this.suite?.tests || []) {
-                            if (!index.has(test.area)) {
-                                index.set(test.area, { area: test.area, tests: [] });
-                                groups.push(index.get(test.area));
+                            // Group by story then area, so the two QA stories stay
+                            // visually separate inside the one suite.
+                            const key = `${test.story || ''}:${test.area}`;
+                            if (!index.has(key)) {
+                                index.set(key, { key, area: test.area, story: test.story, tests: [] });
+                                groups.push(index.get(key));
                             }
-                            index.get(test.area).tests.push(test);
+                            index.get(key).tests.push(test);
                         }
                         return groups;
                     },
@@ -424,7 +457,21 @@
                 font-size: 0.75rem; padding: 0.2rem 0.45rem; border-radius: 0.35rem;
                 background: var(--at-soft); border: 1px solid var(--at-line); color: var(--at-muted);
             }
-            .at-source__side { display: flex; flex-direction: column; gap: 0.7rem; align-items: flex-end; }
+            .at-source__side { display: flex; flex-direction: column; gap: 0.5rem; align-items: flex-end; }
+            .at-stories { display: flex; flex-direction: column; gap: 0.7rem; margin-top: 0.5rem; }
+            .at-story { display: flex; flex-direction: column; gap: 0.2rem; }
+            .at-story__name {
+                font-size: 0.85rem; font-weight: 700; text-decoration: none; color: inherit;
+            }
+            .at-story__name:hover { text-decoration: underline; }
+            .at-story__count { font-size: 0.72rem; color: var(--at-muted); }
+            .at-group__label { display: flex; align-items: center; gap: 0.5rem; }
+            .at-group__story {
+                font-size: 0.6rem; font-weight: 800; letter-spacing: 0.05em;
+                padding: 0.1rem 0.35rem; border-radius: 0.3rem;
+                background: rgb(139 92 246 / 0.14); color: rgb(109 40 217);
+            }
+            .dark .at-group__story { color: rgb(196 181 253); }
             .at-link-btn {
                 display: inline-flex; align-items: center; gap: 0.35rem;
                 padding: 0.4rem 0.75rem; border-radius: 0.5rem;
