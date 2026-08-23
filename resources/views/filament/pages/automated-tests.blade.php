@@ -284,7 +284,9 @@
                     get stories() {
                         return (this.suite?.stories || []).map((story) => ({
                             ...story,
-                            short: story.key === 'signature-tool' ? 'Signature tool' : 'NK_Dev_5',
+                            // Catalogues carry their own label; fall back to the
+                            // story key so a new suite needs no code change here.
+                            short: story.short || story.key,
                         }));
                     },
 

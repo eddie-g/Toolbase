@@ -49,6 +49,9 @@ Thumbs.db
 !/tests/AutomatedTests/Signature/
 /tests/AutomatedTests/Signature/*
 !/tests/AutomatedTests/Signature/run_signature_tests.cjs
+!/tests/AutomatedTests/Text/
+/tests/AutomatedTests/Text/*
+!/tests/AutomatedTests/Text/run_text_tests.cjs
 !/tests/Feature/
 /tests/Feature/*
 !/tests/Feature/PdfPasswordProtectionTest.php
