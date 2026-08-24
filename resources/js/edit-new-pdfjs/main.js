@@ -6980,8 +6980,23 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     const documentFontStyle = documentFont?.source === 'pdfjs-runtime'
         ? pdfjsRuntimeRenderFontStyle(documentFont)
         : documentFont?.style;
-    box.style.setProperty('--enpv-font-weight', String(documentFontWeight || annotation?.fontWeight || sourceStyle?.fontWeight || 'normal'));
-    box.style.setProperty('--enpv-font-style', String(documentFontStyle || annotation?.fontStyle || sourceStyle?.fontStyle || 'normal'));
+    // NK_8: an embedded or runtime document font carries its own weight and
+    // style. Those describe the face the text came from, not what the user
+    // asked for, so they must not win over an explicit choice — otherwise
+    // clicking B set --enpv-font-weight, and the next re-render of the
+    // annotation layer quietly put the document's weight back, reverting the
+    // bold on the page. Same rule as preferSourceColor below: only untouched
+    // source text defers to the document font.
+    const preferDocumentTypography = !boolish(annotation?.styleDirty)
+        && !boolish(annotation?.userForcedRichText);
+    box.style.setProperty('--enpv-font-weight', String(
+        (preferDocumentTypography ? documentFontWeight : null)
+        || annotation?.fontWeight || sourceStyle?.fontWeight || 'normal',
+    ));
+    box.style.setProperty('--enpv-font-style', String(
+        (preferDocumentTypography ? documentFontStyle : null)
+        || annotation?.fontStyle || sourceStyle?.fontStyle || 'normal',
+    ));
     const preferSourceColor = !boolish(annotation?.styleDirty)
         && !boolish(annotation?.userForcedRichText)
         && String(annotation?.pdfjsEditorMode || '') !== 'rich';
@@ -17025,14 +17040,68 @@ function createFieldBoxElement(annotation, pageIndex, viewport, scale, hooks) {
     return box;
 }
 
+/**
+ * Nudge a freshly placed text box back inside its page.
+ *
+ * createNewTextAnnotation() clamps against a nominal one-line height, but the
+ * box is laid out at its own line-height plus padding, which is taller. A box
+ * placed hard against an edge therefore rendered outside the page even though
+ * its annotation looked clamped — and a save, which reads geometry back off the
+ * DOM, then persisted the overhang.
+ *
+ * Only the position moves: the rendered size is the renderer's business, and
+ * measuring it here keeps this correct if the line-height or padding changes.
+ *
+ * @returns {boolean} true when the annotation was moved and needs re-rendering
+ */
+function keepNewTextBoxWithinPage(annotation, box, pageIndex) {
+    const viewport = pdfViewer.getPageView(pageIndex)?.viewport;
+    const scale = Number(viewport?.scale) || Number.parseFloat(box?.dataset?.renderScale || '');
+    const pageDiv = box?.closest?.('.page');
+    if (!viewport || !(scale > 0) || !pageDiv) return false;
+
+    const rect = box.getBoundingClientRect();
+    const pageRect = pageDiv.getBoundingClientRect();
+    if (!(rect.height > 0) || !(pageRect.height > 0)) return false;
+
+    const { width: pageWidthPts, height: pageHeightPts } = viewportPdfDimensions(viewport, scale);
+    if (!(pageWidthPts > 0) || !(pageHeightPts > 0)) return false;
+
+    // Laid-out geometry in PDF points, measured from the page's top-left.
+    const left = (rect.left - pageRect.left) / scale;
+    const top = (rect.top - pageRect.top) / scale;
+    const width = rect.width / scale;
+    const height = rect.height / scale;
+
+    const nextLeft = Math.min(Math.max(0, left), Math.max(0, pageWidthPts - width));
+    const nextTop = Math.min(Math.max(0, top), Math.max(0, pageHeightPts - height));
+    if (Math.abs(nextLeft - left) < 0.01 && Math.abs(nextTop - top) < 0.01) return false;
+
+    // PDF space is bottom-up, and pdfY is the box's bottom edge.
+    const pdfX = nextLeft;
+    const pdfY = pageHeightPts - nextTop - (Number(annotation.pdfHeight) || height);
+    annotation.pdfX = pdfX;
+    annotation.pdfY = pdfY;
+    const box0 = { x: pdfX, y: pdfY, w: annotation.pdfWidth, h: annotation.pdfHeight };
+    annotation._originalBox = { ...box0 };
+    annotation._originalPdfBox = { ...box0 };
+    return true;
+}
+
 function createNewTextBoxOnPage(pageIndex, canvasX, canvasY, canvasWidth = null, canvasHeight = null) {
     const annotation = createNewTextAnnotation(pageIndex, canvasX, canvasY, canvasWidth, canvasHeight);
     if (!annotation) return null;
     pushHistorySnapshot('add text');
     upsertPersistedAnnotation(annotation);
     renderAnnotationBoxLayer(pageIndex);
-    const pageDiv = pdfViewer.getPageView(pageIndex)?.div;
-    const box = pageDiv?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(annotation.id)}"]`) || null;
+    const findBox = () => pdfViewer.getPageView(pageIndex)?.div
+        ?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(annotation.id)}"]`) || null;
+    let box = findBox();
+    if (box && keepNewTextBoxWithinPage(annotation, box, pageIndex)) {
+        upsertPersistedAnnotation(annotation);
+        renderAnnotationBoxLayer(pageIndex);
+        box = findBox();
+    }
     if (box) {
         selectAnnBox(box);
         beginEditMode(box);

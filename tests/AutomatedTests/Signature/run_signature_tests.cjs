@@ -1042,6 +1042,22 @@ function boxRects(page) {
     }));
 }
 
+function signatureVisualRects(page) {
+    return page.evaluate(() => Array.from(
+        document.querySelectorAll('.enpv-annotation-box[data-annotation-type="signature"]'),
+    ).map((box) => {
+        const image = box.querySelector('.enpv-signature-img');
+        const boxRect = box.getBoundingClientRect();
+        const imageRect = image?.getBoundingClientRect();
+        return {
+            boxWidth: boxRect.width,
+            boxHeight: boxRect.height,
+            imageWidth: imageRect?.width || 0,
+            imageHeight: imageRect?.height || 0,
+        };
+    }));
+}
+
 /**
  * Put a file into the signature upload input.
  *
@@ -2901,6 +2917,7 @@ async function testMoveResizeLock(page, ctx) {
 
     await selectSignatureBox(page);
     const preResize = (await boxRects(page))[0];
+    const preResizeVisual = (await signatureVisualRects(page))[0];
     const seHandle = page.locator('.enpv-annotation-box[data-annotation-type="signature"] .enpv-resize-handle.se').first();
     await seHandle.scrollIntoViewIfNeeded({ timeout: 8000 });
     await page.waitForTimeout(250);
@@ -2918,6 +2935,35 @@ async function testMoveResizeLock(page, ctx) {
     r.assert('se-handle-resizes', postResize.width > preResize.width + 20,
         'Dragging the south-east handle grows the signature',
         `${preResize.width}x${preResize.height} -> ${postResize.width}x${postResize.height}`);
+    const grownVisual = (await signatureVisualRects(page))[0];
+    r.assert('signature-image-grows-with-box', !!grownVisual
+        && grownVisual.imageWidth > preResizeVisual.imageWidth + 20
+        && Math.abs(grownVisual.imageWidth - grownVisual.boxWidth) <= 2
+        && Math.abs(grownVisual.imageHeight - grownVisual.boxHeight) <= 2,
+        'The rendered signature grows with its selection box',
+        grownVisual
+            ? `box=${grownVisual.boxWidth.toFixed(1)}x${grownVisual.boxHeight.toFixed(1)} image=${grownVisual.imageWidth.toFixed(1)}x${grownVisual.imageHeight.toFixed(1)}`
+            : 'signature image missing');
+
+    const shrinkHandle = page.locator('.enpv-annotation-box[data-annotation-type="signature"] .enpv-resize-handle.se').first();
+    const shrinkBox = await shrinkHandle.boundingBox();
+    const shrinkX = shrinkBox.x + (shrinkBox.width / 2);
+    const shrinkY = shrinkBox.y + (shrinkBox.height / 2);
+    await page.mouse.move(shrinkX, shrinkY);
+    await page.mouse.down();
+    await page.mouse.move(shrinkX - 50, shrinkY - 30, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+    const shrunkVisual = (await signatureVisualRects(page))[0];
+    r.assert('signature-image-shrinks-with-box', !!shrunkVisual
+        && shrunkVisual.boxWidth < grownVisual.boxWidth - 15
+        && shrunkVisual.imageWidth < grownVisual.imageWidth - 15
+        && Math.abs(shrunkVisual.imageWidth - shrunkVisual.boxWidth) <= 2
+        && Math.abs(shrunkVisual.imageHeight - shrunkVisual.boxHeight) <= 2,
+        'The rendered signature shrinks with its selection box',
+        shrunkVisual
+            ? `box=${shrunkVisual.boxWidth.toFixed(1)}x${shrunkVisual.boxHeight.toFixed(1)} image=${shrunkVisual.imageWidth.toFixed(1)}x${shrunkVisual.imageHeight.toFixed(1)}`
+            : 'signature image missing');
 
     const resizedSave = await captureAutosave(page, ctx.saveRecorder);
     const resized = resizedSave.signatures[0];
