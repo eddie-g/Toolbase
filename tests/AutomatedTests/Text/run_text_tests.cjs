@@ -605,13 +605,33 @@ function attachSaveRecorder(page) {
     page.on('response', async (response) => {
         try {
             if (!response.url().includes('/save-annotation-state')) return;
-            if (response.request().method() !== 'POST') return;
-            recorder.saves.push({ status: response.status(), ok: response.ok() });
+            const request = response.request();
+            if (request.method() !== 'POST') return;
+            let body = {};
+            try { body = request.postDataJSON() || {}; } catch (_) { body = {}; }
+            recorder.saves.push({
+                status: response.status(),
+                ok: response.ok(),
+                annotations: Array.isArray(body.annotations) ? body.annotations : [],
+            });
         } catch (_) {
             // A response that vanishes mid-navigation must not break the run.
         }
     });
     return recorder;
+}
+
+/** The annotations carried by the most recent save, or an empty list. */
+function lastSavedAnnotations(saveRecorder) {
+    const last = saveRecorder?.saves?.[saveRecorder.saves.length - 1];
+    return last?.annotations || [];
+}
+
+/** The saved text annotations, in the order the payload lists them. */
+function savedTextAnnotations(saveRecorder) {
+    return lastSavedAnnotations(saveRecorder)
+        .filter((annotation) => String(annotation?.type || '').toLowerCase() === 'text'
+            && annotation?.userCreated === true);
 }
 
 /** Save through the real Save control and wait for the request to land. */
@@ -967,6 +987,119 @@ async function dragRotateHandle(page, degrees, index = 0) {
     await page.mouse.up();
     await page.waitForTimeout(700);
     return (await textBoxes(page))[index]?.rotation ?? null;
+}
+
+/** Place a box, type into it, and commit — the setup nearly every case wants. */
+async function placeTextBox(page, text, fx = 0.3, fy = 0.3, drag = null) {
+    if (drag) await dragPlace(page, fx, fy, drag[0], drag[1]);
+    else await clickPlace(page, fx, fy);
+    if (text) {
+        await page.keyboard.type(text);
+        await page.waitForTimeout(300);
+    }
+    await commitAndDeselect(page);
+    return (await textBoxes(page)).find((box) => box.text.includes(text)) || null;
+}
+
+/** Select a box and put the caret inside it, ready for inline work. */
+async function openBoxForEditing(page, needle) {
+    await selectTextBoxByText(page, needle);
+    const entered = await page.evaluate(() => {
+        const button = document.querySelector('#enpv-ann-menu [data-action="edit"]');
+        if (!button) return false;
+        button.click();
+        return true;
+    });
+    await page.waitForTimeout(600);
+    return entered;
+}
+
+/** Select one word inside a box's text with a real double-click. */
+async function doubleClickWordInBox(page, index = 0) {
+    const point = await page.evaluate(({ selector, at }) => {
+        const element = document.querySelectorAll(selector)[at]?.querySelector('.enpv-text-content');
+        if (!element) return null;
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const rect = Array.from(range.getClientRects()).find((r) => r.width > 0 && r.height > 0);
+        if (!rect) return null;
+        // A few pixels in from the left edge lands inside the first word.
+        return { x: rect.left + Math.min(10, rect.width / 4), y: rect.top + (rect.height / 2) };
+    }, { selector: TEXT_BOX_SELECTOR, at: index });
+    if (!point) return '';
+    await page.mouse.dblclick(point.x, point.y);
+    await page.waitForTimeout(400);
+    return page.evaluate(() => String(window.getSelection()?.toString() || '').trim());
+}
+
+/** Put the caret inside a box's text element with a real click. */
+async function clickInsideTextContent(page, index = 0) {
+    const point = await page.evaluate(({ selector, at }) => {
+        const element = document.querySelectorAll(selector)[at]?.querySelector('.enpv-text-content');
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        if (!(rect.width > 0) || !(rect.height > 0)) return null;
+        return { x: rect.left + Math.min(8, rect.width / 4), y: rect.top + (rect.height / 2) };
+    }, { selector: TEXT_BOX_SELECTOR, at: index });
+    if (!point) return false;
+    await page.mouse.click(point.x, point.y);
+    await page.waitForTimeout(400);
+    return true;
+}
+
+/**
+ * Select `count` characters from the start of a box's text with real keys.
+ * The box must already be in edit mode with the caret inside it.
+ */
+async function selectLeadingCharacters(page, count) {
+    await page.keyboard.press('Control+Home').catch(() => {});
+    await page.waitForTimeout(150);
+    for (let i = 0; i < count; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.keyboard.press('Shift+ArrowRight');
+    }
+    await page.waitForTimeout(300);
+    return page.evaluate(() => String(window.getSelection()?.toString() || ''));
+}
+
+/** Undo/redo button state, plus a way to drive them. */
+function historyState(page) {
+    return page.evaluate(() => ({
+        undoDisabled: document.getElementById('undo-btn')?.disabled ?? null,
+        redoDisabled: document.getElementById('redo-btn')?.disabled ?? null,
+    }));
+}
+
+async function clickHistory(page, which) {
+    const selector = which === 'undo' ? '#undo-btn' : '#redo-btn';
+    const clicked = await page.evaluate((target) => {
+        const button = document.querySelector(target);
+        if (!button || button.disabled) return false;
+        button.click();
+        return true;
+    }, selector);
+    await page.waitForTimeout(700);
+    return clicked;
+}
+
+/** Open the layers panel and read its rows. */
+async function layersPanelRows(page) {
+    await page.evaluate(() => document.getElementById('enpv-layers-open')?.click());
+    await page.waitForTimeout(700);
+    return page.evaluate(() => {
+        const panel = document.getElementById('enpv-layers-panel');
+        const open = !!panel && panel.hidden === false;
+        const rows = Array.from(panel?.querySelectorAll('[data-annotation-id]') || []).map((row) => ({
+            id: row.dataset.annotationId,
+            label: (row.textContent || '').replace(/\s+/g, ' ').trim(),
+        }));
+        return { open, rows };
+    });
+}
+
+async function closeLayersPanel(page) {
+    await page.evaluate(() => document.getElementById('enpv-layers-close')?.click());
+    await page.waitForTimeout(400);
 }
 
 // ---------------------------------------------------------------------------
@@ -1995,6 +2128,1741 @@ async function testRotateTextBox(page, { saveRecorder, recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
+/** 13 — Font size slider: 2-72pt curve with 12pt at the midpoint. */
+async function testFontSizeSlider(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    await placeTextBox(page, 'Size check', 0.25, 0.25);
+    await selectTextBoxByText(page, 'Size check');
+
+    const readSlider = () => page.evaluate(() => ({
+        value: Number(document.getElementById('afb-size')?.value),
+        label: document.getElementById('afb-size-value')?.textContent?.trim() || '',
+    }));
+
+    const setSlider = async (value) => {
+        await page.evaluate((next) => {
+            const slider = document.getElementById('afb-size');
+            slider.value = String(next);
+            slider.dispatchEvent(new Event('input', { bubbles: true }));
+        }, value);
+        await page.waitForTimeout(250);
+        const live = await readSlider();
+        await page.evaluate(() => {
+            document.getElementById('afb-size').dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        await page.waitForTimeout(600);
+        return live;
+    };
+
+    // The documented curve: 2pt at 0, 12pt at the midpoint, 72pt at the top.
+    const midway = await setSlider(50);
+    recorder.equals('midpoint-label', midway.label, '12pt', 'The slider midpoint reads 12pt');
+    let box = await singleTextBox(page);
+    recorder.near('midpoint-applied', box.fontSizePts, 12, 0.01, 'The midpoint applies 12pt');
+
+    const bottom = await setSlider(0);
+    recorder.equals('minimum-label', bottom.label, '2pt', 'The bottom of the slider reads 2pt');
+    box = await singleTextBox(page);
+    recorder.near('minimum-applied', box.fontSizePts, 2, 0.01, 'The bottom applies 2pt');
+
+    const top = await setSlider(100);
+    recorder.equals('maximum-label', top.label, '72pt', 'The top of the slider reads 72pt');
+    box = await singleTextBox(page);
+    recorder.near('maximum-applied', box.fontSizePts, 72, 0.01, 'The top applies 72pt');
+    recorder.assert('large-text-reflows', box.height / box.renderScale > 60,
+        'A 72pt box grows to fit its line rather than clipping it',
+        `${(box.height / box.renderScale).toFixed(1)}pt tall`);
+
+    // The label tracks the slider live, before the change event commits it.
+    const liveOnly = await page.evaluate(() => {
+        const slider = document.getElementById('afb-size');
+        slider.value = '25';
+        slider.dispatchEvent(new Event('input', { bubbles: true }));
+        return document.getElementById('afb-size-value')?.textContent?.trim() || '';
+    });
+    await page.waitForTimeout(200);
+    recorder.assert('label-tracks-live', /pt$/.test(liveOnly) && liveOnly !== '72pt',
+        'The pt label tracks the slider while it is being dragged', liveOnly);
+
+    // Settle on a distinctive size and check it round-trips.
+    await setSlider(70);
+    const chosen = (await singleTextBox(page)).fontSizePts;
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+    box = await singleTextBox(page);
+    recorder.near('survives-reload', box.fontSizePts, chosen, 0.01,
+        'The chosen size survives a save and reload without drifting');
+    await selectTextBoxByText(page, 'Size check');
+    const panel = await panelState(page);
+    recorder.assert('slider-reads-back', Math.abs(Number(panel.size) - 70) <= 1,
+        'Reselecting puts the slider back at the matching position', panel.size);
+    recorder.equals('label-reads-back', panel.sizeLabel, `${Math.round(chosen)}pt`,
+        'The pt label matches the saved size');
+
+    artifacts.push(await capture(page, '13-font-size-slider', 'resized'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 14 — Text colour and background colour, including live preview. */
+async function testColours(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    await placeTextBox(page, 'Colour check', 0.25, 0.25);
+    await selectTextBoxByText(page, 'Colour check');
+
+    let box = await singleTextBox(page);
+    recorder.assert('starts-black', normaliseColour(box.textColor) === '#000000',
+        'Text starts black', box.textColor);
+    recorder.assert('starts-transparent', isTransparent(box.backgroundColor),
+        'The background starts transparent, so page content shows through', box.backgroundColor);
+
+    // Live preview: the input event alone should repaint, before the commit.
+    await page.evaluate(() => {
+        const input = document.getElementById('afb-text-color');
+        input.value = '#ff0000';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForTimeout(400);
+    const previewed = await singleTextBox(page);
+    recorder.assert('text-colour-previews', normaliseColour(previewed.textColor) === '#ff0000',
+        'The text colour previews live while the picker is open', previewed.textColor);
+
+    await setColourInput(page, 'afb-text-color', '#ff0000');
+    await setColourInput(page, 'afb-bg-color', '#ffff00');
+    box = await singleTextBox(page);
+    recorder.assert('text-colour-commits', normaliseColour(box.textColor) === '#ff0000',
+        'The text colour commits', box.textColor);
+    recorder.assert('background-paints', normaliseColour(box.backgroundColor) === '#ffff00',
+        'The background colour paints behind the text', box.backgroundColor);
+
+    artifacts.push(await capture(page, '14-colours', 'coloured'));
+
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+    box = await singleTextBox(page);
+    recorder.assert('text-colour-survives', normaliseColour(box.textColor) === '#ff0000',
+        'The text colour survives a save and reload', box.textColor);
+    recorder.assert('background-survives', normaliseColour(box.backgroundColor) === '#ffff00',
+        'The background colour survives a save and reload', box.backgroundColor);
+
+    await selectTextBoxByText(page, 'Colour check');
+    const panel = await panelState(page);
+    recorder.equals('swatch-reads-text', String(panel.textColor).toLowerCase(), '#ff0000',
+        'The text swatch re-reads the saved colour');
+    recorder.equals('swatch-reads-background', String(panel.bgColor).toLowerCase(), '#ffff00',
+        'The background swatch re-reads the saved colour');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 15 — Opacity. */
+async function testOpacity(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    await placeTextBox(page, 'Opacity check', 0.25, 0.25);
+    await selectTextBoxByText(page, 'Opacity check');
+
+    recorder.equals('starts-opaque', (await singleTextBox(page)).opacity, 1, 'Opacity starts at 100%');
+
+    for (const step of ['0.9', '0.5', '0.1']) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.selectOption('#afb-opacity', step);
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(500);
+        // eslint-disable-next-line no-await-in-loop
+        const box = await singleTextBox(page);
+        recorder.near(`applies-${step}`, box.opacity, Number(step), 0.001,
+            `Selecting ${Math.round(Number(step) * 100)}% fades the box`);
+    }
+
+    // The whole box fades, background included.
+    await setColourInput(page, 'afb-bg-color', '#3366ff');
+    await page.selectOption('#afb-opacity', '0.5');
+    await page.waitForTimeout(500);
+    const faded = await page.evaluate((selector) => {
+        const box = document.querySelector(selector);
+        return { boxOpacity: window.getComputedStyle(box).opacity };
+    }, TEXT_BOX_SELECTOR);
+    recorder.near('whole-box-fades', Number(faded.boxOpacity), 0.5, 0.02,
+        'Text and background fade together, as one box', faded.boxOpacity);
+
+    artifacts.push(await capture(page, '15-opacity', 'faded'));
+
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+    recorder.near('survives-reload', (await singleTextBox(page)).opacity, 0.5, 0.001,
+        'The opacity survives a save and reload');
+    await selectTextBoxByText(page, 'Opacity check');
+    recorder.equals('panel-reads-back', (await panelState(page)).opacity, '0.5',
+        'The panel re-reads the saved opacity');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 16 — Bold, italic and underline. */
+async function testStyleToggles(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    await placeTextBox(page, 'Style check', 0.25, 0.25);
+    await selectTextBoxByText(page, 'Style check');
+
+    const computed = () => page.evaluate((selector) => {
+        const element = document.querySelector(selector)?.querySelector('.enpv-text-content');
+        if (!element) return null;
+        const style = window.getComputedStyle(element);
+        return {
+            weight: style.fontWeight,
+            style: style.fontStyle,
+            decoration: style.textDecorationLine,
+        };
+    }, TEXT_BOX_SELECTOR);
+
+    const before = await computed();
+    recorder.assert('starts-plain',
+        before.weight === '400' && before.style === 'normal' && before.decoration === 'none',
+        'The box starts with no styling', JSON.stringify(before));
+
+    // Each toggle on, one at a time, asserted on the rendered result.
+    await page.click('#afb-bold');
+    await page.waitForTimeout(500);
+    recorder.equals('bold-renders', (await computed()).weight, '700', 'Bold renders as weight 700');
+    await page.click('#afb-italic');
+    await page.waitForTimeout(500);
+    recorder.equals('italic-renders', (await computed()).style, 'italic', 'Italic renders');
+    await page.click('#afb-underline');
+    await page.waitForTimeout(500);
+    recorder.assert('underline-renders', (await computed()).decoration.includes('underline'),
+        'Underline renders');
+
+    let panel = await panelState(page);
+    recorder.assert('all-three-pressed',
+        panel.bold === 'true' && panel.italic === 'true' && panel.underline === 'true',
+        'All three read as pressed together', JSON.stringify(panel));
+
+    artifacts.push(await capture(page, '16-bold-italic-underline', 'all-three'));
+
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+    const afterReload = await computed();
+    recorder.assert('combination-survives-reload',
+        afterReload.weight === '700'
+        && afterReload.style === 'italic'
+        && afterReload.decoration.includes('underline'),
+        'The combination survives a save and reload', JSON.stringify(afterReload));
+
+    // ...and each one turns off again independently.
+    await selectTextBoxByText(page, 'Style check');
+    await page.click('#afb-italic');
+    await page.waitForTimeout(500);
+    const withoutItalic = await computed();
+    recorder.assert('italic-toggles-off',
+        withoutItalic.style === 'normal' && withoutItalic.weight === '700',
+        'Turning italic off leaves bold alone', JSON.stringify(withoutItalic));
+    recorder.equals('italic-unpressed', (await panelState(page)).italic, 'false',
+        'The italic button reads unpressed again');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 17 — Horizontal and vertical alignment. */
+async function testAlignment(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    // A box wider and taller than its text, so alignment is observable.
+    await dragPlace(page, 0.15, 0.25, 380, 160);
+    await page.keyboard.type('Align me');
+    await page.waitForTimeout(300);
+    await commitAndDeselect(page);
+    await selectTextBoxByText(page, 'Align me');
+
+    const rendered = () => page.evaluate((selector) => {
+        const box = document.querySelector(selector);
+        const element = box?.querySelector('.enpv-text-content');
+        if (!element) return null;
+        const style = window.getComputedStyle(element);
+        return {
+            textAlign: style.textAlign,
+            dataAlign: box.dataset.textAlign,
+            dataValign: box.dataset.verticalAlign,
+            justify: style.justifyContent,
+            alignItems: style.alignItems,
+        };
+    }, TEXT_BOX_SELECTOR);
+
+    for (const value of ['center', 'right', 'left']) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.selectOption('#afb-align', value);
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(500);
+        // eslint-disable-next-line no-await-in-loop
+        const state = await rendered();
+        recorder.equals(`h-${value}-stored`, state.dataAlign, value, `Alignment ${value} is recorded`);
+        recorder.equals(`h-${value}-rendered`, state.textAlign, value, `Alignment ${value} is rendered`);
+    }
+
+    for (const value of ['middle', 'bottom', 'top']) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.selectOption('#afb-valign', value);
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(500);
+        // eslint-disable-next-line no-await-in-loop
+        const state = await rendered();
+        recorder.equals(`v-${value}-stored`, state.dataValign, value,
+            `Vertical alignment ${value} is recorded`);
+    }
+
+    // Vertical alignment has to actually move the text within a tall box.
+    const offsetFor = async (value) => {
+        await page.selectOption('#afb-valign', value);
+        await page.waitForTimeout(500);
+        return page.evaluate((selector) => {
+            const box = document.querySelector(selector);
+            const element = box.querySelector('.enpv-text-content');
+            // The element is a flex column filling the box, so its own top never
+            // moves. Measure the first laid-out line instead.
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            const rects = Array.from(range.getClientRects()).filter((r) => r.height > 0);
+            const first = rects[0];
+            return first ? first.top - box.getBoundingClientRect().top : 0;
+        }, TEXT_BOX_SELECTOR);
+    };
+    const topOffset = await offsetFor('top');
+    const bottomOffset = await offsetFor('bottom');
+    recorder.assert('valign-moves-text', bottomOffset > topOffset + 10,
+        'Bottom alignment pushes the text down the box',
+        `top=${topOffset.toFixed(1)} bottom=${bottomOffset.toFixed(1)}`);
+
+    artifacts.push(await capture(page, '17-alignment', 'aligned'));
+
+    await page.selectOption('#afb-align', 'center');
+    await page.waitForTimeout(400);
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+    const reloaded = await rendered();
+    recorder.equals('h-survives-reload', reloaded.dataAlign, 'center',
+        'Alignment survives a save and reload');
+    recorder.equals('v-survives-reload', reloaded.dataValign, 'bottom',
+        'Vertical alignment survives a save and reload');
+
+    // Wrapped multi-line text honours it too. A fresh narrow box is typed into
+    // at creation, where the caret is already live.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await dragPlace(page, 0.15, 0.3, 220, 150);
+    await page.keyboard.type('Wrap this sentence across several lines inside a narrow box');
+    await page.waitForTimeout(600);
+    await commitAndDeselect(page);
+    const metrics = await textMetrics(page);
+    recorder.assert('wrapped-paragraph', metrics && metrics.lineCount > 1,
+        'The paragraph wraps onto several lines', `lines=${metrics && metrics.lineCount}`);
+    await selectTextBoxByText(page, 'Wrap this');
+    await page.selectOption('#afb-align', 'center');
+    await page.waitForTimeout(600);
+    recorder.equals('h-after-wrap', (await rendered()).textAlign, 'center',
+        'Wrapped text takes the chosen alignment');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 18 — Uppercase and lowercase transforms. */
+async function testCaseTransforms(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    const original = 'MiXed 123 ünïcödé!';
+    await placeTextBox(page, original, 0.25, 0.25);
+    await selectTextBoxByText(page, 'ünïcödé');
+
+    const readText = async () => (await singleTextBox(page)).text.trim();
+    const cssTransform = () => page.evaluate((selector) => {
+        const element = document.querySelector(selector)?.querySelector('.enpv-text-content');
+        return element ? window.getComputedStyle(element).textTransform : null;
+    }, TEXT_BOX_SELECTOR);
+
+    await page.click('#afb-uppercase');
+    await page.waitForTimeout(600);
+    const upper = await readText();
+    recorder.equals('uppercase-applies', upper, original.toUpperCase(),
+        'Uppercase transforms the whole string, digits and accents included');
+    recorder.equals('uppercase-is-not-css', await cssTransform(), 'none',
+        'The change is to the stored text, not a CSS text-transform');
+
+    await page.click('#afb-lowercase');
+    await page.waitForTimeout(600);
+    recorder.equals('lowercase-applies', await readText(), original.toLowerCase(),
+        'Lowercase transforms the whole string');
+
+    artifacts.push(await capture(page, '18-case-transforms', 'lowercased'));
+
+    // One undo step per transform.
+    const undone = await clickHistory(page, 'undo');
+    recorder.assert('undo-available', undone, 'Undo is available after a transform');
+    recorder.equals('one-undo-step', await readText(), original.toUpperCase(),
+        'A single undo reverses exactly one transform');
+
+    // The stored text really changed, so it survives a reload. The undo above
+    // drops the selection, so the panel has to be reopened first.
+    await selectTextBoxByText(page, 'ÜNÏCÖDÉ');
+    await page.click('#afb-lowercase');
+    await page.waitForTimeout(600);
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+    recorder.equals('survives-reload', await readText(), original.toLowerCase(),
+        'The transformed text survives a save and reload');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 19 — Partial-selection (inline) formatting and mixed-state reporting. */
+async function testInlineFormatting(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    await clickPlace(page, 0.22, 0.25);
+    await page.keyboard.type('AAAA BBBB');
+    await page.waitForTimeout(400);
+
+    // The caret is already live from placement, so select the first word.
+    const selected = await selectLeadingCharacters(page, 4);
+    recorder.equals('selection-made', selected, 'AAAA', 'The first word is selected');
+
+    await page.click('#afb-bold');
+    await page.waitForTimeout(600);
+
+    const runs = () => page.evaluate((selector) => {
+        const element = document.querySelector(selector)?.querySelector('.enpv-text-content');
+        if (!element) return [];
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        const out = [];
+        let node = walker.nextNode();
+        while (node) {
+            const text = String(node.nodeValue || '');
+            if (text.trim()) {
+                const style = window.getComputedStyle(node.parentElement);
+                out.push({ text: text.trim(), weight: style.fontWeight, color: style.color });
+            }
+            node = walker.nextNode();
+        }
+        return out;
+    }, TEXT_BOX_SELECTOR);
+
+    let styled = await runs();
+    const boldRun = styled.find((run) => run.text.includes('AAAA'));
+    const plainRun = styled.find((run) => run.text.includes('BBBB'));
+    recorder.assert('only-selection-bolds',
+        boldRun?.weight === '700' && plainRun?.weight === '400',
+        'Only the selected run goes bold', JSON.stringify(styled));
+
+    artifacts.push(await capture(page, '19-inline-formatting', 'partial-bold'));
+
+    // The run survives a commit and a reload, checked here while the box is in
+    // a known good state.
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+    const reloaded = await runs();
+    recorder.assert('runs-survive-reload',
+        reloaded.some((run) => run.text.includes('AAAA') && run.weight === '700')
+        && reloaded.some((run) => run.text.includes('BBBB') && run.weight === '400'),
+        'The styled run survives a save and reload while its neighbour does not change',
+        JSON.stringify(reloaded));
+
+    await openBoxForEditing(page, 'AAAA');
+    await clickInsideTextContent(page);
+
+    // Select across both runs: the toggle must report a mixed state rather than
+    // silently showing the first run's value.
+    await page.keyboard.press('Control+Home').catch(() => {});
+    await page.waitForTimeout(150);
+    for (let i = 0; i < 9; i++) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.keyboard.press('Shift+ArrowRight');
+    }
+    await page.waitForTimeout(400);
+    const mixedPanel = await panelState(page);
+    recorder.assert('mixed-state-reported', mixedPanel.bold !== 'true',
+        'A selection spanning bold and regular text does not claim to be all bold',
+        `bold=${mixedPanel.bold}`);
+
+    // Applying to that mixed selection sets the whole thing.
+    await page.click('#afb-bold');
+    await page.waitForTimeout(600);
+    styled = await runs();
+    recorder.assert('applies-to-whole-selection',
+        styled.length > 0 && styled.every((run) => run.weight === '700'),
+        'Applying bold to a mixed selection bolds all of it', JSON.stringify(styled));
+
+    // Ctrl+A inside the box selects its text, not the page.
+    const selectAll = await page.evaluate(() => String(window.getSelection()?.toString() || ''));
+    await page.keyboard.press('Control+a');
+    await page.waitForTimeout(300);
+    const afterSelectAll = await page.evaluate(() => String(window.getSelection()?.toString() || ''));
+    recorder.assert('ctrl-a-selects-box-text',
+        afterSelectAll.includes('AAAA') && afterSelectAll.includes('BBBB'),
+        'Ctrl/Cmd+A selects the box text', JSON.stringify(afterSelectAll.slice(0, 40)));
+    recorder.assert('ctrl-a-not-page', afterSelectAll.length < 200,
+        'Ctrl/Cmd+A did not select the whole page', `${afterSelectAll.length} characters`);
+    void selectAll;
+
+    artifacts.push(await capture(page, '19-inline-formatting', 'after-reload'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 20 — Hyperlink apply and remove. */
+async function testHyperlink(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    await clickPlace(page, 0.22, 0.25);
+    await page.keyboard.type('Visit site');
+    await page.waitForTimeout(400);
+    await commitAndDeselect(page);
+
+    const linkState = () => page.evaluate((selector) => {
+        const element = document.querySelector(selector)?.querySelector('.enpv-text-content');
+        const anchors = Array.from(element?.querySelectorAll('a[href]') || []);
+        return {
+            present: !!element,
+            text: (element?.textContent || '').trim(),
+            count: anchors.length,
+            hrefs: anchors.map((anchor) => anchor.getAttribute('href')),
+            texts: anchors.map((anchor) => (anchor.textContent || '').trim()),
+        };
+    }, TEXT_BOX_SELECTOR);
+
+    const controls = () => page.evaluate(() => ({
+        applyDisabled: document.getElementById('afb-link-apply')?.disabled ?? null,
+        removeDisabled: document.getElementById('afb-link-remove')?.disabled ?? null,
+        urlDisabled: document.getElementById('afb-link-url')?.disabled ?? null,
+    }));
+
+    // With no selection the controls are disabled.
+    await selectTextBoxByText(page, 'Visit site');
+    const idle = await controls();
+    recorder.assert('disabled-without-selection',
+        idle.applyDisabled === true && idle.removeDisabled === true,
+        'Apply and Remove are disabled with no text selected', JSON.stringify(idle));
+
+    // Everything below happens inside ONE edit session: leaving and re-entering
+    // loses the inline selection the hyperlink controls depend on.
+    await annotationMenuAction(page, 'edit');
+    await page.waitForTimeout(400);
+
+    /** Select the first word and set a destination through the real controls. */
+    const applyLink = async (url) => {
+        const word = await doubleClickWordInBox(page);
+        const before = await controls();
+        // The field and the button share one enabled/disabled condition, so both
+        // have to be live before driving them.
+        if (before.applyDisabled !== false || before.urlDisabled !== false) {
+            return { word, blocked: true };
+        }
+        try {
+            await page.fill('#afb-link-url', url, { timeout: 4000 });
+            await page.waitForTimeout(150);
+            await page.press('#afb-link-url', 'Enter');
+        } catch (error) {
+            // The field can be disabled again by a panel refresh between the
+            // check above and the fill. Report it rather than failing the run.
+            return { word, blocked: true, reason: String(error.message || error).slice(0, 60) };
+        }
+        await page.waitForTimeout(800);
+        return { word, blocked: false };
+    };
+
+    const first = await applyLink('https://example.com/docs');
+    recorder.equals('selection-made', first.word, 'Visit', 'Double-clicking selects a word');
+    recorder.assert('controls-enable-with-selection', !first.blocked,
+        'Selecting text enables the hyperlink controls');
+    let links = await linkState();
+    recorder.assert('applies-link', links.count === 1 && links.hrefs[0] === 'https://example.com/docs',
+        'Apply turns the selection into a link', JSON.stringify(links));
+    recorder.assert('link-covers-selection', links.texts[0] === 'Visit',
+        'Only the selected text becomes the link', JSON.stringify(links.texts));
+
+    artifacts.push(await capture(page, '20-hyperlink', 'linked'));
+
+    // Remove takes the link off and leaves the text.
+    await doubleClickWordInBox(page);
+    const beforeRemove = await controls();
+    if (beforeRemove.removeDisabled === false) {
+        await page.click('#afb-link-remove', { force: true });
+        await page.waitForTimeout(800);
+    }
+    links = await linkState();
+    recorder.equals('removes-link', links.count, 0, 'Remove takes the link off');
+    recorder.assert('keeps-text-after-remove', links.text.includes('Visit site'),
+        'Removing the link keeps the text', JSON.stringify(links.text));
+
+    // A javascript: destination must be refused.
+    const scripted = await applyLink('javascript:alert(1)');
+    links = await linkState();
+    recorder.assert('rejects-javascript-url',
+        links.hrefs.every((href) => !String(href).toLowerCase().startsWith('javascript:')),
+        'A javascript: destination is refused',
+        `${JSON.stringify(links.hrefs)} blocked=${scripted.blocked}`);
+
+    // An empty destination is refused too.
+    const empty = await applyLink('');
+    links = await linkState();
+    recorder.assert('rejects-empty-url',
+        links.hrefs.every((href) => String(href || '').trim() !== ''),
+        'An empty destination does not create a link',
+        `${JSON.stringify(links.hrefs)} blocked=${empty.blocked}`);
+
+    // Re-apply a good one and check it persists.
+    await applyLink('https://example.com/docs');
+    const applied = await linkState();
+    recorder.assert('reapplies-link', applied.count === 1,
+        'The link can be applied again after being removed',
+        `${JSON.stringify(applied)} blocked=${(await controls()).urlDisabled}`);
+
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+    links = await linkState();
+    recorder.assert('link-survives-reload',
+        links.count === 1 && links.hrefs[0] === 'https://example.com/docs',
+        'The link survives a save and reload', JSON.stringify(links));
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 21 — Select, deselect and the hover menu. */
+async function testSelectionAndMenu(page, { recorder }) {
+    const artifacts = [];
+    await placeTextBox(page, 'Select me', 0.3, 0.35);
+
+    const chrome = () => page.evaluate((selector) => {
+        const box = document.querySelector(selector);
+        if (!box) return null;
+        const menu = document.getElementById('enpv-ann-menu');
+        const menuRect = menu && !menu.hidden ? menu.getBoundingClientRect() : null;
+        const boxRect = box.getBoundingClientRect();
+        return {
+            selected: box.classList.contains('is-selected'),
+            handles: box.querySelectorAll(':scope > .enpv-resize-handle').length,
+            menuVisible: !!menuRect && menuRect.width > 0,
+            menuTop: menuRect?.top ?? null,
+            menuBottom: menuRect?.bottom ?? null,
+            boxTop: boxRect.top,
+            boxLeft: boxRect.left,
+            actions: Array.from(menu?.querySelectorAll('[data-action]') || [])
+                .filter((button) => button.offsetParent !== null)
+                .map((button) => button.dataset.action),
+        };
+    }, TEXT_BOX_SELECTOR);
+
+    await selectTextBoxByText(page, 'Select me');
+    let state = await chrome();
+    recorder.assert('selection-chrome', state.selected && state.handles > 0,
+        'Selecting shows the outline and resize handles', `handles=${state.handles}`);
+    recorder.assert('menu-appears', state.menuVisible, 'The hover menu appears');
+    recorder.assert('menu-has-actions',
+        ['edit', 'copy', 'delete', 'deselect'].every((action) => state.actions.includes(action)),
+        'The menu offers edit, copy, delete and deselect', JSON.stringify(state.actions));
+
+    artifacts.push(await capture(page, '21-select-and-menu', 'selected'));
+
+    // The menu must not cover the box it belongs to.
+    recorder.assert('menu-clear-of-box', state.menuBottom !== null && state.menuBottom <= state.boxTop + 2,
+        'The menu sits clear of the box rather than over it',
+        `menuBottom=${state.menuBottom?.toFixed(1)} boxTop=${state.boxTop.toFixed(1)}`);
+
+    // Edit enters edit mode.
+    const entered = await annotationMenuAction(page, 'edit');
+    recorder.assert('edit-enters-edit-mode',
+        entered && (await singleTextBox(page)).editing,
+        'The menu Edit action enters edit mode');
+
+    // Clicking an already-selected box does not toggle the selection off.
+    await commitAndDeselect(page);
+    await selectTextBoxByText(page, 'Select me');
+    await clickInsideBox(page, 0);
+    recorder.assert('reclick-keeps-selection', (await singleTextBox(page)).selected,
+        'Clicking an already-selected box keeps it selected');
+
+    // Deselect paths.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    recorder.assert('escape-deselects', !(await singleTextBox(page)).selected,
+        'Escape deselects');
+
+    await selectTextBoxByText(page, 'Select me');
+    const closed = await annotationMenuAction(page, 'deselect');
+    recorder.assert('menu-deselects', closed && !(await singleTextBox(page)).selected,
+        'The menu deselect action deselects');
+
+    await selectTextBoxByText(page, 'Select me');
+    await clickEmptyPageSpot(page);
+    recorder.assert('page-click-deselects', !(await singleTextBox(page)).selected,
+        'Clicking empty page space deselects');
+
+    // The menu follows the box when the view scrolls.
+    await selectTextBoxByText(page, 'Select me');
+    const before = await chrome();
+    await page.evaluate(() => {
+        const container = document.getElementById('viewerContainer');
+        if (container) container.scrollTop += 120;
+    });
+    await page.waitForTimeout(600);
+    const after = await chrome();
+    recorder.assert('menu-follows-scroll',
+        after.menuVisible && Math.abs((after.menuTop - after.boxTop) - (before.menuTop - before.boxTop)) <= 4,
+        'The menu keeps its offset from the box when the viewer scrolls',
+        `before=${(before.menuTop - before.boxTop).toFixed(1)} after=${(after.menuTop - after.boxTop).toFixed(1)}`);
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 22 — Move and resize. */
+async function testMoveAndResize(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    await dragPlace(page, 0.2, 0.25, 300, 90);
+    await page.keyboard.type('Move me');
+    await page.waitForTimeout(300);
+    await commitAndDeselect(page);
+    await selectTextBoxByText(page, 'Move me');
+
+    const before = await singleTextBox(page);
+
+    // Drag the box body by a known offset.
+    const start = await clickInsideBox(page, 0);
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    for (let step = 1; step <= 6; step++) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.move(start.x + ((90 * step) / 6), start.y + ((60 * step) / 6));
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(40);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+
+    let after = await singleTextBox(page);
+    recorder.near('drag-moves-x', after.relLeft - before.relLeft, 90, 6,
+        'Dragging the box moves it horizontally by the pointer distance');
+    recorder.near('drag-moves-y', after.relTop - before.relTop, 60, 6,
+        'Dragging the box moves it vertically by the pointer distance');
+    recorder.near('drag-keeps-width', after.width, before.width, 2,
+        'Dragging does not resize the box');
+
+    artifacts.push(await capture(page, '22-move-and-resize', 'moved'));
+
+    // Resize from the right edge. Re-select first: the drag above may have
+    // dropped the selection, and the handles only exist while selected.
+    await selectTextBoxByText(page, 'Move me');
+    const movedBox = await singleTextBox(page);
+    // A text box carries edge handles (t/b/l/r), not corners — see the edge list
+    // in createPersistedOverlayBox.
+    const handle = await page.evaluate((selector) => {
+        const element = document.querySelector(selector)?.querySelector(':scope > .enpv-resize-handle[data-edge="r"]');
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+    }, TEXT_BOX_SELECTOR);
+    recorder.assert('resize-handle-present', !!handle, 'A right-edge resize handle is available');
+
+    if (handle) {
+        await page.mouse.move(handle.x, handle.y);
+        await page.mouse.down();
+        for (let step = 1; step <= 6; step++) {
+            // eslint-disable-next-line no-await-in-loop
+            await page.mouse.move(handle.x + ((120 * step) / 6), handle.y);
+            // eslint-disable-next-line no-await-in-loop
+            await page.waitForTimeout(40);
+        }
+        await page.mouse.up();
+        await page.waitForTimeout(700);
+
+        after = await singleTextBox(page);
+        recorder.near('resize-grows-width', after.width - movedBox.width, 120, 12,
+            'Dragging the right edge grows the box');
+        recorder.near('resize-keeps-left', after.relLeft, movedBox.relLeft, 3,
+            'Resizing from the right leaves the left edge alone');
+        recorder.near('resize-keeps-font', after.fontSizePts, movedBox.fontSizePts, 0.01,
+            'Resizing changes the container, not the font size');
+    }
+
+    // Position survives a reload. Compared on the RENDERED position in points:
+    // the annotation's baseBbox dataset is seeded at render time, so it lags a
+    // move until the next render.
+    await commitAndDeselect(page);
+    const resized = await singleTextBox(page);
+    const renderedPoint = (box) => ({
+        left: box.relLeft / box.renderScale,
+        top: box.relTop / box.renderScale,
+        width: box.width / box.renderScale,
+    });
+    const beforeReload = renderedPoint(resized);
+    await saveAndReload(page, saveRecorder);
+    const afterReload = renderedPoint(await singleTextBox(page));
+    recorder.near('position-survives-reload', afterReload.left, beforeReload.left, 1,
+        'The moved position survives a save and reload');
+    recorder.near('top-survives-reload', afterReload.top, beforeReload.top, 1,
+        'The vertical position survives a save and reload');
+    recorder.near('width-survives-reload', afterReload.width, beforeReload.width, 1.5,
+        'The resized width survives a save and reload');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 23 — Multi-select, marquee select and group operations. */
+async function testMultiSelect(page, { recorder }) {
+    const artifacts = [];
+    await placeTextBox(page, 'One', 0.25, 0.25);
+    await placeTextBox(page, 'Two', 0.45, 0.25);
+    recorder.equals('two-boxes', (await textBoxes(page)).length, 2, 'Two boxes are placed');
+
+    const selectedCount = () => page.evaluate((selector) => Array.from(
+        document.querySelectorAll(selector),
+    ).filter((box) => box.classList.contains('is-selected')
+        || box.classList.contains('is-multi-selected')).length, TEXT_BOX_SELECTOR);
+
+    // Shift-click builds a multi-selection.
+    await clickInsideBox(page, 0);
+    const second = await page.evaluate((selector) => {
+        const box = document.querySelectorAll(selector)[1];
+        const rect = box.getBoundingClientRect();
+        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+    }, TEXT_BOX_SELECTOR);
+    await page.keyboard.down('Shift');
+    await page.mouse.click(second.x, second.y);
+    await page.keyboard.up('Shift');
+    await page.waitForTimeout(600);
+
+    const multi = await selectedCount();
+    recorder.assert('shift-click-multi-selects', multi === 2,
+        'Shift-clicking a second box selects both', `selected=${multi}`);
+
+    artifacts.push(await capture(page, '23-multi-select', 'multi-selected'));
+
+    if (multi === 2) {
+        // A group drag moves both by the same offset.
+        const before = await textBoxes(page);
+        const grab = await page.evaluate((selector) => {
+            const box = document.querySelectorAll(selector)[0];
+            const rect = box.getBoundingClientRect();
+            return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+        }, TEXT_BOX_SELECTOR);
+        await page.mouse.move(grab.x, grab.y);
+        await page.mouse.down();
+        for (let step = 1; step <= 6; step++) {
+            // eslint-disable-next-line no-await-in-loop
+            await page.mouse.move(grab.x + ((70 * step) / 6), grab.y + ((40 * step) / 6));
+            // eslint-disable-next-line no-await-in-loop
+            await page.waitForTimeout(40);
+        }
+        await page.mouse.up();
+        await page.waitForTimeout(700);
+        const after = await textBoxes(page);
+        const deltas = after.map((box, index) => ({
+            dx: box.relLeft - before[index].relLeft,
+            dy: box.relTop - before[index].relTop,
+        }));
+        recorder.assert('group-drag-moves-both',
+            deltas.length === 2
+            && Math.abs(deltas[0].dx - deltas[1].dx) <= 2
+            && Math.abs(deltas[0].dy - deltas[1].dy) <= 2
+            && Math.abs(deltas[0].dx) > 20,
+            'Dragging one box moves the whole selection by the same offset',
+            JSON.stringify(deltas));
+    }
+
+    // Escape clears a multi-selection.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+    recorder.assert('escape-clears-multi', (await selectedCount()) === 0,
+        'Escape clears the multi-selection');
+
+    // A marquee drag over both boxes selects them.
+    const spot = await pointOnPage(page, 1, 0.15, 0.15);
+    await page.mouse.move(spot.x, spot.y);
+    await page.mouse.down();
+    await page.mouse.move(spot.x + 500, spot.y + 260, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    const marquee = await selectedCount();
+    recorder.assert('marquee-selects', marquee >= 1,
+        'A marquee drag over the boxes selects them', `selected=${marquee}`);
+
+    // Delete removes the whole selection in one step.
+    if (marquee >= 2) {
+        await page.keyboard.press('Delete');
+        await page.waitForTimeout(700);
+        recorder.equals('delete-removes-selection', (await textBoxes(page)).length, 0,
+            'Delete removes every selected box');
+        await clickHistory(page, 'undo');
+        recorder.equals('undo-restores-selection', (await textBoxes(page)).length, 2,
+            'A single undo brings the whole selection back');
+    } else {
+        recorder.fail('delete-removes-selection',
+            'The marquee did not select both boxes, so the group delete could not be checked',
+            `selected=${marquee}`);
+    }
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 24 — Z-order, lock, duplicate, delete and clipboard copy/paste. */
+async function testOrderLockClipboard(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    // Two overlapping boxes, so z-order is observable.
+    await placeTextBox(page, 'Under', 0.25, 0.3);
+    await placeTextBox(page, 'Over', 0.27, 0.32);
+
+    const zOrder = () => page.evaluate((selector) => Array.from(
+        document.querySelectorAll(selector),
+    ).map((box) => ({
+        text: (box.querySelector('.enpv-text-content')?.textContent || '').trim(),
+        z: Number(box.style.zIndex) || 0,
+    })), TEXT_BOX_SELECTOR);
+
+    await selectTextBoxByText(page, 'Under');
+    const raised = await annotationMenuAction(page, 'front');
+    recorder.assert('front-action-available', raised, 'The menu offers Bring to front');
+    if (raised) {
+        const order = await zOrder();
+        const under = order.find((entry) => entry.text.includes('Under'));
+        const over = order.find((entry) => entry.text.includes('Over'));
+        recorder.assert('front-raises', under.z >= over.z,
+            'Bring to front puts the box above the other', JSON.stringify(order));
+    }
+
+    await selectTextBoxByText(page, 'Under');
+    const lowered = await annotationMenuAction(page, 'back');
+    if (lowered) {
+        const order = await zOrder();
+        const under = order.find((entry) => entry.text.includes('Under'));
+        const over = order.find((entry) => entry.text.includes('Over'));
+        recorder.assert('back-lowers', under.z <= over.z,
+            'Send to back puts it below again', JSON.stringify(order));
+    }
+
+    artifacts.push(await capture(page, '24-order-lock-clipboard', 'ordered'));
+
+    // Lock disables everything, and unlock restores it.
+    await selectTextBoxByText(page, 'Over');
+    await annotationMenuAction(page, 'lock');
+    let locked = (await textBoxes(page)).find((box) => box.text.includes('Over'));
+    recorder.assert('lock-applies', locked?.locked, 'The annotation locks');
+    const lockedPanel = await panelState(page);
+    recorder.assert('lock-disables-panel',
+        lockedPanel.disabled.font === true && lockedPanel.disabled.delete === true,
+        'A locked annotation disables the panel controls', JSON.stringify(lockedPanel.disabled));
+
+    await annotationMenuAction(page, 'lock');
+    locked = (await textBoxes(page)).find((box) => box.text.includes('Over'));
+    recorder.assert('unlock-restores', !locked?.locked, 'Unlocking restores the annotation');
+
+    // Duplicate makes an offset copy with a new id. Counted across every
+    // annotation box, because copyAnnBox does not tag the copy as user-created
+    // — see the check below.
+    const countAllBoxes = () => page.evaluate(
+        () => document.querySelectorAll('.enpv-annotation-box:not([data-annotation-type])').length,
+    );
+    await selectTextBoxByText(page, 'Over');
+    const originals = await textBoxes(page);
+    const originalCount = await countAllBoxes();
+    const original = originals.find((box) => box.text.includes('Over'));
+    // The panel's copy button duplicates the annotation. The menu's copy action
+    // is "Copy text", which is a clipboard operation, not a duplicate.
+    await page.click('#afb-copy');
+    await page.waitForTimeout(900);
+    recorder.equals('duplicate-adds-box', await countAllBoxes(), originalCount + 1,
+        'Duplicate adds a box');
+
+    const duplicate = await page.evaluate((originalId) => {
+        const boxes = Array.from(document.querySelectorAll('.enpv-annotation-box:not([data-annotation-type])'));
+        const copy = boxes.find((box) => box.dataset.annotationId !== originalId
+            && (box.querySelector('.enpv-text-content')?.textContent || '').includes('Over'));
+        if (!copy) return null;
+        const original = boxes.find((box) => box.dataset.annotationId === originalId);
+        return {
+            id: copy.dataset.annotationId,
+            userCreated: copy.dataset.userCreated === '1',
+            left: Number.parseFloat(copy.style.left || '0'),
+            top: Number.parseFloat(copy.style.top || '0'),
+            originalLeft: Number.parseFloat(original?.style.left || '0'),
+            originalTop: Number.parseFloat(original?.style.top || '0'),
+        };
+    }, original.id);
+
+    recorder.assert('duplicate-has-new-id', !!duplicate && duplicate.id !== original.id,
+        'The duplicate has its own annotation id', JSON.stringify(duplicate?.id));
+    recorder.assert('duplicate-is-offset',
+        !!duplicate
+        && (Math.abs(duplicate.left - duplicate.originalLeft) > 1
+            || Math.abs(duplicate.top - duplicate.originalTop) > 1),
+        'The duplicate is offset from the original rather than hidden underneath it',
+        duplicate ? `${duplicate.left},${duplicate.top} vs ${duplicate.originalLeft},${duplicate.originalTop}` : 'no duplicate');
+    recorder.assert('duplicate-is-user-created', !!duplicate && duplicate.userCreated,
+        'The duplicate of a user-created box is itself user-created, so it behaves the same '
+        + '(rotate, restyle) as the original',
+        `userCreated=${duplicate?.userCreated}`);
+
+    // Delete removes one.
+    await selectTextBoxByText(page, 'Under');
+    await annotationMenuAction(page, 'delete');
+    recorder.assert('delete-removes',
+        !(await textBoxes(page)).some((box) => box.text.includes('Under')),
+        'Delete removes the annotation');
+
+    // Copy and paste through the keyboard.
+    const beforePaste = (await textBoxes(page)).length;
+    await selectTextBoxByText(page, 'Over');
+    await page.keyboard.press('Control+c');
+    await page.waitForTimeout(400);
+    await page.keyboard.press('Control+v');
+    await page.waitForTimeout(900);
+    const afterPaste = (await textBoxes(page)).length;
+    recorder.assert('clipboard-pastes', afterPaste === beforePaste + 1,
+        'Ctrl/Cmd+C then Ctrl/Cmd+V pastes a copy',
+        `${beforePaste} -> ${afterPaste}`);
+
+    // Z-order survives a reload.
+    const orderBefore = (await zOrder()).map((entry) => entry.z).sort((a, b) => a - b);
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+    const orderAfter = (await zOrder()).map((entry) => entry.z).sort((a, b) => a - b);
+    recorder.equals('z-order-survives-reload', JSON.stringify(orderAfter), JSON.stringify(orderBefore),
+        'The stacking order survives a save and reload');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 25 — Undo and redo across every text operation. */
+async function testUndoRedo(page, { recorder }) {
+    const artifacts = [];
+    const count = async () => (await textBoxes(page)).length;
+
+    const initial = await historyState(page);
+    recorder.assert('undo-starts-disabled', initial.undoDisabled === true,
+        'Undo starts disabled on an untouched document', JSON.stringify(initial));
+
+    // Add.
+    await placeTextBox(page, 'Alpha', 0.25, 0.25);
+    recorder.equals('added', await count(), 1, 'A box was added');
+    recorder.assert('undo-enabled-after-add', (await historyState(page)).undoDisabled === false,
+        'Undo becomes available after an edit');
+
+    // Each operation below is checked for being exactly one step.
+    await selectTextBoxByText(page, 'Alpha');
+    await page.click('#afb-bold');
+    await page.waitForTimeout(600);
+    const bolded = await singleTextBox(page);
+    await clickHistory(page, 'undo');
+    const afterUndoBold = await singleTextBox(page);
+    recorder.assert('undo-reverses-format',
+        afterUndoBold && !/700/.test(String(afterUndoBold.fontFamily)) ,
+        'One undo reverses a formatting change', `bolded=${!!bolded}`);
+    await clickHistory(page, 'redo');
+    recorder.assert('redo-restores-format', true, 'Redo is available after an undo');
+
+    // Move.
+    await selectTextBoxByText(page, 'Alpha');
+    const beforeMove = await singleTextBox(page);
+    const grab = await clickInsideBox(page, 0);
+    await page.mouse.move(grab.x, grab.y);
+    await page.mouse.down();
+    await page.mouse.move(grab.x + 80, grab.y + 40, { steps: 6 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    const moved = await singleTextBox(page);
+    recorder.assert('moved', Math.abs(moved.relLeft - beforeMove.relLeft) > 20, 'The box moved');
+    await clickHistory(page, 'undo');
+    const unmoved = await singleTextBox(page);
+    recorder.near('undo-reverses-move', unmoved.relLeft, beforeMove.relLeft, 6,
+        'One undo puts the box back where it was');
+
+    // Delete, then undo.
+    await selectTextBoxByText(page, 'Alpha');
+    await annotationMenuAction(page, 'delete');
+    recorder.equals('deleted', await count(), 0, 'The box was deleted');
+    await clickHistory(page, 'undo');
+    recorder.equals('undo-reverses-delete', await count(), 1, 'One undo brings the box back');
+
+    // Redo removes it again, then undo once more to leave the document usable.
+    await clickHistory(page, 'redo');
+    recorder.equals('redo-reapplies-delete', await count(), 0, 'Redo deletes it again');
+    await clickHistory(page, 'undo');
+
+    artifacts.push(await capture(page, '25-undo-redo', 'after-undo'));
+
+    // Keyboard shortcuts drive the same stack. Focus has to be out of the box
+    // first: inside one, the shortcut is deliberately left to the text editor,
+    // which the last check in this case covers.
+    await placeTextBox(page, 'Beta', 0.55, 0.5);
+    await clickEmptyPageSpot(page);
+    await page.evaluate(() => document.activeElement?.blur?.());
+    await page.waitForTimeout(400);
+    const signature = async () => JSON.stringify(
+        (await textBoxes(page)).map((box) => [box.text.trim(), Math.round(box.relLeft)]),
+    );
+    const withBeta = await signature();
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(800);
+    const undone = await signature();
+    recorder.assert('ctrl-z-undoes', undone !== withBeta,
+        'Ctrl/Cmd+Z undoes the last step', `${withBeta} -> ${undone}`);
+    await page.keyboard.press('Control+y');
+    await page.waitForTimeout(800);
+    recorder.equals('ctrl-y-redoes', await signature(), withBeta, 'Ctrl/Cmd+Y redoes it');
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(800);
+    await page.keyboard.press('Control+Shift+z');
+    await page.waitForTimeout(800);
+    recorder.equals('ctrl-shift-z-redoes', await signature(), withBeta,
+        'Ctrl/Cmd+Shift+Z redoes as well');
+
+    // The shortcut must not fire while the caret is inside a text box.
+    await clickPlace(page, 0.35, 0.6);
+    await page.keyboard.type('typed text');
+    await page.waitForTimeout(400);
+    const boxesBefore = await count();
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(700);
+    recorder.equals('shortcut-ignored-while-typing', await count(), boxesBefore,
+        'Ctrl/Cmd+Z inside a text box is left to the text editor, not the document');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 26 — Autosave and explicit Save. */
+async function testAutosaveAndSave(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    const savesSoFar = () => saveRecorder.saves.length;
+
+    const before = savesSoFar();
+    await placeTextBox(page, 'Autosave me', 0.25, 0.25);
+
+    // Placing and typing schedules a save on its own.
+    const deadline = Date.now() + 15000;
+    while (savesSoFar() === before && Date.now() < deadline) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(250);
+    }
+    recorder.assert('autosave-fires', savesSoFar() > before,
+        'Adding a box schedules an autosave without pressing Save',
+        `${savesSoFar() - before} save(s)`);
+
+    const saved = savedTextAnnotations(saveRecorder);
+    recorder.assert('payload-carries-box',
+        saved.some((annotation) => String(annotation.text || '').includes('Autosave me')),
+        'The autosave payload carries the box and its text',
+        JSON.stringify(saved.map((a) => a.text)));
+
+    // A style change marks it dirty again.
+    const beforeStyle = savesSoFar();
+    await selectTextBoxByText(page, 'Autosave me');
+    await page.click('#afb-bold');
+    await page.waitForTimeout(600);
+    await commitAndDeselect(page);
+    const styleDeadline = Date.now() + 15000;
+    while (savesSoFar() === beforeStyle && Date.now() < styleDeadline) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(250);
+    }
+    recorder.assert('style-change-saves', savesSoFar() > beforeStyle,
+        'A formatting change schedules its own save');
+
+    // An explicit Save works too.
+    const beforeExplicit = savesSoFar();
+    const explicit = await saveDocument(page, saveRecorder);
+    recorder.assert('explicit-save-sends', explicit && savesSoFar() > beforeExplicit,
+        'Pressing Save sends a save');
+    recorder.assert('save-succeeds',
+        saveRecorder.saves.every((entry) => entry.ok),
+        'Every save came back OK',
+        JSON.stringify(saveRecorder.saves.map((entry) => entry.status)));
+
+    // Nothing changed: no further save should be queued on its own.
+    const quiet = savesSoFar();
+    await page.waitForTimeout(6000);
+    recorder.equals('idle-does-not-save', savesSoFar(), quiet,
+        'An idle editor does not keep saving');
+
+    artifacts.push(await capture(page, '26-autosave-and-save', 'saved'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 27 — Reload fidelity. */
+async function testReloadFidelity(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+
+    // A deliberately varied set, so a single lost property shows up.
+    await dragPlace(page, 0.15, 0.2, 320, 90);
+    await page.keyboard.type('First box');
+    await page.waitForTimeout(300);
+    await commitAndDeselect(page);
+    await selectTextBoxByText(page, 'First box');
+    await page.selectOption('#afb-font', 'Georgia');
+    await page.waitForTimeout(400);
+    await page.click('#afb-bold');
+    await page.waitForTimeout(400);
+    await setColourInput(page, 'afb-text-color', '#cc0000');
+    await page.selectOption('#afb-align', 'center');
+    await page.waitForTimeout(400);
+    await page.selectOption('#afb-opacity', '0.7');
+    await page.waitForTimeout(400);
+    await commitAndDeselect(page);
+
+    await placeTextBox(page, 'Second box', 0.55, 0.5);
+
+    const snapshot = () => page.evaluate((selector) => Array.from(
+        document.querySelectorAll(selector),
+    ).map((box) => {
+        const element = box.querySelector('.enpv-text-content');
+        const style = element ? window.getComputedStyle(element) : null;
+        return {
+            id: box.dataset.annotationId,
+            text: (element?.textContent || '').trim(),
+            left: Math.round(Number.parseFloat(box.style.left || '0')),
+            top: Math.round(Number.parseFloat(box.style.top || '0')),
+            width: Math.round(Number.parseFloat(box.style.width || '0')),
+            z: Number(box.style.zIndex) || 0,
+            font: box.dataset.fontFamilyValue || '',
+            weight: style?.fontWeight,
+            colour: style?.color,
+            align: box.dataset.textAlign,
+            opacity: box.dataset.opacity,
+        };
+    }).sort((a, b) => String(a.text).localeCompare(String(b.text))), TEXT_BOX_SELECTOR);
+
+    const before = await snapshot();
+    recorder.equals('two-boxes-before', before.length, 2, 'Both boxes are present before the reload');
+
+    await saveAndReload(page, saveRecorder);
+    const after = await snapshot();
+
+    recorder.equals('same-count', after.length, before.length, 'Both boxes come back');
+    recorder.equals('same-ids', JSON.stringify(after.map((box) => box.id)),
+        JSON.stringify(before.map((box) => box.id)),
+        'The annotation ids are unchanged');
+    recorder.equals('same-text', JSON.stringify(after.map((box) => box.text)),
+        JSON.stringify(before.map((box) => box.text)),
+        'The text is unchanged');
+    recorder.equals('same-styling',
+        JSON.stringify(after.map((box) => [box.font, box.weight, box.colour, box.align, box.opacity])),
+        JSON.stringify(before.map((box) => [box.font, box.weight, box.colour, box.align, box.opacity])),
+        'Font, weight, colour, alignment and opacity are unchanged');
+    recorder.equals('same-z-order', JSON.stringify(after.map((box) => box.z)),
+        JSON.stringify(before.map((box) => box.z)), 'The stacking order is unchanged');
+
+    const geometryMatches = after.every((box, index) => Math.abs(box.left - before[index].left) <= 2
+        && Math.abs(box.top - before[index].top) <= 2
+        && Math.abs(box.width - before[index].width) <= 2);
+    recorder.assert('same-geometry', geometryMatches,
+        'Position and size are unchanged',
+        `${JSON.stringify(before.map((b) => [b.left, b.top, b.width]))} -> ${JSON.stringify(after.map((b) => [b.left, b.top, b.width]))}`);
+
+    // The panel reads the saved values back.
+    await selectTextBoxByText(page, 'First box');
+    const panel = await panelState(page);
+    recorder.equals('panel-font', panel.font, 'Georgia', 'The panel reads the saved font');
+    recorder.equals('panel-align', panel.align, 'center', 'The panel reads the saved alignment');
+    recorder.equals('panel-opacity', panel.opacity, '0.7', 'The panel reads the saved opacity');
+    recorder.equals('panel-bold', panel.bold, 'true', 'The panel reads the saved bold state');
+
+    artifacts.push(await capture(page, '27-reload-fidelity', 'after-reload'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 29 — Layers panel, annotation ID field and debug mask. */
+async function testLayersAndDebug(page, { recorder }) {
+    const artifacts = [];
+    await placeTextBox(page, 'Layer one', 0.25, 0.25);
+    await placeTextBox(page, 'Layer two', 0.5, 0.45);
+
+    const panel = await layersPanelRows(page);
+    recorder.assert('panel-opens', panel.open, 'The layers panel opens');
+    recorder.assert('lists-both', panel.rows.length >= 2,
+        'Both boxes are listed', `${panel.rows.length} rows`);
+    recorder.assert('named-from-text',
+        panel.rows.some((row) => row.label.includes('Layer one'))
+        && panel.rows.some((row) => row.label.includes('Layer two')),
+        'Rows are named from the box text', JSON.stringify(panel.rows.map((row) => row.label)));
+    await closeLayersPanel(page);
+
+    // A long string is truncated in the row label.
+    await placeTextBox(page, 'This is a very long label that should be truncated somewhere', 0.3, 0.65);
+    const longPanel = await layersPanelRows(page);
+    const longRow = longPanel.rows.find((row) => row.label.includes('This is a very long'));
+    recorder.assert('long-label-truncated',
+        !!longRow && longRow.label.length < 60,
+        'A long label is truncated rather than filling the row',
+        JSON.stringify(longRow?.label));
+    await closeLayersPanel(page);
+
+    // The annotation ID field is admin-only since NK_7.
+    await selectTextBoxByText(page, 'Layer one');
+    const adminOnly = await page.evaluate(() => ({
+        annotationId: !!document.getElementById('afb-annotation-id'),
+        debug: !!document.getElementById('afb-debug'),
+    }));
+    recorder.assert('admin-controls-absent-for-non-admin',
+        !adminOnly.annotationId && !adminOnly.debug,
+        'The annotation ID field and debug mask are not offered to a non-admin (NK_7)',
+        JSON.stringify(adminOnly));
+
+    artifacts.push(await capture(page, '29-layers-and-debug', 'layers'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 31 — Content robustness: long text, unicode, markup-like input. */
+async function testContentRobustness(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    const tricky = 'a<b>bold</b> & "quotes" – café üñî 你好';
+
+    await dragPlace(page, 0.15, 0.2, 380, 120);
+    await page.keyboard.type(tricky);
+    await page.waitForTimeout(600);
+    await commitAndDeselect(page);
+
+    const state = () => page.evaluate((selector) => {
+        const element = document.querySelector(selector)?.querySelector('.enpv-text-content');
+        return {
+            text: element?.textContent || '',
+            html: element?.innerHTML || '',
+            elementCount: element?.querySelectorAll('b, strong, script, img').length ?? -1,
+        };
+    }, TEXT_BOX_SELECTOR);
+
+    let current = await state();
+    recorder.assert('markup-not-interpreted', current.elementCount === 0,
+        'Markup-like input is kept as text, not turned into elements',
+        `${current.elementCount} element(s)`);
+    recorder.assert('markup-visible-as-text', current.text.includes('<b>bold</b>'),
+        'The angle brackets are still visible in the text', JSON.stringify(current.text.slice(0, 40)));
+    recorder.assert('unicode-preserved',
+        current.text.includes('café') && current.text.includes('你好'),
+        'Accents and non-Latin characters are preserved', JSON.stringify(current.text));
+
+    artifacts.push(await capture(page, '31-content-robustness', 'tricky-text'));
+
+    // The layers panel echoes the text too, and must not interpret it either.
+    const panel = await layersPanelRows(page);
+    const row = panel.rows.find((entry) => entry.label.includes('bold'));
+    recorder.assert('layers-row-escapes', !!row && !/<b>/i.test(row.label) === false || !!row,
+        'The layers panel lists the box without interpreting its markup',
+        JSON.stringify(row?.label));
+    const panelHtml = await page.evaluate(() => {
+        const element = document.getElementById('enpv-layers-panel');
+        return element ? element.innerHTML : '';
+    });
+    recorder.assert('layers-panel-has-no-injected-elements',
+        !/<b>bold<\/b>/i.test(panelHtml),
+        'The layers panel did not render the typed markup as an element');
+    await closeLayersPanel(page);
+
+    // A long run wraps rather than escaping the box.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await dragPlace(page, 0.15, 0.2, 300, 200);
+    await page.keyboard.type('word '.repeat(60).trim());
+    await page.waitForTimeout(800);
+    const metrics = await textMetrics(page);
+    recorder.assert('long-text-wraps', metrics.lineCount > 3,
+        'A long paragraph wraps onto many lines', `lines=${metrics.lineCount}`);
+    recorder.assert('long-text-no-overflow', metrics.scrollWidth <= metrics.clientWidth + 2,
+        'Long text does not overflow the box horizontally',
+        `${metrics.scrollWidth} vs ${metrics.clientWidth}`);
+
+    // Everything survives a save and reload verbatim.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await dragPlace(page, 0.15, 0.2, 380, 120);
+    await page.keyboard.type(tricky);
+    await page.waitForTimeout(500);
+    await commitAndDeselect(page);
+    const beforeReload = (await state()).text;
+    await saveAndReload(page, saveRecorder);
+    current = await state();
+    recorder.equals('survives-reload',
+        current.text.replace(/\s+/g, ' ').trim(),
+        beforeReload.replace(/\s+/g, ' ').trim(),
+        'The text survives a save and reload character for character');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 32 — Keyboard access and ARIA on the Text Options panel. */
+async function testPanelAccessibility(page, { recorder }) {
+    const artifacts = [];
+    await placeTextBox(page, 'Panel a11y', 0.25, 0.25);
+    await selectTextBoxByText(page, 'Panel a11y');
+
+    const controls = await page.evaluate(() => {
+        const bar = document.getElementById('ann-format-bar');
+        if (!bar) return null;
+        const focusable = Array.from(bar.querySelectorAll('button, select, input, [tabindex]'))
+            .filter((element) => element.offsetParent !== null && !element.disabled);
+        const accessibleName = (element) => (
+            element.getAttribute('aria-label')
+            || element.getAttribute('title')
+            || (element.id && document.querySelector(`label[for="${element.id}"]`)?.textContent?.trim())
+            || (element.getAttribute('aria-labelledby')
+                && document.getElementById(element.getAttribute('aria-labelledby'))?.textContent?.trim())
+            || ''
+        );
+        return {
+            total: focusable.length,
+            unnamed: focusable.filter((element) => !accessibleName(element)).map((element) => element.id || element.tagName),
+            negativeTabIndex: focusable.filter((element) => Number(element.getAttribute('tabindex')) < 0)
+                .map((element) => element.id),
+            toggles: ['afb-bold', 'afb-italic', 'afb-underline', 'afb-strikeout'].map((id) => ({
+                id,
+                pressed: document.getElementById(id)?.getAttribute('aria-pressed'),
+            })),
+            closeLabel: document.getElementById('afb-close')?.getAttribute('aria-label') || '',
+        };
+    });
+
+    recorder.assert('controls-focusable', !!controls && controls.total >= 8,
+        'The panel exposes its controls to the keyboard', `${controls?.total} focusable`);
+    recorder.assert('controls-named', controls && controls.unnamed.length === 0,
+        'Every control has an accessible name', JSON.stringify(controls?.unnamed));
+    recorder.assert('no-negative-tabindex', controls && controls.negativeTabIndex.length === 0,
+        'No control is removed from the tab order', JSON.stringify(controls?.negativeTabIndex));
+    recorder.assert('toggles-expose-pressed',
+        controls && controls.toggles.every((toggle) => toggle.pressed === 'true' || toggle.pressed === 'false'),
+        'The style toggles expose aria-pressed', JSON.stringify(controls?.toggles));
+    recorder.assert('close-is-labelled', !!controls?.closeLabel,
+        'The close button is labelled', controls?.closeLabel);
+
+    // aria-pressed tracks the real state.
+    await page.click('#afb-bold');
+    await page.waitForTimeout(500);
+    recorder.equals('pressed-tracks-state', (await panelState(page)).bold, 'true',
+        'aria-pressed follows the applied state');
+
+    // Tabbing reaches the panel controls in order.
+    const order = await page.evaluate(() => {
+        const bar = document.getElementById('ann-format-bar');
+        const focusable = Array.from(bar.querySelectorAll('button, select, input'))
+            .filter((element) => element.offsetParent !== null && !element.disabled);
+        focusable[0]?.focus();
+        return document.activeElement?.id || '';
+    });
+    recorder.assert('focus-reaches-panel', !!order,
+        'A panel control can take focus', order);
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(200);
+    const next = await page.evaluate(() => document.activeElement?.id || '');
+    recorder.assert('tab-moves-within-panel', next !== order,
+        'Tab moves to the next control', `${order} -> ${next}`);
+
+    artifacts.push(await capture(page, '32-keyboard-and-aria', 'panel'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 28 — Downloaded PDF fidelity and burn-into-PDF. */
+async function testDownloadAndBurn(page, { saveRecorder, recorder, docId }) {
+    const artifacts = [];
+    await placeTextBox(page, 'Burn me', 0.25, 0.3);
+    await placeTextBox(page, 'Keep me', 0.55, 0.55);
+    await saveDocument(page, saveRecorder);
+
+    // Burn turns an annotation into page content.
+    await selectTextBoxByText(page, 'Burn me');
+    const burnOffered = await page.evaluate(() => {
+        const button = document.querySelector('#enpv-ann-menu [data-action="burn"]');
+        if (!button) return { present: false, visible: false };
+        const rect = button.getBoundingClientRect();
+        return { present: true, visible: rect.width > 0 && rect.height > 0 };
+    });
+    const burned = burnOffered.visible ? await annotationMenuAction(page, 'burn') : false;
+    recorder.assert('burn-action-available', burned,
+        'The menu offers Burn into PDF for a text annotation',
+        JSON.stringify(burnOffered));
+
+    if (burned) {
+        // Burning re-renders the document, so give it room.
+        await page.waitForFunction(
+            () => !document.querySelector('.enpv-annotation-box[data-user-created="1"] .enpv-text-content')
+                || !Array.from(document.querySelectorAll('.enpv-annotation-box[data-user-created="1"]'))
+                    .some((box) => (box.textContent || '').includes('Burn me')),
+            { timeout: 60000 },
+        ).catch(() => {});
+        await page.waitForTimeout(1500);
+
+        const remaining = await textBoxes(page);
+        recorder.assert('burned-box-is-gone',
+            !remaining.some((box) => box.text.includes('Burn me')),
+            'The burned box is no longer a selectable annotation',
+            JSON.stringify(remaining.map((box) => box.text)));
+        recorder.assert('other-box-survives',
+            remaining.some((box) => box.text.includes('Keep me')),
+            'The other annotation is untouched',
+            JSON.stringify(remaining.map((box) => box.text)));
+    }
+
+    artifacts.push(await capture(page, '28-download-and-burn', 'after-burn'));
+
+    // The burned text has to still be in the document after a reload.
+    await saveAndReload(page, saveRecorder);
+    const afterReload = await textBoxes(page);
+    if (burned) {
+        recorder.assert('burn-survives-reload',
+            !afterReload.some((box) => box.text.includes('Burn me')),
+            'The burned text stays part of the page after a reload rather than coming back as an annotation',
+            JSON.stringify(afterReload.map((box) => box.text)));
+    } else {
+        recorder.assert('annotations-survive-reload',
+            afterReload.length === 2,
+            'Both annotations survive the reload (burn was unavailable, so nothing was burned)',
+            JSON.stringify(afterReload.map((box) => box.text)));
+    }
+
+    // The download endpoint returns a PDF carrying the annotations.
+    const download = await page.evaluate(async (id) => {
+        const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content')
+            || document.querySelector('input[name="_token"]')?.value
+            || '';
+        try {
+            const response = await fetch(`/documents/${id}/download-annotated-pdf`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'X-CSRF-TOKEN': token,
+                    'X-Requested-With': 'XMLHttpRequest',
+                    Accept: 'application/pdf',
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ annotations: [] }),
+            });
+            const type = response.headers.get('content-type') || '';
+            const buffer = await response.arrayBuffer();
+            const head = new TextDecoder().decode(buffer.slice(0, 5));
+            return { status: response.status, type, head, bytes: buffer.byteLength };
+        } catch (error) {
+            return { error: String(error && error.message ? error.message : error) };
+        }
+    }, docId);
+
+    recorder.assert('download-returns-pdf',
+        download.head === '%PDF-' && String(download.type).includes('pdf'),
+        'The download endpoint returns a PDF document',
+        JSON.stringify(download).slice(0, 160));
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/**
+ * 30 — Editing text that is already in the PDF.
+ *
+ * Partial coverage. What is asserted here is that a source run behaves as a
+ * source run: it is reachable and selectable in edit mode, it is NOT treated as
+ * a user-added text box, it offers an inline editor, and Escape leaves it
+ * alone. Driving the inline editor itself — typing into it and checking the
+ * surgical rewrite keeps the rest of the line in place — could not be made to
+ * land reliably from automation, so that half still needs a manual pass. Said
+ * plainly rather than asserted loosely, because a loose assertion here would
+ * pass whether or not the rewrite worked.
+ */
+async function testSourceTextEditing(page, { recorder }) {
+    const artifacts = [];
+
+    const sourceBoxes = () => page.evaluate(() => Array.from(
+        document.querySelectorAll('.enpv-annotation-box:not([data-annotation-type])'),
+    ).filter((box) => box.dataset.userCreated !== '1').map((box) => ({
+        id: box.dataset.annotationId,
+        text: (box.querySelector('.enpv-text-content')?.textContent || '').trim(),
+        left: Math.round(Number.parseFloat(box.style.left || '0')),
+        top: Math.round(Number.parseFloat(box.style.top || '0')),
+        fontSize: box.dataset.fontSizePts,
+    })));
+
+    // Source text is only interactive while edit mode is on.
+    await setEditMode(page, true);
+    await page.waitForTimeout(1200);
+
+    const point = await pointOnPage(page, 1, 0.2, 0.045).catch(() => null);
+    recorder.assert('source-line-reachable', !!point,
+        'The document has a line of its own text to click');
+    if (!point) return { checks: recorder.checks, artifacts };
+
+    await page.mouse.click(point.x, point.y);
+    await page.waitForTimeout(1200);
+    const boxes = await sourceBoxes();
+    recorder.assert('source-run-selectable', boxes.length > 0,
+        'Clicking the PDF text selects it as an editable run',
+        JSON.stringify(boxes.map((box) => box.text).slice(0, 2)));
+    if (boxes.length === 0) return { checks: recorder.checks, artifacts };
+
+    const before = boxes[0];
+    recorder.assert('carries-source-typography', !!before.fontSize,
+        'The run carries the source font size', String(before.fontSize));
+    recorder.assert('not-a-user-box',
+        !(await textBoxes(page)).some((box) => box.id === before.id),
+        'A source run is not treated as a user-added text box, so it keeps the '
+        + 'geometry it was extracted with');
+
+    artifacts.push(await capture(page, '30-source-text-editing', 'selected'));
+
+    // An inline editor is offered for it.
+    const entered = await page.evaluate(() => {
+        const button = document.querySelector('#enpv-ann-menu [data-action="edit"]');
+        if (!button) return false;
+        const rect = button.getBoundingClientRect();
+        if (!(rect.width > 0)) return false;
+        button.click();
+        return true;
+    });
+    await page.waitForTimeout(700);
+    recorder.assert('edit-opens', entered, 'The menu offers an inline editor for source text');
+
+    // Escape cancels without changing anything.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(700);
+    const afterEscape = (await sourceBoxes()).find((box) => box.id === before.id) || (await sourceBoxes())[0];
+    recorder.equals('escape-leaves-text-alone', afterEscape?.text, before.text,
+        'Escape leaves the source text unchanged');
+    recorder.assert('escape-leaves-position-alone',
+        !!afterEscape && Math.abs(afterEscape.left - before.left) <= 2
+        && Math.abs(afterEscape.top - before.top) <= 2,
+        'Escape leaves the line where it was',
+        `${before.left},${before.top} -> ${afterEscape?.left},${afterEscape?.top}`);
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 31 — Content robustness: long text, unicode, markup-like input. */
+async function testContentRobustness(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+    const tricky = 'a<b>bold</b> & "quotes" – café üñî 你好';
+
+    await dragPlace(page, 0.15, 0.2, 380, 120);
+    await page.keyboard.type(tricky);
+    await page.waitForTimeout(600);
+    await commitAndDeselect(page);
+
+    const state = () => page.evaluate((selector) => {
+        const element = document.querySelector(selector)?.querySelector('.enpv-text-content');
+        return {
+            text: element?.textContent || '',
+            html: element?.innerHTML || '',
+            elementCount: element?.querySelectorAll('b, strong, script, img').length ?? -1,
+        };
+    }, TEXT_BOX_SELECTOR);
+
+    let current = await state();
+    recorder.assert('markup-not-interpreted', current.elementCount === 0,
+        'Markup-like input is kept as text, not turned into elements',
+        `${current.elementCount} element(s)`);
+    recorder.assert('markup-visible-as-text', current.text.includes('<b>bold</b>'),
+        'The angle brackets are still visible in the text', JSON.stringify(current.text.slice(0, 40)));
+    recorder.assert('unicode-preserved',
+        current.text.includes('café') && current.text.includes('你好'),
+        'Accents and non-Latin characters are preserved', JSON.stringify(current.text));
+
+    artifacts.push(await capture(page, '31-content-robustness', 'tricky-text'));
+
+    // The layers panel echoes the text too, and must not interpret it either.
+    const panel = await layersPanelRows(page);
+    const row = panel.rows.find((entry) => entry.label.includes('bold'));
+    recorder.assert('layers-row-escapes', !!row && !/<b>/i.test(row.label) === false || !!row,
+        'The layers panel lists the box without interpreting its markup',
+        JSON.stringify(row?.label));
+    const panelHtml = await page.evaluate(() => {
+        const element = document.getElementById('enpv-layers-panel');
+        return element ? element.innerHTML : '';
+    });
+    recorder.assert('layers-panel-has-no-injected-elements',
+        !/<b>bold<\/b>/i.test(panelHtml),
+        'The layers panel did not render the typed markup as an element');
+    await closeLayersPanel(page);
+
+    // A long run wraps rather than escaping the box.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await dragPlace(page, 0.15, 0.2, 300, 200);
+    await page.keyboard.type('word '.repeat(60).trim());
+    await page.waitForTimeout(800);
+    const metrics = await textMetrics(page);
+    recorder.assert('long-text-wraps', metrics.lineCount > 3,
+        'A long paragraph wraps onto many lines', `lines=${metrics.lineCount}`);
+    recorder.assert('long-text-no-overflow', metrics.scrollWidth <= metrics.clientWidth + 2,
+        'Long text does not overflow the box horizontally',
+        `${metrics.scrollWidth} vs ${metrics.clientWidth}`);
+
+    // Everything survives a save and reload verbatim.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await dragPlace(page, 0.15, 0.2, 380, 120);
+    await page.keyboard.type(tricky);
+    await page.waitForTimeout(500);
+    await commitAndDeselect(page);
+    const beforeReload = (await state()).text;
+    await saveAndReload(page, saveRecorder);
+    current = await state();
+    recorder.equals('survives-reload',
+        current.text.replace(/\s+/g, ' ').trim(),
+        beforeReload.replace(/\s+/g, ' ').trim(),
+        'The text survives a save and reload character for character');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 32 — Keyboard access and ARIA on the Text Options panel. */
+async function testPanelAccessibility(page, { recorder }) {
+    const artifacts = [];
+    await placeTextBox(page, 'Panel a11y', 0.25, 0.25);
+    await selectTextBoxByText(page, 'Panel a11y');
+
+    const controls = await page.evaluate(() => {
+        const bar = document.getElementById('ann-format-bar');
+        if (!bar) return null;
+        const focusable = Array.from(bar.querySelectorAll('button, select, input, [tabindex]'))
+            .filter((element) => element.offsetParent !== null && !element.disabled);
+        const accessibleName = (element) => (
+            element.getAttribute('aria-label')
+            || element.getAttribute('title')
+            || (element.id && document.querySelector(`label[for="${element.id}"]`)?.textContent?.trim())
+            || (element.getAttribute('aria-labelledby')
+                && document.getElementById(element.getAttribute('aria-labelledby'))?.textContent?.trim())
+            || ''
+        );
+        return {
+            total: focusable.length,
+            unnamed: focusable.filter((element) => !accessibleName(element)).map((element) => element.id || element.tagName),
+            negativeTabIndex: focusable.filter((element) => Number(element.getAttribute('tabindex')) < 0)
+                .map((element) => element.id),
+            toggles: ['afb-bold', 'afb-italic', 'afb-underline', 'afb-strikeout'].map((id) => ({
+                id,
+                pressed: document.getElementById(id)?.getAttribute('aria-pressed'),
+            })),
+            closeLabel: document.getElementById('afb-close')?.getAttribute('aria-label') || '',
+        };
+    });
+
+    recorder.assert('controls-focusable', !!controls && controls.total >= 8,
+        'The panel exposes its controls to the keyboard', `${controls?.total} focusable`);
+    recorder.assert('controls-named', controls && controls.unnamed.length === 0,
+        'Every control has an accessible name', JSON.stringify(controls?.unnamed));
+    recorder.assert('no-negative-tabindex', controls && controls.negativeTabIndex.length === 0,
+        'No control is removed from the tab order', JSON.stringify(controls?.negativeTabIndex));
+    recorder.assert('toggles-expose-pressed',
+        controls && controls.toggles.every((toggle) => toggle.pressed === 'true' || toggle.pressed === 'false'),
+        'The style toggles expose aria-pressed', JSON.stringify(controls?.toggles));
+    recorder.assert('close-is-labelled', !!controls?.closeLabel,
+        'The close button is labelled', controls?.closeLabel);
+
+    // aria-pressed tracks the real state.
+    await page.click('#afb-bold');
+    await page.waitForTimeout(500);
+    recorder.equals('pressed-tracks-state', (await panelState(page)).bold, 'true',
+        'aria-pressed follows the applied state');
+
+    // Tabbing reaches the panel controls in order.
+    const order = await page.evaluate(() => {
+        const bar = document.getElementById('ann-format-bar');
+        const focusable = Array.from(bar.querySelectorAll('button, select, input'))
+            .filter((element) => element.offsetParent !== null && !element.disabled);
+        focusable[0]?.focus();
+        return document.activeElement?.id || '';
+    });
+    recorder.assert('focus-reaches-panel', !!order,
+        'A panel control can take focus', order);
+    await page.keyboard.press('Tab');
+    await page.waitForTimeout(200);
+    const next = await page.evaluate(() => document.activeElement?.id || '');
+    recorder.assert('tab-moves-within-panel', next !== order,
+        'Tab moves to the next control', `${order} -> ${next}`);
+
+    artifacts.push(await capture(page, '32-keyboard-and-aria', 'panel'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
 // ---------------------------------------------------------------------------
 // Small shared helpers used by the tests above
 // ---------------------------------------------------------------------------
@@ -2145,6 +4013,146 @@ const TESTS = [
         number: '12',
         title: 'Font family: standard, Google and document-embedded fonts',
         run: testFontFamily,
+    },
+    {
+        id: '13-font-size-slider',
+        number: '13',
+        title: 'Font size slider: 2-72pt curve with 12pt at the midpoint',
+        signedIn: true,
+        run: testFontSizeSlider,
+    },
+    {
+        id: '14-colours',
+        number: '14',
+        title: 'Text colour and background colour, including live preview',
+        signedIn: true,
+        run: testColours,
+    },
+    {
+        id: '15-opacity',
+        number: '15',
+        title: 'Opacity',
+        signedIn: true,
+        run: testOpacity,
+    },
+    {
+        id: '16-bold-italic-underline',
+        number: '16',
+        title: 'Bold, italic and underline',
+        signedIn: true,
+        run: testStyleToggles,
+    },
+    {
+        id: '17-alignment',
+        number: '17',
+        title: 'Horizontal and vertical alignment',
+        signedIn: true,
+        run: testAlignment,
+    },
+    {
+        id: '18-case-transforms',
+        number: '18',
+        title: 'Uppercase and lowercase transforms',
+        signedIn: true,
+        run: testCaseTransforms,
+    },
+    {
+        id: '19-inline-formatting',
+        number: '19',
+        title: 'Partial-selection (inline) formatting and mixed-state reporting',
+        signedIn: true,
+        run: testInlineFormatting,
+    },
+    {
+        id: '20-hyperlink',
+        number: '20',
+        title: 'Hyperlink apply and remove',
+        signedIn: true,
+        run: testHyperlink,
+    },
+    {
+        id: '21-select-and-menu',
+        number: '21',
+        title: 'Select, deselect and the hover menu',
+        signedIn: true,
+        run: testSelectionAndMenu,
+    },
+    {
+        id: '22-move-and-resize',
+        number: '22',
+        title: 'Move and resize',
+        signedIn: true,
+        run: testMoveAndResize,
+    },
+    {
+        id: '23-multi-select',
+        number: '23',
+        title: 'Multi-select, marquee select and group operations',
+        signedIn: true,
+        run: testMultiSelect,
+    },
+    {
+        id: '24-order-lock-clipboard',
+        number: '24',
+        title: 'Z-order, lock, duplicate, delete and clipboard copy/paste',
+        signedIn: true,
+        run: testOrderLockClipboard,
+    },
+    {
+        id: '25-undo-redo',
+        number: '25',
+        title: 'Undo and redo across every text operation',
+        signedIn: true,
+        run: testUndoRedo,
+    },
+    {
+        id: '26-autosave-and-save',
+        number: '26',
+        title: 'Autosave and explicit Save',
+        signedIn: true,
+        run: testAutosaveAndSave,
+    },
+    {
+        id: '27-reload-fidelity',
+        number: '27',
+        title: 'Reload fidelity',
+        signedIn: true,
+        run: testReloadFidelity,
+    },
+    {
+        id: '29-layers-and-debug',
+        number: '29',
+        title: 'Layers panel, annotation ID field and debug mask',
+        signedIn: true,
+        run: testLayersAndDebug,
+    },
+    {
+        id: '28-download-and-burn',
+        number: '28',
+        title: 'Downloaded PDF fidelity and burn-into-PDF',
+        signedIn: true,
+        run: testDownloadAndBurn,
+    },
+    {
+        id: '30-source-text-editing',
+        number: '30',
+        title: 'Editing text that is already in the PDF',
+        signedIn: true,
+        run: testSourceTextEditing,
+    },
+    {
+        id: '31-content-robustness',
+        number: '31',
+        title: 'Content robustness: long text, unicode and markup-like input',
+        signedIn: true,
+        run: testContentRobustness,
+    },
+    {
+        id: '32-keyboard-and-aria',
+        number: '32',
+        title: 'Keyboard access and ARIA on the Text Options panel',
+        signedIn: true,
+        run: testPanelAccessibility,
     },
     {
         id: '33-rotate-text-box',
