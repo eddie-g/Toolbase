@@ -947,8 +947,8 @@ export function installSignatureFeature(deps) {
         img.style.position = 'absolute';
         img.style.left = '0';
         img.style.top = '0';
-        img.style.width = `${Math.max(1, pageFrame.width)}px`;
-        img.style.height = `${Math.max(1, pageFrame.height)}px`;
+        img.style.width = pageFrame.rotation === 0 ? '100%' : `${Math.max(1, pageFrame.width)}px`;
+        img.style.height = pageFrame.rotation === 0 ? '100%' : `${Math.max(1, pageFrame.height)}px`;
         img.style.transformOrigin = '0 0';
         img.style.transform = pageFrame.transform;
         box.appendChild(img);
