@@ -1678,12 +1678,13 @@ async function testPanelMirrorsSelection(page, { recorder }) {
     // ...and switching back must restore the styled box's values.
     await selectTextBoxByText(page, 'Styled');
     panel = await panelState(page);
-    // KNOWN DEFECT: box-level bold is lost as soon as the annotation layer
-    // re-renders — placing a second text box is enough. The annotation is saved
-    // with fontWeight 700, so the loss is in the re-render, which replays the
-    // box's stored rich-text runs; those still carry the pre-bold weight and
-    // win over the box-level variable. Alignment is not a run-level property
-    // and does survive, which is why the next check passes.
+    // KNOWN DEFECT [NK_8]: box-level bold is lost as soon as the annotation
+    // layer re-renders — placing a second text box is enough. The annotation is
+    // saved with fontWeight 700, so the loss is in the re-render, which replays
+    // the box's stored rich-text runs; those still carry the pre-bold weight and
+    // win over the box-level variable. Italic goes the same way. Colour,
+    // underline, size, alignment and opacity all survive, which is why every
+    // other check here passes.
     recorder.equals('a-bold-again', panel.bold, 'true',
         'Reselecting the styled box restores its bold state (known defect: box-level '
         + 'bold is dropped when the layer re-renders)');
