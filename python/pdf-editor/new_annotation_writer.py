@@ -3986,30 +3986,104 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
         )
 
 
+def rotate_signature_image_bytes(
+    image_bytes: bytes,
+    rotation: float,
+) -> Optional[Tuple[bytes, float, float]]:
+    """Rotate a signature bitmap about its centre (NK_9).
+
+    page.insert_image only accepts rotations that are multiples of 90, so an
+    arbitrary angle has to be baked into the image itself. Returns the rotated
+    PNG plus the width/height ratio it grew by, so the caller can widen the
+    target rect to match — otherwise the image would be squashed back into the
+    original box.
+
+    Returns None when rotation is not needed or Pillow is unavailable, and the
+    caller falls back to drawing it flat.
+    """
+    if abs(normalize_rotation_degrees(rotation)) < 1e-6:
+        return None
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as source:
+            source = source.convert("RGBA")
+            original_width, original_height = source.size
+            # Pillow rotates counter-clockwise; the editor's angle is clockwise.
+            rotated = source.rotate(
+                -normalize_rotation_degrees(rotation),
+                resample=Image.BICUBIC,
+                expand=True,
+            )
+            buffer = io.BytesIO()
+            rotated.save(buffer, format="PNG")
+            width_ratio = rotated.size[0] / max(1, original_width)
+            height_ratio = rotated.size[1] / max(1, original_height)
+            return buffer.getvalue(), width_ratio, height_ratio
+    except Exception:
+        return None
+
+
+def rotated_signature_rect(rect: fitz.Rect, width_ratio: float, height_ratio: float) -> fitz.Rect:
+    """Grow a rect about its centre to hold the rotated image."""
+    half_width = (rect.width * width_ratio) / 2.0
+    half_height = (rect.height * height_ratio) / 2.0
+    cx = (rect.x0 + rect.x1) / 2.0
+    cy = (rect.y0 + rect.y1) / 2.0
+    return fitz.Rect(cx - half_width, cy - half_height, cx + half_width, cy + half_height)
+
+
 def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
     rect = to_rect(page, ann)
     if rect is None:
         return
 
+    rotation = normalize_rotation_degrees(ann.get("rotation", 0.0))
+
+    image_bytes = None
     asset_file_path = resolve_annotation_image_path(ann)
     if asset_file_path:
-        try:
-            # Match the editor's resized box exactly. PyMuPDF keeps aspect ratio
-            # by default, which would shrink one axis back toward the source image.
-            page.insert_image(rect, filename=asset_file_path, overlay=True, keep_proportion=False)
-            return
-        except Exception:
-            pass
+        if abs(rotation) < 1e-6:
+            try:
+                # Match the editor's resized box exactly. PyMuPDF keeps aspect
+                # ratio by default, which would shrink one axis back toward the
+                # source image.
+                page.insert_image(rect, filename=asset_file_path, overlay=True, keep_proportion=False)
+                return
+            except Exception:
+                pass
+        else:
+            try:
+                with open(asset_file_path, "rb") as handle:
+                    image_bytes = handle.read()
+            except Exception:
+                image_bytes = None
 
-    data_url = str(ann.get("dataUrl") or "")
-    if not data_url.startswith("data:image/"):
+    if image_bytes is None:
+        data_url = str(ann.get("dataUrl") or "")
+        if not data_url.startswith("data:image/"):
+            return
+        try:
+            _, payload = data_url.split(",", 1)
+            image_bytes = base64.b64decode(payload)
+        except Exception:
+            return
+
+    rotated = rotate_signature_image_bytes(image_bytes, rotation)
+    if rotated is not None:
+        rotated_bytes, width_ratio, height_ratio = rotated
+        page.insert_image(
+            rotated_signature_rect(rect, width_ratio, height_ratio),
+            stream=rotated_bytes,
+            overlay=True,
+            keep_proportion=False,
+        )
         return
-    try:
-        _, payload = data_url.split(",", 1)
-        img = base64.b64decode(payload)
-    except Exception:
-        return
-    page.insert_image(rect, stream=img, overlay=True, keep_proportion=False)
+
+    page.insert_image(rect, stream=image_bytes, overlay=True, keep_proportion=False)
 
 
 def resolve_annotation_image_path(ann: Dict[str, Any]) -> Optional[str]:

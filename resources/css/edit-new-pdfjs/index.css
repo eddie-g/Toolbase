@@ -4492,6 +4492,12 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
 .enpv-annotation-box.is-selected.enpv-shape-box:not([data-shape-type="line"]) .enpv-shape-rotate-handle {
     display: flex;
 }
+/* NK_9: signatures and user-created text boxes rotate too. The handle is only
+ * offered while the annotation is selected, same as for shapes. */
+.enpv-annotation-box.is-selected:not(.is-locked)[data-annotation-type="signature"] .enpv-shape-rotate-handle,
+.enpv-annotation-box.is-selected:not(.is-locked)[data-user-created="1"]:not([data-annotation-type]) .enpv-shape-rotate-handle {
+    display: flex;
+}
 .enpv-shape-angle-badge {
     position: absolute;
     left: 50%;

@@ -490,6 +490,14 @@ function textBoxes(page) {
             verticalAlign: box.dataset.verticalAlign || '',
             underline: box.dataset.underline === '1',
             strikeout: box.dataset.strikeout === '1',
+            rotation: num(box.dataset.rotation) ?? 0,
+            boxTransform: box.style.transform || '',
+            isRotated: box.classList.contains('is-rotated'),
+            contentTransform: (box.querySelector('.enpv-text-content')?.style?.transform) || '',
+            rotateHandleVisible: (() => {
+                const handle = box.querySelector(':scope > .enpv-shape-rotate-handle');
+                return !!handle && window.getComputedStyle(handle).display !== 'none';
+            })(),
         };
     }), TEXT_BOX_SELECTOR);
 }
@@ -911,6 +919,47 @@ function textMetrics(page, index = 0) {
             boxWidth: box.getBoundingClientRect().width,
         };
     }, { selector: TEXT_BOX_SELECTOR, at: index });
+}
+
+/**
+ * Drag a box's rotate handle by `degrees`, clockwise about the box centre.
+ * Returns the angle the box ended up at.
+ */
+async function dragRotateHandle(page, degrees, index = 0) {
+    const geometry = await page.evaluate(({ selector, at }) => {
+        const box = document.querySelectorAll(selector)[at];
+        const handle = box?.querySelector(':scope > .enpv-shape-rotate-handle');
+        if (!box || !handle) return null;
+        const handleRect = handle.getBoundingClientRect();
+        const boxRect = box.getBoundingClientRect();
+        return {
+            hx: handleRect.left + (handleRect.width / 2),
+            hy: handleRect.top + (handleRect.height / 2),
+            cx: boxRect.left + (boxRect.width / 2),
+            cy: boxRect.top + (boxRect.height / 2),
+        };
+    }, { selector: TEXT_BOX_SELECTOR, at: index });
+    if (!geometry) throw new Error('No rotate handle on the selected text box');
+
+    const radius = Math.hypot(geometry.hx - geometry.cx, geometry.hy - geometry.cy);
+    const startAngle = Math.atan2(geometry.hy - geometry.cy, geometry.hx - geometry.cx);
+    const sweep = (degrees * Math.PI) / 180;
+
+    await page.mouse.move(geometry.hx, geometry.hy);
+    await page.mouse.down();
+    for (let step = 1; step <= 8; step++) {
+        const angle = startAngle + ((sweep * step) / 8);
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.move(
+            geometry.cx + (Math.cos(angle) * radius),
+            geometry.cy + (Math.sin(angle) * radius),
+        );
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(40);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    return (await textBoxes(page))[index]?.rotation ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1811,6 +1860,81 @@ async function testFontFamily(page, { saveRecorder, recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
+/** 33 — Rotate a text box (NK_9). */
+async function testRotateTextBox(page, { saveRecorder, recorder }) {
+    const artifacts = [];
+
+    await clickPlace(page, 0.3, 0.3);
+    await page.keyboard.type('Rotate me');
+    await page.waitForTimeout(350);
+    await commitAndDeselect(page);
+
+    let box = await singleTextBox(page);
+    recorder.equals('starts-upright', box.rotation, 0, 'A new text box starts unrotated');
+    recorder.assert('no-handle-unselected', !box.rotateHandleVisible,
+        'The rotate handle is not offered while nothing is selected');
+
+    await selectTextBoxByText(page, 'Rotate me');
+    box = await singleTextBox(page);
+    recorder.assert('handle-on-selection', box.rotateHandleVisible,
+        'Selecting the box offers a rotate handle');
+
+    const rotated = await dragRotateHandle(page, 90);
+    box = await singleTextBox(page);
+    recorder.near('rotates-to-angle', rotated, 90, 6,
+        'Dragging the handle a quarter turn rotates the box by about 90 degrees');
+    recorder.assert('marked-rotated', box.isRotated,
+        'The box is flagged as rotated');
+    recorder.assert('content-transformed', /rotate\(/.test(box.contentTransform),
+        'The text content carries a rotation transform', box.contentTransform);
+    recorder.assert('box-stays-axis-aligned',
+        !/rotate\(/.test(String(box.boxTransform || '')),
+        'The box itself is not rotated — only its content is, matching the PDF writer');
+
+    artifacts.push(await capture(page, '33-rotate-text-box', 'rotated'));
+
+    // A re-render of the layer must not straighten it back up.
+    const transformAfterRotate = box.contentTransform;
+    await commitAndDeselect(page);
+    await clickPlace(page, 0.65, 0.6);
+    await page.keyboard.type('Second');
+    await page.waitForTimeout(300);
+    await commitAndDeselect(page);
+
+    let boxes = await textBoxes(page);
+    let target = boxes.find((entry) => entry.text.includes('Rotate me'));
+    recorder.near('survives-rerender', target?.rotation ?? -1, rotated, 0.5,
+        'The angle survives the re-render caused by placing another box');
+    recorder.equals('transform-survives-rerender', target?.contentTransform, transformAfterRotate,
+        'The rotation transform is unchanged by the re-render');
+
+    // ...nor a save and reload.
+    await saveAndReload(page, saveRecorder);
+    boxes = await textBoxes(page);
+    target = boxes.find((entry) => entry.text.includes('Rotate me'));
+    recorder.assert('survives-reload-present', !!target,
+        'The rotated box is still there after a reload');
+    recorder.near('survives-reload', target?.rotation ?? -1, rotated, 0.5,
+        'The angle survives a save and reload');
+    recorder.assert('transform-after-reload', /rotate\(/.test(String(target?.contentTransform || '')),
+        'The box still renders rotated after a reload', target?.contentTransform);
+
+    artifacts.push(await capture(page, '33-rotate-text-box', 'after-reload'));
+
+    // A locked annotation offers no handle.
+    await selectTextBoxByText(page, 'Rotate me');
+    const locked = await annotationMenuAction(page, 'lock');
+    if (locked) {
+        const lockedBox = (await textBoxes(page)).find((entry) => entry.text.includes('Rotate me'));
+        recorder.assert('locked-has-no-handle', !lockedBox?.rotateHandleVisible,
+            'A locked annotation offers no rotate handle');
+    } else {
+        recorder.fail('locked-has-no-handle', 'No lock control in the annotation menu');
+    }
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
 // ---------------------------------------------------------------------------
 // Small shared helpers used by the tests above
 // ---------------------------------------------------------------------------
@@ -1961,6 +2085,14 @@ const TESTS = [
         number: '12',
         title: 'Font family: standard, Google and document-embedded fonts',
         run: testFontFamily,
+    },
+    {
+        id: '33-rotate-text-box',
+        number: '33',
+        title: 'Rotate a text box',
+        // Needs edit mode, which is premium-gated.
+        signedIn: true,
+        run: testRotateTextBox,
     },
 ];
 

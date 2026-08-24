@@ -353,6 +353,17 @@
                 "summary": "Every control is tabbable in a sensible order with a visible focus ring and an accessible name, the style toggles expose aria-pressed, and the panel never steals focus from the box while typing.",
                 "automated": false,
                 "story": "text-tool"
+            },
+            {
+                "number": "33",
+                "id": "33-rotate-text-box",
+                "gid": "1217760052035814",
+                "area": "Manipulation",
+                "title": "Rotate a text box",
+                "summary": "A selected text box offers a rotate handle. Dragging it turns the text about the box centre while the box stays axis-aligned, and the angle survives a re-render of the annotation layer, a save and a reload. A locked annotation gets no handle.",
+                "automated": true,
+                "automation_note": "Added with [NK_9]. The signature half of that story is covered by the writer regression python/test_helpers/regression_signature_rotation.py, since placing a signature is the signature suite's job rather than this one's. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it.",
+                "story": "text-tool"
             }
         ]
     }

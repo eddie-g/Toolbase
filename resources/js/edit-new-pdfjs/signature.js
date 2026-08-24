@@ -62,6 +62,11 @@ import {
     viewportRotatedContentFrame,
 } from './page-geometry.js';
 import {
+    normalizeAnnotationRotation,
+    isUprightRotation,
+    contentRotationTransform,
+} from './annotation-rotation.js';
+import {
     signatureMode,
     signatureDirty,
     signatureDrawing,
@@ -950,7 +955,17 @@ export function installSignatureFeature(deps) {
         img.style.width = pageFrame.rotation === 0 ? '100%' : `${Math.max(1, pageFrame.width)}px`;
         img.style.height = pageFrame.rotation === 0 ? '100%' : `${Math.max(1, pageFrame.height)}px`;
         img.style.transformOrigin = '0 0';
-        img.style.transform = pageFrame.transform;
+        // NK_9: the signature's own angle rides on top of any page rotation.
+        // The box stays axis-aligned; only the image spins, about its centre.
+        const signatureRotation = normalizeAnnotationRotation(annotation.rotation);
+        box.dataset.rotation = String(signatureRotation);
+        box.classList.toggle('is-rotated', !isUprightRotation(signatureRotation));
+        img.style.transform = contentRotationTransform(
+            pageFrame.transform,
+            pageFrame.rotation === 0 ? rect.width : pageFrame.width,
+            pageFrame.rotation === 0 ? rect.height : pageFrame.height,
+            signatureRotation,
+        );
         box.appendChild(img);
         const label = document.createElement('span');
         label.className = 'enpv-signature-selection-label';

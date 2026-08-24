@@ -174,14 +174,14 @@ class AutomatedTestsPageTest extends TestCase
 
         $tests = $response->json('suite.tests');
 
-        $this->assertCount(32, $tests, 'Every QA subtask should be catalogued');
+        $this->assertCount(33, $tests, 'Every QA subtask should be catalogued');
         $this->assertCount(
-            32,
+            33,
             array_unique(array_column($tests, 'id')),
             'Each subtask maps to its own runner test',
         );
         $this->assertCount(
-            32,
+            33,
             array_unique(array_column($tests, 'gid')),
             'Each test links back to a distinct Asana subtask',
         );
@@ -220,6 +220,7 @@ class AutomatedTestsPageTest extends TestCase
                 '10-commit-and-empty',
                 '11-panel-mirrors-selection',
                 '12-font-family',
+                '33-rotate-text-box',
             ],
             array_column($automated, 'id'),
         );
@@ -287,7 +288,7 @@ class AutomatedTestsPageTest extends TestCase
             ->assertOk()
             ->assertJsonPath('success', true);
 
-        $this->assertSame(12, $response->json('summary.tests_total'));
+        $this->assertSame(13, $response->json('summary.tests_total'));
 
         $failing = [];
         foreach ($response->json('results') as $result) {
