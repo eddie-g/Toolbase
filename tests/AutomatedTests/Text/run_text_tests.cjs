@@ -1644,6 +1644,8 @@ async function testPanelMirrorsSelection(page, { recorder }) {
 
     await page.click('#afb-bold');
     await page.waitForTimeout(400);
+    await page.click('#afb-italic');
+    await page.waitForTimeout(400);
     await page.selectOption('#afb-align', 'center');
     await page.waitForTimeout(400);
     await page.selectOption('#afb-opacity', '0.5');
@@ -1652,6 +1654,7 @@ async function testPanelMirrorsSelection(page, { recorder }) {
 
     panel = await panelState(page);
     recorder.equals('a-bold', panel.bold, 'true', 'Bold reads as pressed after applying it');
+    recorder.equals('a-italic', panel.italic, 'true', 'Italic reads as pressed after applying it');
     recorder.equals('a-align', panel.align, 'center', 'Alignment reads back as centre');
     recorder.equals('a-opacity', panel.opacity, '0.5', 'Opacity reads back as 50%');
     recorder.equals('a-colour', String(panel.textColor).toLowerCase(), '#ff0000',
@@ -1669,6 +1672,7 @@ async function testPanelMirrorsSelection(page, { recorder }) {
     await selectTextBoxByText(page, 'Plain');
     panel = await panelState(page);
     recorder.equals('b-bold', panel.bold, 'false', 'Bold does not carry over to the next selection');
+    recorder.equals('b-italic', panel.italic, 'false', 'Italic does not carry over to the next selection');
     recorder.equals('b-align', panel.align, 'left', 'Alignment does not carry over');
     recorder.equals('b-opacity', panel.opacity, '1', 'Opacity does not carry over');
     recorder.equals('b-colour', String(panel.textColor).toLowerCase(), '#000000',
@@ -1678,16 +1682,15 @@ async function testPanelMirrorsSelection(page, { recorder }) {
     // ...and switching back must restore the styled box's values.
     await selectTextBoxByText(page, 'Styled');
     panel = await panelState(page);
-    // KNOWN DEFECT [NK_8]: box-level bold is lost as soon as the annotation
-    // layer re-renders — placing a second text box is enough. The annotation is
-    // saved with fontWeight 700, so the loss is in the re-render, which replays
-    // the box's stored rich-text runs; those still carry the pre-bold weight and
-    // win over the box-level variable. Italic goes the same way. Colour,
-    // underline, size, alignment and opacity all survive, which is why every
-    // other check here passes.
+    // NK_8 regression. Placing the second box re-rendered the annotation layer,
+    // which used to overwrite the authored weight and style with the document
+    // font's own — so bold and italic reverted on the page. These two checks are
+    // the guard; keep them named so a recurrence is attributed to NK_8 rather
+    // than read as a panel-state problem.
     recorder.equals('a-bold-again', panel.bold, 'true',
-        'Reselecting the styled box restores its bold state (known defect: box-level '
-        + 'bold is dropped when the layer re-renders)');
+        'Bold survives the layer re-render caused by placing another box (NK_8)');
+    recorder.equals('a-italic-again', panel.italic, 'true',
+        'Italic survives the layer re-render caused by placing another box (NK_8)');
     recorder.equals('a-align-again', panel.align, 'center', 'Reselecting restores its alignment');
 
     // Close hides the panel without changing the annotation.

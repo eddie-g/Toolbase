@@ -298,11 +298,8 @@ class AutomatedTestsPageTest extends TestCase
             }
         }
 
-        // One known product defect: box-level bold does not survive a re-render
-        // of the annotation layer. Everything else must pass. When that is
-        // fixed, this expectation should drop to an empty array.
         $this->assertSame(
-            ['a-bold-again'],
+            [],
             $failing,
             'Unexpected failing checks: '.json_encode($failing),
         );

@@ -139,7 +139,7 @@
                 "summary": "Every control is read from the selected box, re-reads fully when a differently styled box is selected, hides on close and deselect, and is disabled on a locked annotation.",
                 "automated": true,
                 "story": "text-tool",
-                "automation_note": "FAILING on one check, raised as [NK_8]: box-level bold does not survive a re-render of the annotation layer \u2014 placing a second text box reverts it, on the page as well as in the panel. Italic behaves the same way; colour, underline, font size, alignment and opacity all survive. Every other control in this case passes. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+                "automation_note": "Also guards NK_8: bold and italic applied to a committed box must survive a re-render of the annotation layer. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "12",

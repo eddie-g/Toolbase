@@ -6980,8 +6980,23 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     const documentFontStyle = documentFont?.source === 'pdfjs-runtime'
         ? pdfjsRuntimeRenderFontStyle(documentFont)
         : documentFont?.style;
-    box.style.setProperty('--enpv-font-weight', String(documentFontWeight || annotation?.fontWeight || sourceStyle?.fontWeight || 'normal'));
-    box.style.setProperty('--enpv-font-style', String(documentFontStyle || annotation?.fontStyle || sourceStyle?.fontStyle || 'normal'));
+    // NK_8: an embedded or runtime document font carries its own weight and
+    // style. Those describe the face the text came from, not what the user
+    // asked for, so they must not win over an explicit choice — otherwise
+    // clicking B set --enpv-font-weight, and the next re-render of the
+    // annotation layer quietly put the document's weight back, reverting the
+    // bold on the page. Same rule as preferSourceColor below: only untouched
+    // source text defers to the document font.
+    const preferDocumentTypography = !boolish(annotation?.styleDirty)
+        && !boolish(annotation?.userForcedRichText);
+    box.style.setProperty('--enpv-font-weight', String(
+        (preferDocumentTypography ? documentFontWeight : null)
+        || annotation?.fontWeight || sourceStyle?.fontWeight || 'normal',
+    ));
+    box.style.setProperty('--enpv-font-style', String(
+        (preferDocumentTypography ? documentFontStyle : null)
+        || annotation?.fontStyle || sourceStyle?.fontStyle || 'normal',
+    ));
     const preferSourceColor = !boolish(annotation?.styleDirty)
         && !boolish(annotation?.userForcedRichText)
         && String(annotation?.pdfjsEditorMode || '') !== 'rich';
