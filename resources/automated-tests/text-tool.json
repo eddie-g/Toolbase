@@ -360,9 +360,9 @@
                 "gid": "1217760052035814",
                 "area": "Manipulation",
                 "title": "Rotate a text box",
-                "summary": "A selected text box offers a rotate handle. Dragging it turns the text about the box centre while the box stays axis-aligned, and the angle survives a re-render of the annotation layer, a save and a reload. A locked annotation gets no handle.",
+                "summary": "A selected text box offers a rotate handle. Dragging it turns the text about the box centre while the box stays axis-aligned, and the angle survives a re-render of the annotation layer, a save and a reload. A locked annotation gets no handle, and neither does text that came from the PDF \u2014 only text the user added is rotatable.",
                 "automated": true,
-                "automation_note": "Added with [NK_9]. The signature half of that story is covered by the writer regression python/test_helpers/regression_signature_rotation.py, since placing a signature is the signature suite's job rather than this one's. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it.",
+                "automation_note": "Added with [NK_9]. The exclusion of PDF source text is a product decision, confirmed, and is asserted here so it cannot drift. The signature half of that story is covered by the writer regression python/test_helpers/regression_signature_rotation.py, since placing a signature is the signature suite's job rather than this one's. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it.",
                 "story": "text-tool"
             }
         ]

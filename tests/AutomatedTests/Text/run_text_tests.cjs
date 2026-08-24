@@ -1932,6 +1932,40 @@ async function testRotateTextBox(page, { saveRecorder, recorder }) {
         recorder.fail('locked-has-no-handle', 'No lock control in the annotation menu');
     }
 
+    // Only text the user added is rotatable. Text that came from the PDF keeps
+    // the geometry it was extracted with, and offers no handle at all — a
+    // product decision, so it is pinned here rather than left to drift.
+    await commitAndDeselect(page);
+    const sourcePoint = await pointOnPage(page, 1, 0.2, 0.045).catch(() => null);
+    if (sourcePoint) {
+        await page.mouse.click(sourcePoint.x, sourcePoint.y);
+        await page.waitForTimeout(900);
+        const sourceState = await page.evaluate(() => {
+            const box = Array.from(document.querySelectorAll('.enpv-annotation-box'))
+                .find((candidate) => candidate.classList.contains('is-selected')
+                    && candidate.dataset.userCreated !== '1'
+                    && !candidate.dataset.annotationType);
+            if (!box) return { found: false };
+            const handle = box.querySelector(':scope > .enpv-shape-rotate-handle');
+            return {
+                found: true,
+                text: (box.querySelector('.enpv-text-content')?.textContent || '').trim().slice(0, 30),
+                handleVisible: !!handle && window.getComputedStyle(handle).display !== 'none',
+            };
+        });
+        if (sourceState.found) {
+            recorder.assert('source-text-has-no-handle', !sourceState.handleVisible,
+                'Text that came from the PDF offers no rotate handle',
+                JSON.stringify(sourceState));
+        } else {
+            recorder.ok('source-text-has-no-handle',
+                'No source text run was selectable at this point; nothing to rotate either way');
+        }
+    } else {
+        recorder.ok('source-text-has-no-handle',
+            'The document had no reachable source text line to check');
+    }
+
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
