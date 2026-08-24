@@ -7061,8 +7061,7 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     const textAlign = normalizeTextAlign(annotation?.textAlign);
     box.dataset.textAlign = textAlign;
     box.style.setProperty('--enpv-text-align', textAlign);
-    const verticalAlign = normalizeVerticalAlign(annotation?.verticalAlign);
-    box.dataset.verticalAlign = verticalAlign;
+    setAnnotationBoxVerticalAlign(box, annotation?.verticalAlign);
 }
 
 function captureSourceSpanRunsForBox(box, group, layerEl) {
@@ -12061,6 +12060,8 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     }
     // NK_9: last, so nothing later in the build resets the transform.
     applyAnnotationRotationToBox(box, annotation.rotation);
+    // NK_11: the text element only exists by now.
+    applyVerticalAlignPresentationToBox(box);
     return { box, rect, mask, maskRect };
 }
 
@@ -23224,6 +23225,43 @@ function setFormatBarOpacityValue(opacity) {
 function setAnnotationBoxVerticalAlign(box, value) {
     if (!box) return;
     box.dataset.verticalAlign = normalizeVerticalAlign(value);
+    applyVerticalAlignPresentationToBox(box);
+}
+
+/**
+ * Put the chosen vertical alignment on the text element itself (NK_11).
+ *
+ * It used to live only in CSS, in selectors that each required a particular
+ * combination of is-editing / is-persisted-overlay / is-rich-editor and the
+ * body's edit-mode class. A box that was being edited matched none of them, so
+ * it kept `display: block` — and `justify-content` on a block container does
+ * nothing. Choosing Middle appeared to do nothing at all, until some later
+ * re-render put the box into a matching state and the text jumped.
+ *
+ * Writing it inline, from the one place that records the value, makes what the
+ * user sees independent of which classes happen to be on the box.
+ *
+ * Only user-authored text boxes: a promoted source run keeps the source-fidelity
+ * fitting that owns its layout.
+ */
+function applyVerticalAlignPresentationToBox(box) {
+    if (!box) return;
+    if (String(box.dataset.annotationType || '')) return;
+    if (!isUserCreatedTextBox(box)) return;
+    const tc = box.querySelector(':scope > .enpv-text-content');
+    if (!tc) return;
+
+    const value = normalizeVerticalAlign(box.dataset.verticalAlign);
+    if (value === 'top') {
+        // Top is the natural flow; hand it back to the stylesheet.
+        tc.style.removeProperty('display');
+        tc.style.removeProperty('flex-direction');
+        tc.style.removeProperty('justify-content');
+        return;
+    }
+    tc.style.display = 'flex';
+    tc.style.flexDirection = 'column';
+    tc.style.justifyContent = value === 'middle' ? 'center' : 'flex-end';
 }
 
 function updateAnnotationFormatBarForBox(box) {

@@ -2431,6 +2431,7 @@ async function testAlignment(page, { saveRecorder, recorder }) {
 
     artifacts.push(await capture(page, '17-alignment', 'aligned'));
 
+
     await page.selectOption('#afb-align', 'center');
     await page.waitForTimeout(400);
     await commitAndDeselect(page);
@@ -2457,6 +2458,61 @@ async function testAlignment(page, { saveRecorder, recorder }) {
     await page.waitForTimeout(600);
     recorder.equals('h-after-wrap', (await rendered()).textAlign, 'center',
         'Wrapped text takes the chosen alignment');
+    // NK_11 regression. Vertical alignment used to live only in CSS, behind
+    // selectors that a box being edited did not match — so choosing Middle did
+    // nothing until some later re-render, and then the text jumped. Measure at
+    // the moment it is chosen, and again in the two settled states.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await dragPlace(page, 0.12, 0.15, 560, 300);
+    await page.keyboard.type('Centre me');
+    await page.waitForTimeout(500);
+
+    const lineOffset = () => page.evaluate((selector) => {
+        const box = document.querySelector(selector);
+        const element = box?.querySelector('.enpv-text-content');
+        if (!element) return null;
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const first = Array.from(range.getClientRects()).find((r) => r.height > 0);
+        const boxRect = box.getBoundingClientRect();
+        return {
+            top: first ? first.top - boxRect.top : null,
+            boxHeight: boxRect.height,
+            editing: box.classList.contains('is-editing'),
+        };
+    }, TEXT_BOX_SELECTOR);
+
+    const atTop = await lineOffset();
+    // Chosen while the box is still being edited, which is the reported flow.
+    await page.selectOption('#afb-valign', 'middle');
+    await page.waitForTimeout(600);
+    const whileEditing = await lineOffset();
+
+    recorder.assert('valign-applies-while-editing',
+        whileEditing && whileEditing.top > atTop.top + 40,
+        'Choosing Middle moves the text as soon as it is chosen, without waiting for a re-render',
+        `top=${atTop?.top?.toFixed(1)} -> ${whileEditing?.top?.toFixed(1)} of ${whileEditing?.boxHeight?.toFixed(0)}px`);
+    recorder.assert('valign-is-actually-centred',
+        whileEditing && Math.abs(whileEditing.top - (whileEditing.boxHeight / 2)) < whileEditing.boxHeight * 0.2,
+        'The text sits near the middle of the box, not merely lower down',
+        `${whileEditing?.top?.toFixed(1)} vs centre ${(whileEditing?.boxHeight / 2).toFixed(1)}`);
+
+    await commitAndDeselect(page);
+    const afterCommit = await lineOffset();
+    await selectTextBoxByText(page, 'Centre me');
+    const afterReselect = await lineOffset();
+
+    recorder.assert('valign-stable-across-states',
+        afterCommit && afterReselect
+        && Math.abs(afterCommit.top - whileEditing.top) <= 8
+        && Math.abs(afterReselect.top - whileEditing.top) <= 8,
+        'The same value looks the same while editing, after committing and after reselecting — '
+        + 'it does not jump',
+        `editing=${whileEditing?.top?.toFixed(1)} committed=${afterCommit?.top?.toFixed(1)} `
+        + `reselected=${afterReselect?.top?.toFixed(1)}`);
+
+    artifacts.push(await capture(page, '17-alignment', 'centred-while-editing'));
 
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
