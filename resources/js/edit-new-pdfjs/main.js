@@ -11376,6 +11376,85 @@ function boxRotationDegrees(box) {
     return normalizeAnnotationRotation(Number.parseFloat(box?.dataset?.rotation || '0') || 0);
 }
 
+function ensureTextSelectionFrame(box) {
+    if (!box || String(box.dataset.annotationType || '') || !annotationBoxCanRotate(box)) return null;
+    let frame = box.querySelector(':scope > .enpv-text-selection-frame');
+    if (frame) return frame;
+    frame = document.createElement('div');
+    frame.className = 'enpv-text-selection-frame';
+    frame.setAttribute('aria-hidden', 'true');
+    const firstHandle = box.querySelector(':scope > .enpv-resize-handle, :scope > .enpv-shape-rotate-handle');
+    box.insertBefore(frame, firstHandle || null);
+    box.classList.add('has-text-selection-frame');
+    return frame;
+}
+
+function updateTextSelectionChromeForBox(box, rotation) {
+    if (!box || String(box.dataset.annotationType || '') || !annotationBoxCanRotate(box)) return;
+    const frame = ensureTextSelectionFrame(box);
+    if (!frame) return;
+    const angle = normalizeAnnotationRotation(rotation);
+    frame.style.transform = isUprightRotation(angle) ? 'none' : `rotate(${angle}deg)`;
+    frame.dataset.rotation = String(Math.round(angle * 10) / 10);
+
+    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const anchors = {
+        t: { x: 0.5, y: 0 },
+        b: { x: 0.5, y: 1 },
+        l: { x: 0, y: 0.5 },
+        r: { x: 1, y: 0.5 },
+    };
+    Object.entries(anchors).forEach(([edge, anchor]) => {
+        const handle = box.querySelector(`:scope > .enpv-resize-handle[data-edge="${edge}"]`);
+        if (!handle) return;
+        const point = rotateShapeLocalPoint(anchor.x * width, anchor.y * height, width, height, angle);
+        handle.style.left = `${point.x}px`;
+        handle.style.top = `${point.y}px`;
+    });
+}
+
+function ensureSignatureSelectionFrame(box) {
+    if (!box || box.dataset.annotationType !== 'signature') return null;
+    let frame = box.querySelector(':scope > .enpv-signature-selection-frame');
+    if (frame) return frame;
+    frame = document.createElement('div');
+    frame.className = 'enpv-signature-selection-frame';
+    frame.setAttribute('aria-hidden', 'true');
+    const firstHandle = box.querySelector(':scope > .enpv-resize-handle, :scope > .enpv-shape-rotate-handle');
+    box.insertBefore(frame, firstHandle || null);
+    box.classList.add('has-signature-selection-frame');
+    return frame;
+}
+
+function updateSignatureSelectionChromeForBox(box, rotation) {
+    const frame = ensureSignatureSelectionFrame(box);
+    if (!frame) return;
+    const angle = normalizeAnnotationRotation(rotation);
+    frame.style.transform = isUprightRotation(angle) ? 'none' : `rotate(${angle}deg)`;
+    frame.dataset.rotation = String(Math.round(angle * 10) / 10);
+
+    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const anchors = {
+        nw: { x: 0, y: 0 },
+        ne: { x: 1, y: 0 },
+        sw: { x: 0, y: 1 },
+        se: { x: 1, y: 1 },
+        t: { x: 0.5, y: 0 },
+        b: { x: 0.5, y: 1 },
+        l: { x: 0, y: 0.5 },
+        r: { x: 1, y: 0.5 },
+    };
+    Object.entries(anchors).forEach(([edge, anchor]) => {
+        const handle = box.querySelector(`:scope > .enpv-resize-handle[data-edge="${edge}"]`);
+        if (!handle) return;
+        const point = rotateShapeLocalPoint(anchor.x * width, anchor.y * height, width, height, angle);
+        handle.style.left = `${point.x}px`;
+        handle.style.top = `${point.y}px`;
+    });
+}
+
 /**
  * Draw a text box or signature at its angle.
  *
@@ -11413,6 +11492,8 @@ function applyAnnotationRotationToBox(box, rotation = null) {
         element.style.transformOrigin = '0 0';
         element.style.transform = transform;
     });
+    if (type === 'signature') updateSignatureSelectionChromeForBox(box, angle);
+    else if (!type) updateTextSelectionChromeForBox(box, angle);
 }
 
 const CUTTABLE_SHAPE_TYPES = new Set(['square', 'circle', 'triangle', 'star', 'polygon']);
@@ -21684,7 +21765,10 @@ function renderAnnotationBoxLayer(pageIndex) {
                 onResizeHandlePointerDown,
                 selectAnnBox,
             });
-            if (sigBox) layer.appendChild(sigBox);
+            if (sigBox) {
+                applyAnnotationRotationToBox(sigBox, annotation.rotation);
+                layer.appendChild(sigBox);
+            }
         }
     }
     for (const annotation of regularImageAnnotations) {
@@ -25694,6 +25778,11 @@ function onResizePointerMove(ev) {
         top = parseFloat(box.style.top) || top;
         w = parseFloat(box.style.width) || w;
         h = parseFloat(box.style.height) || h;
+    }
+    if (box.dataset.annotationType !== 'shape'
+        && annotationBoxCanRotate(box)
+        && box.classList.contains('is-rotated')) {
+        applyAnnotationRotationToBox(box);
     }
     resizeState.endLeft = left;
     resizeState.endTop = top;

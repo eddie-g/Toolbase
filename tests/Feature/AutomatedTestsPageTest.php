@@ -42,24 +42,24 @@ class AutomatedTestsPageTest extends TestCase
 
         $tests = $response->json('suite.tests');
 
-        $this->assertCount(36, $tests, 'Both QA stories\' subtasks should be catalogued');
+        $this->assertCount(37, $tests, 'Both QA stories\' subtasks should be catalogued');
 
         $automated = array_values(array_filter($tests, fn (array $test) => $test['automated'] === true));
         $this->assertCount(
-            36,
+            37,
             $automated,
             'Every catalogued subtask is automated; the runner must implement all of them',
         );
 
         $this->assertCount(
-            36,
+            37,
             array_unique(array_column($tests, 'id')),
             'Each subtask maps to its own runner test',
         );
 
         // Both stories must actually contribute cases.
         $byStory = array_count_values(array_column($tests, 'story'));
-        $this->assertSame(23, $byStory['signature-tool'] ?? 0);
+        $this->assertSame(24, $byStory['signature-tool'] ?? 0);
         $this->assertSame(13, $byStory['nk-dev-5'] ?? 0);
 
         foreach ($tests as $test) {
@@ -119,7 +119,7 @@ class AutomatedTestsPageTest extends TestCase
             ->assertOk()
             ->assertJsonPath('success', true);
 
-        $this->assertSame(36, $response->json('summary.tests_total'));
+        $this->assertSame(37, $response->json('summary.tests_total'));
         $this->assertSame(
             $response->json('summary.checks_total'),
             $response->json('summary.checks_passed'),
@@ -246,6 +246,37 @@ class AutomatedTestsPageTest extends TestCase
                 "The runner must register {$test['id']}, or the admin page offers a test that cannot run",
             );
         }
+    }
+
+    public function test_every_automated_signature_case_exists_in_the_runner(): void
+    {
+        $catalogue = json_decode(
+            (string) file_get_contents(resource_path('automated-tests/signature-tool.json')),
+            true,
+        );
+        $automated = array_values(array_filter(
+            $catalogue['suite']['tests'],
+            fn (array $test) => $test['automated'] === true,
+        ));
+
+        $runner = (string) file_get_contents(base_path('tests/AutomatedTests/Signature/run_signature_tests.cjs'));
+
+        foreach ($automated as $test) {
+            $this->assertStringContainsString(
+                "id: '".$test['id']."'",
+                $runner,
+                "The runner must register {$test['id']}, or the admin page offers a test that cannot run",
+            );
+        }
+
+        // Numbers are how the admin page labels rows, so a duplicate makes two
+        // different cases indistinguishable there.
+        $numbers = array_column($catalogue['suite']['tests'], 'number');
+        $this->assertSame(
+            array_unique($numbers),
+            $numbers,
+            'Two signature cases share a number',
+        );
     }
 
     public function test_text_tool_run_rejects_ids_outside_the_catalogue(): void

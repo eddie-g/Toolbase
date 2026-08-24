@@ -448,6 +448,8 @@ function textBoxes(page) {
         const styles = window.getComputedStyle(box);
         const textEl = box.querySelector('.enpv-text-content') || box;
         const textStyles = window.getComputedStyle(textEl);
+        const selectionFrame = box.querySelector(':scope > .enpv-text-selection-frame');
+        const selectionFrameRect = selectionFrame?.getBoundingClientRect();
         const read = (name) => box.style.getPropertyValue(name).trim();
         const num = (value) => {
             const parsed = Number.parseFloat(value);
@@ -494,6 +496,11 @@ function textBoxes(page) {
             boxTransform: box.style.transform || '',
             isRotated: box.classList.contains('is-rotated'),
             contentTransform: (box.querySelector('.enpv-text-content')?.style?.transform) || '',
+            effectiveContentTransform: textStyles.transform || '',
+            selectionFrameTransform: selectionFrame?.style?.transform || '',
+            selectionFrameWidth: selectionFrameRect?.width || 0,
+            selectionFrameHeight: selectionFrameRect?.height || 0,
+            selectionFrameVisible: !!selectionFrame && window.getComputedStyle(selectionFrame).display !== 'none',
             rotateHandleVisible: (() => {
                 const handle = box.querySelector(':scope > .enpv-shape-rotate-handle');
                 return !!handle && window.getComputedStyle(handle).display !== 'none';
@@ -1864,13 +1871,15 @@ async function testFontFamily(page, { saveRecorder, recorder }) {
 async function testRotateTextBox(page, { saveRecorder, recorder }) {
     const artifacts = [];
 
-    await clickPlace(page, 0.3, 0.3);
+    await dragPlace(page, 0.2, 0.3, 360, 80);
     await page.keyboard.type('Rotate me');
     await page.waitForTimeout(350);
     await commitAndDeselect(page);
 
     let box = await singleTextBox(page);
     recorder.equals('starts-upright', box.rotation, 0, 'A new text box starts unrotated');
+    recorder.assert('starts-user-sized', box.userSized,
+        'The rotation case uses a dragged user-sized text box');
     recorder.assert('no-handle-unselected', !box.rotateHandleVisible,
         'The rotate handle is not offered while nothing is selected');
 
@@ -1887,9 +1896,18 @@ async function testRotateTextBox(page, { saveRecorder, recorder }) {
         'The box is flagged as rotated');
     recorder.assert('content-transformed', /rotate\(/.test(box.contentTransform),
         'The text content carries a rotation transform', box.contentTransform);
+    recorder.assert('content-effectively-rotated', box.effectiveContentTransform !== 'none',
+        'User-sized text renders the rotation instead of overriding it in CSS',
+        box.effectiveContentTransform);
+    recorder.assert('bounding-frame-rotates', box.selectionFrameVisible
+        && /rotate\(/.test(box.selectionFrameTransform)
+        && Math.abs(box.selectionFrameWidth - box.height) <= 3
+        && Math.abs(box.selectionFrameHeight - box.width) <= 3,
+        'The blue bounding frame rotates with the text',
+        `box=${box.width.toFixed(1)}x${box.height.toFixed(1)} frame=${box.selectionFrameWidth.toFixed(1)}x${box.selectionFrameHeight.toFixed(1)} ${box.selectionFrameTransform}`);
     recorder.assert('box-stays-axis-aligned',
         !/rotate\(/.test(String(box.boxTransform || '')),
-        'The box itself is not rotated — only its content is, matching the PDF writer');
+        'The internal geometry stays axis-aligned for drag and PDF persistence');
 
     artifacts.push(await capture(page, '33-rotate-text-box', 'rotated'));
 
@@ -1907,6 +1925,10 @@ async function testRotateTextBox(page, { saveRecorder, recorder }) {
         'The angle survives the re-render caused by placing another box');
     recorder.equals('transform-survives-rerender', target?.contentTransform, transformAfterRotate,
         'The rotation transform is unchanged by the re-render');
+    recorder.assert('effective-transform-survives-rerender', target?.effectiveContentTransform !== 'none',
+        'The effective rotation survives the re-render', target?.effectiveContentTransform);
+    recorder.assert('bounding-frame-survives-rerender', /rotate\(/.test(String(target?.selectionFrameTransform || '')),
+        'The rotated bounding frame survives the re-render', target?.selectionFrameTransform);
 
     // ...nor a save and reload.
     await saveAndReload(page, saveRecorder);
@@ -1918,6 +1940,10 @@ async function testRotateTextBox(page, { saveRecorder, recorder }) {
         'The angle survives a save and reload');
     recorder.assert('transform-after-reload', /rotate\(/.test(String(target?.contentTransform || '')),
         'The box still renders rotated after a reload', target?.contentTransform);
+    recorder.assert('effective-transform-after-reload', target?.effectiveContentTransform !== 'none',
+        'The user-sized text remains visibly rotated after a reload', target?.effectiveContentTransform);
+    recorder.assert('bounding-frame-after-reload', /rotate\(/.test(String(target?.selectionFrameTransform || '')),
+        'The bounding frame keeps the saved angle after a reload', target?.selectionFrameTransform);
 
     artifacts.push(await capture(page, '33-rotate-text-box', 'after-reload'));
 
