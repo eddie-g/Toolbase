@@ -416,6 +416,17 @@
                 "summary": "A standard account keeps 5 and is refused a sixth by the server with the allowance named; an active pdf-editor subscription keeps 20. Lapsed and wrong-product subscriptions do not raise it.",
                 "automated": true,
                 "automation_note": "Runner test nk5-13-standard-limit for the browser flow, plus 7 server tests covering the tiers, lapsed and wrong-product subscriptions, admins and the guest fallback. The upgrade wording is worth a manual look."
+            },
+            {
+                "number": "37",
+                "id": "37-rotate-bounding-frame",
+                "gid": "1217803120863165",
+                "area": "Placement",
+                "title": "Rotate a placed signature",
+                "summary": "A selected signature offers a rotate handle. Dragging it turns the image about the box centre, and the bounding frame and all eight resize handles follow the rotated image rather than staying square to the page. The angle reaches the save payload and survives a full reload.",
+                "automated": true,
+                "automation_note": "Added with [NK_9]. The export half is covered separately by python/test_helpers/regression_signature_rotation.py, which measures a probe mark's bounding box at 0, 45 and 90 degrees.",
+                "story": "signature-tool"
             }
         ]
     }

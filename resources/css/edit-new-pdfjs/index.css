@@ -4132,10 +4132,12 @@ body.enpv-body .pdfViewer .page > .annotationLayer .enpv-removed-pdf-link {
 }
 .enpv-annotation-box.is-user-sized-text .enpv-text-content {
     overflow: hidden;
+    width: 100% !important;
+}
+.enpv-annotation-box.is-user-sized-text:not(.is-rotated) .enpv-text-content {
     /* Resizing changes the container, never the glyph aspect ratio. */
     transform: none !important;
     transform-origin: initial !important;
-    width: 100% !important;
 }
 .enpv-annotation-box[data-preserve-distributed-leader-spacing="1"] .enpv-text-content {
     /* PDF dot leaders are fixed single rows. Keep their captured gaps intact
@@ -4463,6 +4465,69 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
 .enpv-annotation-box.is-selected.enpv-shape-box:not([data-shape-type="line"]) .enpv-shape-selection-frame {
     display: block;
 }
+/* NK_12: while a text box is rotated its background is painted by this layer,
+ * which carries the same transform as the text, instead of by the box — which
+ * rotation deliberately leaves square to the page. */
+.enpv-annotation-box > .enpv-annotation-bg {
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    background: var(--enpv-bg-color, transparent);
+    opacity: inherit;
+    pointer-events: none;
+    z-index: 0;
+}
+.enpv-annotation-box.has-rotated-bg,
+.enpv-annotation-box.has-rotated-bg:hover,
+.enpv-annotation-box.has-rotated-bg.is-selected,
+.enpv-annotation-box.has-rotated-bg.is-editing,
+.enpv-annotation-box.has-rotated-bg.is-selected.is-editing {
+    background: transparent !important;
+}
+.enpv-annotation-box.has-rotated-bg > .enpv-text-content {
+    position: relative;
+    z-index: 1;
+}
+.enpv-text-selection-frame,
+.enpv-signature-selection-frame {
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    border: 1px dashed rgba(96, 165, 250, 0.75);
+    pointer-events: none;
+    display: none;
+    transform-origin: center center;
+    z-index: 1;
+}
+.enpv-annotation-box.is-rotated.has-text-selection-frame {
+    border-color: transparent !important;
+    outline-color: transparent !important;
+    box-shadow: none !important;
+}
+.enpv-annotation-box.is-rotated.has-signature-selection-frame {
+    border-color: transparent !important;
+    outline-color: transparent !important;
+    box-shadow: none !important;
+}
+body.enpv-edit-on .enpv-annotation-box.is-rotated.has-text-selection-frame > .enpv-text-selection-frame,
+body:not(.enpv-edit-on) .enpv-annotation-box.is-rotated.has-text-selection-frame.is-selected > .enpv-text-selection-frame,
+body:not(.enpv-edit-on) .enpv-annotation-box.is-rotated.has-text-selection-frame.is-editing > .enpv-text-selection-frame {
+    display: block;
+}
+body.enpv-edit-on .enpv-annotation-box.is-rotated.has-signature-selection-frame > .enpv-signature-selection-frame,
+body:not(.enpv-edit-on) .enpv-annotation-box.is-rotated.has-signature-selection-frame.is-selected > .enpv-signature-selection-frame {
+    display: block;
+}
+.enpv-annotation-box.is-rotated.has-text-selection-frame.is-selected > .enpv-text-selection-frame {
+    border-style: solid;
+    border-color: rgba(59, 130, 246, 0.95);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
+}
+.enpv-annotation-box.is-rotated.has-signature-selection-frame.is-selected > .enpv-signature-selection-frame {
+    border-style: solid;
+    border-color: rgba(59, 130, 246, 0.95);
+    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.25);
+}
 .enpv-shape-rotate-handle {
     position: absolute;
     width: 22px;
@@ -4490,6 +4555,12 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
     cursor: grabbing;
 }
 .enpv-annotation-box.is-selected.enpv-shape-box:not([data-shape-type="line"]) .enpv-shape-rotate-handle {
+    display: flex;
+}
+/* NK_9: signatures and user-created text boxes rotate too. The handle is only
+ * offered while the annotation is selected, same as for shapes. */
+.enpv-annotation-box.is-selected:not(.is-locked)[data-annotation-type="signature"] .enpv-shape-rotate-handle,
+.enpv-annotation-box.is-selected:not(.is-locked)[data-user-created="1"]:not([data-annotation-type]) .enpv-shape-rotate-handle {
     display: flex;
 }
 .enpv-shape-angle-badge {

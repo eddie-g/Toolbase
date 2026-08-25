@@ -30,6 +30,11 @@ import html2canvas from 'html2canvas';
 import { generateUuidV4 } from '../edit-new/util/uuid.js';
 import { sliderValueToFontPt, fontPtToSliderValue } from '../edit-new/text/font-slider.js';
 import { composeTextDecorationLine, decorationTokensFromValue } from '../edit-new/text/decoration.js';
+import {
+    normalizeAnnotationRotation,
+    isUprightRotation,
+    contentRotationTransform,
+} from './annotation-rotation.js';
 import { computeLineBoxGeometry, constrainLineEndpointTo45, normalizeRotationDegrees } from '../edit-new/util/geometry.js';
 import {
     correctionToKeepPaintedAxisInside,
@@ -5580,6 +5585,12 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
             pdfHeight: pdfRect.h,
             locked: box.dataset.locked != null ? box.dataset.locked === '1' : Boolean(existingAnnotation.locked),
             zIndex: Number.parseInt(box.style.zIndex || box.dataset.zIndex || existingAnnotation.zIndex || '6', 10) || 6,
+            // NK_9
+            rotation: normalizeAnnotationRotation(
+                box.dataset.rotation != null
+                    ? Number.parseFloat(box.dataset.rotation)
+                    : existingAnnotation.rotation,
+            ),
         });
     }
     let displayMarkupTextOverride = null;
@@ -5873,6 +5884,13 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         backgroundColor,
         underline,
         strikeout,
+        // NK_9. Defaults to 0, so annotations saved before this keep rendering
+        // exactly as they did.
+        rotation: normalizeAnnotationRotation(
+            box.dataset.rotation != null
+                ? Number.parseFloat(box.dataset.rotation)
+                : existingAnnotation?.rotation,
+        ),
         textAlign,
         verticalAlign,
         userSizedTextBox: box.dataset.userSizedTextBox === '1' || boolish(existingAnnotation?.userSizedTextBox),
@@ -7031,6 +7049,9 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     box.style.opacity = String(opacity);
     box.style.setProperty('--enpv-opacity', String(opacity));
     const underline = boolish(annotation?.underline);
+    // NK_9: keep the box's angle in sync with the annotation, so a re-render
+    // redraws it rotated rather than snapping it upright.
+    box.dataset.rotation = String(normalizeAnnotationRotation(annotation?.rotation));
     const strikeout = boolish(annotation?.strikeout);
     const decorationLine = composeTextDecorationLine(underline, strikeout);
     box.dataset.underline = underline ? '1' : '0';
@@ -7040,8 +7061,7 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     const textAlign = normalizeTextAlign(annotation?.textAlign);
     box.dataset.textAlign = textAlign;
     box.style.setProperty('--enpv-text-align', textAlign);
-    const verticalAlign = normalizeVerticalAlign(annotation?.verticalAlign);
-    box.dataset.verticalAlign = verticalAlign;
+    setAnnotationBoxVerticalAlign(box, annotation?.verticalAlign);
 }
 
 function captureSourceSpanRunsForBox(box, group, layerEl) {
@@ -11335,6 +11355,182 @@ function shapeBoxCanRotate(box) {
         && normalizeShapeType(box.dataset.shapeType) !== 'line';
 }
 
+/**
+ * NK_9: text boxes and signatures rotate too.
+ *
+ * Only annotations the user authored — a promoted source run keeps the geometry
+ * it was extracted with, and rotating it would fight the source mask.
+ */
+function annotationBoxCanRotate(box) {
+    if (!box) return false;
+    const type = String(box.dataset.annotationType || '').toLowerCase();
+    if (type === 'shape') return shapeBoxCanRotate(box);
+    if (type === 'signature') return true;
+    if (type) return false;
+    return isUserCreatedTextBox(box);
+}
+
+/** The angle a box is currently drawn at. */
+function boxRotationDegrees(box) {
+    return normalizeAnnotationRotation(Number.parseFloat(box?.dataset?.rotation || '0') || 0);
+}
+
+function ensureTextSelectionFrame(box) {
+    if (!box || String(box.dataset.annotationType || '') || !annotationBoxCanRotate(box)) return null;
+    let frame = box.querySelector(':scope > .enpv-text-selection-frame');
+    if (frame) return frame;
+    frame = document.createElement('div');
+    frame.className = 'enpv-text-selection-frame';
+    frame.setAttribute('aria-hidden', 'true');
+    const firstHandle = box.querySelector(':scope > .enpv-resize-handle, :scope > .enpv-shape-rotate-handle');
+    box.insertBefore(frame, firstHandle || null);
+    box.classList.add('has-text-selection-frame');
+    return frame;
+}
+
+function updateTextSelectionChromeForBox(box, rotation) {
+    if (!box || String(box.dataset.annotationType || '') || !annotationBoxCanRotate(box)) return;
+    const frame = ensureTextSelectionFrame(box);
+    if (!frame) return;
+    const angle = normalizeAnnotationRotation(rotation);
+    frame.style.transform = isUprightRotation(angle) ? 'none' : `rotate(${angle}deg)`;
+    frame.dataset.rotation = String(Math.round(angle * 10) / 10);
+
+    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const anchors = {
+        t: { x: 0.5, y: 0 },
+        b: { x: 0.5, y: 1 },
+        l: { x: 0, y: 0.5 },
+        r: { x: 1, y: 0.5 },
+    };
+    Object.entries(anchors).forEach(([edge, anchor]) => {
+        const handle = box.querySelector(`:scope > .enpv-resize-handle[data-edge="${edge}"]`);
+        if (!handle) return;
+        const point = rotateShapeLocalPoint(anchor.x * width, anchor.y * height, width, height, angle);
+        handle.style.left = `${point.x}px`;
+        handle.style.top = `${point.y}px`;
+    });
+}
+
+function ensureSignatureSelectionFrame(box) {
+    if (!box || box.dataset.annotationType !== 'signature') return null;
+    let frame = box.querySelector(':scope > .enpv-signature-selection-frame');
+    if (frame) return frame;
+    frame = document.createElement('div');
+    frame.className = 'enpv-signature-selection-frame';
+    frame.setAttribute('aria-hidden', 'true');
+    const firstHandle = box.querySelector(':scope > .enpv-resize-handle, :scope > .enpv-shape-rotate-handle');
+    box.insertBefore(frame, firstHandle || null);
+    box.classList.add('has-signature-selection-frame');
+    return frame;
+}
+
+function updateSignatureSelectionChromeForBox(box, rotation) {
+    const frame = ensureSignatureSelectionFrame(box);
+    if (!frame) return;
+    const angle = normalizeAnnotationRotation(rotation);
+    frame.style.transform = isUprightRotation(angle) ? 'none' : `rotate(${angle}deg)`;
+    frame.dataset.rotation = String(Math.round(angle * 10) / 10);
+
+    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const anchors = {
+        nw: { x: 0, y: 0 },
+        ne: { x: 1, y: 0 },
+        sw: { x: 0, y: 1 },
+        se: { x: 1, y: 1 },
+        t: { x: 0.5, y: 0 },
+        b: { x: 0.5, y: 1 },
+        l: { x: 0, y: 0.5 },
+        r: { x: 1, y: 0.5 },
+    };
+    Object.entries(anchors).forEach(([edge, anchor]) => {
+        const handle = box.querySelector(`:scope > .enpv-resize-handle[data-edge="${edge}"]`);
+        if (!handle) return;
+        const point = rotateShapeLocalPoint(anchor.x * width, anchor.y * height, width, height, angle);
+        handle.style.left = `${point.x}px`;
+        handle.style.top = `${point.y}px`;
+    });
+}
+
+/**
+ * Draw a text box or signature at its angle.
+ *
+ * The box itself stays axis-aligned — see annotation-rotation.js for why — so
+ * this only transforms the content, composing with any page rotation already
+ * applied to the same element.
+ */
+function applyAnnotationRotationToBox(box, rotation = null) {
+    if (!box) return;
+    const type = String(box.dataset.annotationType || '').toLowerCase();
+    if (type === 'shape' || !annotationBoxCanRotate(box)) return;
+
+    const angle = rotation == null ? boxRotationDegrees(box) : normalizeAnnotationRotation(rotation);
+    const wasRotated = box.classList.contains('is-rotated');
+    box.classList.toggle('is-rotated', !isUprightRotation(angle));
+    // An upright annotation that was never rotated is left completely alone —
+    // writing 'none' would stomp on a transform some other feature owns.
+    if (isUprightRotation(angle) && !wasRotated) return;
+
+    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const pageFrame = viewportRotatedContentFrame(
+        { rotation: Number.parseFloat(box.dataset.pageRotation || '0') || 0 },
+        width,
+        height,
+    );
+    const frameWidth = pageFrame.rotation === 0 ? width : pageFrame.width;
+    const frameHeight = pageFrame.rotation === 0 ? height : pageFrame.height;
+    const transform = contentRotationTransform(pageFrame.transform, frameWidth, frameHeight, angle);
+
+    const targets = type === 'signature'
+        ? box.querySelectorAll(':scope > .enpv-signature-img')
+        : box.querySelectorAll(':scope > .enpv-text-content');
+    targets.forEach((element) => {
+        element.style.transformOrigin = '0 0';
+        element.style.transform = transform;
+    });
+    if (!type) applyRotatedBackgroundToBox(box, angle, transform);
+    if (type === 'signature') updateSignatureSelectionChromeForBox(box, angle);
+    else if (!type) updateTextSelectionChromeForBox(box, angle);
+}
+
+/**
+ * Turn a text box's background colour with its text (NK_12).
+ *
+ * Rotation moves the CONTENT and leaves the box axis-aligned, so that drag,
+ * resize and hit-testing keep working on unrotated geometry. The background,
+ * though, is painted on the box itself — so a rotated box kept a square fill
+ * under tilted glyphs, and the exported PDF, which rotates the fill, no longer
+ * matched what the user was shown.
+ *
+ * While the box is rotated the fill moves to a layer that carries the same
+ * transform as the content, and the box's own background is suppressed. An
+ * upright box is left entirely on the original CSS path.
+ */
+function applyRotatedBackgroundToBox(box, rotation, transform) {
+    const upright = isUprightRotation(rotation);
+    let layer = box.querySelector(':scope > .enpv-annotation-bg');
+
+    if (upright) {
+        if (layer) layer.remove();
+        box.classList.remove('has-rotated-bg');
+        return;
+    }
+
+    if (!layer) {
+        layer = document.createElement('div');
+        layer.className = 'enpv-annotation-bg';
+        layer.setAttribute('aria-hidden', 'true');
+        // First child, so the text and every handle paint over it.
+        box.insertBefore(layer, box.firstChild);
+    }
+    layer.style.transformOrigin = '0 0';
+    layer.style.transform = transform;
+    box.classList.add('has-rotated-bg');
+}
+
 const CUTTABLE_SHAPE_TYPES = new Set(['square', 'circle', 'triangle', 'star', 'polygon']);
 
 function canCutShapeBox(box) {
@@ -11590,15 +11786,15 @@ function updateShapeSelectionChromeForBox(box) {
 }
 
 function ensureShapeRotateHandle(box) {
-    if (!box || box.dataset.annotationType !== 'shape') return null;
+    if (!box || !annotationBoxCanRotate(box)) return null;
     let handle = box.querySelector(':scope > .enpv-shape-rotate-handle');
     if (handle) return handle;
     handle = document.createElement('button');
     handle.type = 'button';
     handle.className = 'enpv-shape-rotate-handle';
-    handle.dataset.action = 'rotate-shape';
-    handle.title = 'Rotate shape';
-    handle.setAttribute('aria-label', 'Rotate shape');
+    handle.dataset.action = 'rotate-annotation';
+    handle.title = 'Rotate';
+    handle.setAttribute('aria-label', 'Rotate');
     handle.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>';
     handle.addEventListener('pointerdown', onShapeRotateHandlePointerDown);
     box.appendChild(handle);
@@ -11606,8 +11802,8 @@ function ensureShapeRotateHandle(box) {
 }
 
 function updateShapeRotateHandleForBox(box) {
-    if (!box || box.dataset.annotationType !== 'shape') return;
-    const canRotate = shapeBoxCanRotate(box);
+    if (!box) return;
+    const canRotate = annotationBoxCanRotate(box) && !isAnnBoxLocked(box);
     const handle = canRotate
         ? ensureShapeRotateHandle(box)
         : box.querySelector(':scope > .enpv-shape-rotate-handle');
@@ -11898,6 +12094,10 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
         applyMovedOverlayRunMaskSegments(mask, box, maskRect, pageDiv);
         scheduleMovedOverlayRunMaskRefresh(mask, box, maskRect, pageDiv);
     }
+    // NK_9: last, so nothing later in the build resets the transform.
+    applyAnnotationRotationToBox(box, annotation.rotation);
+    // NK_11: the text element only exists by now.
+    applyVerticalAlignPresentationToBox(box);
     return { box, rect, mask, maskRect };
 }
 
@@ -21602,7 +21802,10 @@ function renderAnnotationBoxLayer(pageIndex) {
                 onResizeHandlePointerDown,
                 selectAnnBox,
             });
-            if (sigBox) layer.appendChild(sigBox);
+            if (sigBox) {
+                applyAnnotationRotationToBox(sigBox, annotation.rotation);
+                layer.appendChild(sigBox);
+            }
         }
     }
     for (const annotation of regularImageAnnotations) {
@@ -23058,6 +23261,43 @@ function setFormatBarOpacityValue(opacity) {
 function setAnnotationBoxVerticalAlign(box, value) {
     if (!box) return;
     box.dataset.verticalAlign = normalizeVerticalAlign(value);
+    applyVerticalAlignPresentationToBox(box);
+}
+
+/**
+ * Put the chosen vertical alignment on the text element itself (NK_11).
+ *
+ * It used to live only in CSS, in selectors that each required a particular
+ * combination of is-editing / is-persisted-overlay / is-rich-editor and the
+ * body's edit-mode class. A box that was being edited matched none of them, so
+ * it kept `display: block` — and `justify-content` on a block container does
+ * nothing. Choosing Middle appeared to do nothing at all, until some later
+ * re-render put the box into a matching state and the text jumped.
+ *
+ * Writing it inline, from the one place that records the value, makes what the
+ * user sees independent of which classes happen to be on the box.
+ *
+ * Only user-authored text boxes: a promoted source run keeps the source-fidelity
+ * fitting that owns its layout.
+ */
+function applyVerticalAlignPresentationToBox(box) {
+    if (!box) return;
+    if (String(box.dataset.annotationType || '')) return;
+    if (!isUserCreatedTextBox(box)) return;
+    const tc = box.querySelector(':scope > .enpv-text-content');
+    if (!tc) return;
+
+    const value = normalizeVerticalAlign(box.dataset.verticalAlign);
+    if (value === 'top') {
+        // Top is the natural flow; hand it back to the stylesheet.
+        tc.style.removeProperty('display');
+        tc.style.removeProperty('flex-direction');
+        tc.style.removeProperty('justify-content');
+        return;
+    }
+    tc.style.display = 'flex';
+    tc.style.flexDirection = 'column';
+    tc.style.justifyContent = value === 'middle' ? 'center' : 'flex-end';
 }
 
 function updateAnnotationFormatBarForBox(box) {
@@ -24697,6 +24937,7 @@ function selectAnnBox(box) {
     if (box.classList.contains('is-selected')) {
         positionAnnMenuOver(box);
         updateAnnotationFormatBarForBox(box);
+        updateShapeRotateHandleForBox(box);
         routeSidePanelForSelectedBox(box);
         return;
     }
@@ -24707,6 +24948,7 @@ function selectAnnBox(box) {
     box.classList.add('is-selected');
     positionAnnMenuOver(box);
     updateAnnotationFormatBarForBox(box);
+    updateShapeRotateHandleForBox(box);
     routeSidePanelForSelectedBox(box);
     renderLayersPanel();
 }
@@ -25611,6 +25853,11 @@ function onResizePointerMove(ev) {
         w = parseFloat(box.style.width) || w;
         h = parseFloat(box.style.height) || h;
     }
+    if (box.dataset.annotationType !== 'shape'
+        && annotationBoxCanRotate(box)
+        && box.classList.contains('is-rotated')) {
+        applyAnnotationRotationToBox(box);
+    }
     resizeState.endLeft = left;
     resizeState.endTop = top;
     resizeState.endWidth = w;
@@ -25686,7 +25933,7 @@ function onShapeRotateHandlePointerDown(ev) {
     ev.preventDefault();
     const handle = ev.currentTarget;
     const box = handle?.parentElement || null;
-    if (!shapeBoxCanRotate(box)) return;
+    if (!annotationBoxCanRotate(box)) return;
     if (isAnnBoxLocked(box)) return;
     if (!box.classList.contains('is-selected')) selectAnnBox(box);
     const center = shapeRotationCenterClient(box);
@@ -25724,6 +25971,13 @@ function onShapeRotatePointerMove(ev) {
     const nextRotation = normalizeRotationDegrees(handleAngle - 90);
     shapeRotateState.currentRotation = nextRotation;
     box.dataset.rotation = String(Math.round(nextRotation * 10) / 10);
+    updateShapeRotateHandleForBox(box);
+    if (box.dataset.annotationType !== 'shape') {
+        // Text and signatures follow the pointer through a CSS transform; only
+        // shapes need their SVG geometry rebuilt mid-gesture.
+        applyAnnotationRotationToBox(box, nextRotation);
+        return;
+    }
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     const liveAnnotation = buildAnnotationFromBox(box, existing) || existing || {};
     updateShapeSvgForBox(box, {
@@ -25746,7 +26000,7 @@ function onShapeRotatePointerUp(ev) {
     if (!box?.isConnected) return;
     positionAnnMenuOver(box);
     if (rotationDeltaDegrees(currentRotation, startRotation) <= 0.5) return;
-    pushHistorySnapshot('rotate shape');
+    pushHistorySnapshot(box.dataset.annotationType === 'shape' ? 'rotate shape' : 'rotate annotation');
     box.dataset.pendingEdit = '1';
     syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
     updateShapeRotateHandleForBox(box);

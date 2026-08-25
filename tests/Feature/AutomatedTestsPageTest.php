@@ -42,24 +42,24 @@ class AutomatedTestsPageTest extends TestCase
 
         $tests = $response->json('suite.tests');
 
-        $this->assertCount(36, $tests, 'Both QA stories\' subtasks should be catalogued');
+        $this->assertCount(37, $tests, 'Both QA stories\' subtasks should be catalogued');
 
         $automated = array_values(array_filter($tests, fn (array $test) => $test['automated'] === true));
         $this->assertCount(
-            36,
+            37,
             $automated,
             'Every catalogued subtask is automated; the runner must implement all of them',
         );
 
         $this->assertCount(
-            36,
+            37,
             array_unique(array_column($tests, 'id')),
             'Each subtask maps to its own runner test',
         );
 
         // Both stories must actually contribute cases.
         $byStory = array_count_values(array_column($tests, 'story'));
-        $this->assertSame(23, $byStory['signature-tool'] ?? 0);
+        $this->assertSame(24, $byStory['signature-tool'] ?? 0);
         $this->assertSame(13, $byStory['nk-dev-5'] ?? 0);
 
         foreach ($tests as $test) {
@@ -119,7 +119,7 @@ class AutomatedTestsPageTest extends TestCase
             ->assertOk()
             ->assertJsonPath('success', true);
 
-        $this->assertSame(36, $response->json('summary.tests_total'));
+        $this->assertSame(37, $response->json('summary.tests_total'));
         $this->assertSame(
             $response->json('summary.checks_total'),
             $response->json('summary.checks_passed'),
@@ -174,14 +174,14 @@ class AutomatedTestsPageTest extends TestCase
 
         $tests = $response->json('suite.tests');
 
-        $this->assertCount(32, $tests, 'Every QA subtask should be catalogued');
+        $this->assertCount(33, $tests, 'Every QA subtask should be catalogued');
         $this->assertCount(
-            32,
+            33,
             array_unique(array_column($tests, 'id')),
             'Each subtask maps to its own runner test',
         );
         $this->assertCount(
-            32,
+            33,
             array_unique(array_column($tests, 'gid')),
             'Each test links back to a distinct Asana subtask',
         );
@@ -220,6 +220,27 @@ class AutomatedTestsPageTest extends TestCase
                 '10-commit-and-empty',
                 '11-panel-mirrors-selection',
                 '12-font-family',
+                '13-font-size-slider',
+                '14-colours',
+                '15-opacity',
+                '16-bold-italic-underline',
+                '17-alignment',
+                '18-case-transforms',
+                '19-inline-formatting',
+                '20-hyperlink',
+                '21-select-and-menu',
+                '22-move-and-resize',
+                '23-multi-select',
+                '24-order-lock-clipboard',
+                '25-undo-redo',
+                '26-autosave-and-save',
+                '27-reload-fidelity',
+                '28-download-and-burn',
+                '29-layers-and-debug',
+                '30-source-text-editing',
+                '31-content-robustness',
+                '32-keyboard-and-aria',
+                '33-rotate-text-box',
             ],
             array_column($automated, 'id'),
         );
@@ -247,6 +268,37 @@ class AutomatedTestsPageTest extends TestCase
         }
     }
 
+    public function test_every_automated_signature_case_exists_in_the_runner(): void
+    {
+        $catalogue = json_decode(
+            (string) file_get_contents(resource_path('automated-tests/signature-tool.json')),
+            true,
+        );
+        $automated = array_values(array_filter(
+            $catalogue['suite']['tests'],
+            fn (array $test) => $test['automated'] === true,
+        ));
+
+        $runner = (string) file_get_contents(base_path('tests/AutomatedTests/Signature/run_signature_tests.cjs'));
+
+        foreach ($automated as $test) {
+            $this->assertStringContainsString(
+                "id: '".$test['id']."'",
+                $runner,
+                "The runner must register {$test['id']}, or the admin page offers a test that cannot run",
+            );
+        }
+
+        // Numbers are how the admin page labels rows, so a duplicate makes two
+        // different cases indistinguishable there.
+        $numbers = array_column($catalogue['suite']['tests'], 'number');
+        $this->assertSame(
+            array_unique($numbers),
+            $numbers,
+            'Two signature cases share a number',
+        );
+    }
+
     public function test_text_tool_run_rejects_ids_outside_the_catalogue(): void
     {
         $this->actingAs($this->admin(), 'admin')
@@ -255,14 +307,30 @@ class AutomatedTestsPageTest extends TestCase
             ->assertJsonPath('success', false);
     }
 
-    public function test_text_tool_run_rejects_a_case_that_is_not_automated_yet(): void
+    public function test_text_tool_allowlist_matches_the_catalogue(): void
     {
-        // 13 is catalogued but not implemented; asking for it must not reach
-        // the runner.
-        $this->actingAs($this->admin(), 'admin')
-            ->postJson('/automated-tests/text-tool/run', ['tests' => ['13-font-size-slider']])
-            ->assertStatus(422)
-            ->assertJsonPath('success', false);
+        // Every Text tool case is automated now, so there is no half-automated id
+        // left to reject. What still matters is that the allowlist is built from
+        // the catalogue rather than trusting the client: an unknown id is refused
+        // (covered above), and every catalogued id is accepted.
+        $catalogue = json_decode(
+            (string) file_get_contents(resource_path('automated-tests/text-tool.json')),
+            true,
+        );
+        $ids = array_column($catalogue['suite']['tests'], 'id');
+
+        $this->assertNotEmpty($ids);
+        $this->assertSame(
+            $ids,
+            array_column(
+                array_values(array_filter(
+                    $catalogue['suite']['tests'],
+                    fn (array $test) => $test['automated'] === true,
+                )),
+                'id',
+            ),
+            'Every catalogued case should be automated',
+        );
     }
 
     public function test_text_tool_artifact_route_rejects_path_traversal(): void
@@ -287,7 +355,7 @@ class AutomatedTestsPageTest extends TestCase
             ->assertOk()
             ->assertJsonPath('success', true);
 
-        $this->assertSame(12, $response->json('summary.tests_total'));
+        $this->assertSame(33, $response->json('summary.tests_total'));
 
         $failing = [];
         foreach ($response->json('results') as $result) {
