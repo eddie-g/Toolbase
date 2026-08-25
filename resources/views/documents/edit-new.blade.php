@@ -43,7 +43,7 @@
 @include('documents.edit-new._pages')
 
 @include('documents.edit-new._shape-panel')
-@include('documents.edit-new._draw-panel')
+@include('documents.edit-new._draw-panel', ['drawSmoothingSlider' => true])
 @include('documents.edit-new._markup-modal')
 @include('documents.edit-new._signature-modal')
 @include('documents.edit-new._image-modal')
