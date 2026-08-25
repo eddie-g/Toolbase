@@ -111,8 +111,9 @@
                 "area": "Geometry",
                 "title": "Shapes are clamped inside the page",
                 "summary": "Drawing at each edge and corner, and dragging well past the page boundary, must leave the shape inside the page with no negative coordinates and no overhang, at a usable size. Measures the RENDERED shape, not just stored geometry: the text tool clamp used a height the box did not render at, so the annotation looked clamped while the rendering spilled off the page.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "Covers clamping at the right, bottom, left and top edges. Measures the PAINTED SVG geometry, not the stored annotation, and asserts it did so — the equivalent text-tool clamp bug looked correct in the stored values while the rendering spilled off the page. Zooms out first: at default zoom the page is wider than the viewport, so a drag past the PAGE edge would also leave the VIEWPORT and fail on harness geometry."
             },
             {
                 "number": "10",
@@ -121,8 +122,9 @@
                 "area": "Geometry",
                 "title": "Drawing stays accurate across zoom levels",
                 "summary": "At fit-width, 50%, 100%, 200% and an odd value the shape appears under the pointer, and the same dragged rectangle yields the same PDF coordinates whatever zoom it was drawn at. Changing zoom with a shape on the page keeps it anchored, with handles and hover menu following it.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "Covers drawing at three zoom levels and staying anchored when zoom changes. The invariant is the same PAGE-RELATIVE rectangle, not the same pixel drag: at higher zoom a fixed pixel drag legitimately covers fewer PDF points, so the drag is scaled by the zoom factor before the PDF width is compared. An earlier version asserted the wrong thing and would have driven a \"fix\" that broke correct behaviour."
             },
             {
                 "number": "11",
@@ -131,8 +133,9 @@
                 "area": "Geometry",
                 "title": "Drawing on rotated pages",
                 "summary": "Establishes what the Shapes tool does on a rotated page. For the Text tool the answer was that rotated pages are not editable at all: the editor renders them flattened, says so in a dialog, and places nothing. Two tools behaving differently on the same rotated page is the finding here.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "ANSWERED: the Shapes tool AGREES with the Text tool. A rotated page blocks editing, the editor explains why in a dialog, dragging draws nothing, and rotating back restores both the tool and the shape drawn beforehand. No divergence between the two tools."
             },
             {
                 "number": "12",
@@ -221,8 +224,9 @@
                 "area": "Manipulation",
                 "title": "Select, deselect and the hover menu",
                 "summary": "Selecting a shape shows the outline, resize handles and hover menu, anchored over the shape and still correct after scrolling and zooming. Every deselect path works. Covers selection by outline as well as filled interior, and what happens with a fully transparent fill.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "Covers selection, the hover menu appearing and staying anchored while scrolling, resize handles appearing on selection alone (no edit mode needed, unlike text boxes), selection of a shape with no fill, and both deselect paths."
             },
             {
                 "number": "21",
@@ -231,8 +235,9 @@
                 "area": "Manipulation",
                 "title": "Move and resize",
                 "summary": "Dragging by body and grip follows the pointer 1:1 at every zoom, stays inside the page, and survives a reload. Resizing from each handle changes geometry without scaling the stroke width, and a resize below the minimum is clamped rather than inverted. Each gesture is one undo step.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "Covers 1:1 dragging on both axes, one drag being one undo step, resizing from the right edge without scaling the stroke width, and position and size surviving a save and reload."
             },
             {
                 "number": "22",
@@ -241,8 +246,9 @@
                 "area": "Manipulation",
                 "title": "Rotate",
                 "summary": "The shape turns about its centre, the angle persists through save and reload and reaches the downloaded PDF. A locked shape gets no handle and a line is not rotatable. Fill and stroke must both turn with the shape: a rotated outline over an unrotated fill was exactly the NK_12 text-tool bug, so this measures the painted area rather than reading a style.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "FINDING — a locked shape KEEPS its rotate handle. index.css:5476 hides it for .is-locked at specificity (0,3,0), but the show rule at index.css:4557 is (0,5,0) and carries no :not(.is-locked) guard; the signature and text rules at 4562-4563 do have it. Check left failing deliberately. Otherwise covers rotation about the centre, the angle persisting through save and reload, and the painted geometry genuinely turning. Note the NK_12 split-transform bug cannot occur here: each shape is one svg element carrying both fill and stroke."
             },
             {
                 "number": "23",
@@ -251,8 +257,9 @@
                 "area": "Manipulation",
                 "title": "Cut a shape",
                 "summary": "Cut is offered on square, circle, triangle, star and polygon and not on line. Arming it shows some state, Escape cancels cleanly, the result is a sensible shape rather than a broken one, and the cut survives save, reload and download.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "Covers Cut being offered for a square and not for a line (matching CUTTABLE_SHAPE_TYPES), arming showing a visible state, and Escape cancelling cleanly and leaving the shape intact."
             },
             {
                 "number": "24",
@@ -261,8 +268,9 @@
                 "area": "Manipulation",
                 "title": "Lock, duplicate, delete and z-order",
                 "summary": "A locked shape cannot be moved, resized, rotated or restyled and its panel controls are disabled; unlock restores everything. Duplicate makes an offset copy with the same styling and a new annotation id, and the copy must behave exactly like the original -- a duplicated text box did not, which was a finding on the Text tool story. Bring-to-front and send-to-back survive save, reload and download.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "Covers z-order, lock, duplicate, delete and the reload round trip. Z-order is tracked by annotation id, not DOM position: the layer re-sorts its boxes by z-index, so comparing by index reads the wrong pair after a raise. Records that the shape menu offers NO Duplicate action (text and signature boxes do), so the clipboard is the only route; the copy is checked to be rotatable like its original."
             },
             {
                 "number": "25",
@@ -271,8 +279,9 @@
                 "area": "Manipulation",
                 "title": "Multi-select and group operations",
                 "summary": "A marquee drag selects several shapes and shift-click extends a selection. Shift-click was added to the shared annotation pointer-down path on the Text tool story, so both tools should behave the same here rather than differing by accident. A group drag moves everything by one offset, Delete removes the whole selection in one undo step, and Escape clears it.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "Covers shift-click extending a selection, a group drag moving everything by one offset, Escape clearing it, and a marquee followed by a group delete and a single undo. Shift-click works for shapes, confirming the shared annotation pointer-down path added on the Text tool story behaves the same for both tools."
             },
             {
                 "number": "26",
@@ -281,8 +290,9 @@
                 "area": "Persistence",
                 "title": "Undo and redo across every shape operation",
                 "summary": "Undo and redo by button and by every shortcut for draw, restyle, move, resize, rotate, cut, lock, duplicate, delete and paste. Each is exactly one step with no half-applied states, and the buttons disable correctly at both ends of the stack.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "FINDING — a restyle cannot be undone at all; three undos do not restore the previous colour. The panel binds both events on every input: input applies the change with pushHistory:false, then change snapshots the ALREADY-CHANGED state, so undo has nothing earlier to return to. A real colour picker fires the same input-then-change pair, so this is not a harness artefact. Check left failing deliberately. Draw, move and delete are each correctly one undo step."
             },
             {
                 "number": "27",
@@ -291,8 +301,9 @@
                 "area": "Persistence",
                 "title": "Autosave and explicit Save",
                 "summary": "Drawing, restyling, moving, resizing, rotating and deleting each mark the document dirty and schedule an autosave with the status line reporting it. An explicit Save does the same. No save is sent when nothing changed, and rapid edits coalesce rather than racing.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "Covers drawing scheduling an autosave, an explicit Save landing and carrying the shape, no save being sent while nothing changes, and four rapid restyles coalescing rather than producing a save each."
             },
             {
                 "number": "28",
@@ -301,8 +312,9 @@
                 "area": "Persistence",
                 "title": "Reload fidelity",
                 "summary": "One of every shape with different strokes, fills, opacities and angles across more than one page comes back after a hard reload with the same geometry, styling, angle, z-order and annotation ids, and the panel reads its values back when each is selected.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "Covers three shapes with different types, strokes, fills, opacities and one rotation, surviving a hard reload with their geometry, styling, angle and annotation ids intact, and the panel reading the values back when a reloaded shape is selected."
             },
             {
                 "number": "29",
@@ -311,9 +323,9 @@
                 "area": "Export",
                 "title": "Downloaded PDF fidelity, per shape type",
                 "summary": "Every shape type appears in the downloaded PDF at the same place and size with the right stroke, fill, opacities and angle. Checked per type because draw_shape has a distinct branch per shape and one can regress while the others are fine. Includes a shape with no stroke, one with no fill, and one with both partly transparent.",
-                "automated": false,
+                "automated": true,
                 "story": "shapes-tool",
-                "automation_note": "COVERAGE GAP, recorded deliberately. The legacy suite at tests/OverlayEditor/Shapes/ was deleted as dead code under \"[Cleanup] - Remove retired admin tools\" subtask 7. It was the only thing asserting PDF DRAWING OPERATORS per shape type -- that a rectangle emits 'l' path ops, a circle emits 'c' beziers, that a rotation writes the expected cm matrix, and that colour, border width and opacity land in the output. It also covered arrow, checkmark and polygon. Nothing asserts any of that now. This case was originally scoped assuming that suite existed to lean on, so if operator-level fidelity matters it has to be built here rather than assumed to be covered elsewhere."
+                "automation_note": "Covers one shape of every offered type reaching both the page and the saved payload, plus a no-stroke shape, and the download endpoint returning a real PDF. FINDING recorded here: picking a shape while one is SELECTED converts that shape rather than only setting the next default, so several different shapes cannot be drawn in a row without pressing Escape between them. NOT COVERED, as a recorded SKIP: per-shape PDF drawing operators. The legacy suite that asserted them was deleted as dead code under the admin cleanup, so verifying placement, size, colour and angle in an external viewer is a MANUAL check."
             },
             {
                 "number": "30",
@@ -322,8 +334,9 @@
                 "area": "Layers",
                 "title": "Layers panel and annotation identity",
                 "summary": "Shapes are listed and recognisably named, reordering a row changes z-order on the page, and a row survives a reload still pointing at the same annotation. The annotation ID field and debug mask are admin-only since NK_7: absent for a non-admin, working for an admin.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "Covers the layers panel listing and naming both shapes, rows still pointing at real annotations after a reload, annotation ids surviving, and both halves of the NK_7 admin gate — controls absent for a non-admin and present for an admin via a real Filament login. Skipped rather than failed when no QA admin is configured."
             },
             {
                 "number": "31",
@@ -332,8 +345,9 @@
                 "area": "Coverage",
                 "title": "Shapes the writer supports but the picker does not offer",
                 "summary": "The PDF writer draws arrow, checkmark and polygon and the picker offers none of them. Establishes whether they are reachable another way and what happens when one arrives in the editor: does it render, can it be selected, restyled and saved without corruption. The outcome is a DECISION, not a pass or fail -- either they should be offered, or the writer carries code for shapes that can no longer occur.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "DECISION NEEDED, not a pass or fail. The picker offers exactly seven shapes and none of arrow, checkmark or polygon, while draw_shape still handles all three. Whether they are reachable another way needs checking against real data. Note polygon is also listed in CUTTABLE_SHAPE_TYPES, so the cut feature carries a branch for a shape the picker cannot produce either."
             },
             {
                 "number": "32",
@@ -342,8 +356,9 @@
                 "area": "Accessibility",
                 "title": "Keyboard access and ARIA on the Shape options panel",
                 "summary": "Every control is reachable by Tab in a sensible order with a visible focus ring and an accessible name. The shape buttons expose which is selected and the More shapes toggle reports aria-expanded. Sliders are keyboard-operable. One screen-reader pass confirms the selected shape and its options are announced.",
-                "automated": false,
-                "story": "shapes-tool"
+                "automated": true,
+                "story": "shapes-tool",
+                "automation_note": "TWO ACCESSIBILITY FINDINGS, both left failing deliberately. (1) The two <input type=\"color\"> swatches have no accessible name — no aria-label, title or associated text — so a screen reader announces them only as \"color\". (2) The shape buttons mark the selected shape with an is-active CSS class only: no aria-pressed, no aria-selected, no radio role, so which shape is chosen is invisible to assistive technology. The story asks for exactly this. Passing: aria-expanded tracks the More shapes toggle both ways, sliders respond to arrow keys, focus is visible, and no visible control is removed from the tab order. A screen-reader pass is a recorded SKIP — automation cannot stand in for it."
             }
         ]
     }

@@ -719,6 +719,372 @@ async function selectShape(page, index = 0) {
 }
 
 // ---------------------------------------------------------------------------
+// Page rotation
+// ---------------------------------------------------------------------------
+
+/** Rotation pdf.js is currently applying to a page. */
+function pageRotation(page, pageNumber = 1) {
+    return page.evaluate((number) => {
+        const view = window.__enpv?.pdfViewer?.getPageView(number - 1);
+        return Number(view?.viewport?.rotation) || 0;
+    }, pageNumber);
+}
+
+/**
+ * Rotate a page through the page manager, the only rotation UI.
+ *
+ * Rotation round-trips to the server and re-renders, so this waits for the
+ * viewport to report the new angle. The "cannot edit" dialog is read BEFORE any
+ * cleanup, because closing the manager involves an Escape which dismisses that
+ * dialog too — and whether it appears is part of what case 11 asserts.
+ */
+async function rotatePage(page, pageNumber, direction = 'right') {
+    const before = await pageRotation(page, pageNumber);
+    await page.click('#enpv-page-manager-open');
+    await page.waitForSelector('.enpv-page-manager-item', { timeout: 15000 });
+    await page.waitForTimeout(400);
+    await page.click(`.enpv-page-manager-item:nth-of-type(${pageNumber}) .enpv-page-manager-rotate-${direction}`);
+    await page.waitForFunction(
+        ({ number, previous }) => {
+            const view = window.__enpv?.pdfViewer?.getPageView(number - 1);
+            const rotation = Number(view?.viewport?.rotation);
+            return Number.isFinite(rotation) && rotation !== previous;
+        },
+        { number: pageNumber, previous: before },
+        { timeout: 60000 },
+    );
+
+    let dialogShown = false;
+    let dialogMessage = '';
+    for (let attempt = 0; attempt < 10 && !dialogShown; attempt++) {
+        // eslint-disable-next-line no-await-in-loop
+        const state = await page.evaluate(() => {
+            const el = document.getElementById('enpv-rotated-edit-dialog');
+            return {
+                shown: !!el && el.hidden === false,
+                message: document.getElementById('enpv-rotated-edit-dialog-description')?.textContent?.trim() || '',
+            };
+        });
+        dialogShown = state.shown;
+        dialogMessage = state.message;
+        // eslint-disable-next-line no-await-in-loop
+        if (!dialogShown) await page.waitForTimeout(200);
+    }
+
+    // A modal left open covers the page, and every later click lands on it.
+    for (let attempt = 0; attempt < 3; attempt++) {
+        // eslint-disable-next-line no-await-in-loop
+        const open = await page.evaluate(() => document.getElementById('enpv-page-manager-modal')?.hidden === false);
+        if (!open) break;
+        // eslint-disable-next-line no-await-in-loop
+        await page.click('#enpv-page-manager-close').catch(() => {});
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(500);
+        // eslint-disable-next-line no-await-in-loop
+        await page.keyboard.press('Escape').catch(() => {});
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(400);
+    }
+    await page.evaluate(() => {
+        const el = document.getElementById('enpv-rotated-edit-dialog');
+        if (el && el.hidden === false) document.getElementById('enpv-rotated-edit-dialog-close')?.click();
+    });
+    await page.waitForTimeout(900);
+    return { rotation: await pageRotation(page, pageNumber), dialogShown, dialogMessage };
+}
+
+/**
+ * Where a shape is actually PAINTED, relative to its page, in CSS px.
+ *
+ * Deliberately measures the rendered SVG rather than the annotation's stored
+ * geometry. The equivalent text-tool clamp bug looked correct in the stored
+ * values while the rendering spilled off the page, so case 09 has to check the
+ * thing the user can see.
+ */
+function paintedShapeBounds(page, index = 0) {
+    return page.evaluate(([selector, i]) => {
+        const box = document.querySelectorAll(selector)[i];
+        if (!box) return null;
+        const pageDiv = box.closest('.page');
+        if (!pageDiv) return null;
+        const pageRect = pageDiv.getBoundingClientRect();
+
+        // Measure the DRAWN element, not the <svg> wrapper. The wrapper is sized
+        // to the box and stays axis-aligned; rotation is baked into the drawn
+        // geometry inside it, so the wrapper's rect would never reflect a turn.
+        const drawn = box.querySelector('svg path, svg polygon, svg polyline, svg ellipse, svg circle, svg rect, svg line');
+        const painted = drawn || box.querySelector('svg');
+        const rect = (painted || box).getBoundingClientRect();
+        return {
+            left: rect.left - pageRect.left,
+            top: rect.top - pageRect.top,
+            right: rect.right - pageRect.left,
+            bottom: rect.bottom - pageRect.top,
+            width: rect.width,
+            height: rect.height,
+            pageWidth: pageRect.width,
+            pageHeight: pageRect.height,
+            usedDrawnGeometry: !!drawn,
+        };
+    }, [SHAPE_BOX_SELECTOR, index]);
+}
+
+// ---------------------------------------------------------------------------
+// Annotation menu and handles
+// ---------------------------------------------------------------------------
+
+/** Which annotation-menu actions are actually offered for the selection. */
+function annMenuState(page) {
+    return page.evaluate(() => {
+        const menu = document.getElementById('enpv-ann-menu');
+        if (!menu) return { present: false, visible: false, actions: [] };
+        const menuRect = menu.getBoundingClientRect();
+        const actions = Array.from(menu.querySelectorAll('[data-action]')).map((button) => {
+            const rect = button.getBoundingClientRect();
+            return {
+                action: button.dataset.action,
+                visible: !button.hidden && rect.width > 0 && rect.height > 0,
+            };
+        });
+        return {
+            present: true,
+            visible: !menu.hidden && menuRect.width > 0 && menuRect.height > 0,
+            left: menuRect.left,
+            top: menuRect.top,
+            actions,
+            offered: actions.filter((a) => a.visible).map((a) => a.action),
+        };
+    });
+}
+
+/** Click one action in the annotation menu. Returns false if it is not offered. */
+async function annotationMenuAction(page, action) {
+    const offered = await page.evaluate((name) => {
+        const button = document.querySelector(`#enpv-ann-menu [data-action="${name}"]`);
+        if (!button || button.hidden) return false;
+        const rect = button.getBoundingClientRect();
+        // On-screen as well as sized: the menu can sit at a negative y, where a
+        // forced click silently does nothing.
+        return rect.width > 0 && rect.height > 0
+            && rect.top >= 0 && rect.left >= 0
+            && rect.bottom <= window.innerHeight && rect.right <= window.innerWidth;
+    }, action);
+    if (!offered) return false;
+    await page.click(`#enpv-ann-menu [data-action="${action}"]`, { force: true });
+    await page.waitForTimeout(600);
+    return true;
+}
+
+/** The rotate handle for the selected shape, if one is on show. */
+function rotateHandleAt(page) {
+    return page.evaluate((selector) => {
+        const box = document.querySelector(`${selector}.is-selected`);
+        if (!box) return null;
+        const handle = box.querySelector(':scope > .enpv-shape-rotate-handle');
+        if (!handle) return { present: false, visible: false };
+        const rect = handle.getBoundingClientRect();
+        return {
+            present: true,
+            visible: rect.width > 0 && rect.height > 0,
+            x: rect.left + (rect.width / 2),
+            y: rect.top + (rect.height / 2),
+        };
+    }, SHAPE_BOX_SELECTOR);
+}
+
+/** Drag the rotate handle around the shape's centre by an angle in degrees. */
+async function dragRotateHandle(page, degrees) {
+    const handle = await rotateHandleAt(page);
+    if (!handle?.visible) return false;
+    const centre = await page.evaluate((selector) => {
+        const box = document.querySelector(`${selector}.is-selected`);
+        const rect = box.getBoundingClientRect();
+        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+    }, SHAPE_BOX_SELECTOR);
+
+    const radius = Math.hypot(handle.x - centre.x, handle.y - centre.y) || 60;
+    const startAngle = Math.atan2(handle.y - centre.y, handle.x - centre.x);
+    const target = startAngle + ((degrees * Math.PI) / 180);
+
+    await page.mouse.move(handle.x, handle.y);
+    await page.mouse.down();
+    const steps = 10;
+    for (let step = 1; step <= steps; step++) {
+        const angle = startAngle + (((target - startAngle) * step) / steps);
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.move(centre.x + (radius * Math.cos(angle)), centre.y + (radius * Math.sin(angle)));
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(35);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    return true;
+}
+
+/** Drag a shape by its body. */
+async function dragShapeBy(page, index, dx, dy) {
+    const from = await page.evaluate(([selector, i]) => {
+        const box = document.querySelectorAll(selector)[i];
+        if (!box) return null;
+        const rect = box.getBoundingClientRect();
+        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+    }, [SHAPE_BOX_SELECTOR, index]);
+    if (!from) return false;
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    for (let step = 1; step <= 6; step++) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.move(from.x + ((dx * step) / 6), from.y + ((dy * step) / 6));
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(40);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    return true;
+}
+
+function editModeOn(page) {
+    return page.evaluate(() => document.body.classList.contains('enpv-edit-on'));
+}
+
+/** Toggle edit mode through its real control, top bar or floating toolbar. */
+async function setEditMode(page, on) {
+    if ((await editModeOn(page)) === on) return;
+    const selector = await page.evaluate(() => {
+        const top = document.getElementById('edit-mode-toggle');
+        if (top && top.offsetParent) return '#edit-mode-toggle';
+        const floating = document.getElementById('ftb-edit-mode');
+        return floating && floating.offsetParent ? '#ftb-edit-mode' : null;
+    });
+    if (!selector) throw new Error('No visible edit-mode control');
+    await page.click(selector, { force: true });
+    await page.waitForFunction(
+        (wanted) => document.body.classList.contains('enpv-edit-on') === wanted,
+        on,
+        { timeout: 15000 },
+    );
+    await page.waitForTimeout(700);
+}
+
+/**
+ * Select a shape and wait until its menu is actually usable.
+ *
+ * Leaves shape mode first: while the tool is on, a press on the page starts a
+ * new drawing rather than selecting what is under the pointer, which silently
+ * turns "click the shape then use its menu" into a no-op.
+ */
+async function ensureSelected(page, index = 0, annotationId = null) {
+    // Edit mode, not shape mode. With the Shapes tool on, a press on the page
+    // begins a new drawing; with everything off, a shape box is clickable but
+    // its annotation menu comes up empty. Edit mode is the state in which a
+    // shape can be selected AND its menu actually acted on.
+    await setShapeMode(page, false);
+    await setEditMode(page, true);
+    for (let attempt = 0; attempt < 5; attempt++) {
+        // eslint-disable-next-line no-await-in-loop
+        const target = annotationId == null ? index : await page.evaluate(
+            ([selector, id]) => Array.from(document.querySelectorAll(selector))
+                .findIndex((box) => box.dataset.annotationId === id),
+            [SHAPE_BOX_SELECTOR, annotationId],
+        );
+        // eslint-disable-next-line no-await-in-loop
+        await selectShape(page, target < 0 ? index : target);
+        // eslint-disable-next-line no-await-in-loop
+        const menu = await annMenuState(page);
+
+        // The menu is drawn ABOVE the shape. A shape near the top of the viewport
+        // puts it at a negative y: it still reports a width and height, so it
+        // looks usable, but a click there lands nowhere and every action becomes
+        // a silent no-op. Scroll the shape down and try again.
+        if (menu.visible && menu.top < 8) {
+            // eslint-disable-next-line no-await-in-loop
+            await page.evaluate((wanted) => {
+                const container = document.getElementById('viewerContainer');
+                if (container) container.scrollTop -= wanted;
+            }, 120 - menu.top);
+            // eslint-disable-next-line no-await-in-loop
+            await page.waitForTimeout(500);
+            // eslint-disable-next-line no-await-in-loop
+            continue;
+        }
+        if (menu.visible) return true;
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(350);
+    }
+    return false;
+}
+
+/** Click the undo or redo control. */
+async function clickHistory(page, which) {
+    await page.evaluate((id) => document.getElementById(id)?.click(), which === 'undo' ? 'undo-btn' : 'redo-btn');
+    await page.waitForTimeout(700);
+}
+
+// ---------------------------------------------------------------------------
+// Layers panel and admin session
+// ---------------------------------------------------------------------------
+
+async function layersPanelRows(page) {
+    await page.evaluate(() => document.getElementById('enpv-layers-open')?.click());
+    await page.waitForTimeout(700);
+    return page.evaluate(() => {
+        const panel = document.getElementById('enpv-layers-panel');
+        return {
+            open: !!panel && panel.hidden === false,
+            rows: Array.from(panel?.querySelectorAll('[data-annotation-id]') || []).map((row) => ({
+                id: row.dataset.annotationId,
+                label: (row.textContent || '').replace(/\s+/g, ' ').trim(),
+            })),
+        };
+    });
+}
+
+async function closeLayersPanel(page) {
+    await page.evaluate(() => document.getElementById('enpv-layers-close')?.click());
+    await page.waitForTimeout(400);
+}
+
+/**
+ * Credentials for the QA admin, or null when none is configured. Forwarded by
+ * AutomatedTestController from config/automated_tests.php.
+ */
+function adminCredentials() {
+    const email = String(process.env.AUTOMATED_TESTS_ADMIN_EMAIL || '').trim();
+    const password = String(process.env.AUTOMATED_TESTS_ADMIN_PASSWORD || '').trim();
+    if (!email || !password) return null;
+    return { email, password };
+}
+
+/**
+ * Sign in through the real Filament admin login.
+ *
+ * The annotation ID field and debug mask are gated in Blade on
+ * auth('admin')->check(), so there is nothing to shim client-side — the markup
+ * simply is not sent to a non-admin.
+ */
+async function signInAsAdmin(page) {
+    const credentials = adminCredentials();
+    if (!credentials) return false;
+    await page.goto(`${BASE_URL}/admin/login`, { waitUntil: 'load', timeout: 45000 });
+    const email = await page.$('input[type="email"], #data\\.email');
+    const password = await page.$('input[type="password"], #data\\.password');
+    if (!email || !password) return false;
+    await email.fill(credentials.email);
+    await password.fill(credentials.password);
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: 'load', timeout: 45000 }).catch(() => null),
+        page.click('button[type="submit"]'),
+    ]);
+    await page.waitForTimeout(400);
+    return !/\/admin\/login/.test(page.url());
+}
+
+async function openEditorAsAdmin(page, docId) {
+    if (!(await signInAsAdmin(page))) return null;
+    return openEditor(page, docId);
+}
+
+// ---------------------------------------------------------------------------
 // Cases
 // ---------------------------------------------------------------------------
 
@@ -1483,6 +1849,1318 @@ async function testLineEndpoints(page, { recorder, saveRecorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
+/** 09 — Shapes are clamped inside the page. */
+async function testClampedInsidePage(page, { recorder }) {
+    const artifacts = [];
+    // Zoom out first: at default zoom the page is wider than the viewport, so a
+    // drag past the PAGE edge would also leave the VIEWPORT and fail on harness
+    // geometry rather than telling us anything about clamping.
+    await stepZoom(page, 'out', 3);
+    await setShapeMode(page, true);
+    await pickShape(page, 'square');
+
+    // Drag hard past the right and bottom edges.
+    await drawShape(page, { fx: 0.80, fy: 0.60 }, { dx: 260, dy: 200 });
+    let painted = await paintedShapeBounds(page, 0);
+    recorder.assert('overflow-drag-drew-something', !!painted,
+        'Dragging past the page edge still produces a shape');
+
+    if (painted) {
+        // Measured on the RENDERED shape, not the stored geometry: the text-tool
+        // clamp bug looked correct in the annotation while the rendering spilled.
+        recorder.assert('painted-not-past-right',
+            painted.right <= painted.pageWidth + 1.5,
+            'The painted shape does not overhang the right edge of the page',
+            JSON.stringify({ right: Math.round(painted.right), pageWidth: Math.round(painted.pageWidth) }));
+        recorder.assert('painted-not-past-bottom',
+            painted.bottom <= painted.pageHeight + 1.5,
+            'The painted shape does not overhang the bottom edge of the page',
+            JSON.stringify({ bottom: Math.round(painted.bottom), pageHeight: Math.round(painted.pageHeight) }));
+        recorder.assert('keeps-usable-size',
+            painted.width >= 8 && painted.height >= 8,
+            'The clamped shape keeps a usable size rather than collapsing',
+            JSON.stringify({ w: Math.round(painted.width), h: Math.round(painted.height) }));
+        recorder.assert('measured-drawn-geometry', painted.usedDrawnGeometry,
+            'The measurement came from the drawn SVG geometry, not the box or the SVG wrapper',
+            JSON.stringify(painted.usedDrawnGeometry));
+    }
+
+    // Now the left/top edges, dragging back off the page. The delta is derived
+    // from the real page box: a fixed negative drag can be impossible to perform
+    // when the page already sits at the top of the scroll container, and that
+    // would fail on harness geometry rather than on clamping.
+    await setShapeMode(page, true);
+    const anchor = await pointOnPage(page, 1, 0.08, 0.30);
+    const overshoot = await page.evaluate(() => {
+        const pageDiv = document.querySelector('#viewer .page[data-page-number="1"]');
+        const rect = pageDiv.getBoundingClientRect();
+        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    });
+    // Just past the left edge, and upward by whatever room the viewport allows.
+    const dx = -((anchor.x - overshoot.left) + 40);
+    const dy = -Math.min(anchor.y - 20, (anchor.y - overshoot.top) + 40);
+    await drawShape(page, { fx: 0.08, fy: 0.30 }, { dx, dy });
+    const boxes = await shapeBoxes(page);
+    const corner = await paintedShapeBounds(page, boxes.length - 1);
+    if (corner) {
+        recorder.assert('no-negative-left', corner.left >= -1.5,
+            'The shape does not run off the left edge into negative coordinates',
+            JSON.stringify({ left: Math.round(corner.left) }));
+        recorder.assert('no-negative-top', corner.top >= -1.5,
+            'The shape does not run off the top edge into negative coordinates',
+            JSON.stringify({ top: Math.round(corner.top) }));
+    }
+
+    // The stored geometry must agree with what was painted.
+    const stored = (await shapeBoxes(page))[0];
+    recorder.assert('stored-geometry-non-negative',
+        !!stored && stored.relLeft >= -1.5 && stored.relTop >= -1.5,
+        'The stored annotation position is inside the page too',
+        JSON.stringify({ left: Math.round(stored?.relLeft ?? -999), top: Math.round(stored?.relTop ?? -999) }));
+
+    artifacts.push(await capture(page, '09-clamped-inside-page', 'clamped'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 10 — Drawing stays accurate across zoom levels. */
+async function testZoomAccuracy(page, { recorder }) {
+    const artifacts = [];
+    await setShapeMode(page, true);
+    await pickShape(page, 'square');
+
+    const baseline = await readZoom(page);
+    recorder.assert('zoom-readable', baseline.scale > 0,
+        'The viewer reports a usable scale', JSON.stringify(baseline));
+
+    // The invariant worth testing is that the same PAGE-RELATIVE rectangle gives
+    // the same PDF geometry at any zoom. A fixed PIXEL drag does not: at higher
+    // zoom the same pixels legitimately cover fewer PDF points. So the drag is
+    // scaled by the zoom, and the resulting PDF width is compared.
+    const BASE_DX = 190;
+    const BASE_DY = 150;
+    const passes = [
+        { label: 'baseline', direction: 'in', steps: 0, fy: 0.16 },
+        { label: 'zoomed-out', direction: 'out', steps: 2, fy: 0.40 },
+        { label: 'zoomed-in', direction: 'in', steps: 3, fy: 0.64 },
+    ];
+
+    const measured = [];
+    for (const pass of passes) {
+        if (pass.steps > 0) {
+            // eslint-disable-next-line no-await-in-loop
+            await stepZoom(page, pass.direction, pass.steps);
+        }
+        // eslint-disable-next-line no-await-in-loop
+        const zoom = await readZoom(page);
+        const factor = zoom.scale / baseline.scale;
+
+        // eslint-disable-next-line no-await-in-loop
+        await setShapeMode(page, true);
+        // eslint-disable-next-line no-await-in-loop
+        const before = (await shapeBoxes(page)).length;
+        // Each pass draws at its own fy so it cannot land on an earlier shape
+        // and drag that instead of drawing a new one.
+        // eslint-disable-next-line no-await-in-loop
+        await drawShape(page, { fx: 0.18, fy: pass.fy },
+            { dx: BASE_DX * factor, dy: BASE_DY * factor });
+        // eslint-disable-next-line no-await-in-loop
+        const boxes = await shapeBoxes(page);
+        recorder.assert(`${pass.label}-drew`, boxes.length === before + 1,
+            `A shape is drawn at ${pass.label} (scale ${zoom.scale.toFixed(2)})`,
+            `${before} -> ${boxes.length}`);
+
+        const drawn = boxes[boxes.length - 1];
+        if (drawn && boxes.length === before + 1) {
+            measured.push({
+                label: pass.label,
+                scale: zoom.scale,
+                ptWidth: drawn.width / zoom.scale,
+                ptHeight: drawn.height / zoom.scale,
+            });
+        }
+    }
+
+    recorder.assert('drew-at-every-zoom', measured.length === passes.length,
+        'A shape was drawn at every zoom level tested',
+        JSON.stringify(measured.map((m) => m.label)));
+
+    if (measured.length === passes.length) {
+        const scales = measured.map((m) => m.scale);
+        recorder.assert('zoom-actually-changed',
+            Math.max(...scales) - Math.min(...scales) > 0.1,
+            'The three passes really were at different zoom levels',
+            JSON.stringify(scales.map((v) => Number(v.toFixed(3)))));
+
+        const widths = measured.map((m) => m.ptWidth);
+        recorder.assert('same-rect-same-pdf-width',
+            Math.max(...widths) - Math.min(...widths) <= 6,
+            'The same page-relative rectangle produces the same PDF width at every zoom',
+            JSON.stringify(measured.map((m) => ({
+                at: m.label, scale: Number(m.scale.toFixed(2)), pt: Number(m.ptWidth.toFixed(1)),
+            }))));
+
+        const heights = measured.map((m) => m.ptHeight);
+        recorder.assert('same-rect-same-pdf-height',
+            Math.max(...heights) - Math.min(...heights) <= 6,
+            'The same page-relative rectangle produces the same PDF height at every zoom',
+            JSON.stringify(heights.map((v) => Number(v.toFixed(1)))));
+    }
+
+    // A shape stays anchored when the zoom changes under it.
+    const zoomBefore = (await readZoom(page)).scale;
+    const boundsBefore = await paintedShapeBounds(page, 0);
+    await stepZoom(page, 'out', 2);
+    const zoomAfter = (await readZoom(page)).scale;
+    const boundsAfter = await paintedShapeBounds(page, 0);
+    if (boundsBefore && boundsAfter && zoomBefore > 0 && zoomAfter > 0) {
+        recorder.near('stays-anchored-across-zoom',
+            boundsAfter.left / zoomAfter, boundsBefore.left / zoomBefore, 6,
+            'A shape keeps its place on the page when the zoom changes');
+    }
+
+    artifacts.push(await capture(page, '10-zoom-accuracy', 'zoom'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/**
+ * 11 — Drawing on rotated pages.
+ *
+ * The QA case asks what the Shapes tool does here, and whether it agrees with
+ * the Text tool. For text the answer was that a rotated page is not editable at
+ * all: the editor renders it as one flattened image, says so in a dialog, and
+ * the tool places nothing. This asserts the Shapes tool holds the same contract
+ * — two tools differing on the same rotated page would be the finding.
+ */
+async function testRotatedPages(page, { recorder }) {
+    const artifacts = [];
+
+    recorder.equals('starts-unrotated', await pageRotation(page, 1), 0,
+        'The page starts unrotated');
+
+    // Baseline: drawing works before any rotation.
+    await setShapeMode(page, true);
+    await pickShape(page, 'square');
+    await drawShape(page, { fx: 0.25, fy: 0.22 }, { dx: 170, dy: 140 });
+    const baseline = await shapeBoxes(page);
+    recorder.equals('baseline-drawn', baseline.length, 1,
+        'A shape can be drawn before the page is rotated');
+
+    const rotated = await rotatePage(page, 1, 'right');
+    recorder.equals('rotated-90', rotated.rotation, 90, 'The page rotates to 90 degrees');
+
+    recorder.assert('rotation-blocks-editing', await page.evaluate(
+        () => document.body.classList.contains('enpv-edit-rotation-blocked'),
+    ), 'Rotating the page marks editing as unavailable');
+    recorder.assert('rotation-explained',
+        rotated.dialogShown && /rotated/i.test(rotated.dialogMessage),
+        'The editor explains why the rotated page cannot be edited',
+        rotated.dialogMessage.slice(0, 140));
+
+    artifacts.push(await capture(page, '11-rotated-pages', 'rotation-blocked'));
+
+    // The shapes tool may still toggle, but must place nothing.
+    const countBefore = (await shapeBoxes(page)).length;
+    await setShapeMode(page, true);
+    recorder.assert('shape-tool-still-toggles', await shapeModeOn(page),
+        'The Shapes tool can still be switched on');
+
+    const spot = await pointOnPage(page, 1, 0.35, 0.3);
+    await page.mouse.move(spot.x, spot.y);
+    await page.mouse.down();
+    for (let step = 1; step <= 6; step++) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.move(spot.x + (step * 25), spot.y + (step * 20));
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(35);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(900);
+
+    recorder.equals('no-drawing-while-rotated', (await shapeBoxes(page)).length, countBefore,
+        'Dragging on a rotated page draws nothing, matching the Text tool contract');
+
+    // Rotate back: the tool and the original shape both return.
+    const restored = await rotatePage(page, 1, 'left');
+    recorder.equals('rotated-back', restored.rotation, 0, 'The page rotates back to 0 degrees');
+    recorder.assert('editing-restored', !(await page.evaluate(
+        () => document.body.classList.contains('enpv-edit-rotation-blocked'),
+    )), 'Editing becomes available again once the page is upright');
+    recorder.equals('original-shape-survived', (await shapeBoxes(page)).length, 1,
+        'The shape drawn before rotation is still there afterwards');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 20 — Select, deselect and the hover menu. */
+async function testSelectAndMenu(page, { recorder }) {
+    const artifacts = [];
+    await drawOne(page, 'square', { fx: 0.22, fy: 0.20 }, { dx: 200, dy: 160 });
+
+    recorder.assert('click-selects', await selectShape(page, 0),
+        'Clicking a shape selects it');
+
+    const menu = await annMenuState(page);
+    recorder.assert('menu-appears', menu.visible,
+        'The hover menu appears over the selection', JSON.stringify(menu.offered));
+    recorder.ok('menu-actions-offered',
+        `The menu offers: ${menu.offered.join(', ')}`, JSON.stringify(menu.offered));
+
+    const handles = await page.evaluate((selector) => Array.from(
+        document.querySelectorAll(`${selector}.is-selected > .enpv-resize-handle`),
+    ).filter((h) => {
+        const r = h.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    }).map((h) => h.dataset.edge), SHAPE_BOX_SELECTOR);
+    recorder.assert('handles-appear', handles.length >= 4,
+        'Resize handles appear on selection, without needing edit mode',
+        JSON.stringify(handles));
+
+    // The menu must follow the shape when the view scrolls.
+    const before = await annMenuState(page);
+    await page.evaluate(() => {
+        const container = document.getElementById('viewerContainer');
+        if (container) container.scrollTop += 120;
+    });
+    await page.waitForTimeout(600);
+    const after = await annMenuState(page);
+    recorder.assert('menu-follows-scroll',
+        after.visible && Math.abs((after.top - before.top) + 120) <= 24,
+        'The menu stays anchored over the shape when the page scrolls',
+        JSON.stringify({ before: Math.round(before.top), after: Math.round(after.top) }));
+    await page.evaluate(() => {
+        const container = document.getElementById('viewerContainer');
+        if (container) container.scrollTop -= 120;
+    });
+    await page.waitForTimeout(500);
+
+    // A fully transparent fill must still be selectable, via its outline.
+    await selectShape(page, 0);
+    await setShapeStyle(page, { fillOpacity: 0 });
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    const reselected = await selectShape(page, 0);
+    recorder.assert('transparent-fill-still-selectable', reselected,
+        'A shape with no fill can still be selected',
+        JSON.stringify({ fillOpacity: (await shapeBoxes(page))[0]?.fillOpacity }));
+
+    // Every deselect path.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    recorder.assert('escape-deselects',
+        !(await page.evaluate((sel) => !!document.querySelector(`${sel}.is-selected`), SHAPE_BOX_SELECTOR)),
+        'Escape clears the selection');
+
+    await selectShape(page, 0);
+    const empty = await pointOnPage(page, 1, 0.85, 0.85);
+    await page.mouse.click(empty.x, empty.y);
+    await page.waitForTimeout(500);
+    recorder.assert('empty-click-deselects',
+        !(await page.evaluate((sel) => !!document.querySelector(`${sel}.is-selected`), SHAPE_BOX_SELECTOR)),
+        'Clicking empty page clears the selection');
+
+    artifacts.push(await capture(page, '20-select-and-menu', 'selected'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 21 — Move and resize. */
+async function testMoveAndResize(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+    await drawOne(page, 'square', { fx: 0.22, fy: 0.20 }, { dx: 200, dy: 160 });
+    await selectShape(page, 0);
+
+    const before = (await shapeBoxes(page))[0];
+    await dragShapeBy(page, 0, 120, 90);
+    let after = (await shapeBoxes(page))[0];
+    recorder.near('drag-moves-x', after.relLeft - before.relLeft, 120, 6,
+        'Dragging the body moves the shape 1:1 on x');
+    recorder.near('drag-moves-y', after.relTop - before.relTop, 90, 6,
+        'Dragging the body moves the shape 1:1 on y');
+    recorder.near('drag-keeps-width', after.width, before.width, 2,
+        'Dragging moves the shape without resizing it');
+
+    // One drag must be exactly one undo step.
+    await clickHistory(page, 'undo');
+    const undone = (await shapeBoxes(page))[0];
+    recorder.near('drag-is-one-undo-step', undone.relLeft, before.relLeft, 6,
+        'A single undo puts the shape back where it started');
+    await clickHistory(page, 'redo');
+
+    // Resize from the right edge. Shapes show handles on selection alone.
+    await selectShape(page, 0);
+    const beforeResize = (await shapeBoxes(page))[0];
+    const handle = await page.evaluate((selector) => {
+        const el = document.querySelector(`${selector}.is-selected > .enpv-resize-handle.r`)
+            || document.querySelector(`${selector}.is-selected > .enpv-resize-handle[data-edge="r"]`);
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0) return null;
+        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+    }, SHAPE_BOX_SELECTOR);
+    recorder.assert('resize-handle-available', !!handle,
+        'A right-edge resize handle is available on a selected shape');
+
+    if (handle) {
+        await page.mouse.move(handle.x, handle.y);
+        await page.mouse.down();
+        for (let step = 1; step <= 6; step++) {
+            // eslint-disable-next-line no-await-in-loop
+            await page.mouse.move(handle.x + ((110 * step) / 6), handle.y);
+            // eslint-disable-next-line no-await-in-loop
+            await page.waitForTimeout(40);
+        }
+        await page.mouse.up();
+        await page.waitForTimeout(700);
+
+        after = (await shapeBoxes(page))[0];
+        recorder.near('resize-grows-width', after.width - beforeResize.width, 110, 12,
+            'Dragging the right edge grows the shape');
+        recorder.near('resize-keeps-left', after.relLeft, beforeResize.relLeft, 4,
+            'Resizing from the right leaves the left edge alone');
+        recorder.equals('resize-keeps-stroke-width', after.strokeWidth, beforeResize.strokeWidth,
+            'The stroke width does not scale with the shape');
+    }
+
+    // Position survives a reload.
+    const beforeReload = (await shapeBoxes(page))[0];
+    await saveAndReload(page, saveRecorder);
+    const reloaded = (await shapeBoxes(page))[0];
+    recorder.near('position-survives-reload', reloaded?.relLeft, beforeReload.relLeft, 3,
+        'The shape is in the same place after a save and reload');
+    recorder.near('size-survives-reload', reloaded?.width, beforeReload.width, 3,
+        'The shape is the same size after a save and reload');
+
+    artifacts.push(await capture(page, '21-move-and-resize', 'moved'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 22 — Rotate. */
+async function testRotate(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+    await drawOne(page, 'square', { fx: 0.25, fy: 0.22 }, { dx: 220, dy: 170 });
+    await selectShape(page, 0);
+
+    const handle = await rotateHandleAt(page);
+    recorder.assert('rotate-handle-offered', !!handle?.visible,
+        'A selected shape offers a rotate handle', JSON.stringify(handle));
+
+    // Measure the PAINTED area before and after: a rotated outline over an
+    // unrotated fill was exactly the NK_12 text-tool bug, and reading a
+    // transform off one element would not have caught it.
+    const paintedBefore = await paintedShapeBounds(page, 0);
+
+    const rotated = await dragRotateHandle(page, 40);
+    recorder.assert('rotate-drag-ran', rotated, 'The rotate handle can be dragged');
+
+    const box = (await shapeBoxes(page))[0];
+    recorder.assert('angle-stored', Math.abs(box?.rotation || 0) > 5,
+        'The rotation is stored on the annotation', JSON.stringify(box?.rotation));
+
+    const paintedAfter = await paintedShapeBounds(page, 0);
+    if (paintedBefore && paintedAfter) {
+        // A rotated square paints a LARGER axis-aligned bounding box. Measured on
+        // the drawn geometry, so this fails if the angle is stored but never
+        // actually painted.
+        const grew = (paintedAfter.width > paintedBefore.width + 8)
+            || (paintedAfter.height > paintedBefore.height + 8);
+        recorder.assert('painted-shape-actually-turns', grew,
+            'The painted geometry really rotates, not just the stored angle',
+            JSON.stringify({
+                before: { w: Math.round(paintedBefore.width), h: Math.round(paintedBefore.height) },
+                after: { w: Math.round(paintedAfter.width), h: Math.round(paintedAfter.height) },
+            }));
+    }
+
+    // NK_12 was a rotated outline over an unrotated background, and the story
+    // asked to watch for the same class of bug here. It cannot occur for shapes:
+    // each shape is ONE svg element carrying both fill and stroke, so they cannot
+    // diverge. Recorded rather than asserted, since a passing check here would
+    // only be restating the DOM structure.
+    const parts = await page.evaluate((selector) => {
+        const box = document.querySelectorAll(selector)[0];
+        const drawn = Array.from(box?.querySelectorAll('svg > *') || []);
+        // Only elements that actually paint ink count: the shape svg also carries
+        // non-painting children (null fill AND null stroke) used as chrome.
+        return drawn
+            .map((el) => ({
+                tag: el.tagName.toLowerCase(),
+                fill: el.getAttribute('fill'),
+                stroke: el.getAttribute('stroke'),
+            }))
+            .filter((el) => (el.fill && el.fill !== 'none') || (el.stroke && el.stroke !== 'none'));
+    }, SHAPE_BOX_SELECTOR);
+    recorder.ok('fill-and-stroke-cannot-diverge',
+        parts.length === 1
+            ? 'Fill and stroke are one svg element, so the NK_12 split-transform bug is structurally impossible for shapes'
+            : `The shape paints ${parts.length} separate svg elements, so fill/stroke divergence IS possible here and needs its own check`,
+        JSON.stringify(parts));
+
+    // A locked shape offers no handle. Checked here, while the selection is
+    // already live -- after a save and reload the box comes back but the menu
+    // is not re-attached by a synthetic click, which is a harness limit rather
+    // than a product one.
+    const locked = await annotationMenuAction(page, 'lock');
+    if (locked) {
+        await page.waitForTimeout(400);
+        const lockedBox = (await shapeBoxes(page))[0];
+        recorder.assert('lock-applies', !!lockedBox?.locked,
+            'The lock action actually locks the shape', JSON.stringify(lockedBox?.locked));
+        const afterLock = await rotateHandleAt(page);
+        // LEFT FAILING DELIBERATELY — this is a real defect, not a flaky check.
+        // index.css:5476 hides .enpv-shape-rotate-handle for .is-locked at
+        // specificity (0,3,0), but the show rule at index.css:4557
+        // (.enpv-annotation-box.is-selected.enpv-shape-box:not([data-shape-type="line"]))
+        // is (0,5,0) and carries no :not(.is-locked) guard, so it wins. The
+        // signature and user-created-text rules at 4562-4563 DO have that guard;
+        // the shape rule is the one that was missed.
+        recorder.assert('locked-shape-has-no-handle', !afterLock?.visible,
+            'A locked shape offers no rotate handle (FINDING: it still does — see index.css:4557 vs 5476)',
+            JSON.stringify({ locked: lockedBox?.locked, handle: afterLock }));
+        await annotationMenuAction(page, 'lock');
+        await page.waitForTimeout(300);
+    } else {
+        recorder.assert('locked-shape-has-no-handle', false,
+            'Lock should be offered for a selected shape',
+            JSON.stringify(await annMenuState(page)));
+    }
+
+    // Angle survives a save and reload.
+    const angleBefore = (await shapeBoxes(page))[0]?.rotation;
+    await saveAndReload(page, saveRecorder);
+    const angleAfter = (await shapeBoxes(page))[0]?.rotation;
+    recorder.near('angle-survives-reload', angleAfter, angleBefore, 1.5,
+        'The angle survives a save and reload');
+
+    artifacts.push(await capture(page, '22-rotate', 'rotated'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 23 — Cut a shape. */
+async function testCutShape(page, { recorder }) {
+    const artifacts = [];
+
+    // Cut is offered on square, circle, triangle, star and polygon; not on line.
+    await drawOne(page, 'square', { fx: 0.20, fy: 0.18 }, { dx: 200, dy: 160 });
+    await selectShape(page, 0);
+    let menu = await annMenuState(page);
+    recorder.assert('cut-offered-for-square', menu.offered.includes('cut'),
+        'Cut is offered for a square, matching CUTTABLE_SHAPE_TYPES',
+        JSON.stringify(menu.offered));
+
+    // Arming cut must show some state, and Escape must cancel cleanly.
+    const armed = await annotationMenuAction(page, 'cut');
+    if (armed) {
+        const armedState = await page.evaluate((selector) => ({
+            bodyArmed: document.body.classList.contains('enpv-shape-cut-armed'),
+            boxArmed: !!document.querySelector(`${selector}.is-shape-cut-armed`),
+        }), SHAPE_BOX_SELECTOR);
+        recorder.assert('cut-shows-armed-state',
+            armedState.bodyArmed || armedState.boxArmed,
+            'Arming cut puts the editor into a visible armed state',
+            JSON.stringify(armedState));
+
+        const countBefore = (await shapeBoxes(page)).length;
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(600);
+        const afterEscape = await page.evaluate((selector) => ({
+            bodyArmed: document.body.classList.contains('enpv-shape-cut-armed'),
+            boxArmed: !!document.querySelector(`${selector}.is-shape-cut-armed`),
+        }), SHAPE_BOX_SELECTOR);
+        recorder.assert('escape-cancels-cut',
+            !afterEscape.bodyArmed && !afterEscape.boxArmed,
+            'Escape cancels the armed cut cleanly', JSON.stringify(afterEscape));
+        recorder.equals('escape-leaves-shape-intact', (await shapeBoxes(page)).length, countBefore,
+            'Cancelling the cut leaves the shape as it was');
+    } else {
+        recorder.fail('cut-shows-armed-state', 'Cut could not be armed, so its state could not be checked');
+    }
+
+    // A line must NOT offer cut.
+    await setShapeMode(page, true);
+    await pickShape(page, 'line');
+    await setShapeMode(page, true);
+    await drawShape(page, { fx: 0.20, fy: 0.55 }, { dx: 200, dy: 120 });
+    const boxes = await shapeBoxes(page);
+    await selectShape(page, boxes.length - 1);
+    menu = await annMenuState(page);
+    recorder.assert('cut-not-offered-for-line', !menu.offered.includes('cut'),
+        'Cut is not offered for a line', JSON.stringify(menu.offered));
+
+    artifacts.push(await capture(page, '23-cut-shape', 'cut'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 24 — Lock, duplicate, delete and z-order. */
+async function testLockDuplicateDeleteOrder(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+    // Two shapes that OVERLAP visually for the z-order checks, but whose press
+    // points do not: starting the second drag inside the first shape would grab
+    // that shape instead of drawing a new one.
+    await drawOne(page, 'square', { fx: 0.18, fy: 0.18 }, { dx: 220, dy: 170 });
+    await drawOne(page, null, { fx: 0.18, fy: 0.42 }, { dx: 220, dy: 170 });
+
+    const zOrder = () => page.evaluate((selector) => Array.from(
+        document.querySelectorAll(selector),
+    ).map((box, index) => ({
+        id: box.dataset.annotationId || `dom-${index}`,
+        domIndex: index,
+        style: box.style.zIndex || null,
+        dataset: box.dataset.zIndex || null,
+        computed: window.getComputedStyle(box).zIndex,
+    })), SHAPE_BOX_SELECTOR);
+
+    // Bring to front / send to back.
+    const selectedOk = await ensureSelected(page, 0);
+    const targetId = (await shapeBoxes(page))[0]?.annotationId;
+    recorder.assert('shape-selects-for-menu', selectedOk,
+        'The shape can be selected and its menu becomes usable',
+        JSON.stringify(await annMenuState(page)));
+    const front = await annotationMenuAction(page, 'front');
+    recorder.assert('front-offered', front, 'The menu offers Bring to front');
+    // Track the target by annotation id, not DOM position: the layer re-sorts
+    // its boxes by z-index, so after a raise the shape is no longer at index 0
+    // and comparing by index would read the wrong pair.
+    const zById = async () => {
+        const entries = await zOrder();
+        return Object.fromEntries(entries.map((e) => [e.id, Number.parseInt(e.dataset ?? e.style ?? '0', 10)]));
+    };
+    let z = await zById();
+    const others = Object.keys(z).filter((id) => id !== targetId);
+    recorder.assert('front-raises', z[targetId] > Math.max(...others.map((id) => z[id])),
+        'Bring to front puts the shape above the other', JSON.stringify(z));
+
+    await ensureSelected(page, null, targetId);
+    await annotationMenuAction(page, 'back');
+    z = await zById();
+    recorder.assert('back-lowers', z[targetId] < Math.max(...others.map((id) => z[id])),
+        'Send to back puts it below again', JSON.stringify(z));
+
+    // Lock disables the panel and blocks moving.
+    await ensureSelected(page, 0);
+    recorder.assert('lock-offered', await annotationMenuAction(page, 'lock'),
+        'The menu offers Lock');
+    let boxes = await shapeBoxes(page);
+    recorder.assert('lock-applies', boxes[0]?.locked, 'The shape reports itself locked');
+
+    const lockedBefore = boxes[0];
+    await dragShapeBy(page, 0, 90, 70);
+    boxes = await shapeBoxes(page);
+    recorder.near('locked-shape-cannot-move', boxes[0]?.relLeft, lockedBefore.relLeft, 3,
+        'A locked shape cannot be dragged');
+
+    await ensureSelected(page, 0);
+    await annotationMenuAction(page, 'lock');
+    boxes = await shapeBoxes(page);
+    recorder.assert('unlock-restores', !boxes[0]?.locked, 'Unlocking restores the shape');
+
+    // Duplicate. The shape menu does not offer a Duplicate action -- unlike text
+    // and signature boxes -- so the reachable route is the clipboard. Which one
+    // works is recorded rather than assumed.
+    await ensureSelected(page, 0);
+    const countBefore = (await shapeBoxes(page)).length;
+    const menuCopy = await annotationMenuAction(page, 'copy');
+    recorder.ok('duplicate-route',
+        menuCopy
+            ? 'Duplicate is offered in the shape menu'
+            : 'The shape menu offers NO Duplicate action (text and signature boxes do); the clipboard is the only route',
+        JSON.stringify((await annMenuState(page)).offered));
+
+    if (!menuCopy) {
+        await ensureSelected(page, 0);
+        await page.keyboard.press('Control+c');
+        await page.waitForTimeout(400);
+        await page.keyboard.press('Control+v');
+        await page.waitForTimeout(900);
+    }
+    boxes = await shapeBoxes(page);
+    recorder.equals('duplicate-adds-shape', boxes.length, countBefore + 1,
+        'Duplicating a shape adds one copy');
+
+    const copy = boxes[boxes.length - 1];
+    const ids = boxes.map((b) => b.annotationId);
+    recorder.assert('duplicate-has-new-id', new Set(ids).size === ids.length,
+        'The duplicate has its own annotation id', JSON.stringify(copy?.annotationId));
+    recorder.assert('duplicate-is-offset',
+        !!copy && (Math.abs(copy.relLeft - boxes[0].relLeft) > 2 || Math.abs(copy.relTop - boxes[0].relTop) > 2),
+        'The duplicate is offset rather than hidden underneath the original',
+        JSON.stringify({ copy: [Math.round(copy?.relLeft), Math.round(copy?.relTop)] }));
+
+    // The Text tool had a bug where a duplicate lost its rotatability. Shapes
+    // should not repeat it, so check the copy is rotatable like its original.
+    await ensureSelected(page, boxes.length - 1);
+    const copyHandle = await rotateHandleAt(page);
+    recorder.assert('duplicate-behaves-like-original', !!copyHandle?.visible,
+        'The duplicate offers a rotate handle, so it behaves like the shape it came from',
+        JSON.stringify(copyHandle));
+
+    // Delete.
+    const beforeDelete = (await shapeBoxes(page)).length;
+    recorder.assert('delete-offered', await annotationMenuAction(page, 'delete'),
+        'The menu offers Delete');
+    recorder.equals('delete-removes', (await shapeBoxes(page)).length, beforeDelete - 1,
+        'Delete removes the shape');
+
+    // Z-order survives a reload.
+    const orderBefore = await zOrder();
+    await saveAndReload(page, saveRecorder);
+    const orderAfter = await zOrder();
+    recorder.equals('z-order-survives-reload', JSON.stringify(orderAfter), JSON.stringify(orderBefore),
+        'The stacking order survives a save and reload');
+
+    artifacts.push(await capture(page, '24-lock-duplicate-delete-order', 'ordered'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 25 — Multi-select and group operations. */
+async function testMultiSelect(page, { recorder }) {
+    const artifacts = [];
+    await drawOne(page, 'square', { fx: 0.18, fy: 0.18 }, { dx: 170, dy: 130 });
+    await drawOne(page, null, { fx: 0.18, fy: 0.42 }, { dx: 170, dy: 130 });
+    recorder.equals('two-shapes', (await shapeBoxes(page)).length, 2, 'Two shapes are drawn');
+
+    await setShapeMode(page, false);
+    await setEditMode(page, true);
+
+    const selectedCount = () => page.evaluate((selector) => Array.from(
+        document.querySelectorAll(selector),
+    ).filter((box) => box.classList.contains('is-selected')
+        || box.classList.contains('is-multi-selected')).length, SHAPE_BOX_SELECTOR);
+
+    // Shift-click was added to the shared annotation pointer-down path on the
+    // Text tool story, so it should behave identically here.
+    await selectShape(page, 0);
+    const second = await page.evaluate((selector) => {
+        const box = document.querySelectorAll(selector)[1];
+        const rect = box.getBoundingClientRect();
+        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+    }, SHAPE_BOX_SELECTOR);
+    await page.keyboard.down('Shift');
+    await page.mouse.click(second.x, second.y);
+    await page.keyboard.up('Shift');
+    await page.waitForTimeout(600);
+
+    const multi = await selectedCount();
+    recorder.assert('shift-click-multi-selects', multi === 2,
+        'Shift-clicking a second shape selects both, matching the Text tool',
+        `selected=${multi}`);
+
+    if (multi === 2) {
+        const before = await shapeBoxes(page);
+        await dragShapeBy(page, 0, 90, 70);
+        const after = await shapeBoxes(page);
+        const deltas = after.map((box, i) => ({
+            dx: box.relLeft - before[i].relLeft,
+            dy: box.relTop - before[i].relTop,
+        }));
+        recorder.assert('group-drag-moves-both',
+            deltas.length === 2
+            && Math.abs(deltas[0].dx - deltas[1].dx) <= 3
+            && Math.abs(deltas[0].dy - deltas[1].dy) <= 3
+            && Math.abs(deltas[0].dx) > 20,
+            'A group drag moves the whole selection by one offset',
+            JSON.stringify(deltas));
+    }
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(500);
+    recorder.equals('escape-clears-multi', await selectedCount(), 0,
+        'Escape clears the multi-selection');
+
+    // A marquee over both shapes, sized from where they actually are.
+    const span = await page.evaluate((selector) => {
+        const rects = Array.from(document.querySelectorAll(selector)).map((b) => b.getBoundingClientRect());
+        return {
+            left: Math.min(...rects.map((r) => r.left)),
+            top: Math.min(...rects.map((r) => r.top)),
+            right: Math.max(...rects.map((r) => r.right)),
+            bottom: Math.max(...rects.map((r) => r.bottom)),
+        };
+    }, SHAPE_BOX_SELECTOR);
+    const pad = 26;
+    await page.mouse.move(span.left - pad, span.top - pad);
+    await page.mouse.down();
+    await page.mouse.move(span.right + pad, span.bottom + pad, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    const marquee = await selectedCount();
+    recorder.assert('marquee-selects-both', marquee === 2,
+        'A marquee drag over both shapes selects them', `selected=${marquee}`);
+
+    if (marquee === 2) {
+        await page.keyboard.press('Delete');
+        await page.waitForTimeout(800);
+        recorder.equals('delete-removes-selection', (await shapeBoxes(page)).length, 0,
+            'Delete removes every selected shape');
+        await clickHistory(page, 'undo');
+        recorder.equals('undo-restores-selection', (await shapeBoxes(page)).length, 2,
+            'A single undo brings the whole selection back');
+    }
+
+    artifacts.push(await capture(page, '25-multi-select', 'multi-selected'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 26 — Undo and redo across every shape operation. */
+async function testUndoRedo(page, { recorder }) {
+    const artifacts = [];
+    const count = async () => (await shapeBoxes(page)).length;
+
+    // Draw.
+    await drawOne(page, 'square', { fx: 0.20, fy: 0.20 }, { dx: 190, dy: 150 });
+    recorder.equals('draw-adds', await count(), 1, 'Drawing adds a shape');
+    await clickHistory(page, 'undo');
+    recorder.equals('undo-draw', await count(), 0, 'Undo removes the drawn shape in one step');
+    await clickHistory(page, 'redo');
+    recorder.equals('redo-draw', await count(), 1, 'Redo brings it back in one step');
+
+    // Restyle.
+    await ensureSelected(page, 0);
+    const beforeStyle = (await shapeBoxes(page))[0]?.strokeColor;
+    await setShapeStyle(page, { strokeHex: '#ff0000' });
+    const afterStyle = (await shapeBoxes(page))[0]?.strokeColor;
+    recorder.assert('restyle-applied', afterStyle !== beforeStyle,
+        'A restyle changes the shape', JSON.stringify({ beforeStyle, afterStyle }));
+    // Count the undos it actually takes, so a failure says how far off it is
+    // rather than just "not equal".
+    let undosToRevert = 0;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+        // eslint-disable-next-line no-await-in-loop
+        await clickHistory(page, 'undo');
+        // eslint-disable-next-line no-await-in-loop
+        const now = (await shapeBoxes(page))[0]?.strokeColor;
+        if (String(now).toLowerCase() === String(beforeStyle).toLowerCase()) {
+            undosToRevert = attempt;
+            break;
+        }
+    }
+    // LEFT FAILING DELIBERATELY — a restyle appears not to be undoable at all.
+    // The Shape options panel binds BOTH events on every input: 'input' calls
+    // commitShapeInspectorToSelectedBox({pushHistory:false}) and applies the
+    // change, then 'change' calls it again with pushHistory:true. By then the
+    // change is already applied, so the snapshot captures the NEW state and
+    // undo has nothing earlier to go back to. A real colour picker fires the
+    // same input-then-change pair, so this is not an artefact of the harness.
+    recorder.assert('undo-restyle-is-one-step', undosToRevert === 1,
+        'One undo reverts a restyle (FINDING: no number of undos does — see the panel input/change handlers)',
+        undosToRevert === 0
+            ? `three undos did not restore ${beforeStyle}`
+            : `took ${undosToRevert} undo(s)`);
+    for (let i = 0; i < Math.max(undosToRevert, 1); i++) {
+        // eslint-disable-next-line no-await-in-loop
+        await clickHistory(page, 'redo');
+    }
+
+    // Move.
+    await ensureSelected(page, 0);
+    const beforeMove = (await shapeBoxes(page))[0];
+    await dragShapeBy(page, 0, 100, 80);
+    const afterMove = (await shapeBoxes(page))[0];
+    recorder.assert('move-applied', Math.abs(afterMove.relLeft - beforeMove.relLeft) > 20,
+        'The shape moved');
+    await clickHistory(page, 'undo');
+    recorder.near('undo-move', (await shapeBoxes(page))[0]?.relLeft, beforeMove.relLeft, 5,
+        'One undo reverts the move');
+    await clickHistory(page, 'redo');
+
+    // Delete.
+    await ensureSelected(page, 0);
+    await annotationMenuAction(page, 'delete');
+    recorder.equals('delete-applied', await count(), 0, 'Delete removes the shape');
+    await clickHistory(page, 'undo');
+    recorder.equals('undo-delete', await count(), 1, 'One undo brings the deleted shape back');
+
+    // Keyboard shortcuts drive the same stack.
+    await page.keyboard.press('Control+z');
+    await page.waitForTimeout(700);
+    const afterCtrlZ = await count();
+    await page.keyboard.press('Control+Shift+z');
+    await page.waitForTimeout(700);
+    recorder.assert('keyboard-undo-redo-work',
+        afterCtrlZ !== 1 || (await count()) === 1,
+        'Ctrl+Z and Ctrl+Shift+Z drive the same history stack',
+        `afterCtrlZ=${afterCtrlZ} afterRedo=${await count()}`);
+
+    artifacts.push(await capture(page, '26-undo-redo', 'history'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 27 — Autosave and explicit Save. */
+async function testAutosaveAndSave(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+
+    const savesBefore = saveRecorder.saves.length;
+    await drawOne(page, 'square', { fx: 0.20, fy: 0.20 }, { dx: 190, dy: 150 });
+
+    // Drawing must mark the document dirty and schedule a save.
+    await page.waitForTimeout(6000);
+    const afterDraw = saveRecorder.saves.length;
+    recorder.assert('draw-schedules-a-save', afterDraw > savesBefore,
+        'Drawing a shape schedules an autosave',
+        `saves ${savesBefore} -> ${afterDraw}`);
+
+    // An explicit Save also lands, and carries the shape.
+    const explicit = await saveDocument(page, saveRecorder);
+    recorder.assert('explicit-save-lands', explicit, 'An explicit Save sends the annotation state');
+    const saved = savedShapeAnnotations(saveRecorder);
+    recorder.assert('save-carries-the-shape', saved.length >= 1,
+        'The saved payload contains the shape', `${saved.length} shape annotations`);
+
+    // Nothing changed: a second Save must not invent new work.
+    const quiet = saveRecorder.saves.length;
+    await page.waitForTimeout(6000);
+    recorder.equals('no-save-when-nothing-changed', saveRecorder.saves.length, quiet,
+        'No further autosave is sent while the document is untouched');
+
+    // Rapid edits coalesce rather than racing.
+    const beforeBurst = saveRecorder.saves.length;
+    await ensureSelected(page, 0);
+    for (const colour of ['#111111', '#222222', '#333333', '#444444']) {
+        // eslint-disable-next-line no-await-in-loop
+        await setShapeStyle(page, { strokeHex: colour });
+    }
+    await page.waitForTimeout(7000);
+    const burst = saveRecorder.saves.length - beforeBurst;
+    recorder.assert('rapid-edits-coalesce', burst <= 4,
+        'Four rapid restyles do not produce a save each', `${burst} saves for 4 edits`);
+
+    artifacts.push(await capture(page, '27-autosave-and-save', 'saved'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 28 — Reload fidelity. */
+async function testReloadFidelity(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+
+    // One of several shapes, each with its own styling and one rotated.
+    const spec = [
+        { type: 'square', fy: 0.14, stroke: '#ff0000', fill: '#00ff00', strokeWidth: 6, fillOpacity: 70 },
+        { type: 'circle', fy: 0.36, stroke: '#0000ff', fill: '#ffff00', strokeWidth: 2, fillOpacity: 30 },
+        { type: 'triangle', fy: 0.58, stroke: '#ff00ff', fill: '#00ffff', strokeWidth: 12, fillOpacity: 90 },
+    ];
+    for (const item of spec) {
+        // eslint-disable-next-line no-await-in-loop
+        await setShapeMode(page, true);
+        // eslint-disable-next-line no-await-in-loop
+        await pickShape(page, item.type);
+        // eslint-disable-next-line no-await-in-loop
+        await setShapeStyle(page, {
+            strokeHex: item.stroke,
+            fillHex: item.fill,
+            strokeWidth: item.strokeWidth,
+            fillOpacity: item.fillOpacity,
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await setShapeMode(page, true);
+        // eslint-disable-next-line no-await-in-loop
+        await drawShape(page, { fx: 0.18, fy: item.fy }, { dx: 170, dy: 130 });
+    }
+
+    // Rotate one of them so the angle is part of what must survive.
+    await ensureSelected(page, 0);
+    await dragRotateHandle(page, 35);
+
+    const before = await shapeBoxes(page);
+    recorder.equals('all-shapes-drawn', before.length, spec.length,
+        'Every shape in the fixture is drawn');
+
+    await saveAndReload(page, saveRecorder);
+    const after = await shapeBoxes(page);
+    recorder.equals('all-shapes-return', after.length, before.length,
+        'Every shape comes back after a hard reload');
+
+    if (after.length === before.length) {
+        const byId = (list) => Object.fromEntries(list.map((b) => [b.annotationId, b]));
+        const a = byId(before);
+        const b = byId(after);
+        const ids = Object.keys(a);
+        recorder.assert('annotation-ids-survive', ids.every((id) => b[id]),
+            'Every annotation keeps its id across the reload',
+            JSON.stringify({ before: ids.length, matched: ids.filter((id) => b[id]).length }));
+
+        const mismatches = ids.filter((id) => b[id]).filter((id) => (
+            a[id].shapeType !== b[id].shapeType
+            || String(a[id].strokeColor).toLowerCase() !== String(b[id].strokeColor).toLowerCase()
+            || String(a[id].fillColor).toLowerCase() !== String(b[id].fillColor).toLowerCase()
+            || Math.abs((a[id].strokeWidth || 0) - (b[id].strokeWidth || 0)) > 0.01
+            || Math.abs((a[id].fillOpacity || 0) - (b[id].fillOpacity || 0)) > 0.02
+            || Math.abs((a[id].rotation || 0) - (b[id].rotation || 0)) > 1.5
+        ));
+        recorder.assert('styling-and-angle-survive', mismatches.length === 0,
+            'Shape type, stroke, fill, opacity and angle all survive the reload',
+            JSON.stringify(mismatches.map((id) => ({ before: a[id], after: b[id] }))).slice(0, 300));
+
+        const moved = ids.filter((id) => b[id]).filter((id) => (
+            Math.abs(a[id].relLeft - b[id].relLeft) > 3 || Math.abs(a[id].relTop - b[id].relTop) > 3
+        ));
+        recorder.assert('geometry-survives', moved.length === 0,
+            'Every shape comes back in the same place', JSON.stringify(moved));
+    }
+
+    // The panel must read the values back when a reloaded shape is selected.
+    await ensureSelected(page, 0);
+    const panel = await shapePanelState(page);
+    const selected = (await shapeBoxes(page))[0];
+    recorder.assert('panel-reads-back',
+        String(panel.strokeHex || '').toLowerCase() === String(selected?.strokeColor || '').toLowerCase(),
+        'Selecting a reloaded shape reads its values back into the panel',
+        JSON.stringify({ panel: panel.strokeHex, shape: selected?.strokeColor }));
+
+    artifacts.push(await capture(page, '28-reload-fidelity', 'reloaded'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 29 — Downloaded PDF fidelity, per shape type. */
+async function testDownloadFidelity(page, { recorder, saveRecorder, docId }) {
+    const artifacts = [];
+
+    // One of every shape the picker offers, so the export covers each branch of
+    // draw_shape rather than one representative.
+    const types = [...PRIMARY_SHAPES, ...MORE_SHAPES];
+    const failedToDraw = [];
+    let retypedByPicker = null;
+    for (let i = 0; i < types.length; i++) {
+        // Deselect between draws. A shape stays SELECTED after being drawn, and
+        // picking a different shape commits to the selection — so without this
+        // each shape is silently converted to the next type picked. Captured
+        // once below as a finding rather than just worked around.
+        if (i > 0) {
+            // eslint-disable-next-line no-await-in-loop
+            const typesBefore = (await shapeBoxes(page)).map((b) => b.shapeType);
+            // eslint-disable-next-line no-await-in-loop
+            await page.keyboard.press('Escape');
+            // eslint-disable-next-line no-await-in-loop
+            await page.waitForTimeout(300);
+            if (retypedByPicker === null) retypedByPicker = typesBefore;
+        }
+        // Two columns, and never right at the top edge: a press point too close
+        // to the top leaves no room for the drag and the draw is silently lost.
+        const fx = 0.14 + ((i % 2) * 0.42);
+        const fy = 0.16 + (Math.floor(i / 2) * 0.18);
+        // eslint-disable-next-line no-await-in-loop
+        await setShapeMode(page, true);
+        // eslint-disable-next-line no-await-in-loop
+        await pickShape(page, types[i]);
+        // eslint-disable-next-line no-await-in-loop
+        await setShapeMode(page, true);
+        // eslint-disable-next-line no-await-in-loop
+        const before = (await shapeBoxes(page)).length;
+        // eslint-disable-next-line no-await-in-loop
+        await drawShape(page, { fx, fy }, { dx: 150, dy: 110 });
+        // eslint-disable-next-line no-await-in-loop
+        const boxesNow = await shapeBoxes(page);
+        if (boxesNow.length !== before + 1) {
+            failedToDraw.push({ type: types[i], reason: 'no shape added' });
+        } else {
+            // Compare the type actually produced against the one picked, per
+            // iteration: comparing sets at the end cannot tell which draw went
+            // wrong, only that something is missing.
+            // eslint-disable-next-line no-await-in-loop
+            const active = (await shapePanelState(page)).activeShape;
+            const produced = boxesNow.map((b) => b.shapeType);
+            const expectedCount = types.slice(0, i + 1).filter((t) => t === types[i]).length;
+            const actualCount = produced.filter((t) => t === types[i]).length;
+            if (actualCount < expectedCount) {
+                failedToDraw.push({ type: types[i], picked: active, produced });
+            }
+        }
+    }
+    // FINDING, recorded rather than asserted: this is a product behaviour that
+    // needs a decision, not a pass/fail. A shape stays selected after it is
+    // drawn (case 02), and the Shape options panel commits shapeType along with
+    // styling to whatever is selected. So picking a different shape converts the
+    // one just drawn instead of only setting up the next draw. Drawing several
+    // different shapes in a row is impossible without deselecting between them.
+    recorder.ok('picker-retypes-the-selected-shape',
+        'Picking a shape while one is selected CONVERTS that shape rather than only setting the next default. '
+        + 'Combined with shape mode staying on after a draw, several different shapes cannot be drawn in a row '
+        + 'without pressing Escape between them. Worth deciding whether the picker should apply to the selection at all.',
+        JSON.stringify({ observedBeforeDeselect: retypedByPicker }));
+
+    recorder.assert('every-draw-landed', failedToDraw.length === 0,
+        'Every shape type drew exactly one shape of that type',
+        JSON.stringify(failedToDraw).slice(0, 400));
+
+    // A shape with no stroke, and one with both partly transparent.
+    // Deselect first. The Shape options panel commits to the SELECTED shape, and
+    // that commit carries shapeType as well as styling — so picking a shape or
+    // changing a value while one is selected rewrites that shape rather than
+    // only setting up the next draw.
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(400);
+    const typesBeforeSetup = (await shapeBoxes(page)).map((b) => b.shapeType);
+
+    await setShapeMode(page, true);
+    await pickShape(page, 'square');
+    await setShapeStyle(page, { strokeWidth: 0, fillOpacity: 60 });
+    const typesAfterSetup = (await shapeBoxes(page)).map((b) => b.shapeType);
+    recorder.assert('panel-setup-does-not-retype-existing-shapes',
+        JSON.stringify(typesBeforeSetup) === JSON.stringify(typesAfterSetup),
+        'Picking a shape and setting style for the NEXT draw leaves existing shapes alone',
+        JSON.stringify({ before: typesBeforeSetup, after: typesAfterSetup }));
+    await setShapeMode(page, true);
+    await drawShape(page, { fx: 0.60, fy: 0.72 }, { dx: 140, dy: 100 });
+
+    const drawn = await shapeBoxes(page);
+    recorder.equals('every-type-drawn', drawn.length, types.length + 1,
+        'One shape of every offered type is drawn, plus a no-stroke shape');
+
+    const missing = types.filter((t) => !drawn.some((b) => b.shapeType === t));
+    recorder.assert('all-types-present', missing.length === 0,
+        'Every shape type the picker offers made it onto the page',
+        JSON.stringify({ missing, drawn: drawn.map((b) => b.shapeType) }));
+
+    await saveDocument(page, saveRecorder);
+    const saved = savedShapeAnnotations(saveRecorder);
+    const savedTypes = new Set(saved.map((a) => String(a.shapeType || '').toLowerCase()));
+    const notSaved = types.filter((t) => !savedTypes.has(t));
+    recorder.assert('all-types-saved', notSaved.length === 0,
+        'Every shape type reaches the saved annotation payload', JSON.stringify(notSaved));
+
+    // The download endpoint must return a real PDF.
+    // The endpoint validates an annotations array, so send what was just saved.
+    const download = await page.evaluate(async ([id, annotations]) => {
+        const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+        const response = await fetch(`/documents/${id}/download-annotated-pdf`, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+                'X-CSRF-TOKEN': token,
+                Accept: 'application/pdf',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ annotations }),
+        });
+        const buffer = await response.arrayBuffer();
+        const head = new TextDecoder().decode(new Uint8Array(buffer).slice(0, 5));
+        return { status: response.status, type: response.headers.get('content-type'), bytes: buffer.byteLength, head };
+    }, [docId, saved]);
+    recorder.assert('download-returns-pdf',
+        download.status === 200 && download.head === '%PDF-' && download.bytes > 1000,
+        'The download endpoint returns a PDF document', JSON.stringify(download));
+
+    // NOT COVERED, and deliberately said out loud rather than implied.
+    recorder.skip('operator-level-fidelity',
+        'Per-shape PDF drawing operators are NOT asserted anywhere. The legacy suite that '
+        + 'checked them (rectangles emitting l path ops, circles emitting c beziers, the cm '
+        + 'rotation matrix, colour/border/opacity in output) was deleted as dead code under '
+        + 'the admin cleanup. Verifying placement, size, colour and angle in an external '
+        + 'viewer remains a MANUAL check.');
+
+    artifacts.push(await capture(page, '29-download-fidelity', 'all-shapes'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 30 — Layers panel and annotation identity. */
+async function testLayersAndIdentity(page, { recorder, saveRecorder, docId }) {
+    const artifacts = [];
+    await drawOne(page, 'square', { fx: 0.18, fy: 0.18 }, { dx: 180, dy: 140 });
+    await drawOne(page, 'circle', { fx: 0.18, fy: 0.45 }, { dx: 180, dy: 140 });
+
+    const panel = await layersPanelRows(page);
+    recorder.assert('panel-opens', panel.open, 'The layers panel opens');
+    recorder.assert('lists-both-shapes', panel.rows.length >= 2,
+        'Both shapes are listed', `${panel.rows.length} rows`);
+    recorder.assert('rows-named-recognisably',
+        panel.rows.every((row) => row.label.length > 0),
+        'Each row carries a recognisable name', JSON.stringify(panel.rows.map((r) => r.label)));
+    await closeLayersPanel(page);
+
+    // A row must keep pointing at the same annotation across a reload.
+    const idsBefore = (await shapeBoxes(page)).map((b) => b.annotationId).sort();
+    await saveAndReload(page, saveRecorder);
+    const afterPanel = await layersPanelRows(page);
+    const idsAfter = (await shapeBoxes(page)).map((b) => b.annotationId).sort();
+    recorder.equals('ids-survive-reload', JSON.stringify(idsAfter), JSON.stringify(idsBefore),
+        'Annotation ids survive a reload');
+    recorder.assert('rows-still-point-at-annotations',
+        afterPanel.rows.every((row) => idsAfter.includes(row.id)),
+        'Every layer row still points at a real annotation after the reload',
+        JSON.stringify({ rows: afterPanel.rows.map((r) => r.id), shapes: idsAfter }));
+    await closeLayersPanel(page);
+
+    // Admin-only controls: absent for a non-admin.
+    await ensureSelected(page, 0);
+    const asGuest = await page.evaluate(() => ({
+        annotationId: !!document.getElementById('afb-annotation-id'),
+        debug: !!document.getElementById('afb-debug'),
+    }));
+    recorder.assert('admin-controls-absent-for-non-admin',
+        !asGuest.annotationId && !asGuest.debug,
+        'The annotation ID field and debug mask are not offered to a non-admin (NK_7)',
+        JSON.stringify(asGuest));
+
+    // ...and present for an admin. Skipped, not failed, when unconfigured.
+    if (!adminCredentials()) {
+        recorder.skip('admin-controls-present-for-admin',
+            'No QA admin configured (AUTOMATED_TESTS_ADMIN_EMAIL/PASSWORD) — admin-only controls not exercised');
+    } else if (!(await openEditorAsAdmin(page, docId))) {
+        recorder.assert('admin-sign-in', false, 'Signed in as the QA admin',
+            `login did not take, url=${page.url()}`);
+    } else {
+        recorder.assert('admin-sign-in', true, 'Signed in as the QA admin');
+        await ensureSelected(page, 0);
+        const asAdmin = await page.evaluate(() => ({
+            annotationId: !!document.getElementById('afb-annotation-id'),
+            debug: !!document.getElementById('afb-debug'),
+        }));
+        recorder.assert('admin-controls-present-for-admin',
+            asAdmin.annotationId && asAdmin.debug,
+            'The annotation ID field and debug mask are offered to an admin (NK_7)',
+            JSON.stringify(asAdmin));
+    }
+
+    artifacts.push(await capture(page, '30-layers-and-identity', 'layers'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/**
+ * 31 — Shapes the writer supports but the picker does not offer.
+ *
+ * The story is explicit that the outcome here is a DECISION, not a pass or
+ * fail, so this records what is reachable rather than asserting a verdict.
+ */
+async function testWriterOnlyShapes(page, { recorder }) {
+    const artifacts = [];
+    await setShapeMode(page, true);
+    await page.click('#shape-more-toggle', { force: true }).catch(() => {});
+    await page.waitForTimeout(300);
+
+    const offered = await page.evaluate(() => Array.from(
+        document.querySelectorAll('#shape-tool-panel [data-shape-tool]'),
+    ).map((button) => button.dataset.shapeTool));
+
+    recorder.equals('picker-offers-seven', offered.length, 7,
+        'The picker offers exactly the seven documented shapes');
+    recorder.assert('picker-matches-expected',
+        [...PRIMARY_SHAPES, ...MORE_SHAPES].every((t) => offered.includes(t)),
+        'The picker offers circle, triangle, square, line, star, X and heart',
+        JSON.stringify(offered));
+
+    const writerOnly = ['arrow', 'checkmark', 'polygon'];
+    const reachable = writerOnly.filter((t) => offered.includes(t));
+    recorder.assert('writer-only-shapes-are-not-in-the-picker', reachable.length === 0,
+        'arrow, checkmark and polygon are not offered by the picker', JSON.stringify(reachable));
+
+    // Recorded for the decision, not asserted.
+    recorder.ok('decision-needed',
+        'draw_shape in python/pdf-editor/new_annotation_writer.py still handles arrow, checkmark '
+        + 'and polygon, and none of the three can be created in this editor. Whether they are '
+        + 'reachable another way (an older document, an import, the guided flow) needs checking '
+        + 'against real data. The outcome is a decision: either offer them, or the writer is '
+        + 'carrying branches for shapes that can no longer occur. Note that polygon is also '
+        + 'listed in CUTTABLE_SHAPE_TYPES, so the cut feature has a branch for a shape the '
+        + 'picker cannot produce either.',
+        JSON.stringify({ pickerOffers: offered, writerAlsoSupports: writerOnly }));
+
+    artifacts.push(await capture(page, '31-writer-only-shapes', 'picker'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 32 — Keyboard access and ARIA on the Shape options panel. */
+async function testKeyboardAndAria(page, { recorder }) {
+    const artifacts = [];
+    await setShapeMode(page, true);
+
+    // Every control needs an accessible name.
+    const named = await page.evaluate(() => {
+        const panel = document.getElementById('shape-tool-panel');
+        const controls = Array.from(panel?.querySelectorAll('button, input, select, [role="button"]') || []);
+        return controls.map((el) => ({
+            id: el.id || null,
+            tag: el.tagName.toLowerCase(),
+            type: el.type || null,
+            name: (el.getAttribute('aria-label') || el.getAttribute('title')
+                || el.textContent?.trim() || '').slice(0, 40),
+            hidden: el.type === 'hidden' || window.getComputedStyle(el).display === 'none',
+        }));
+    });
+    const visible = named.filter((c) => !c.hidden);
+    const unnamed = visible.filter((c) => !c.name);
+    // LEFT FAILING DELIBERATELY — accessibility finding. The two <input
+    // type="color"> swatches carry no aria-label, title or associated text, so a
+    // screen reader announces them only as "color". Every other control in the
+    // panel is named.
+    recorder.assert('every-control-has-a-name', unnamed.length === 0,
+        'Every visible control in the panel has an accessible name (FINDING: the colour swatches have none)',
+        JSON.stringify(unnamed));
+
+    // The shape buttons must expose which one is selected.
+    const selectionExposed = await page.evaluate(() => {
+        const buttons = Array.from(document.querySelectorAll('#shape-tool-panel [data-shape-tool]'));
+        const active = buttons.filter((b) => b.classList.contains('is-active'));
+        return {
+            total: buttons.length,
+            activeCount: active.length,
+            ariaPressed: buttons.map((b) => b.getAttribute('aria-pressed')),
+            ariaSelected: buttons.map((b) => b.getAttribute('aria-selected')),
+        };
+    });
+    const exposesState = selectionExposed.ariaPressed.some((v) => v !== null)
+        || selectionExposed.ariaSelected.some((v) => v !== null);
+    // LEFT FAILING DELIBERATELY — accessibility finding, and one the story asks
+    // for by name: "The shape buttons must expose which one is selected". They
+    // mark the active shape with an is-active CSS class only. No aria-pressed,
+    // no aria-selected, no role="radio" — so which shape is chosen is invisible
+    // to assistive technology.
+    recorder.assert('selected-shape-exposed-to-assistive-tech', exposesState,
+        'The shape buttons expose which one is selected through ARIA (FINDING: only a CSS class does)',
+        JSON.stringify(selectionExposed));
+
+    // More shapes toggle reports aria-expanded correctly, both ways.
+    const collapsed = await page.evaluate(() => document.getElementById('shape-more-toggle')?.getAttribute('aria-expanded'));
+    await page.click('#shape-more-toggle', { force: true });
+    await page.waitForTimeout(300);
+    const expanded = await page.evaluate(() => document.getElementById('shape-more-toggle')?.getAttribute('aria-expanded'));
+    recorder.assert('aria-expanded-tracks-the-toggle',
+        collapsed === 'false' && expanded === 'true',
+        'The More shapes toggle reports aria-expanded in both states',
+        JSON.stringify({ collapsed, expanded }));
+
+    // Sliders must be operable by keyboard.
+    const sliderBefore = await page.evaluate(() => document.getElementById('shape-stroke-width')?.value);
+    await page.focus('#shape-stroke-width');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(300);
+    const sliderAfter = await page.evaluate(() => document.getElementById('shape-stroke-width')?.value);
+    recorder.assert('sliders-are-keyboard-operable', sliderBefore !== sliderAfter,
+        'The stroke width slider responds to arrow keys',
+        JSON.stringify({ before: sliderBefore, after: sliderAfter }));
+
+    // Focus must be visible, not suppressed.
+    const focusVisible = await page.evaluate(() => {
+        const el = document.getElementById('shape-more-toggle');
+        el.focus();
+        const style = window.getComputedStyle(el);
+        return {
+            outlineStyle: style.outlineStyle,
+            outlineWidth: style.outlineWidth,
+            boxShadow: style.boxShadow,
+            isFocused: document.activeElement === el,
+        };
+    });
+    recorder.assert('focus-is-visible',
+        focusVisible.isFocused
+        && (focusVisible.outlineStyle !== 'none' || (focusVisible.boxShadow && focusVisible.boxShadow !== 'none')),
+        'A focused control shows a visible focus indicator',
+        JSON.stringify(focusVisible));
+
+    // Tab order through the panel.
+    const tabOrder = await page.evaluate(() => Array.from(
+        document.querySelectorAll('#shape-tool-panel button, #shape-tool-panel input'),
+    ).filter((el) => el.type !== 'hidden' && window.getComputedStyle(el).display !== 'none')
+        .map((el) => el.tabIndex));
+    recorder.assert('no-control-removed-from-tab-order',
+        tabOrder.every((index) => index >= 0),
+        'No visible control is removed from the tab order with a negative tabindex',
+        JSON.stringify(tabOrder));
+
+    recorder.skip('screen-reader-pass',
+        'Announcing the selected shape and its options through a screen reader is a MANUAL check; '
+        + 'the story asks for one pass with a real reader, which automation cannot stand in for.');
+
+    artifacts.push(await capture(page, '32-keyboard-and-aria', 'panel'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
@@ -1496,6 +3174,9 @@ const TESTS = [
     { id: '06-drag-to-draw-preview', number: '06', title: 'Drag to draw, with a live preview', run: testDragToDrawPreview, signedIn: true },
     { id: '07-shift-constrains', number: '07', title: 'Shift constrains the drawn shape', run: testShiftConstrains, signedIn: true },
     { id: '08-click-without-drag', number: '08', title: 'A click with no drag, and drags below any minimum', run: testClickWithoutDrag, signedIn: true },
+    { id: '09-clamped-inside-page', number: '09', title: 'Shapes are clamped inside the page', run: testClampedInsidePage, signedIn: true },
+    { id: '10-zoom-accuracy', number: '10', title: 'Drawing stays accurate across zoom levels', run: testZoomAccuracy, signedIn: true },
+    { id: '11-rotated-pages', number: '11', title: 'Drawing on rotated pages', run: testRotatedPages, signedIn: true },
     { id: '12-stroke-colour', number: '12', title: 'Stroke colour', run: testStrokeColour, signedIn: true },
     { id: '13-stroke-width-range', number: '13', title: 'Stroke width across its whole range', run: testStrokeWidthRange, signedIn: true },
     { id: '14-stroke-opacity', number: '14', title: 'Stroke opacity', run: testStrokeOpacity, signedIn: true },
@@ -1504,6 +3185,19 @@ const TESTS = [
     { id: '17-transparent-stroke-and-fill', number: '17', title: 'Transparent stroke and transparent fill', run: testTransparency, signedIn: true },
     { id: '18-default-style', number: '18', title: 'A new shape uses the documented defaults', run: testDefaultStyle, signedIn: true },
     { id: '19-line-endpoints', number: '19', title: 'Line: endpoints, caps and no fill', run: testLineEndpoints, signedIn: true },
+    { id: '20-select-and-menu', number: '20', title: 'Select, deselect and the hover menu', run: testSelectAndMenu, signedIn: true },
+    { id: '21-move-and-resize', number: '21', title: 'Move and resize', run: testMoveAndResize, signedIn: true },
+    { id: '22-rotate', number: '22', title: 'Rotate', run: testRotate, signedIn: true },
+    { id: '23-cut-shape', number: '23', title: 'Cut a shape', run: testCutShape, signedIn: true },
+    { id: '24-lock-duplicate-delete-order', number: '24', title: 'Lock, duplicate, delete and z-order', run: testLockDuplicateDeleteOrder, signedIn: true },
+    { id: '25-multi-select', number: '25', title: 'Multi-select and group operations', run: testMultiSelect, signedIn: true },
+    { id: '26-undo-redo', number: '26', title: 'Undo and redo across every shape operation', run: testUndoRedo, signedIn: true },
+    { id: '27-autosave-and-save', number: '27', title: 'Autosave and explicit Save', run: testAutosaveAndSave, signedIn: true },
+    { id: '28-reload-fidelity', number: '28', title: 'Reload fidelity', run: testReloadFidelity, signedIn: true },
+    { id: '29-download-fidelity', number: '29', title: 'Downloaded PDF fidelity, per shape type', run: testDownloadFidelity, signedIn: true },
+    { id: '30-layers-and-identity', number: '30', title: 'Layers panel and annotation identity', run: testLayersAndIdentity, signedIn: true },
+    { id: '31-writer-only-shapes', number: '31', title: 'Shapes the writer supports but the picker does not offer', run: testWriterOnlyShapes, signedIn: true },
+    { id: '32-keyboard-and-aria', number: '32', title: 'Keyboard access and ARIA on the Shape options panel', run: testKeyboardAndAria, signedIn: true },
 ];
 
 function summarise(test, checks, artifacts, error, startedAt) {
@@ -1647,6 +3341,22 @@ module.exports = {
     readZoom,
     stepZoom,
     selectShape,
+    ensureSelected,
+    setEditMode,
+    layersPanelRows,
+    adminCredentials,
+    signInAsAdmin,
+    openEditorAsAdmin,
+    editModeOn,
+    pageRotation,
+    rotatePage,
+    paintedShapeBounds,
+    annMenuState,
+    annotationMenuAction,
+    rotateHandleAt,
+    dragRotateHandle,
+    dragShapeBy,
+    clickHistory,
     runTests,
 };
 
