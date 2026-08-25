@@ -2,9 +2,9 @@
 
 namespace App\Filament\Resources;
 
-use App\Filament\Resources\OverlayEditorTestResource\Pages;
-use App\Filament\Resources\OverlayEditorTestResource\Widgets\OverlayEditorTestStatsWidget;
-use App\Models\OverlayEditorTest;
+use App\Filament\Resources\PdfTestReportResource\Pages;
+use App\Filament\Resources\PdfTestReportResource\Widgets\PdfTestReportStatsWidget;
+use App\Models\PdfTestReport;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -12,21 +12,21 @@ use Filament\Tables;
 use Filament\Tables\Table;
 use Filament\Tables\Actions\Action;
 
-class OverlayEditorTestResource extends Resource
+class PdfTestReportResource extends Resource
 {
-    protected static ?string $model = OverlayEditorTest::class;
+    protected static ?string $model = PdfTestReport::class;
 
     protected static ?string $navigationIcon = 'heroicon-o-beaker';
 
-    protected static ?string $navigationLabel = 'Test Results';
+    protected static ?string $navigationLabel = 'PDF Test Results';
 
-    protected static ?string $navigationGroup = 'Admin';
+    protected static ?string $navigationGroup = 'PDF Tests';
 
     protected static ?string $modelLabel = 'Overlay Editor Test';
 
     protected static ?string $pluralModelLabel = 'Overlay Editor Tests';
 
-    protected static ?int $navigationSort = 30;
+    protected static ?int $navigationSort = 2;
 
     public static function canCreate(): bool
     {
@@ -126,7 +126,7 @@ class OverlayEditorTestResource extends Resource
                     ]),
                 Tables\Filters\SelectFilter::make('run_id')
                     ->label('Test Run')
-                    ->options(fn () => OverlayEditorTest::query()
+                    ->options(fn () => PdfTestReport::query()
                         ->select('run_id', 'created_at', 'test_type')
                         ->distinct('run_id')
                         ->orderByDesc('created_at')
@@ -156,7 +156,7 @@ class OverlayEditorTestResource extends Resource
     public static function getWidgets(): array
     {
         return [
-            OverlayEditorTestStatsWidget::class,
+            PdfTestReportStatsWidget::class,
         ];
     }
 
@@ -168,8 +168,8 @@ class OverlayEditorTestResource extends Resource
     public static function getPages(): array
     {
         return [
-            'index' => Pages\ListOverlayEditorTests::route('/'),
-            'view' => Pages\ViewOverlayEditorTest::route('/{record}'),
+            'index' => Pages\ListPdfTestReports::route('/'),
+            'view' => Pages\ViewPdfTestReport::route('/{record}'),
         ];
     }
 }

@@ -60,6 +60,7 @@ Thumbs.db
 !/tests/Feature/PdfPasswordProtectionTest.php
 !/tests/Feature/DocumentConversionQueueTest.php
 !/tests/Feature/AutomatedTestsPageTest.php
+!/tests/Feature/PdfTestReportViewPageTest.php
 !/tests/Feature/SavedSignatureTest.php
 !/tests/Feature/TextFormatBarTest.php
 !/tests/Unit/

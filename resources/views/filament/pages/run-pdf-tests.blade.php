@@ -15,7 +15,7 @@
                     </p>
                 </div>
                 <div class="flex items-center gap-3 shrink-0">
-                    <a href="{{ \App\Filament\Resources\OverlayEditorTestResource::getUrl() }}">
+                    <a href="{{ \App\Filament\Resources\PdfTestReportResource::getUrl() }}">
                         <x-filament::button color="gray" size="sm" icon="heroicon-o-arrow-left">Results</x-filament::button>
                     </a>
                     <x-filament::button
@@ -1213,9 +1213,9 @@
 
                 uploadResultDetailsUrl(result) {
                     if (!result?.id) {
-                        return '{{ \App\Filament\Resources\OverlayEditorTestResource::getUrl() }}';
+                        return '{{ \App\Filament\Resources\PdfTestReportResource::getUrl() }}';
                     }
-                    return '{{ \App\Filament\Resources\OverlayEditorTestResource::getUrl('view', ['record' => '__RECORD__']) }}'
+                    return '{{ \App\Filament\Resources\PdfTestReportResource::getUrl('view', ['record' => '__RECORD__']) }}'
                         .replace('__RECORD__', encodeURIComponent(result.id));
                 },
 

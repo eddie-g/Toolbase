@@ -1,16 +1,16 @@
 <?php
 
-namespace App\Filament\Resources\OverlayEditorTestResource\Widgets;
+namespace App\Filament\Resources\PdfTestReportResource\Widgets;
 
-use App\Models\OverlayEditorTest;
+use App\Models\PdfTestReport;
 use Filament\Widgets\StatsOverviewWidget;
 use Filament\Widgets\StatsOverviewWidget\Stat;
 
-class OverlayEditorTestStatsWidget extends StatsOverviewWidget
+class PdfTestReportStatsWidget extends StatsOverviewWidget
 {
     protected function getStats(): array
     {
-        $latestRunId = OverlayEditorTest::orderByDesc('created_at')->value('run_id');
+        $latestRunId = PdfTestReport::orderByDesc('created_at')->value('run_id');
 
         if (!$latestRunId) {
             return [
@@ -18,12 +18,12 @@ class OverlayEditorTestStatsWidget extends StatsOverviewWidget
             ];
         }
 
-        $latestRun = OverlayEditorTest::where('run_id', $latestRunId);
+        $latestRun = PdfTestReport::where('run_id', $latestRunId);
         $total = $latestRun->count();
         $passed = (clone $latestRun)->where('status', 'pass')->count();
         $failed = (clone $latestRun)->where('status', 'fail')->count();
         $errors = (clone $latestRun)->where('status', 'error')->count();
-        $testType = OverlayEditorTest::where('run_id', $latestRunId)->value('test_type');
+        $testType = PdfTestReport::where('run_id', $latestRunId)->value('test_type');
 
         return [
             Stat::make('Latest Run', ucfirst($testType ?? 'Unknown'))

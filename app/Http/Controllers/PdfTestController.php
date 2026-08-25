@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Document;
-use App\Models\OverlayEditorTest;
+use App\Models\PdfTestReport;
 use App\Models\PdfAcroForm;
 use App\Models\PdfExtractionBlock;
 use App\Models\PdfExtractionFitz;
@@ -602,7 +602,7 @@ class PdfTestController extends Controller
                 $reportPayload['test_key'] = $resultTestKey;
             }
 
-            $report = OverlayEditorTest::create($this->filterPersistableReportPayload($reportPayload));
+            $report = PdfTestReport::create($this->filterPersistableReportPayload($reportPayload));
             $reportId = $report->id;
             $createdAt = $report->created_at?->toIso8601String();
         } catch (\Throwable $error) {
@@ -797,7 +797,7 @@ class PdfTestController extends Controller
      */
     protected function getLatestRun(array $files): ?array
     {
-        $latestRunId = OverlayEditorTest::query()
+        $latestRunId = PdfTestReport::query()
             ->where('test_type', 'pdf')
             ->latest('created_at')
             ->value('run_id');
@@ -806,7 +806,7 @@ class PdfTestController extends Controller
             return null;
         }
 
-        $reports = OverlayEditorTest::query()
+        $reports = PdfTestReport::query()
             ->where('test_type', 'pdf')
             ->where('run_id', $latestRunId)
             ->get();
@@ -820,13 +820,13 @@ class PdfTestController extends Controller
             ->flip();
 
         $results = $reports
-            ->sortBy(function (OverlayEditorTest $report) use ($order) {
+            ->sortBy(function (PdfTestReport $report) use ($order) {
                 $testKey = $report->test_key ?: Str::beforeLast((string) $report->filename, '.pdf');
 
                 return $order->get($testKey, PHP_INT_MAX);
             })
             ->values()
-            ->map(fn (OverlayEditorTest $report) => $this->serializeReport($report))
+            ->map(fn (PdfTestReport $report) => $this->serializeReport($report))
             ->all();
 
         return [
@@ -840,7 +840,7 @@ class PdfTestController extends Controller
     /**
      * @return array<string, mixed>
      */
-    protected function serializeReport(OverlayEditorTest $report): array
+    protected function serializeReport(PdfTestReport $report): array
     {
         return [
             'id' => $report->id,
@@ -932,7 +932,7 @@ class PdfTestController extends Controller
         try {
             $this->hasTestKeyColumn = in_array('test_key', $this->getTestsOverlayEditorColumns(), true);
         } catch (\Throwable $error) {
-            Log::warning('Could not inspect tests_overlay_editor schema', [
+            Log::warning('Could not inspect pdf_test_reports schema', [
                 'error' => $error->getMessage(),
             ]);
             $this->hasTestKeyColumn = false;
@@ -960,9 +960,9 @@ class PdfTestController extends Controller
         }
 
         try {
-            $this->testsOverlayEditorColumns = Schema::getColumnListing('tests_overlay_editor');
+            $this->testsOverlayEditorColumns = Schema::getColumnListing('pdf_test_reports');
         } catch (\Throwable $error) {
-            Log::warning('Could not load tests_overlay_editor columns', [
+            Log::warning('Could not load pdf_test_reports columns', [
                 'error' => $error->getMessage(),
             ]);
             $this->testsOverlayEditorColumns = [];
