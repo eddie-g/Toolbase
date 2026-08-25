@@ -18,9 +18,6 @@
                     <a href="{{ \App\Filament\Resources\OverlayEditorTestResource::getUrl() }}">
                         <x-filament::button color="gray" size="sm" icon="heroicon-o-arrow-left">Results</x-filament::button>
                     </a>
-                    <a href="{{ route('filament.admin.pages.debug-pdf') }}">
-                        <x-filament::button color="gray" size="sm" icon="heroicon-o-bug-ant">Debug PDF</x-filament::button>
-                    </a>
                     <x-filament::button
                         x-show="activeTab !== 'upload-tests'"
                         x-on:click="startAllTests()"
