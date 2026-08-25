@@ -48,15 +48,17 @@ import {
 } from '../edit-new/shapes/inspector-ui.js';
 import { normalizeShapeAnnotation, normalizeImageAnnotation, applyShapeStateToAnnotation } from '../edit-new/annotations/normalize.js';
 import { getImageAnnotationSource } from '../edit-new/annotations/image-source.js';
-import { paintDrawDot, paintDrawSegment } from '../edit-new/draw/primitives.js';
+import { paintDrawDot } from '../edit-new/draw/primitives.js';
 import {
+    DEFAULT_DRAW_SMOOTHING,
+    drawSmoothingPasses,
+    normalizeDrawSmoothing,
     paintSmoothDrawCurve,
     smoothDrawCurvePoints,
     smoothDrawCurveSvgPathD,
 } from '../edit-new/draw/smooth-curve.js';
 import {
     DIRECT_DRAW_TOOL_ERASER,
-    DIRECT_DRAW_TOOL_SMOOTH_CURVE,
     normalizeDirectDrawTool,
 } from '../edit-new/draw/tool-type.js';
 import {
@@ -372,6 +374,8 @@ const shapeFillOpacityValue = document.getElementById('shape-fill-opacity-value'
 const drawToolPanel = document.getElementById('draw-tool-panel');
 const drawToolClose = document.getElementById('draw-tool-close');
 const drawToolButtons = Array.from(document.querySelectorAll('[data-draw-direct-tool]'));
+const drawToolSmoothingInput = document.getElementById('draw-tool-smoothing');
+const drawToolSmoothingValue = document.getElementById('draw-tool-smoothing-value');
 const drawToolSizeInput = document.getElementById('draw-tool-size');
 const drawToolSizeValue = document.getElementById('draw-tool-size-value');
 const drawToolOpacityInput = document.getElementById('draw-tool-opacity');
@@ -945,6 +949,7 @@ let drawToolType = 'pen';
 let drawStrokeColor = '#111827';
 let drawOpacity = 1;
 let drawBrushSize = 10;
+let drawSmoothing = DEFAULT_DRAW_SMOOTHING;
 let drawStyleLiveEditHistoryCaptured = false;
 let activeDrawSession = null;
 let highlightModeActive = false;
@@ -15966,9 +15971,7 @@ function syncDrawToolPanelUi() {
         floatingDrawButton.title = drawModeActive
             ? (drawToolType === DIRECT_DRAW_TOOL_ERASER
                 ? 'Eraser active — drag on the PDF to cover content'
-                : drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                    ? 'Smooth curve active — drag on the PDF to draw a fitted curve'
-                    : 'Draw active — drag on the PDF to draw')
+                : 'Draw active — drag on the PDF to draw')
             : 'Draw — sketch directly on the PDF';
     }
     drawToolButtons.forEach((button) => {
@@ -15982,6 +15985,14 @@ function syncDrawToolPanelUi() {
     if (drawToolColorInput) drawToolColorInput.value = cssColorToHex(drawStrokeColor, '#111827');
     if (drawToolSizeInput) drawToolSizeInput.value = String(Math.round(drawBrushSize));
     if (drawToolSizeValue) drawToolSizeValue.textContent = `${Math.round(drawBrushSize)}px`;
+    // NK_16: smoothing is a stroke property, like size and opacity — the
+    // eraser has no stroke to smooth, so it greys out alongside opacity.
+    const smoothingPercent = Math.round(drawSmoothing * 100);
+    if (drawToolSmoothingInput) {
+        drawToolSmoothingInput.value = String(smoothingPercent);
+        drawToolSmoothingInput.disabled = drawToolType === DIRECT_DRAW_TOOL_ERASER;
+    }
+    if (drawToolSmoothingValue) drawToolSmoothingValue.textContent = `${smoothingPercent}%`;
     if (drawToolOpacityInput) {
         drawToolOpacityInput.value = String(Math.round(activeDirectDrawOpacity() * 100));
         drawToolOpacityInput.disabled = drawToolType === DIRECT_DRAW_TOOL_ERASER;
@@ -15990,9 +16001,7 @@ function syncDrawToolPanelUi() {
     setDrawToolStatus(
         drawToolType === DIRECT_DRAW_TOOL_ERASER
             ? 'Eraser mode is active. Drag directly on the page to cover content with white.'
-            : drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                ? 'Smooth curve mode is active. Drag directly on the page to draw a fitted curve.'
-                : 'Pen mode is active. Drag directly on the page to draw.',
+            : 'Pen mode is active. Drag directly on the page to draw.',
     );
 }
 
@@ -16025,7 +16034,7 @@ function clampDirectDrawVectorNumber(value, fallback = 0) {
     return Number.isFinite(number) ? number : fallback;
 }
 
-function directDrawSvgPathFromPoints(points, smoothCurve = false) {
+function directDrawSvgPathFromPoints(points, smoothCurve = false, smoothing = null) {
     const cleanPoints = Array.isArray(points)
         ? points
             .map((point) => ({
@@ -16035,7 +16044,18 @@ function directDrawSvgPathFromPoints(points, smoothCurve = false) {
             .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
         : [];
     if (!cleanPoints.length) return '';
+    // NK_16: an explicit amount fits with that tension; a stroke saved before
+    // NK_16 has none, and keeps the legacy full-tension fit it was drawn with.
+    if (Number.isFinite(Number(smoothing))) {
+        const amount = normalizeDrawSmoothing(smoothing);
+        if (amount <= 0) return polylinePathFromPoints(cleanPoints);
+        return smoothDrawCurveSvgPathD(smoothDrawCurvePoints(cleanPoints, drawSmoothingPasses(amount)), amount);
+    }
     if (smoothCurve) return smoothDrawCurveSvgPathD(cleanPoints);
+    return polylinePathFromPoints(cleanPoints);
+}
+
+function polylinePathFromPoints(cleanPoints) {
     if (cleanPoints.length === 1) {
         const point = cleanPoints[0];
         return `M ${point.x.toFixed(3)} ${point.y.toFixed(3)} L ${(point.x + 0.01).toFixed(3)} ${point.y.toFixed(3)}`;
@@ -16050,7 +16070,7 @@ function directDrawVectorToSvgDataUrl(vector) {
     const height = Math.max(1, clampDirectDrawVectorNumber(vector.height, 0));
     const strokes = Array.isArray(vector.strokes) ? vector.strokes : [];
     const paths = strokes.map((stroke) => {
-        const pathData = directDrawSvgPathFromPoints(stroke?.points, Boolean(stroke?.smoothCurve));
+        const pathData = directDrawSvgPathFromPoints(stroke?.points, Boolean(stroke?.smoothCurve), stroke?.smoothing);
         if (!pathData) return '';
         const color = cssColorToHex(stroke?.color, '#111827');
         const opacity = clamp01(stroke?.opacity ?? 1, 1);
@@ -16077,11 +16097,15 @@ function restyleDirectDrawVector(vector, style = {}) {
                 y: clampDirectDrawVectorNumber(point?.y, 0),
             }))
             : [];
+        const smoothing = Number.isFinite(Number(style.smoothing))
+            ? normalizeDrawSmoothing(style.smoothing)
+            : stroke?.smoothing;
         return points.length ? {
             color,
             opacity,
             brushSize,
             smoothCurve: Boolean(stroke?.smoothCurve),
+            ...(Number.isFinite(Number(smoothing)) ? { smoothing: normalizeDrawSmoothing(smoothing) } : {}),
             points,
         } : null;
     }).filter(Boolean);
@@ -16143,6 +16167,10 @@ function reflectDirectDrawAnnotationToInputs(annotation) {
     }
     if (stroke) {
         drawBrushSize = Math.max(2, Number(stroke.brushSize) || drawBrushSize);
+        // A stroke saved before NK_16 has no amount; show what its fit matches.
+        drawSmoothing = Number.isFinite(Number(stroke.smoothing))
+            ? normalizeDrawSmoothing(stroke.smoothing)
+            : (stroke.smoothCurve ? DEFAULT_DRAW_SMOOTHING : 0);
     }
     syncDrawToolPanelUi();
 }
@@ -16165,6 +16193,7 @@ function applyDrawPanelStateToSelectedDirectDrawAnnotations(options = {}) {
             color: isEraser ? '#ffffff' : drawStrokeColor,
             opacity: isEraser ? 1 : drawOpacity,
             brushSize: drawBrushSize,
+            smoothing: isEraser ? undefined : drawSmoothing,
         });
         if (!styled?.vector) continue;
         updates.push({ box, existing, current, styled, isEraser, directDrawTool });
@@ -16240,8 +16269,8 @@ function directDrawVectorFromSession(session, cropLeft, cropTop, cropWidth, crop
             y: Math.max(0, Math.min(cropHeight, clampDirectDrawVectorNumber(point.y, 0) - cropTop)),
         }));
     if (!points.length) return null;
-    const smoothCurve = normalizeDirectDrawTool(session?.directDrawTool) === DIRECT_DRAW_TOOL_SMOOTH_CURVE;
-    if (smoothCurve) points = smoothDrawCurvePoints(points);
+    const smoothing = normalizeDrawSmoothing(session?.smoothing);
+    if (smoothing > 0) points = smoothDrawCurvePoints(points, drawSmoothingPasses(smoothing));
     return {
         version: 1,
         width: Math.max(1, cropWidth),
@@ -16250,7 +16279,8 @@ function directDrawVectorFromSession(session, cropLeft, cropTop, cropWidth, crop
             color: cssColorToHex(session.color, '#111827'),
             opacity: clamp01(session.opacity ?? 1, 1),
             brushSize: Math.max(0.25, clampDirectDrawVectorNumber(session.width, 1)),
-            smoothCurve,
+            smoothCurve: smoothing > 0,
+            smoothing,
             points,
         }],
     };
@@ -16330,8 +16360,8 @@ function beginDirectPenStroke(event, pageIndex) {
         color: strokeColor,
         width: drawBrushSize,
         opacity: strokeOpacity,
+        smoothing: drawSmoothing,
         points: [{ x: point.canvasX, y: point.canvasY }],
-        lastMidPoint: { x: point.canvasX, y: point.canvasY },
         minX: point.canvasX - (drawBrushSize / 2),
         minY: point.canvasY - (drawBrushSize / 2),
         maxX: point.canvasX + (drawBrushSize / 2),
@@ -16358,14 +16388,11 @@ function moveDirectPenStroke(event) {
     session.minY = Math.min(session.minY, point.y - (session.width / 2));
     session.maxX = Math.max(session.maxX, point.x + (session.width / 2));
     session.maxY = Math.max(session.maxY, point.y + (session.width / 2));
-    if (session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
-        session.ctx.clearRect(0, 0, session.layer.width, session.layer.height);
-        paintSmoothDrawCurve(session.ctx, session, session.color, session.width);
-    } else {
-        const midPoint = { x: (lastPoint.x + point.x) / 2, y: (lastPoint.y + point.y) / 2 };
-        paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, midPoint, session.width, session.color);
-        session.lastMidPoint = midPoint;
-    }
+    // NK_16: refit the whole stroke on every move. The smoothing passes shift
+    // points that are already down, so an incremental segment would leave the
+    // tail disagreeing with the rest of the curve.
+    session.ctx.clearRect(0, 0, session.layer.width, session.layer.height);
+    paintSmoothDrawCurve(session.ctx, session, session.color, session.width, session.smoothing);
     return true;
 }
 
@@ -16375,10 +16402,6 @@ function finishDirectPenStroke(event) {
     event.preventDefault();
     event.stopPropagation();
     try { session.pageDiv?.releasePointerCapture?.(event.pointerId); } catch (_) {}
-    if (session.points.length > 1 && session.directDrawTool !== DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
-        const lastPoint = session.points[session.points.length - 1];
-        paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, lastPoint, session.width, session.color);
-    }
     const padding = Math.max(session.width, 8);
     const cropLeft = Math.max(0, Math.floor(session.minX - padding));
     const cropTop = Math.max(0, Math.floor(session.minY - padding));
@@ -16397,18 +16420,16 @@ function finishDirectPenStroke(event) {
     const outputCtx = outputCanvas.getContext('2d');
     outputCtx.scale(outputScale, outputScale);
     outputCtx.globalAlpha = session.opacity;
-    if (session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
-        paintSmoothDrawCurve(outputCtx, {
-            color: session.color,
-            width: session.width,
-            points: session.points.map((point) => ({
-                x: point.x - cropLeft,
-                y: point.y - cropTop,
-            })),
-        }, session.color, session.width);
-    } else {
-        outputCtx.drawImage(session.layer, -cropLeft, -cropTop);
-    }
+    // Refit from the points rather than upscaling the preview layer, so the
+    // exported drawing gets the full outputScale resolution.
+    paintSmoothDrawCurve(outputCtx, {
+        color: session.color,
+        width: session.width,
+        points: session.points.map((point) => ({
+            x: point.x - cropLeft,
+            y: point.y - cropTop,
+        })),
+    }, session.color, session.width, session.smoothing);
     const pdfWidth = cropWidth / session.scale;
     const pdfHeight = cropHeight / session.scale;
     const annotation = directDrawAnnotationAtPageBox(session.pageIndex, {
@@ -16429,9 +16450,7 @@ function finishDirectPenStroke(event) {
         setDrawToolStatus(
             session.directDrawTool === DIRECT_DRAW_TOOL_ERASER
                 ? 'Eraser stroke added. Keep dragging to cover more content.'
-                : session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                    ? 'Smooth curve added. Keep drawing on the page.'
-                    : 'Drawing added. Keep drawing on the page.',
+                : 'Drawing added. Keep drawing on the page.',
         );
     }
     return true;
@@ -16465,11 +16484,9 @@ function setDrawMode(active) {
     if (drawModeActive) {
         deselectAnnBox();
         setStatus(
-            drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                ? 'Smooth curve mode active. Drag on the PDF to draw a fitted curve.'
-                : drawToolType === DIRECT_DRAW_TOOL_ERASER
-                    ? 'Eraser mode active. Drag on the PDF to cover content.'
-                    : 'Draw mode active. Drag on the PDF to draw.',
+            drawToolType === DIRECT_DRAW_TOOL_ERASER
+                ? 'Eraser mode active. Drag on the PDF to cover content.'
+                : 'Draw mode active. Drag on the PDF to draw.',
         );
     } else if (!document.body.classList.contains('enpv-edit-on')
         && !document.body.classList.contains('enpv-add-text-on')
@@ -29171,6 +29188,16 @@ drawToolSizeInput?.addEventListener('input', () => {
 });
 drawToolSizeInput?.addEventListener('change', () => {
     drawBrushSize = Math.max(2, Number(drawToolSizeInput.value) || 10);
+    syncDrawToolPanelUi();
+    finishLiveDrawPanelStateEdit();
+});
+drawToolSmoothingInput?.addEventListener('input', () => {
+    drawSmoothing = normalizeDrawSmoothing(Number(drawToolSmoothingInput.value) / 100);
+    syncDrawToolPanelUi();
+    applyLiveDrawPanelStateToSelectedDirectDrawAnnotations();
+});
+drawToolSmoothingInput?.addEventListener('change', () => {
+    drawSmoothing = normalizeDrawSmoothing(Number(drawToolSmoothingInput.value) / 100);
     syncDrawToolPanelUi();
     finishLiveDrawPanelStateEdit();
 });
