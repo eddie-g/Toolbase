@@ -86,6 +86,20 @@ function createRecorder() {
     return {
         checks,
         ok: (item, description, detail) => push(item, true, description, detail),
+        /**
+         * Record a check that could not be exercised on this machine. A skip is
+         * kept out of the pass denominator so it neither fails the run nor is
+         * quietly counted as a pass -- the gap stays visible in the report.
+         */
+        skip: (item, description, detail) => {
+            checks.push({
+                result: 'SKIP',
+                item,
+                description,
+                detail: detail == null ? '' : String(detail),
+            });
+            return false;
+        },
         fail: (item, description, detail) => push(item, false, description, detail),
         assert: (item, condition, description, detail) => push(item, !!condition, description, detail),
         equals: (item, actual, expected, description) => push(
@@ -280,6 +294,54 @@ async function openEditorAsSignedIn(page, docId) {
     if (flag !== '1') throw new Error(`Editor did not render as signed in (flag=${flag})`);
 
     return consoleErrors;
+}
+
+/**
+ * Credentials for the QA admin, or null when none is configured.
+ *
+ * The controller forwards these from config/automated_tests.php. Without them a
+ * suite skips its admin-only assertions rather than failing, so the catalogue
+ * still runs on a machine that has no QA admin account.
+ */
+function adminCredentials() {
+    const email = String(process.env.AUTOMATED_TESTS_ADMIN_EMAIL || '').trim();
+    const password = String(process.env.AUTOMATED_TESTS_ADMIN_PASSWORD || '').trim();
+    if (!email || !password) return null;
+    return { email, password };
+}
+
+/**
+ * Sign in through the real Filament admin login form.
+ *
+ * The debug mask and annotation ID field are gated in Blade on
+ * auth('admin')->check(), so unlike the premium gate there is nothing to shim
+ * client-side -- the markup simply is not sent. Returns false when no QA admin
+ * is configured or the login does not take.
+ */
+async function signInAsAdmin(page) {
+    const credentials = adminCredentials();
+    if (!credentials) return false;
+    await page.goto(`${BASE_URL}/admin/login`, { waitUntil: 'load', timeout: 45000 });
+    const email = await page.$('input[type="email"], #data\\.email');
+    const password = await page.$('input[type="password"], #data\\.password');
+    if (!email || !password) return false;
+    await email.fill(credentials.email);
+    await password.fill(credentials.password);
+    await Promise.all([
+        page.waitForNavigation({ waitUntil: 'load', timeout: 45000 }).catch(() => null),
+        page.click('button[type="submit"]'),
+    ]);
+    // Filament bounces a failed login straight back to /admin/login.
+    await page.waitForTimeout(400);
+    return !/\/admin\/login/.test(page.url());
+}
+
+/**
+ * Open the editor with an admin session attached, or null when unavailable.
+ */
+async function openEditorAsAdmin(page, docId) {
+    if (!(await signInAsAdmin(page))) return null;
+    return openEditor(page, docId);
 }
 
 // ---------------------------------------------------------------------------
@@ -2971,9 +3033,26 @@ async function testMoveAndResize(page, { saveRecorder, recorder }) {
     // Resize from the right edge. Re-select first: the drag above may have
     // dropped the selection, and the handles only exist while selected.
     await selectTextBoxByText(page, 'Move me');
+    // For a TEXT box the handles are display:none unless the box is both
+    // .is-selected AND .is-editing (shape/signature/image/field boxes show them
+    // on selection alone). So enter edit mode, or the handle is present in the
+    // DOM but has no layout box and the drag lands on the page behind it.
+    const boxCentre = await page.evaluate((selector) => {
+        const element = document.querySelector(selector);
+        if (!element) return null;
+        const rect = element.getBoundingClientRect();
+        return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+    }, TEXT_BOX_SELECTOR);
+    if (boxCentre) {
+        await page.mouse.dblclick(boxCentre.x, boxCentre.y);
+        await page.waitForTimeout(600);
+    }
+    recorder.assert('resize-needs-edit-mode',
+        await page.evaluate((selector) => !!document.querySelector(`${selector}.is-editing`), TEXT_BOX_SELECTOR),
+        'A text box enters edit mode, which is what reveals its resize handles');
     const movedBox = await singleTextBox(page);
     // A text box carries edge handles (t/b/l/r), not corners — see the edge list
-    // in createPersistedOverlayBox.
+    // in addEditableBoxChrome.
     const handle = await page.evaluate((selector) => {
         const element = document.querySelector(selector)?.querySelector(':scope > .enpv-resize-handle[data-edge="r"]');
         if (!element) return null;
@@ -3094,11 +3173,24 @@ async function testMultiSelect(page, { recorder }) {
     recorder.assert('escape-clears-multi', (await selectedCount()) === 0,
         'Escape clears the multi-selection');
 
-    // A marquee drag over both boxes selects them.
-    const spot = await pointOnPage(page, 1, 0.15, 0.15);
-    await page.mouse.move(spot.x, spot.y);
+    // A marquee drag over both boxes selects them. The rectangle is derived from
+    // where the boxes actually are: the group drag above has just moved them, so
+    // a hard-coded rectangle would miss one and quietly under-test the marquee.
+    const span = await page.evaluate((selector) => {
+        const rects = Array.from(document.querySelectorAll(selector))
+            .map((box) => box.getBoundingClientRect());
+        if (!rects.length) return null;
+        return {
+            left: Math.min(...rects.map((rect) => rect.left)),
+            top: Math.min(...rects.map((rect) => rect.top)),
+            right: Math.max(...rects.map((rect) => rect.right)),
+            bottom: Math.max(...rects.map((rect) => rect.bottom)),
+        };
+    }, TEXT_BOX_SELECTOR);
+    const pad = 28;
+    await page.mouse.move(span.left - pad, span.top - pad);
     await page.mouse.down();
-    await page.mouse.move(spot.x + 500, spot.y + 260, { steps: 8 });
+    await page.mouse.move(span.right + pad, span.bottom + pad, { steps: 8 });
     await page.mouse.up();
     await page.waitForTimeout(700);
     const marquee = await selectedCount();
@@ -3488,7 +3580,7 @@ async function testReloadFidelity(page, { saveRecorder, recorder }) {
 }
 
 /** 29 — Layers panel, annotation ID field and debug mask. */
-async function testLayersAndDebug(page, { recorder }) {
+async function testLayersAndDebug(page, { recorder, docId }) {
     const artifacts = [];
     await placeTextBox(page, 'Layer one', 0.25, 0.25);
     await placeTextBox(page, 'Layer two', 0.5, 0.45);
@@ -3525,6 +3617,36 @@ async function testLayersAndDebug(page, { recorder }) {
         JSON.stringify(adminOnly));
 
     artifacts.push(await capture(page, '29-layers-and-debug', 'layers'));
+
+    // The other half of NK_7: those same controls MUST appear for an admin.
+    // The gate lives in Blade, so this needs a real admin session -- see
+    // signInAsAdmin. Skipped, not failed, when no QA admin is configured.
+    if (!adminCredentials()) {
+        recorder.skip('admin-controls-present-for-admin',
+            'No QA admin configured (AUTOMATED_TESTS_ADMIN_EMAIL/PASSWORD) - admin-only controls not exercised');
+    } else if (!(await openEditorAsAdmin(page, docId))) {
+        recorder.assert('admin-sign-in', false,
+            'Signed in as the QA admin', `login did not take, url=${page.url()}`);
+    } else {
+        recorder.assert('admin-sign-in', true, 'Signed in as the QA admin');
+        await placeTextBox(page, 'Admin layer', 0.3, 0.4);
+        await selectTextBoxByText(page, 'Admin layer');
+        const asAdmin = await page.evaluate(() => ({
+            annotationId: !!document.getElementById('afb-annotation-id'),
+            debug: !!document.getElementById('afb-debug'),
+            annotationIdValue: document.getElementById('afb-annotation-id')?.value || '',
+        }));
+        recorder.assert('admin-controls-present-for-admin',
+            asAdmin.annotationId && asAdmin.debug,
+            'The annotation ID field and debug mask are offered to an admin (NK_7)',
+            JSON.stringify(asAdmin));
+        recorder.assert('admin-annotation-id-populated',
+            asAdmin.annotationIdValue.trim().length > 0,
+            'The annotation ID field shows the selected annotation id',
+            JSON.stringify(asAdmin.annotationIdValue));
+        artifacts.push(await capture(page, '29-layers-and-debug-admin', 'layers-admin'));
+    }
+
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
@@ -3690,6 +3812,11 @@ async function testDownloadAndBurn(page, { saveRecorder, recorder, docId }) {
         const rect = button.getBoundingClientRect();
         return { present: true, visible: rect.width > 0 && rect.height > 0 };
     });
+    // Burn asks for confirmation. Playwright dismisses dialogs by default, which
+    // silently aborts the burn and leaves the box exactly where it was -- the
+    // check then fails for a reason that has nothing to do with the product.
+    const acceptConfirm = (dialog) => { dialog.accept().catch(() => {}); };
+    page.on('dialog', acceptConfirm);
     const burned = burnOffered.visible ? await annotationMenuAction(page, 'burn') : false;
     recorder.assert('burn-action-available', burned,
         'The menu offers Burn into PDF for a text annotation',
@@ -3716,6 +3843,7 @@ async function testDownloadAndBurn(page, { saveRecorder, recorder, docId }) {
             JSON.stringify(remaining.map((box) => box.text)));
     }
 
+    page.off('dialog', acceptConfirm);
     artifacts.push(await capture(page, '28-download-and-burn', 'after-burn'));
 
     // The burned text has to still be in the document after a reload.
@@ -4311,10 +4439,13 @@ const TESTS = [
 
 function summarise(test, checks, artifacts, error, startedAt) {
     const passed = checks.filter((check) => check.result === 'PASS').length;
-    const total = checks.length;
+    const skipped = checks.filter((check) => check.result === 'SKIP').length;
+    // Skipped checks are not failures and are not passes either: drop them from
+    // the denominator so the ratio still reads as "everything that could run".
+    const total = checks.length - skipped;
     let status = 'passed';
     if (error) status = 'error';
-    else if (total === 0) status = 'error';
+    else if (checks.length === 0) status = 'error';
     else if (passed < total) status = 'failed';
 
     return {
@@ -4325,6 +4456,7 @@ function summarise(test, checks, artifacts, error, startedAt) {
         checks,
         checks_passed: passed,
         checks_total: total,
+        checks_skipped: skipped,
         artifacts: artifacts || [],
         error: error ? String(error.message || error) : null,
         duration_ms: Date.now() - startedAt,
@@ -4464,8 +4596,15 @@ module.exports = {
     PLACEMENT_DEFAULTS,
     buildBlankPdfBuffer,
     fetchCsrfToken,
+    adminCredentials,
+    signInAsAdmin,
+    openEditorAsAdmin,
     createBlankDocument,
     openEditor,
+    openEditorAsSignedIn,
+    placeTextBox,
+    doubleClickWordInBox,
+    annotationMenuAction,
     viewerScale,
     setAddTextMode,
     pointOnPage,

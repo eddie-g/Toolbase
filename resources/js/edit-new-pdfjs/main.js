@@ -1665,7 +1665,12 @@ function isDirectDrawEraserAnnotation(annotation) {
 }
 
 function canBurnAnnotation(annotation) {
-    return isShapeAnnotation(annotation) || isDirectDrawAnnotation(annotation);
+    return isShapeAnnotation(annotation)
+        || isDirectDrawAnnotation(annotation)
+        // Text added with the Text tool burns too. Source text stays excluded on
+        // purpose: burning it would erase the page's own words only to stamp the
+        // very same words straight back over the hole.
+        || isUserCreatedTextAnnotation(annotation);
 }
 
 function pdfjsAnnotationLayerKey(annotation) {
@@ -22759,6 +22764,33 @@ function selectMultipleAnnBoxes(boxes) {
     setStatus(`${multiSelectedAnnBoxUids.size} annotations selected.`);
 }
 
+/**
+ * Shift-click selection. The marquee builds a multi-selection by area; this
+ * reaches the same selection one box at a time, and shift-clicking a box that
+ * is already in the selection drops it back out.
+ */
+function extendAnnBoxSelection(box) {
+    if (!box || isAnnBoxLocked(box)) return;
+    if (!String(box.dataset.uid || '')) {
+        selectAnnBox(box);
+        return;
+    }
+    const current = hasMultiSelection() ? multiSelectedBoxes() : [];
+    if (!current.length) {
+        const selected = findSelectedBox();
+        if (selected && selected !== box && !isAnnBoxLocked(selected)) current.push(selected);
+    }
+    const next = current.filter((candidate) => candidate !== box);
+    // Filtering removed it => it was already selected => this click is a toggle off.
+    if (next.length === current.length) next.push(box);
+    if (!next.length) {
+        clearMultiSelection();
+        deselectAnnBox();
+        return;
+    }
+    selectMultipleAnnBoxes(next);
+}
+
 function selectCurrentPageDirectDrawAnnotations() {
     const pageIndex = Math.max(0, (Number(pdfViewer?.currentPageNumber) || 1) - 1);
     renderAnnotationBoxLayer(pageIndex);
@@ -23882,7 +23914,9 @@ function refreshAnnMenuState(box) {
     const locked = isAnnBoxLocked(box);
     const annotationType = String(box.dataset.annotationType || '').toLowerCase();
     const annotation = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
-    const burnable = canBurnAnnotation(annotation);
+    // A box that has not been persisted yet is absent from the annotation map;
+    // fall back to the box so freshly added text can still be burned.
+    const burnable = canBurnAnnotation(annotation) || (!annotation && isUserCreatedTextBox(box));
     const isImageMenu = annotationType === 'image';
     const isSignatureMenu = annotationType === 'signature';
     const isShapeMenu = annotationType === 'shape';
@@ -24455,7 +24489,7 @@ async function burnAnnotationLayer(annotation, box = null) {
         ? (buildAnnotationFromBox(activeBox, persisted) || persisted)
         : persisted;
     if (!canBurnAnnotation(burnAnnotation)) {
-        throw new Error('Only shapes and drawings can be burned into the PDF.');
+        throw new Error('Only shapes, drawings, and text added with the Text tool can be burned into the PDF.');
     }
     if (!window.confirm('Burn this layer into the PDF? This cannot be undone and text behind the layer will be erased.')) {
         return false;
@@ -24790,6 +24824,14 @@ function copyAnnBox(box) {
     copy.dataset.zIndex = String((Number.parseInt(box.style.zIndex || box.dataset.zIndex || '2', 10) || 2) + 1);
     copy.dataset.styleDirty = '1';
     copy.dataset.userForcedRichText = '1';
+    // A duplicate has to behave exactly like what it was copied from. These flags
+    // decide whether a box counts as user-authored, which is what gates rotation --
+    // without them the copy silently loses the rotate handle its original had.
+    if (isUserCreatedTextBox(box, existing)) copy.dataset.userCreated = '1';
+    if (box.dataset.userAuthored === '1') copy.dataset.userAuthored = '1';
+    if (box.dataset.skipPdfjsSourceMask === '1') copy.dataset.skipPdfjsSourceMask = '1';
+    const sourceRotation = boxRotationDegrees(box);
+    if (sourceRotation) copy.dataset.rotation = String(sourceRotation);
     copy.dataset.backgroundColor = box.dataset.backgroundColor || 'transparent';
     copy.dataset.opacity = box.dataset.opacity || box.style.opacity || '1';
     copy.dataset.underline = box.dataset.underline || '0';
@@ -24834,6 +24876,7 @@ function copyAnnBox(box) {
     setBoxEditorMode(copy, 'rich');
     addEditableBoxChrome(copy);
     layer.appendChild(copy);
+    if (sourceRotation) applyAnnotationRotationToBox(copy, sourceRotation);
     selectAnnBox(copy);
     syncMenuMutation(copy);
 }
@@ -25541,6 +25584,10 @@ function onAnnBoxPointerDown(ev) {
     if (hasMultiSelection() && box.classList.contains('is-multi-selected')) {
         if (isAnnBoxLocked(box)) return;
         if (beginMultiAnnBoxDrag(box, ev)) return;
+    }
+    if (ev.shiftKey) {
+        extendAnnBoxSelection(box);
+        return;
     }
     selectAnnBox(box);
     if (isAnnBoxLocked(box)) return;
@@ -27102,14 +27149,24 @@ window.addEventListener('keydown', (ev) => {
     }
     if (ev.key === 'Escape' && selectedAnnBoxUid && !dragState) deselectAnnBox();
     if ((ev.key === 'Delete' || ev.key === 'Backspace') && hasMultiSelection() && !dragState && !multiDragState) {
+        // A focused text field owns Delete/Backspace. Without this, clearing the
+        // hyperlink URL box -- or any other panel input -- deletes the selected
+        // annotation instead of a character. The clipboard shortcuts
+        // already guard this way; this path was simply missed.
+        if (activeElementAcceptsNativeClipboard()) return;
         const active = document.activeElement;
-        if (active?.isContentEditable || active?.closest?.('[contenteditable="true"]')) return;
+        if (active?.closest?.('[contenteditable="true"]')) return;
         if (deleteMultiSelectedAnnBoxes()) ev.preventDefault();
         return;
     }
     if ((ev.key === 'Delete' || ev.key === 'Backspace') && selectedAnnBoxUid && !dragState) {
+        // A focused text field owns Delete/Backspace. Without this, clearing the
+        // hyperlink URL box -- or any other panel input -- deletes the selected
+        // annotation instead of a character. The clipboard shortcuts
+        // already guard this way; this path was simply missed.
+        if (activeElementAcceptsNativeClipboard()) return;
         const active = document.activeElement;
-        if (active?.isContentEditable || active?.closest?.('[contenteditable="true"]')) return;
+        if (active?.closest?.('[contenteditable="true"]')) return;
         const box = findSelectedBox();
         if (box) {
             ev.preventDefault();
