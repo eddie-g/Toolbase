@@ -11491,8 +11491,44 @@ function applyAnnotationRotationToBox(box, rotation = null) {
         element.style.transformOrigin = '0 0';
         element.style.transform = transform;
     });
+    if (!type) applyRotatedBackgroundToBox(box, angle, transform);
     if (type === 'signature') updateSignatureSelectionChromeForBox(box, angle);
     else if (!type) updateTextSelectionChromeForBox(box, angle);
+}
+
+/**
+ * Turn a text box's background colour with its text (NK_12).
+ *
+ * Rotation moves the CONTENT and leaves the box axis-aligned, so that drag,
+ * resize and hit-testing keep working on unrotated geometry. The background,
+ * though, is painted on the box itself — so a rotated box kept a square fill
+ * under tilted glyphs, and the exported PDF, which rotates the fill, no longer
+ * matched what the user was shown.
+ *
+ * While the box is rotated the fill moves to a layer that carries the same
+ * transform as the content, and the box's own background is suppressed. An
+ * upright box is left entirely on the original CSS path.
+ */
+function applyRotatedBackgroundToBox(box, rotation, transform) {
+    const upright = isUprightRotation(rotation);
+    let layer = box.querySelector(':scope > .enpv-annotation-bg');
+
+    if (upright) {
+        if (layer) layer.remove();
+        box.classList.remove('has-rotated-bg');
+        return;
+    }
+
+    if (!layer) {
+        layer = document.createElement('div');
+        layer.className = 'enpv-annotation-bg';
+        layer.setAttribute('aria-hidden', 'true');
+        // First child, so the text and every handle paint over it.
+        box.insertBefore(layer, box.firstChild);
+    }
+    layer.style.transformOrigin = '0 0';
+    layer.style.transform = transform;
+    box.classList.add('has-rotated-bg');
 }
 
 const CUTTABLE_SHAPE_TYPES = new Set(['square', 'circle', 'triangle', 'star', 'polygon']);

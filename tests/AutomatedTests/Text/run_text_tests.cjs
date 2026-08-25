@@ -501,6 +501,18 @@ function textBoxes(page) {
             selectionFrameWidth: selectionFrameRect?.width || 0,
             selectionFrameHeight: selectionFrameRect?.height || 0,
             selectionFrameVisible: !!selectionFrame && window.getComputedStyle(selectionFrame).display !== 'none',
+            boxBackground: styles.backgroundColor,
+            bgLayer: (() => {
+                const layer = box.querySelector(':scope > .enpv-annotation-bg');
+                if (!layer) return null;
+                const rect = layer.getBoundingClientRect();
+                return {
+                    background: window.getComputedStyle(layer).backgroundColor,
+                    transform: layer.style.transform || '',
+                    width: rect.width,
+                    height: rect.height,
+                };
+            })(),
             rotateHandleVisible: (() => {
                 const handle = box.querySelector(':scope > .enpv-shape-rotate-handle');
                 return !!handle && window.getComputedStyle(handle).display !== 'none';
@@ -2090,6 +2102,68 @@ async function testRotateTextBox(page, { saveRecorder, recorder }) {
     } else {
         recorder.fail('locked-has-no-handle', 'No lock control in the annotation menu');
     }
+    // Unlock again: a locked box cannot be cleared for the next scenario.
+    if (locked) await annotationMenuAction(page, 'lock');
+
+    // NK_12 regression. Rotation turns the content and leaves the box square to
+    // the page — but the background used to be painted on the box, so a rotated
+    // box kept a square fill under tilted glyphs, and the exported PDF (which
+    // does rotate the fill) no longer matched the editor. Measure the painted
+    // area, not a style: the bug was a transform set on an element that was not
+    // the one doing the painting.
+    await commitAndDeselect(page);
+    await deleteAllTextBoxes(page);
+    await dragPlace(page, 0.15, 0.25, 300, 110);
+    await page.keyboard.type('On green');
+    await page.waitForTimeout(400);
+    await commitAndDeselect(page);
+    await selectTextBoxByText(page, 'On green');
+    await setColourInput(page, 'afb-bg-color', '#124020');
+
+    let filled = await singleTextBox(page);
+    recorder.assert('background-applied-upright',
+        normaliseColour(filled.backgroundColor) === '#124020',
+        'The box has a background colour before it is rotated', filled.backgroundColor);
+    recorder.assert('no-layer-while-upright', !filled.bgLayer,
+        'An upright box keeps the original background path, with no extra layer');
+
+    const spun = await dragRotateHandle(page, 35);
+    filled = await singleTextBox(page);
+
+    recorder.assert('background-layer-appears', !!filled.bgLayer,
+        'A rotated box paints its background through a layer that can turn');
+    recorder.assert('background-layer-rotates',
+        !!filled.bgLayer && /rotate\(/.test(filled.bgLayer.transform),
+        'The background carries the rotation', filled.bgLayer?.transform);
+    recorder.assert('background-layer-keeps-colour',
+        !!filled.bgLayer && normaliseColour(filled.bgLayer.background) === '#124020',
+        'The rotated background keeps the chosen colour', filled.bgLayer?.background);
+    recorder.assert('box-fill-suppressed',
+        isTransparent(filled.boxBackground),
+        'The box itself no longer paints a square fill underneath',
+        filled.boxBackground);
+
+    // A rotated rectangle covers more ground than the box it came from. This is
+    // what proves the fill actually turned rather than merely being moved.
+    const expected = rotatedBounds(filled.width, filled.height, spun);
+    recorder.near('background-covers-rotated-area-width',
+        filled.bgLayer?.width ?? 0, expected.width, 6,
+        'The painted area spans the rotated rectangle horizontally');
+    recorder.near('background-covers-rotated-area-height',
+        filled.bgLayer?.height ?? 0, expected.height, 6,
+        'The painted area spans the rotated rectangle vertically');
+
+    artifacts.push(await capture(page, '33-rotate-text-box', 'rotated-background'));
+
+    // ...and it survives a reload, like the angle itself.
+    await commitAndDeselect(page);
+    await saveAndReload(page, saveRecorder);
+    const reloadedFill = (await textBoxes(page)).find((entry) => entry.text.includes('On green'));
+    recorder.assert('background-rotation-survives-reload',
+        !!reloadedFill?.bgLayer && /rotate\(/.test(reloadedFill.bgLayer.transform)
+        && normaliseColour(reloadedFill.bgLayer.background) === '#124020',
+        'The rotated background survives a save and reload',
+        JSON.stringify(reloadedFill?.bgLayer));
 
     // Only text the user added is rotatable. Text that came from the PDF keeps
     // the geometry it was extracted with, and offers no handle at all — a
@@ -3922,6 +3996,17 @@ async function testPanelAccessibility(page, { recorder }) {
 // ---------------------------------------------------------------------------
 // Small shared helpers used by the tests above
 // ---------------------------------------------------------------------------
+
+/** Axis-aligned extent of a rectangle turned by `degrees`. */
+function rotatedBounds(width, height, degrees) {
+    const radians = (Number(degrees) || 0) * (Math.PI / 180);
+    const cos = Math.abs(Math.cos(radians));
+    const sin = Math.abs(Math.sin(radians));
+    return {
+        width: (width * cos) + (height * sin),
+        height: (width * sin) + (height * cos),
+    };
+}
 
 function normaliseColour(value) {
     const text = String(value || '').trim().toLowerCase();

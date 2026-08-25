@@ -4465,6 +4465,29 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-persisted-overlay:hover {
 .enpv-annotation-box.is-selected.enpv-shape-box:not([data-shape-type="line"]) .enpv-shape-selection-frame {
     display: block;
 }
+/* NK_12: while a text box is rotated its background is painted by this layer,
+ * which carries the same transform as the text, instead of by the box — which
+ * rotation deliberately leaves square to the page. */
+.enpv-annotation-box > .enpv-annotation-bg {
+    position: absolute;
+    inset: 0;
+    box-sizing: border-box;
+    background: var(--enpv-bg-color, transparent);
+    opacity: inherit;
+    pointer-events: none;
+    z-index: 0;
+}
+.enpv-annotation-box.has-rotated-bg,
+.enpv-annotation-box.has-rotated-bg:hover,
+.enpv-annotation-box.has-rotated-bg.is-selected,
+.enpv-annotation-box.has-rotated-bg.is-editing,
+.enpv-annotation-box.has-rotated-bg.is-selected.is-editing {
+    background: transparent !important;
+}
+.enpv-annotation-box.has-rotated-bg > .enpv-text-content {
+    position: relative;
+    z-index: 1;
+}
 .enpv-text-selection-frame,
 .enpv-signature-selection-frame {
     position: absolute;
