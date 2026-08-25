@@ -9,7 +9,6 @@ use App\Http\Controllers\BrowseLogosController;
 use App\Http\Controllers\AutomatedTestController;
 use App\Http\Controllers\SavedSignatureController;
 use App\Http\Controllers\CreditController;
-use App\Http\Controllers\OverlayEditorTestController;
 use App\Http\Controllers\PdfTestController;
 use App\Http\Controllers\PdfUploadTestController;
 use App\Http\Controllers\ShapeTestController;
@@ -145,8 +144,6 @@ Route::get('/loaded-fonts.css', function() {
     ]);
 })->name('loadedFonts');
 
-Route::get('/overlay-editor/test-files', [OverlayEditorTestController::class, 'getTestFiles'])->name('overlayEditor.testFiles');
-Route::post('/overlay-editor/run-single-test', [OverlayEditorTestController::class, 'runSingleTest'])->name('overlayEditor.runSingleTest');
 
 Route::get('/shapes/test-files', [ShapeTestController::class, 'getTestFiles'])->name('shapes.testFiles');
 Route::post('/shapes/run-single-test', [ShapeTestController::class, 'runSingleTest'])->name('shapes.runSingleTest');
