@@ -137,6 +137,53 @@ class AutomatedTestsPageTest extends TestCase
             ->assertSee('Test plan', false);
     }
 
+    public function test_an_expanded_test_offers_a_run_only_this_test_control(): void
+    {
+        $response = $this->actingAs($this->admin(), 'admin')
+            ->get('/admin/automated-tests')
+            ->assertOk()
+            ->assertSee('Run only this test', false);
+
+        $html = $response->getContent();
+
+        // Assert the CLICK BINDING, not just that a runOnly() method exists — the
+        // method definition alone matches 'runOnly(test)', so a button rewired to
+        // run() would still have satisfied that.
+        $this->assertStringContainsString('x-on:click="runOnly(test)"', $html,
+            'The button must be bound to runOnly(), or it would re-run the whole suite');
+        $this->assertStringContainsString('tests: [test.id]', $html,
+            'A single run must post just this test id');
+
+        // It must be blocked while any run is in flight, so two runs cannot overlap.
+        $this->assertStringContainsString(':disabled="busy"', $html,
+            'The button must be disabled while a run is already in progress');
+
+        // Only automated cases can be run; a manual one has nothing to execute.
+        $this->assertStringContainsString('x-if="test.automated"', $html,
+            'The button must only be offered for automated cases');
+    }
+
+    public function test_running_one_test_does_not_clear_the_other_results(): void
+    {
+        $html = (string) $this->actingAs($this->admin(), 'admin')
+            ->get('/admin/automated-tests')
+            ->assertOk()
+            ->getContent();
+
+        // run() deliberately resets everything; runOnly() must not, or re-running
+        // one failing case would wipe the results being compared against it.
+        $this->assertMatchesRegularExpression(
+            '/async runOnly\(test\)\s*\{(?:(?!async run\(\)).)*?this\.summary = null;/s',
+            $html,
+            'runOnly() should clear the run summary, whose totals no longer describe the screen',
+        );
+        $this->assertDoesNotMatchRegularExpression(
+            '/async runOnly\(test\)\s*\{(?:(?!async run\(\)).)*?this\.results = \{\};/s',
+            $html,
+            'runOnly() must NOT clear this.results — that is what separates it from a full run',
+        );
+    }
+
     public function test_the_page_offers_a_tab_per_suite(): void
     {
         $suites = (new \App\Filament\Pages\AutomatedTests)->getSuites();
