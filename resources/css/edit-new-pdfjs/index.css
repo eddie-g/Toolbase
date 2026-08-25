@@ -4554,7 +4554,11 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-rotated.has-signature-selection-
 .enpv-shape-rotate-handle:active {
     cursor: grabbing;
 }
-.enpv-annotation-box.is-selected.enpv-shape-box:not([data-shape-type="line"]) .enpv-shape-rotate-handle {
+/* :not(.is-locked) matters here. The rule below that hides handles on a locked
+ * annotation is only (0,3,0); this selector is (0,5,0) and would out-specify it,
+ * so without the guard a locked shape kept its rotate handle. The signature and
+ * user-created-text rules just below always had the guard — this one did not. */
+.enpv-annotation-box.is-selected:not(.is-locked).enpv-shape-box:not([data-shape-type="line"]) .enpv-shape-rotate-handle {
     display: flex;
 }
 /* NK_9: signatures and user-created text boxes rotate too. The handle is only

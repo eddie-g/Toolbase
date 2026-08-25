@@ -248,7 +248,7 @@
                 "summary": "The shape turns about its centre, the angle persists through save and reload and reaches the downloaded PDF. A locked shape gets no handle and a line is not rotatable. Fill and stroke must both turn with the shape: a rotated outline over an unrotated fill was exactly the NK_12 text-tool bug, so this measures the painted area rather than reading a style.",
                 "automated": true,
                 "story": "shapes-tool",
-                "automation_note": "FINDING — a locked shape KEEPS its rotate handle. index.css:5476 hides it for .is-locked at specificity (0,3,0), but the show rule at index.css:4557 is (0,5,0) and carries no :not(.is-locked) guard; the signature and text rules at 4562-4563 do have it. Check left failing deliberately. Otherwise covers rotation about the centre, the angle persisting through save and reload, and the painted geometry genuinely turning. Note the NK_12 split-transform bug cannot occur here: each shape is one svg element carrying both fill and stroke."
+                "automation_note": "Covers rotation about the centre, the angle persisting through save and reload, the PAINTED geometry genuinely turning (a rotated square grows from 220x170 to 278x272), and a LOCKED shape offering no rotate handle. That last one was a real defect when the case was written: index.css:4557 showed the handle at specificity (0,5,0) with no :not(.is-locked) guard and out-specified the hide rule at 5476 (0,3,0). Fixed by adding the guard the signature and text rules already had. The NK_12 split-transform bug cannot occur for shapes — each paints as ONE svg element carrying both fill and stroke."
             },
             {
                 "number": "23",
@@ -292,7 +292,7 @@
                 "summary": "Undo and redo by button and by every shortcut for draw, restyle, move, resize, rotate, cut, lock, duplicate, delete and paste. Each is exactly one step with no half-applied states, and the buttons disable correctly at both ends of the stack.",
                 "automated": true,
                 "story": "shapes-tool",
-                "automation_note": "FINDING — a restyle cannot be undone at all; three undos do not restore the previous colour. The panel binds both events on every input: input applies the change with pushHistory:false, then change snapshots the ALREADY-CHANGED state, so undo has nothing earlier to return to. A real colour picker fires the same input-then-change pair, so this is not a harness artefact. Check left failing deliberately. Draw, move and delete are each correctly one undo step."
+                "automation_note": "Covers undo and redo for draw, restyle, move and delete, each confirmed to be exactly ONE step, plus the keyboard shortcuts driving the same stack. Restyle was a real defect when the case was written: the panel applied changes on input with pushHistory:false and then snapshotted on change, by which point the change was already applied, so no number of undos could revert it. Fixed by snapshotting once at the START of a styling gesture, keyed by the selected shape uid so switching shapes begins a fresh gesture."
             },
             {
                 "number": "27",
@@ -358,7 +358,7 @@
                 "summary": "Every control is reachable by Tab in a sensible order with a visible focus ring and an accessible name. The shape buttons expose which is selected and the More shapes toggle reports aria-expanded. Sliders are keyboard-operable. One screen-reader pass confirms the selected shape and its options are announced.",
                 "automated": true,
                 "story": "shapes-tool",
-                "automation_note": "TWO ACCESSIBILITY FINDINGS, both left failing deliberately. (1) The two <input type=\"color\"> swatches have no accessible name — no aria-label, title or associated text — so a screen reader announces them only as \"color\". (2) The shape buttons mark the selected shape with an is-active CSS class only: no aria-pressed, no aria-selected, no radio role, so which shape is chosen is invisible to assistive technology. The story asks for exactly this. Passing: aria-expanded tracks the More shapes toggle both ways, sliders respond to arrow keys, focus is visible, and no visible control is removed from the tab order. A screen-reader pass is a recorded SKIP — automation cannot stand in for it."
+                "automation_note": "Covers accessible names on every visible control, the selected shape being exposed through aria-pressed AND that state MOVING when a different shape is picked, aria-expanded on the More shapes toggle, keyboard-operable sliders, a visible focus indicator, and nothing removed from the tab order. Two real defects when the case was written: the colour swatches had no accessible name (the aria-label sat on a text-less wrapping label, which does not name the input), and the shape buttons marked selection with a CSS class only. Both fixed. NOTE the aria-pressed check was itself strengthened: seeding the attribute in Blade alone satisfied the original check while the runtime sync was broken, so it now asserts the attribute follows the selection. A screen-reader pass remains a recorded SKIP."
             }
         ]
     }

@@ -3102,8 +3102,23 @@ async function testKeyboardAndAria(page, { recorder }) {
     // no aria-selected, no role="radio" — so which shape is chosen is invisible
     // to assistive technology.
     recorder.assert('selected-shape-exposed-to-assistive-tech', exposesState,
-        'The shape buttons expose which one is selected through ARIA (FINDING: only a CSS class does)',
+        'The shape buttons expose which one is selected through ARIA, not just a CSS class',
         JSON.stringify(selectionExposed));
+
+    // Assert the state MOVES, not merely that the attribute exists. Seeding
+    // aria-pressed in the Blade markup alone would satisfy the check above while
+    // the runtime sync was broken, so this picks a different shape and confirms
+    // the attribute follows the selection.
+    await pickShape(page, 'triangle');
+    const afterPick = await page.evaluate(() => Object.fromEntries(
+        Array.from(document.querySelectorAll('#shape-tool-panel [data-shape-tool]'))
+            .map((b) => [b.dataset.shapeTool, b.getAttribute('aria-pressed')]),
+    ));
+    recorder.assert('aria-pressed-follows-the-selection',
+        afterPick.triangle === 'true'
+        && Object.entries(afterPick).filter(([k]) => k !== 'triangle').every(([, v]) => v === 'false'),
+        'Picking a different shape moves aria-pressed onto it and clears the others',
+        JSON.stringify(afterPick));
 
     // More shapes toggle reports aria-expanded correctly, both ways.
     const collapsed = await page.evaluate(() => document.getElementById('shape-more-toggle')?.getAttribute('aria-expanded'));

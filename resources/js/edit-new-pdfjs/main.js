@@ -29606,6 +29606,33 @@ shapeMoreToggle?.addEventListener('click', (event) => {
     event.stopPropagation();
     setMoreShapesExpanded(shapeMoreToggle.getAttribute('aria-expanded') !== 'true');
 });
+/**
+ * Which shape a styling gesture is currently open against, or null.
+ *
+ * The panel applies changes on every `input` and only committed history on
+ * `change`. By then the change was already applied, so the snapshot captured the
+ * NEW state and a restyle could not be undone at all. The snapshot now happens
+ * once per gesture, BEFORE the first change lands.
+ */
+let shapeStyleGestureUid = null;
+
+/** Snapshot the pre-change state once, at the start of a styling gesture. */
+function beginShapeStyleGesture() {
+    const box = findSelectedBox();
+    if (!box) return;
+    const uid = String(box.dataset.uid || '');
+    // Already open for this shape; switching shapes starts a fresh gesture.
+    if (shapeStyleGestureUid !== null && shapeStyleGestureUid === uid) return;
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    if (!isShapeBox(box, existing) || isAnnBoxLocked(box)) return;
+    shapeStyleGestureUid = uid;
+    pushHistorySnapshot('change shape style');
+}
+
+function endShapeStyleGesture() {
+    shapeStyleGestureUid = null;
+}
+
 [
     shapeStrokeColorInput,
     shapeStrokeHexInput,
@@ -29618,6 +29645,7 @@ shapeMoreToggle?.addEventListener('click', (event) => {
     shapeFillOpacityInput,
 ].filter(Boolean).forEach((input) => {
     input.addEventListener('input', () => {
+        beginShapeStyleGesture();
         if (input === shapeStrokeColorInput && shapeStrokeHexInput) shapeStrokeHexInput.value = shapeStrokeColorInput.value;
         if (input === shapeStrokeHexInput && shapeStrokeColorInput) shapeStrokeColorInput.value = cssColorToHex(shapeStrokeHexInput.value, shapeStrokeColorInput.value);
         if (input === shapeFillColorInput && shapeFillHexInput) shapeFillHexInput.value = shapeFillColorInput.value;
@@ -29636,7 +29664,14 @@ shapeMoreToggle?.addEventListener('click', (event) => {
         if (shapeFillOpacityValue && shapeFillOpacityInput) shapeFillOpacityValue.textContent = `${shapeFillOpacityInput.value}%`;
         commitShapeInspectorToSelectedBox({ pushHistory: false });
     });
-    input.addEventListener('change', () => commitShapeInspectorToSelectedBox({ pushHistory: true }));
+    input.addEventListener('change', () => {
+        // No pushHistory here: beginShapeStyleGesture already snapshotted the
+        // state from before the gesture. Pushing again would capture the value
+        // the user just set and leave undo with nothing earlier to return to.
+        beginShapeStyleGesture();
+        commitShapeInspectorToSelectedBox({ pushHistory: false });
+        endShapeStyleGesture();
+    });
 });
 
 // Install signature feature (Sign button in floating toolbar, modal,
