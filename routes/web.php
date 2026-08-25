@@ -6,7 +6,6 @@ use App\Http\Controllers\DomainSearchController;
 use App\Http\Controllers\GeneratedImagePreviewController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\BrowseLogosController;
-use App\Http\Controllers\ComplianceController;
 use App\Http\Controllers\AutomatedTestController;
 use App\Http\Controllers\SavedSignatureController;
 use App\Http\Controllers\CreditController;
@@ -145,9 +144,6 @@ Route::get('/loaded-fonts.css', function() {
         'Cache-Control' => 'no-cache, must-revalidate'
     ]);
 })->name('loadedFonts');
-Route::post('/compliance/run-tests', [ComplianceController::class, 'runTests'])->name('compliance.runTests');
-Route::get('/compliance/test-files', [ComplianceController::class, 'getTestFiles'])->name('compliance.testFiles');
-Route::post('/compliance/run-single-test', [ComplianceController::class, 'runSingleTest'])->name('compliance.runSingleTest');
 
 Route::get('/overlay-editor/test-files', [OverlayEditorTestController::class, 'getTestFiles'])->name('overlayEditor.testFiles');
 Route::post('/overlay-editor/run-single-test', [OverlayEditorTestController::class, 'runSingleTest'])->name('overlayEditor.runSingleTest');
