@@ -7154,10 +7154,19 @@ class DocumentController extends Controller
         $isDirectDrawing = $type === 'image'
             && strtolower(trim((string) ($annotation['imageToolSource'] ?? ''))) === 'direct-draw';
 
-        if ($type !== 'shape' && !$isDirectDrawing) {
+        // Text added with the Text tool can be burned as well. Source text is left
+        // out on purpose: burning it would redact the page's own words and stamp
+        // the identical words back over the hole.
+        $isUserCreatedText = $type === 'text' && (
+            filter_var($annotation['userCreated'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            || filter_var($annotation['userAuthored'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            || filter_var($annotation['skipPdfjsSourceMask'] ?? false, FILTER_VALIDATE_BOOLEAN)
+        );
+
+        if ($type !== 'shape' && !$isDirectDrawing && !$isUserCreatedText) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only shapes and direct drawings can be burned into the PDF.',
+                'message' => 'Only shapes, direct drawings, and text added with the Text tool can be burned into the PDF.',
             ], 422);
         }
 

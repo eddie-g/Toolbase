@@ -95,10 +95,19 @@ class AutomatedTestController extends Controller
             ], 422);
         }
 
+        // Admin-gated controls are rendered server-side behind the `admin` guard,
+        // so a suite that covers them signs in through the real login form. When
+        // no QA admin is configured the runner skips those assertions instead of
+        // failing, so this stays optional.
+        $runnerEnv = array_filter([
+            'AUTOMATED_TESTS_ADMIN_EMAIL' => config('automated_tests.admin_email'),
+            'AUTOMATED_TESTS_ADMIN_PASSWORD' => config('automated_tests.admin_password'),
+        ], static fn ($value) => is_string($value) && $value !== '');
+
         $process = new Process(
             ['node', $runner, '--run', implode(',', $ids)],
             base_path(),
-            null,
+            $runnerEnv === [] ? null : $runnerEnv,
             null,
             self::RUN_TIMEOUT_SECONDS,
         );

@@ -191,10 +191,10 @@
                 "gid": "1217756857128740",
                 "area": "Formatting",
                 "title": "Bold, italic and underline",
-                "summary": "Each toggle updates the page text and its own pressed state, combinations work together, and all survive save, reload and download \u2014 including fonts with no real bold or italic cut.",
+                "summary": "Each toggle updates the page text and its own pressed state, combinations work together, and all survive save, reload and download — including fonts with no real bold or italic cut.",
                 "automated": true,
                 "story": "text-tool",
-                "automation_note": "Asserted on the computed style, not the inline one \u2014 that distinction is what NK_10 turned on. Fonts with no real bold or italic cut still need a manual pass. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+                "automation_note": "Asserted on the computed style, not the inline one — that distinction is what NK_10 turned on. Fonts with no real bold or italic cut still need a manual pass. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "17",
@@ -238,7 +238,7 @@
                 "summary": "Apply and remove work on a selection and are disabled without one, malformed and javascript: destinations are refused, and the link is clickable in the downloaded PDF.",
                 "automated": true,
                 "story": "text-tool",
-                "automation_note": "PARTIAL: apply, remove, and the disabled state are covered, and javascript: and empty destinations are refused. Re-applying after a remove currently loses the box in automation \u2014 under investigation, and worth a manual pass. Clickability in the downloaded PDF is not automated. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+                "automation_note": "PARTIAL: apply, remove, and the disabled state are covered, and javascript: and empty destinations are refused. Re-applying after a remove currently loses the box in automation — under investigation, and worth a manual pass. Clickability in the downloaded PDF is not automated. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "21",
@@ -260,7 +260,7 @@
                 "summary": "Dragging by body and grip follows the pointer 1:1 at every zoom and survives reload; resizing reflows the text, clamps below the minimum size, and each gesture is one undo step.",
                 "automated": true,
                 "story": "text-tool",
-                "automation_note": "PARTIAL: dragging, the undo step and the reload round trip are covered. Dragging the right-edge handle does not change the width in automation \u2014 unresolved, and worth a manual pass before trusting resize. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+                "automation_note": "PARTIAL: dragging, the undo step and the reload round trip are covered. Dragging the right-edge handle does not change the width in automation — unresolved, and worth a manual pass before trusting resize. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "23",
@@ -271,7 +271,7 @@
                 "summary": "Shift-click and marquee build a multi-selection, a group drag moves every box by the same offset, Delete removes them in one undo step, and Escape clears the selection.",
                 "automated": true,
                 "story": "text-tool",
-                "automation_note": "FINDING: shift-click does not build a multi-selection; only the marquee does. The shift-click check is left failing deliberately so the gap stays visible. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+                "automation_note": "Covers shift-click building a multi-selection, a group drag moving the whole selection by one offset, Escape clearing it, and a marquee drag followed by a group delete and a single undo. The marquee rectangle is derived from where the boxes actually are, since the group drag has just moved them. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "24",
@@ -282,7 +282,7 @@
                 "summary": "Front/back ordering persists through save, reload and download; lock disables move, resize, edit and the panel; duplicate makes an offset copy with a new id; and copy/paste works across pages without hijacking the shortcut inside an editor.",
                 "automated": true,
                 "story": "text-tool",
-                "automation_note": "FINDING: a duplicate of a user-created box is not itself tagged user-created, so it does not behave like the original (it cannot be rotated). The check is left failing deliberately. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+                "automation_note": "Covers z-order, lock, duplicate, delete, clipboard paste and the reload round trip. The duplicate is asserted to be tagged user-created, so it behaves like the original -- rotatable and restylable (NK_13). Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "25",
@@ -326,7 +326,7 @@
                 "summary": "The downloaded PDF renders every box at the right place, size and styling with selectable text, and a burned box becomes page content that still renders after reload and download.",
                 "automated": true,
                 "story": "text-tool",
-                "automation_note": "FINDING: Burn into PDF is present in the annotation menu but never shown for a text box, so it cannot be exercised. The check is left failing pending a decision on whether burn is meant to apply to text. The download endpoint is confirmed to return a PDF; visual fidelity in an external viewer still needs a manual pass. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+                "automation_note": "Covers Burn into PDF for a text annotation end to end: the action is offered, the burned box stops being an annotation, the neighbouring box is untouched, and the burn survives a save and reload. Burn is scoped to text added with the Text tool; source text is deliberately excluded. Visual fidelity in an external viewer is still a manual check. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "29",
@@ -337,7 +337,7 @@
                 "summary": "Boxes are listed and named from their own text with the documented truncation and fallback, reordering changes z-order, the read-only annotation ID selects on click, and the debug mask opens against the selected box.",
                 "automated": true,
                 "story": "text-tool",
-                "automation_note": "Covers the panel, row naming and truncation. The annotation ID field and debug mask are admin-only since NK_7, so this asserts their ABSENCE for a non-admin; exercising them needs an admin session. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+                "automation_note": "Covers the panel, row naming and truncation, and both halves of the NK_7 gate: the annotation ID field and debug mask are absent for a non-admin and present, with the ID populated, for an admin. The admin half signs in through the real Filament login (the gate is server-side Blade), and is SKIPPED rather than failed when no QA admin is configured. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "30",
@@ -348,7 +348,7 @@
                 "summary": "On a text-bearing document, editing a source span writes back surgically without moving the rest of the line, preserves typography, handles longer and shorter replacements, and does not fire once the box has been moved.",
                 "automated": true,
                 "story": "text-tool",
-                "automation_note": "PARTIAL: asserts a source run is reachable, selectable, not treated as a user box, carries its source typography, offers an inline editor, and is left alone by Escape. Driving the inline editor could not be made to land reliably from automation, so the surgical rewrite itself still needs a manual pass. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+                "automation_note": "PARTIAL BY DECISION: asserts a source run is reachable, selectable, not treated as a user box, carries its source typography, offers an inline editor, and is left alone by Escape. Driving the inline editor could not be made to land reliably from automation, so the surgical rewrite itself is a MANUAL check by agreement rather than an assertion that would pass either way. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
             },
             {
                 "number": "31",
@@ -378,7 +378,7 @@
                 "gid": "1217760052035814",
                 "area": "Manipulation",
                 "title": "Rotate a text box",
-                "summary": "A selected text box offers a rotate handle. Dragging it turns the text about the box centre while the box stays axis-aligned, and the angle survives a re-render of the annotation layer, a save and a reload. A locked annotation gets no handle, and neither does text that came from the PDF \u2014 only text the user added is rotatable.",
+                "summary": "A selected text box offers a rotate handle. Dragging it turns the text about the box centre while the box stays axis-aligned, and the angle survives a re-render of the annotation layer, a save and a reload. A locked annotation gets no handle, and neither does text that came from the PDF — only text the user added is rotatable.",
                 "automated": true,
                 "automation_note": "Added with [NK_9]. The exclusion of PDF source text is a product decision, confirmed, and is asserted here so it cannot drift. The signature half of that story is covered by the writer regression python/test_helpers/regression_signature_rotation.py, since placing a signature is the signature suite's job rather than this one's. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it.",
                 "story": "text-tool"
