@@ -144,6 +144,7 @@ class AutomatedTestsPageTest extends TestCase
 
         $this->assertContains('signature-tool', $keys);
         $this->assertContains('text-tool', $keys, 'The text tool needs its own tab');
+        $this->assertContains('shapes-tool', $keys, 'The shapes tool needs its own tab');
 
         // The switcher only renders with more than one suite, so the labels
         // have to reach the page for the tabs to be usable.
@@ -266,6 +267,62 @@ class AutomatedTestsPageTest extends TestCase
                 "The runner must register {$test['id']}, or the admin page offers a test that cannot run",
             );
         }
+    }
+
+    public function test_shapes_tool_suite_endpoint_requires_admin_authentication(): void
+    {
+        $this->getJson('/automated-tests/shapes-tool/suite')->assertUnauthorized();
+    }
+
+    public function test_shapes_tool_suite_returns_the_catalogue(): void
+    {
+        $response = $this->actingAs($this->admin(), 'admin')
+            ->getJson('/automated-tests/shapes-tool/suite')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('suite.key', 'shapes-tool');
+
+        $tests = $response->json('suite.tests');
+        $this->assertCount(32, $tests, 'The shapes story specifies 32 cases');
+
+        foreach ($tests as $test) {
+            $this->assertSame('shapes-tool', $test['story']);
+            $this->assertNotEmpty($test['gid'], "Case {$test['id']} must carry its Asana subtask gid");
+        }
+
+        // Each case maps onto its own Asana subtask; a duplicate gid would
+        // silently report one subtask's result against another.
+        $gids = array_column($tests, 'gid');
+        $this->assertSame(array_unique($gids), $gids, 'Two shapes cases share an Asana gid');
+    }
+
+    public function test_every_automated_shapes_case_exists_in_the_runner(): void
+    {
+        $catalogue = json_decode(
+            (string) file_get_contents(resource_path('automated-tests/shapes-tool.json')),
+            true,
+        );
+        $automated = array_values(array_filter(
+            $catalogue['suite']['tests'],
+            fn (array $test) => $test['automated'] === true,
+        ));
+
+        $this->assertNotEmpty($automated, 'At least one shapes case should be automated by now');
+
+        $runner = (string) file_get_contents(base_path('tests/AutomatedTests/Shapes/run_shapes_tests.cjs'));
+
+        foreach ($automated as $test) {
+            $this->assertStringContainsString(
+                "id: '".$test['id']."'",
+                $runner,
+                "The runner must register {$test['id']}, or the admin page offers a test that cannot run",
+            );
+        }
+
+        // Numbers are how the admin page labels rows, so a duplicate makes two
+        // different cases indistinguishable there.
+        $numbers = array_column($catalogue['suite']['tests'], 'number');
+        $this->assertSame(array_unique($numbers), $numbers, 'Two shapes cases share a number');
     }
 
     public function test_every_automated_signature_case_exists_in_the_runner(): void

@@ -1,0 +1,349 @@
+{
+    "suite": {
+        "key": "shapes-tool",
+        "name": "Shapes tool",
+        "tool_label": "Shapes tool",
+        "target_url": "/documents/{document}/edit-new?pdfjs=1",
+        "runner": "tests/AutomatedTests/Shapes/run_shapes_tests.cjs",
+        "workspace": "My workspace",
+        "project": "Netkit",
+        "section": "Claude QA Agent",
+        "stories": [
+            {
+                "key": "shapes-tool",
+                "short": "Shapes tool",
+                "task_gid": "1217808893073764",
+                "task_name": "[QA] - Shapes tool",
+                "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752/task/1217808893073764",
+                "instructions": [
+                    "Start with a blank pdf project for edit-new?pdfjs=1",
+                    "Click the Shapes tool",
+                    "Subtask 11 needs a document with a rotated page instead of the blank one",
+                    "Subtask 31 needs an annotation of a writer-only shape type, which the picker cannot produce"
+                ]
+            }
+        ],
+        "tests": [
+            {
+                "number": "01",
+                "id": "01-blank-project-loads",
+                "gid": "1217808870931882",
+                "area": "Entry",
+                "title": "Setup: blank PDF project loads in /edit-new?pdfjs=1 with the Shapes tool available",
+                "summary": "Precondition for the whole story: the page rasterises, the top-bar Shapes button and the floating toolbar shapes button are both present and enabled, no shape exists yet, the Shape options panel is closed, and the console is clean.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "02",
+                "id": "02-tool-toggle-exclusivity",
+                "gid": "1217808871029362",
+                "area": "Tool mode",
+                "title": "Shapes toggles from both toolbars and is exclusive with the other tools",
+                "summary": "Clicking Shapes opens the Shape options panel and puts the body into shape mode. The top-bar and floating buttons drive one shared state and can never look active independently. Add Text, Draw, Highlight, Sign and edit mode each cancel shape mode and vice versa. Also records whether shape mode survives drawing one shape, since the Add Text tool deliberately drops its mode after one placement and the two should not differ by accident.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "03",
+                "id": "03-primary-shapes-draw",
+                "gid": "1217808870960985",
+                "area": "Drawing",
+                "title": "The four primary shapes draw: circle, triangle, square and line",
+                "summary": "Each of circle, triangle, square and line draws to the dragged rectangle and stores the matching shapeType on the annotation rather than falling back to a rectangle. The picker shows which shape is selected. Asserted against the annotation, not the look alone.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "04",
+                "id": "04-more-shapes",
+                "gid": "1217808854650548",
+                "area": "Drawing",
+                "title": "More shapes: star, X and heart",
+                "summary": "The More shapes toggle reveals star, X and heart and reports aria-expanded correctly. Each draws. Picking a non-primary shape leaves the toggle showing one is active, and collapsing the toggle does not change the selected shape.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "05",
+                "id": "05-style-persists-between-draws",
+                "gid": "1217808854544480",
+                "area": "Drawing",
+                "title": "The chosen shape and style persist between draws",
+                "summary": "The panel is a set of defaults for the next shape, not a per-shape reset: a second shape drawn after the first comes out with the same shape type and styling. Also records whether those defaults survive a reload, either way.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "06",
+                "id": "06-drag-to-draw-preview",
+                "gid": "1217808836132369",
+                "area": "Drawing",
+                "title": "Drag to draw, with a live preview",
+                "summary": "A preview follows the pointer from the press point in every direction including up and to the left, and the released shape matches the preview. Covers a drag that ends outside the page and one interrupted by Escape or lost pointer capture, with no orphaned preview element left in the DOM.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "07",
+                "id": "07-shift-constrains",
+                "gid": "1217808836133904",
+                "area": "Drawing",
+                "title": "Shift constrains the drawn shape",
+                "summary": "Holding Shift constrains a circle to a circle, a square to a square and a line to the nearest 45 degrees. Checked for Shift pressed mid-drag and released mid-drag, not only held from the start.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "08",
+                "id": "08-click-without-drag",
+                "gid": "1217808870961003",
+                "area": "Drawing",
+                "title": "A click with no drag, and drags below any minimum",
+                "summary": "Records what a click with no drag and a few-pixel drag actually produce: a default-sized shape, nothing, or a degenerate zero-size annotation. A shape too small to see but still selectable and saved is a defect worth raising.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "09",
+                "id": "09-clamped-inside-page",
+                "gid": "1217808854720694",
+                "area": "Geometry",
+                "title": "Shapes are clamped inside the page",
+                "summary": "Drawing at each edge and corner, and dragging well past the page boundary, must leave the shape inside the page with no negative coordinates and no overhang, at a usable size. Measures the RENDERED shape, not just stored geometry: the text tool clamp used a height the box did not render at, so the annotation looked clamped while the rendering spilled off the page.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "10",
+                "id": "10-zoom-accuracy",
+                "gid": "1217808893392289",
+                "area": "Geometry",
+                "title": "Drawing stays accurate across zoom levels",
+                "summary": "At fit-width, 50%, 100%, 200% and an odd value the shape appears under the pointer, and the same dragged rectangle yields the same PDF coordinates whatever zoom it was drawn at. Changing zoom with a shape on the page keeps it anchored, with handles and hover menu following it.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "11",
+                "id": "11-rotated-pages",
+                "gid": "1217808836072847",
+                "area": "Geometry",
+                "title": "Drawing on rotated pages",
+                "summary": "Establishes what the Shapes tool does on a rotated page. For the Text tool the answer was that rotated pages are not editable at all: the editor renders them flattened, says so in a dialog, and places nothing. Two tools behaving differently on the same rotated page is the finding here.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "12",
+                "id": "12-stroke-colour",
+                "gid": "1217808804073465",
+                "area": "Styling",
+                "title": "Stroke colour",
+                "summary": "Changing stroke colour before drawing and on an existing selected shape shows immediately, survives save and reload, and reaches the downloaded PDF. The hex field and the swatch stay in step.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "13",
+                "id": "13-stroke-width-range",
+                "gid": "1217808804073475",
+                "area": "Styling",
+                "title": "Stroke width across its whole range",
+                "summary": "The slider runs 0 to 24; the readout tracks it and the drawn outline actually changes thickness at both ends. Width 0 must mean no stroke at all, and a shape with no stroke and no fill must not become an invisible but selectable annotation.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "14",
+                "id": "14-stroke-opacity",
+                "gid": "1217808804073081",
+                "area": "Styling",
+                "title": "Stroke opacity",
+                "summary": "Stroke opacity from 100% to 0% fades the outline, the readout matches, and the value survives save, reload and download. Stroke and fill opacity are independent of one another.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "15",
+                "id": "15-fill-colour",
+                "gid": "1217808854741082",
+                "area": "Styling",
+                "title": "Fill colour",
+                "summary": "Changing fill colour before drawing and on an existing shape shows immediately, survives save and reload, and reaches the downloaded PDF. The fill sits behind the stroke rather than covering it.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "16",
+                "id": "16-fill-opacity",
+                "gid": "1217808836132544",
+                "area": "Styling",
+                "title": "Fill opacity",
+                "summary": "Fill opacity defaults to 22%. Across its range the fill fades while the stroke does not, and the value is preserved through save, reload and download.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "17",
+                "id": "17-transparent-stroke-and-fill",
+                "gid": "1217808854739577",
+                "area": "Styling",
+                "title": "Transparent stroke and transparent fill",
+                "summary": "Establishes how a user reaches the transparency flags behind the two colour controls, then checks a transparent fill shows page content through it and a transparent stroke shows no outline. A shape with both transparent is invisible: records whether that is prevented or whether it stays selectable and recoverable.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "18",
+                "id": "18-default-style",
+                "gid": "1217808893433643",
+                "area": "Styling",
+                "title": "A new shape uses the documented defaults",
+                "summary": "A shape drawn without touching the panel comes out with stroke #0f172a at width 3 and 100% opacity, and fill #22c55e at 22% opacity. Verified against the annotation, not by eye.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "19",
+                "id": "19-line-endpoints",
+                "gid": "1217808854945939",
+                "area": "Styling",
+                "title": "Line: endpoints, caps and no fill",
+                "summary": "A line is not a box: both endpoints follow the drag, its stored geometry is the endpoints rather than a bounding rectangle, and fill settings do not apply. The line is excluded from rotation and from cut, and the picker and menu must agree rather than offering controls that do nothing.",
+                "automated": true,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "20",
+                "id": "20-select-and-menu",
+                "gid": "1217808804172472",
+                "area": "Manipulation",
+                "title": "Select, deselect and the hover menu",
+                "summary": "Selecting a shape shows the outline, resize handles and hover menu, anchored over the shape and still correct after scrolling and zooming. Every deselect path works. Covers selection by outline as well as filled interior, and what happens with a fully transparent fill.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "21",
+                "id": "21-move-and-resize",
+                "gid": "1217808855004648",
+                "area": "Manipulation",
+                "title": "Move and resize",
+                "summary": "Dragging by body and grip follows the pointer 1:1 at every zoom, stays inside the page, and survives a reload. Resizing from each handle changes geometry without scaling the stroke width, and a resize below the minimum is clamped rather than inverted. Each gesture is one undo step.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "22",
+                "id": "22-rotate",
+                "gid": "1217808855004660",
+                "area": "Manipulation",
+                "title": "Rotate",
+                "summary": "The shape turns about its centre, the angle persists through save and reload and reaches the downloaded PDF. A locked shape gets no handle and a line is not rotatable. Fill and stroke must both turn with the shape: a rotated outline over an unrotated fill was exactly the NK_12 text-tool bug, so this measures the painted area rather than reading a style.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "23",
+                "id": "23-cut-shape",
+                "gid": "1217808871252136",
+                "area": "Manipulation",
+                "title": "Cut a shape",
+                "summary": "Cut is offered on square, circle, triangle, star and polygon and not on line. Arming it shows some state, Escape cancels cleanly, the result is a sensible shape rather than a broken one, and the cut survives save, reload and download.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "24",
+                "id": "24-lock-duplicate-delete-order",
+                "gid": "1217808804244392",
+                "area": "Manipulation",
+                "title": "Lock, duplicate, delete and z-order",
+                "summary": "A locked shape cannot be moved, resized, rotated or restyled and its panel controls are disabled; unlock restores everything. Duplicate makes an offset copy with the same styling and a new annotation id, and the copy must behave exactly like the original -- a duplicated text box did not, which was a finding on the Text tool story. Bring-to-front and send-to-back survive save, reload and download.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "25",
+                "id": "25-multi-select",
+                "gid": "1217808855039106",
+                "area": "Manipulation",
+                "title": "Multi-select and group operations",
+                "summary": "A marquee drag selects several shapes and shift-click extends a selection. Shift-click was added to the shared annotation pointer-down path on the Text tool story, so both tools should behave the same here rather than differing by accident. A group drag moves everything by one offset, Delete removes the whole selection in one undo step, and Escape clears it.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "26",
+                "id": "26-undo-redo",
+                "gid": "1217808871214031",
+                "area": "Persistence",
+                "title": "Undo and redo across every shape operation",
+                "summary": "Undo and redo by button and by every shortcut for draw, restyle, move, resize, rotate, cut, lock, duplicate, delete and paste. Each is exactly one step with no half-applied states, and the buttons disable correctly at both ends of the stack.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "27",
+                "id": "27-autosave-and-save",
+                "gid": "1217808804286764",
+                "area": "Persistence",
+                "title": "Autosave and explicit Save",
+                "summary": "Drawing, restyling, moving, resizing, rotating and deleting each mark the document dirty and schedule an autosave with the status line reporting it. An explicit Save does the same. No save is sent when nothing changed, and rapid edits coalesce rather than racing.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "28",
+                "id": "28-reload-fidelity",
+                "gid": "1217808893594871",
+                "area": "Persistence",
+                "title": "Reload fidelity",
+                "summary": "One of every shape with different strokes, fills, opacities and angles across more than one page comes back after a hard reload with the same geometry, styling, angle, z-order and annotation ids, and the panel reads its values back when each is selected.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "29",
+                "id": "29-download-fidelity",
+                "gid": "1217808855071105",
+                "area": "Export",
+                "title": "Downloaded PDF fidelity, per shape type",
+                "summary": "Every shape type appears in the downloaded PDF at the same place and size with the right stroke, fill, opacities and angle. Checked per type because draw_shape has a distinct branch per shape and one can regress while the others are fine. Includes a shape with no stroke, one with no fill, and one with both partly transparent.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "30",
+                "id": "30-layers-and-identity",
+                "gid": "1217808836418244",
+                "area": "Layers",
+                "title": "Layers panel and annotation identity",
+                "summary": "Shapes are listed and recognisably named, reordering a row changes z-order on the page, and a row survives a reload still pointing at the same annotation. The annotation ID field and debug mask are admin-only since NK_7: absent for a non-admin, working for an admin.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "31",
+                "id": "31-writer-only-shapes",
+                "gid": "1217808804290084",
+                "area": "Coverage",
+                "title": "Shapes the writer supports but the picker does not offer",
+                "summary": "The PDF writer draws arrow, checkmark and polygon and the picker offers none of them. Establishes whether they are reachable another way and what happens when one arrives in the editor: does it render, can it be selected, restyled and saved without corruption. The outcome is a DECISION, not a pass or fail -- either they should be offered, or the writer carries code for shapes that can no longer occur.",
+                "automated": false,
+                "story": "shapes-tool"
+            },
+            {
+                "number": "32",
+                "id": "32-keyboard-and-aria",
+                "gid": "1217808871214043",
+                "area": "Accessibility",
+                "title": "Keyboard access and ARIA on the Shape options panel",
+                "summary": "Every control is reachable by Tab in a sensible order with a visible focus ring and an accessible name. The shape buttons expose which is selected and the More shapes toggle reports aria-expanded. Sliders are keyboard-operable. One screen-reader pass confirms the selected shape and its options are announced.",
+                "automated": false,
+                "story": "shapes-tool"
+            }
+        ]
+    }
+}

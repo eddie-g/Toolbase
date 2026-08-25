@@ -37,6 +37,11 @@ class AutomatedTests extends Page
                 'label' => 'Text tool',
                 'available' => true,
             ],
+            [
+                'key' => 'shapes-tool',
+                'label' => 'Shapes tool',
+                'available' => true,
+            ],
         ];
     }
 }

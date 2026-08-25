@@ -28,6 +28,11 @@ class AutomatedTestController extends Controller
             'runner' => 'tests/AutomatedTests/Text/run_text_tests.cjs',
             'artifacts' => 'tests/AutomatedTests/Text/artifacts',
         ],
+        'shapes-tool' => [
+            'catalogue' => 'automated-tests/shapes-tool.json',
+            'runner' => 'tests/AutomatedTests/Shapes/run_shapes_tests.cjs',
+            'artifacts' => 'tests/AutomatedTests/Shapes/artifacts',
+        ],
     ];
 
     /** Playwright drives a real browser per test — allow generous headroom. */
