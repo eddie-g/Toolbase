@@ -145,11 +145,6 @@ class OverlayEditorTestResource extends Resource
                 ]),
             ])
             ->headerActions([
-                Action::make('run_shape_tests')
-                    ->label('Run Shape Tests')
-                    ->icon('heroicon-o-play')
-                    ->color('warning')
-                    ->url(fn () => route('filament.admin.pages.run-shape-tests')),
                 Action::make('run_pdf_tests')
                     ->label('Run PDF Tests')
                     ->icon('heroicon-o-play')

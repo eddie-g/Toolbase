@@ -11,7 +11,6 @@ use App\Http\Controllers\SavedSignatureController;
 use App\Http\Controllers\CreditController;
 use App\Http\Controllers\PdfTestController;
 use App\Http\Controllers\PdfUploadTestController;
-use App\Http\Controllers\ShapeTestController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -145,9 +144,6 @@ Route::get('/loaded-fonts.css', function() {
 })->name('loadedFonts');
 
 
-Route::get('/shapes/test-files', [ShapeTestController::class, 'getTestFiles'])->name('shapes.testFiles');
-Route::post('/shapes/run-single-test', [ShapeTestController::class, 'runSingleTest'])->name('shapes.runSingleTest');
-Route::post('/shapes/run-all-tests', [ShapeTestController::class, 'runAllTests'])->name('shapes.runAllTests');
 
 // Account-scoped saved signatures for the signature modal (NK_Dev_4).
 // The controller resolves the web/admin guard itself and answers guests with
