@@ -5,12 +5,17 @@
  * (Netkit -> Claude QA Agent). Each run creates a fresh blank PDF, uploads it
  * as a new document, opens it in the pdf.js editor, and drives the real UI.
  *
- * Scope note: there is a SEPARATE, older shape suite at
+ * Scope note: there WAS a separate, older shape suite at
  * tests/OverlayEditor/Shapes/run_shape_tests.cjs, reached from Admin ->
- * Run Shape Tests. That one drives the LEGACY overlay editor (/documents/{id}/edit)
- * and validates PDF drawing operators per shape type. This suite drives the
- * pdf.js editor (/edit-new?pdfjs=1) and its Shapes tool UI. They complement
- * each other; do not duplicate the operator-level assertions here.
+ * Run Shape Tests. It drove the LEGACY overlay editor (/documents/{id}/edit)
+ * and validated PDF drawing operators per shape type. Both it and its admin
+ * page were deleted as dead code under "[Cleanup] - Remove retired admin
+ * tools" (subtask 7).
+ *
+ * That leaves NO operator-level assertions anywhere: nothing now checks that a
+ * rectangle emits 'l' path ops, a circle emits 'c' beziers, or that a rotation
+ * writes the expected cm matrix in the output PDF. Case 29 (Downloaded PDF
+ * fidelity) is the place to add that if it is ever wanted.
  *
  * Usage:
  *   node run_shapes_tests.cjs --list

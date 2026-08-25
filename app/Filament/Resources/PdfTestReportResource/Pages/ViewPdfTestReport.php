@@ -1,15 +1,15 @@
 <?php
 
-namespace App\Filament\Resources\OverlayEditorTestResource\Pages;
+namespace App\Filament\Resources\PdfTestReportResource\Pages;
 
-use App\Filament\Resources\OverlayEditorTestResource;
+use App\Filament\Resources\PdfTestReportResource;
 use Filament\Resources\Pages\ViewRecord;
 use Filament\Infolists;
 use Filament\Infolists\Infolist;
 
-class ViewOverlayEditorTest extends ViewRecord
+class ViewPdfTestReport extends ViewRecord
 {
-    protected static string $resource = OverlayEditorTestResource::class;
+    protected static string $resource = PdfTestReportResource::class;
 
     public function infolist(Infolist $infolist): Infolist
     {

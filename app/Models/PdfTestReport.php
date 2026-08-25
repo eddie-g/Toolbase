@@ -4,9 +4,17 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 
-class OverlayEditorTest extends Model
+/**
+ * A single stored result row from the Run PDF Tests page.
+ *
+ * Formerly OverlayEditorTest, backed by tests_overlay_editor. The table was
+ * shared with the Run Overlay Tests and Run Shape Tests pages until both were
+ * retired; PdfTestController is now its only writer, so both the model and the
+ * table were renamed to say so.
+ */
+class PdfTestReport extends Model
 {
-    protected $table = 'tests_overlay_editor';
+    protected $table = 'pdf_test_reports';
 
     protected $fillable = [
         'run_id',

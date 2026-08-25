@@ -6,14 +6,11 @@ use App\Http\Controllers\DomainSearchController;
 use App\Http\Controllers\GeneratedImagePreviewController;
 use App\Http\Controllers\AIController;
 use App\Http\Controllers\BrowseLogosController;
-use App\Http\Controllers\ComplianceController;
 use App\Http\Controllers\AutomatedTestController;
 use App\Http\Controllers\SavedSignatureController;
 use App\Http\Controllers\CreditController;
-use App\Http\Controllers\OverlayEditorTestController;
 use App\Http\Controllers\PdfTestController;
 use App\Http\Controllers\PdfUploadTestController;
-use App\Http\Controllers\ShapeTestController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/', function () {
@@ -145,16 +142,8 @@ Route::get('/loaded-fonts.css', function() {
         'Cache-Control' => 'no-cache, must-revalidate'
     ]);
 })->name('loadedFonts');
-Route::post('/compliance/run-tests', [ComplianceController::class, 'runTests'])->name('compliance.runTests');
-Route::get('/compliance/test-files', [ComplianceController::class, 'getTestFiles'])->name('compliance.testFiles');
-Route::post('/compliance/run-single-test', [ComplianceController::class, 'runSingleTest'])->name('compliance.runSingleTest');
 
-Route::get('/overlay-editor/test-files', [OverlayEditorTestController::class, 'getTestFiles'])->name('overlayEditor.testFiles');
-Route::post('/overlay-editor/run-single-test', [OverlayEditorTestController::class, 'runSingleTest'])->name('overlayEditor.runSingleTest');
 
-Route::get('/shapes/test-files', [ShapeTestController::class, 'getTestFiles'])->name('shapes.testFiles');
-Route::post('/shapes/run-single-test', [ShapeTestController::class, 'runSingleTest'])->name('shapes.runSingleTest');
-Route::post('/shapes/run-all-tests', [ShapeTestController::class, 'runAllTests'])->name('shapes.runAllTests');
 
 // Account-scoped saved signatures for the signature modal (NK_Dev_4).
 // The controller resolves the web/admin guard itself and answers guests with
@@ -181,9 +170,6 @@ Route::get('/pdf-tests/document/{document}/info', [PdfTestController::class, 'do
 Route::get('/pdf-tests/document/{document}/annotation-debug', [PdfTestController::class, 'annotationDebug'])->name('pdfTests.annotationDebug');
 Route::post('/pdf-tests/document/{document}/flag-annotation', [PdfTestController::class, 'flagAnnotation'])->name('pdfTests.flagAnnotation');
 Route::post('/pdf-tests/document/{document}/render-annotations', [PdfTestController::class, 'renderAnnotations'])->name('pdfTests.renderAnnotations');
-Route::post('/pdf-tests/document/{document}/compare-first-annotation', [PdfTestController::class, 'compareFirstAnnotation'])->name('pdfTests.compareFirstAnnotation');
-Route::post('/pdf-tests/document/{document}/compare-written-vs-original', [PdfTestController::class, 'compareWrittenVsOriginal'])->name('pdfTests.compareWrittenVsOriginal');
-Route::post('/pdf-tests/document/{document}/compare-edit-new-snapshot', [PdfTestController::class, 'compareEditNewSnapshot'])->name('pdfTests.compareEditNewSnapshot');
 
 Route::middleware('auth:admin')
     ->prefix('/pdf-tests/upload-tests')

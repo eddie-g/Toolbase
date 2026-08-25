@@ -312,7 +312,8 @@
                 "title": "Downloaded PDF fidelity, per shape type",
                 "summary": "Every shape type appears in the downloaded PDF at the same place and size with the right stroke, fill, opacities and angle. Checked per type because draw_shape has a distinct branch per shape and one can regress while the others are fine. Includes a shape with no stroke, one with no fill, and one with both partly transparent.",
                 "automated": false,
-                "story": "shapes-tool"
+                "story": "shapes-tool",
+                "automation_note": "COVERAGE GAP, recorded deliberately. The legacy suite at tests/OverlayEditor/Shapes/ was deleted as dead code under \"[Cleanup] - Remove retired admin tools\" subtask 7. It was the only thing asserting PDF DRAWING OPERATORS per shape type -- that a rectangle emits 'l' path ops, a circle emits 'c' beziers, that a rotation writes the expected cm matrix, and that colour, border width and opacity land in the output. It also covered arrow, checkmark and polygon. Nothing asserts any of that now. This case was originally scoped assuming that suite existed to lean on, so if operator-level fidelity matters it has to be built here rather than assumed to be covered elsewhere."
             },
             {
                 "number": "30",
