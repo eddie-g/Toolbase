@@ -9292,11 +9292,13 @@ class DocumentController extends Controller
 
     /**
      * Bake all unedited promoted annotations into the clean base PDF using the
-     * exact writer + normalization pipeline that /admin/pdf-comparison's
-     * "Edit-new snapshot" panel uses. /edit-new loads this as the base so the
-     * canvas does not need to redraw promoted source spans (eliminating the
-     * overprint/duplicate-text class of bugs and guaranteeing pixel-equivalence
-     * with the comparison snapshot).
+     * exact writer + normalization pipeline the editor itself uses. /edit-new
+     * loads this as the base so the canvas does not need to redraw promoted
+     * source spans, eliminating the overprint/duplicate-text class of bugs.
+     *
+     * buildEditNewComparisonAnnotations() keeps its name from the retired
+     * /admin/pdf-comparison page, but this is the live editor path and is the
+     * only caller left.
      */
     public function bakedPdf(Request $request, Document $document)
     {
