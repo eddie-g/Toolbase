@@ -26,11 +26,6 @@
             <button type="button" class="sfb-shape-btn" aria-pressed="false" data-shape-tool="line" title="Line" aria-label="Line">
                 <svg viewBox="0 0 24 24"><path d="M5 19 19 5"></path></svg>
             </button>
-            <button type="button" class="sfb-shape-btn sfb-more-shapes-toggle" id="shape-more-toggle" title="More shapes" aria-label="More shapes" aria-expanded="false" aria-controls="shape-more-grid">
-                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6l-.04.04a2 2 0 1 1-3.92 0L10 20a1.7 1.7 0 0 0-1-.6 1.7 1.7 0 0 0-1.88.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1l-.04-.04a2 2 0 1 1 0-3.92L4 10a1.7 1.7 0 0 0 .6-1 1.7 1.7 0 0 0-.34-1.88l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6l.04-.04a2 2 0 1 1 3.92 0L14 4a1.7 1.7 0 0 0 1 .6 1.7 1.7 0 0 0 1.88-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 .6 1l.04.04a2 2 0 1 1 0 3.92L20 14a1.7 1.7 0 0 0-.6 1z"></path></svg>
-            </button>
-        </div>
-        <div class="sfb-shape-grid sfb-extra-shapes" id="shape-more-grid">
             <button type="button" class="sfb-shape-btn" aria-pressed="false" data-shape-tool="star" title="Star" aria-label="Star">
                 <svg viewBox="0 0 24 24"><path d="m12 4 2.35 4.76 5.25.76-3.8 3.7.9 5.23L12 16l-4.7 2.45.9-5.23-3.8-3.7 5.25-.76z"></path></svg>
             </button>

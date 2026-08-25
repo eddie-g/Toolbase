@@ -62,7 +62,8 @@
                 "title": "More shapes: star, X and heart",
                 "summary": "The More shapes toggle reveals star, X and heart and reports aria-expanded correctly. Each draws. Picking a non-primary shape leaves the toggle showing one is active, and collapsing the toggle does not change the selected shape.",
                 "automated": true,
-                "story": "shapes-tool"
+                "story": "shapes-tool",
+                "automation_note": "Covers star, X and heart drawing and recording their own shapeType, and the picker showing each as selected. Rewritten for NK_13: the \"More shapes\" gear toggle is gone and all seven shapes sit in one grid, so this now asserts that star, X and heart are visible alongside the primary four with nothing to expand, and that neither the toggle nor its separate grid remains."
             },
             {
                 "number": "05",
@@ -259,7 +260,7 @@
                 "summary": "Cut is offered on square, circle, triangle, star and polygon and not on line. Arming it shows some state, Escape cancels cleanly, the result is a sensible shape rather than a broken one, and the cut survives save, reload and download.",
                 "automated": true,
                 "story": "shapes-tool",
-                "automation_note": "Covers Cut being offered for a square and not for a line (matching CUTTABLE_SHAPE_TYPES), arming showing a visible state, and Escape cancelling cleanly and leaving the shape intact."
+                "automation_note": "Covers Cut being offered for a square AND for a heart (NK_14), and NOT for a line; arming showing a visible state; Escape cancelling cleanly and leaving the shape intact. Line stays excluded because canCutShapeBox is gated on shapeBoxCanRotate, which excludes lines, and because \"cut\" for a one-dimensional segment means splitting it rather than the area split this implements — left on NK_14 for a spec. Performing an actual cut and checking the result survives save/reload/download is still a manual check."
             },
             {
                 "number": "24",
@@ -325,7 +326,7 @@
                 "summary": "Every shape type appears in the downloaded PDF at the same place and size with the right stroke, fill, opacities and angle. Checked per type because draw_shape has a distinct branch per shape and one can regress while the others are fine. Includes a shape with no stroke, one with no fill, and one with both partly transparent.",
                 "automated": true,
                 "story": "shapes-tool",
-                "automation_note": "Covers one shape of every offered type reaching both the page and the saved payload, plus a no-stroke shape, and the download endpoint returning a real PDF. FINDING recorded here: picking a shape while one is SELECTED converts that shape rather than only setting the next default, so several different shapes cannot be drawn in a row without pressing Escape between them. NOT COVERED, as a recorded SKIP: per-shape PDF drawing operators. The legacy suite that asserted them was deleted as dead code under the admin cleanup, so verifying placement, size, colour and angle in an external viewer is a MANUAL check."
+                "automation_note": "Covers one shape of every offered type plus a no-stroke shape, every type reaching the saved payload, and the download endpoint returning a real PDF. Since NK_15 the seven shapes are drawn BACK TO BACK WITHOUT DESELECTING, which used to be impossible — the picker committed to the selection, so choosing the next shape converted the one just drawn. Leaving the Escape out is deliberate: picker-does-not-retype-the-selection guards that fix and breaks if the behaviour returns. Still a recorded SKIP: per-shape PDF drawing operators, deleted with the legacy suite under the admin cleanup; external-viewer fidelity remains a MANUAL check."
             },
             {
                 "number": "30",
@@ -347,7 +348,7 @@
                 "summary": "The PDF writer draws arrow, checkmark and polygon and the picker offers none of them. Establishes whether they are reachable another way and what happens when one arrives in the editor: does it render, can it be selected, restyled and saved without corruption. The outcome is a DECISION, not a pass or fail -- either they should be offered, or the writer carries code for shapes that can no longer occur.",
                 "automated": true,
                 "story": "shapes-tool",
-                "automation_note": "DECISION NEEDED, not a pass or fail. The picker offers exactly seven shapes and none of arrow, checkmark or polygon, while draw_shape still handles all three. Whether they are reachable another way needs checking against real data. Note polygon is also listed in CUTTABLE_SHAPE_TYPES, so the cut feature carries a branch for a shape the picker cannot produce either."
+                "automation_note": "ESTABLISHED, and the DECISION is still open. The picker offers exactly seven shapes, all directly reachable since NK_13 removed the More toggle, and none of arrow, checkmark or polygon — which draw_shape still handles. Whether those three are reachable another way needs checking against real data. Note polygon is also in CUTTABLE_SHAPE_TYPES, so cut carries a branch for a shape the picker cannot produce."
             },
             {
                 "number": "32",
@@ -358,7 +359,7 @@
                 "summary": "Every control is reachable by Tab in a sensible order with a visible focus ring and an accessible name. The shape buttons expose which is selected and the More shapes toggle reports aria-expanded. Sliders are keyboard-operable. One screen-reader pass confirms the selected shape and its options are announced.",
                 "automated": true,
                 "story": "shapes-tool",
-                "automation_note": "Covers accessible names on every visible control, the selected shape being exposed through aria-pressed AND that state MOVING when a different shape is picked, aria-expanded on the More shapes toggle, keyboard-operable sliders, a visible focus indicator, and nothing removed from the tab order. Two real defects when the case was written: the colour swatches had no accessible name (the aria-label sat on a text-less wrapping label, which does not name the input), and the shape buttons marked selection with a CSS class only. Both fixed. NOTE the aria-pressed check was itself strengthened: seeding the attribute in Blade alone satisfied the original check while the runtime sync was broken, so it now asserts the attribute follows the selection. A screen-reader pass remains a recorded SKIP."
+                "automation_note": "Covers accessible names, the selected shape being exposed through aria-pressed AND that state moving with the selection, keyboard-operable sliders, a visible focus indicator, and the tab order. The aria-expanded check went with the More toggle under NK_13; in its place this asserts all seven shapes are directly focusable, which is strictly better for keyboard users than a disclosure they had to find first. Removing that toggle also exposed a real gap: the shape buttons set outline:none and styled :focus-visible identically to :hover, so keyboard focus was a faint grey border change. Both editors now have a proper focus ring — it mattered more once all seven entered the tab order. A screen-reader pass remains a recorded SKIP."
             }
         ]
     }
