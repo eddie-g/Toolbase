@@ -70,7 +70,11 @@ export function reflectShapeStateToInputs(shapeState, refs) {
     if (shapeFillOpacityValue) shapeFillOpacityValue.textContent = `${Math.round(currentShapeFillOpacity * 100)}%`;
     if (shapeTypeButtons) {
         shapeTypeButtons.forEach((button) => {
-            button.classList.toggle('is-active', button.dataset.shapeTool === currentShapeType);
+            const isActive = button.dataset.shapeTool === currentShapeType;
+            button.classList.toggle('is-active', isActive);
+            // The class alone is invisible to assistive technology: without
+            // aria-pressed a screen reader cannot tell which shape is selected.
+            button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
         });
     }
 }

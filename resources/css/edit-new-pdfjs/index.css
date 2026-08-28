@@ -1092,13 +1092,13 @@ body.enpv-body #shape-tool-panel .sfb-control-label {
 body.enpv-body #shape-tool-panel .sfb-shape-grid {
     width: 100%;
     display: grid;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    /* NK_13: all seven shapes sit in one grid now the More toggle is gone.
+       auto-fit rather than a fixed seven so the row wraps instead of squashing
+       on a narrow panel (the panel is min(430px, 96vw)). */
+    grid-template-columns: repeat(auto-fit, minmax(40px, 1fr));
     gap: 8px;
     padding: 0;
     background: transparent;
-}
-body.enpv-body #shape-tool-panel .sfb-extra-shapes {
-    margin-left: 0;
 }
 body.enpv-body #shape-tool-panel .sfb-shape-btn {
     width: 100%;
@@ -1107,22 +1107,25 @@ body.enpv-body #shape-tool-panel .sfb-shape-btn {
     border-radius: 8px;
     background: #f8fafc;
 }
-body.enpv-body #shape-tool-panel .sfb-shape-btn:hover,
-body.enpv-body #shape-tool-panel .sfb-shape-btn:focus-visible {
+body.enpv-body #shape-tool-panel .sfb-shape-btn:hover {
     border-color: #94a3b8;
     background: #ffffff;
-    outline: none;
+}
+/* Keyboard focus needs its own indicator, not the hover treatment. The rule
+   above used to cover :focus-visible too AND set outline:none, so a keyboard
+   user got a faint grey border change and nothing else. That matters more since
+   NK_13 put all seven shapes directly in the tab order. */
+body.enpv-body #shape-tool-panel .sfb-shape-btn:focus-visible {
+    border-color: #2563eb;
+    background: #ffffff;
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
 }
 body.enpv-body #shape-tool-panel .sfb-shape-btn.is-active {
     border-color: #2563eb;
     background: #eff6ff;
     color: #1d4ed8;
     box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
-}
-body.enpv-body #shape-tool-panel .sfb-more-shapes-toggle[aria-expanded="true"] {
-    border-color: #7c3aed;
-    background: #f5f3ff;
-    color: #5b21b6;
 }
 body.enpv-body #shape-tool-panel .sfb-color {
     width: 44px;
@@ -4554,7 +4557,11 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-rotated.has-signature-selection-
 .enpv-shape-rotate-handle:active {
     cursor: grabbing;
 }
-.enpv-annotation-box.is-selected.enpv-shape-box:not([data-shape-type="line"]) .enpv-shape-rotate-handle {
+/* :not(.is-locked) matters here. The rule below that hides handles on a locked
+ * annotation is only (0,3,0); this selector is (0,5,0) and would out-specify it,
+ * so without the guard a locked shape kept its rotate handle. The signature and
+ * user-created-text rules just below always had the guard — this one did not. */
+.enpv-annotation-box.is-selected:not(.is-locked).enpv-shape-box:not([data-shape-type="line"]) .enpv-shape-rotate-handle {
     display: flex;
 }
 /* NK_9: signatures and user-created text boxes rotate too. The handle is only

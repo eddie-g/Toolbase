@@ -358,7 +358,6 @@ const afbDelete = document.getElementById('afb-delete');
 const shapeToolPanel = document.getElementById('shape-tool-panel');
 const shapeToolClose = document.getElementById('shape-tool-close');
 const shapeTypeButtons = Array.from(document.querySelectorAll('[data-shape-tool]'));
-const shapeMoreToggle = document.getElementById('shape-more-toggle');
 const shapeStrokeColorInput = document.getElementById('shape-stroke-color');
 const shapeStrokeHexInput = document.getElementById('shape-stroke-hex');
 const shapeStrokeTransparentInput = document.getElementById('shape-stroke-transparent');
@@ -11541,7 +11540,11 @@ function applyRotatedBackgroundToBox(box, rotation, transform) {
     box.classList.add('has-rotated-bg');
 }
 
-const CUTTABLE_SHAPE_TYPES = new Set(['square', 'circle', 'triangle', 'star', 'polygon']);
+// NK_14: heart joins the cuttable set. Line deliberately does NOT — cut is
+// gated on shapeBoxCanRotate(), which excludes lines, and "cut" for a
+// one-dimensional segment would mean splitting it in two, which is a different
+// operation from the area split this implements. Left on the ticket for a spec.
+const CUTTABLE_SHAPE_TYPES = new Set(['square', 'circle', 'triangle', 'star', 'polygon', 'heart']);
 
 function canCutShapeBox(box) {
     if (!shapeBoxCanRotate(box)) return false;
@@ -28822,14 +28825,6 @@ function syncShapePanelUi() {
     }
 }
 
-function setMoreShapesExpanded(expanded) {
-    if (!shapeToolPanel || !shapeMoreToggle) return;
-    const active = Boolean(expanded);
-    shapeToolPanel.classList.toggle('sfb-extra-collapsed', !active);
-    shapeMoreToggle.setAttribute('aria-expanded', active ? 'true' : 'false');
-    shapeMoreToggle.classList.toggle('is-active', active);
-}
-
 function setShapeMode(on, options = {}) {
     const active = Boolean(on);
     if (active && document.body.classList.contains('enpv-edit-on')) setEditMode(false);
@@ -29623,16 +29618,43 @@ function shapeStateForToolButton(rawShapeType) {
 
 shapeTypeButtons.forEach((button) => {
     button.addEventListener('click', () => {
+        // NK_15: choose the shape for the NEXT draw only. This deliberately does
+        // NOT commit to the selected box. It used to, which meant clicking a
+        // different shape silently converted the shape you had just drawn — and
+        // because the converted box kept the chrome it was born with, a circle
+        // turned into a line still carried eight box handles instead of two
+        // endpoints. It also made drawing several different shapes in a row
+        // impossible without pressing Escape between them.
         reflectShapeStateToInputs(shapeStateForToolButton(button.dataset.shapeTool), shapeInspectorRefs);
-        commitShapeInspectorToSelectedBox({ pushHistory: true });
     });
 });
-shapeToolPanel?.classList.add('sfb-extra-collapsed');
-shapeMoreToggle?.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setMoreShapesExpanded(shapeMoreToggle.getAttribute('aria-expanded') !== 'true');
-});
+/**
+ * Which shape a styling gesture is currently open against, or null.
+ *
+ * The panel applies changes on every `input` and only committed history on
+ * `change`. By then the change was already applied, so the snapshot captured the
+ * NEW state and a restyle could not be undone at all. The snapshot now happens
+ * once per gesture, BEFORE the first change lands.
+ */
+let shapeStyleGestureUid = null;
+
+/** Snapshot the pre-change state once, at the start of a styling gesture. */
+function beginShapeStyleGesture() {
+    const box = findSelectedBox();
+    if (!box) return;
+    const uid = String(box.dataset.uid || '');
+    // Already open for this shape; switching shapes starts a fresh gesture.
+    if (shapeStyleGestureUid !== null && shapeStyleGestureUid === uid) return;
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    if (!isShapeBox(box, existing) || isAnnBoxLocked(box)) return;
+    shapeStyleGestureUid = uid;
+    pushHistorySnapshot('change shape style');
+}
+
+function endShapeStyleGesture() {
+    shapeStyleGestureUid = null;
+}
+
 [
     shapeStrokeColorInput,
     shapeStrokeHexInput,
@@ -29645,6 +29667,7 @@ shapeMoreToggle?.addEventListener('click', (event) => {
     shapeFillOpacityInput,
 ].filter(Boolean).forEach((input) => {
     input.addEventListener('input', () => {
+        beginShapeStyleGesture();
         if (input === shapeStrokeColorInput && shapeStrokeHexInput) shapeStrokeHexInput.value = shapeStrokeColorInput.value;
         if (input === shapeStrokeHexInput && shapeStrokeColorInput) shapeStrokeColorInput.value = cssColorToHex(shapeStrokeHexInput.value, shapeStrokeColorInput.value);
         if (input === shapeFillColorInput && shapeFillHexInput) shapeFillHexInput.value = shapeFillColorInput.value;
@@ -29663,7 +29686,14 @@ shapeMoreToggle?.addEventListener('click', (event) => {
         if (shapeFillOpacityValue && shapeFillOpacityInput) shapeFillOpacityValue.textContent = `${shapeFillOpacityInput.value}%`;
         commitShapeInspectorToSelectedBox({ pushHistory: false });
     });
-    input.addEventListener('change', () => commitShapeInspectorToSelectedBox({ pushHistory: true }));
+    input.addEventListener('change', () => {
+        // No pushHistory here: beginShapeStyleGesture already snapshotted the
+        // state from before the gesture. Pushing again would capture the value
+        // the user just set and leave undo with nothing earlier to return to.
+        beginShapeStyleGesture();
+        commitShapeInspectorToSelectedBox({ pushHistory: false });
+        endShapeStyleGesture();
+    });
 });
 
 // Install signature feature (Sign button in floating toolbar, modal,
