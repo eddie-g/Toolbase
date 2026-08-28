@@ -29,7 +29,7 @@ in the separate **Manage Pages** tool.
 - A merge updates the current working PDF at `documents.path`. It must not
   overwrite `original_backup_path`.
 - Edits already saved on the current document remain editable after the merge.
-- Imported PDF pages initially have no Toolbase overlay annotations. Their
+- Imported PDF pages initially have no Netkit overlay annotations. Their
   normal PDF content, links, rotations, and supported form widgets are copied.
 - Merge is unavailable for guided documents, matching the existing page-manager
   restriction in the PDF.js editor.
@@ -332,7 +332,7 @@ Do not overwrite the clean original backup used by **Restore original**.
 
 ## Preserving Existing Editor State
 
-Only the current PDF has Toolbase-owned editor state. Because it remains one
+Only the current PDF has Netkit-owned editor state. Because it remains one
 indivisible group, all of its pages move by the same offset:
 
 ```text

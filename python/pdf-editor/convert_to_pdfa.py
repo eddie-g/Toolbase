@@ -20,7 +20,7 @@ import json
 import fitz  # PyMuPDF
 
 
-def get_pdfa_xmp_metadata(part, conformance, title="", producer="Toolbase PDF Engine", creator="Toolbase"):
+def get_pdfa_xmp_metadata(part, conformance, title="", producer="Netkit PDF Engine", creator="Netkit"):
     """
     Generate the XMP metadata block required for PDF/A identification.
     
@@ -35,7 +35,7 @@ def get_pdfa_xmp_metadata(part, conformance, title="", producer="Toolbase PDF En
         XMP metadata XML string
     """
     return f"""<?xpacket begin="\ufeff" id="W5M0MpCehiHzreSzNTczkc9d"?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Toolbase PDF Engine">
+<x:xmpmeta xmlns:x="adobe:ns:meta/" x:xmptk="Netkit PDF Engine">
   <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
     <rdf:Description rdf:about=""
         xmlns:dc="http://purl.org/dc/elements/1.1/"
@@ -864,8 +864,8 @@ def convert_to_pdfa(input_path, output_path, level='2b', embed_fonts=True, srgb_
     doc.set_metadata({
         "format": f"PDF/A-{part}{conformance.lower()}",
         "title": title,
-        "producer": "Toolbase PDF Engine v1.0",
-        "creator": "Toolbase"
+        "producer": "Netkit PDF Engine v1.0",
+        "creator": "Netkit"
     })
     
     # Step 5: Remove any transparency groups that violate PDF/A-1 

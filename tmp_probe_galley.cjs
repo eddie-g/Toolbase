@@ -13,7 +13,7 @@ const fs = require('fs');
   // Upload f1040s1.pdf
   await page.goto('http://localhost:8081/pdf-editor');
   const fileInput = await page.locator('input[type=file]').first();
-  await fileInput.setInputFiles('/home/wolf/Toolbase/tests/OverlayEditor/f1040s1.pdf');
+  await fileInput.setInputFiles('/home/wolf/Netkit/tests/OverlayEditor/f1040s1.pdf');
   await page.waitForTimeout(3000);
   // Find the doc id from URL
   await page.waitForURL(/documents\/\d+\/edit/);

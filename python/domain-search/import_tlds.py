@@ -25,7 +25,7 @@ ROOT_DB_URL = "https://www.iana.org/domains/root/db"
 HTTP_HEADERS = {
     # Avoid brotli content to prevent decoding issues in minimal Python envs.
     "Accept-Encoding": "gzip, deflate",
-    "User-Agent": "Toolbase-TLD-Importer/1.0",
+    "User-Agent": "Netkit-TLD-Importer/1.0",
 }
 
 

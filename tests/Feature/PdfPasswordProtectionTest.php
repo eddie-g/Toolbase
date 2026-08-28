@@ -20,7 +20,7 @@ class PdfPasswordProtectionTest extends TestCase
     {
         parent::setUp();
 
-        $this->testDiskRoot = sys_get_temp_dir() . '/toolbase_pdf_password_' . bin2hex(random_bytes(8));
+        $this->testDiskRoot = sys_get_temp_dir() . '/netkit_pdf_password_' . bin2hex(random_bytes(8));
         File::makeDirectory($this->testDiskRoot, 0700, true);
         config([
             'database.default' => 'sqlite',

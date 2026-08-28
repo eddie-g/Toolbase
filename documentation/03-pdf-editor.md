@@ -1,6 +1,6 @@
 # PDF Editor
 
-The PDF Editor is the flagship feature of Toolbase. Users upload a PDF, apply edits in the browser, and download the modified file. The key architectural principle is that **the original PDF is never modified client-side** — all edits are stored as a JSON annotation layer in the database and stamped onto the PDF server-side using PyMuPDF at export time.
+The PDF Editor is the flagship feature of Netkit. Users upload a PDF, apply edits in the browser, and download the modified file. The key architectural principle is that **the original PDF is never modified client-side** — all edits are stored as a JSON annotation layer in the database and stamped onto the PDF server-side using PyMuPDF at export time.
 
 ---
 

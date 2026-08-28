@@ -39,7 +39,7 @@ class DocumentConversionQueueTest extends TestCase
         ]);
         DB::purge('sqlite');
         DB::setDefaultConnection('sqlite');
-        $this->testDiskRoot = sys_get_temp_dir().'/toolbase_conversion_'.bin2hex(random_bytes(8));
+        $this->testDiskRoot = sys_get_temp_dir().'/netkit_conversion_'.bin2hex(random_bytes(8));
         File::makeDirectory($this->testDiskRoot, 0700, true);
         config(['filesystems.disks.local.root' => $this->testDiskRoot]);
         Storage::forgetDisk('local');
@@ -209,7 +209,7 @@ class DocumentConversionQueueTest extends TestCase
             'progress' => 100,
             'options' => ['layout' => 'exact'],
             'quote' => ['charge_usd' => 0.10],
-            'result' => ['charge_usd' => 0.10, 'engine' => 'toolbase'],
+            'result' => ['charge_usd' => 0.10, 'engine' => 'netkit'],
             'input_path' => 'documents/conversions/test/input.pdf',
             'output_path' => 'documents/conversions/test/output.docx',
             'download_name' => 'source.docx',
