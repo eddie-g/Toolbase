@@ -12,29 +12,26 @@ const { chromium } = require('playwright');
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8081';
 const DOCUMENT_ID = Number(process.env.DOCUMENT_ID || 5293);
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'eddie.gray.biz@gmail.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'codex-test-admin-2861';
+const { requireAdminCredentials } = require('../../tools/admin-credentials.cjs');
+// Resolved from AUTOMATED_TESTS_ADMIN_* (the QA admin), never hardcoded:
+// a stale default here is what led to real admin passwords being reset.
+const { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } = requireAdminCredentials();
 const TARGET_SELECTOR = '.enpv-annotation-box[data-annotation-id="promoted_3_7"]';
 
 async function loginAdmin(page) {
     await page.goto(`${BASE_URL}/admin/login`, { waitUntil: 'domcontentloaded', timeout: 90000 });
-    for (const password of Array.from(new Set([
-        ADMIN_PASSWORD,
-        'TestPwd123!',
-        'codex-test-admin-2861',
-        'password1',
-    ].filter(Boolean)))) {
-        await page.fill('#data\\.email', ADMIN_EMAIL);
-        await page.fill('#data\\.password', password);
-        await page.getByRole('button', { name: 'Sign in' }).click();
-        try {
-            await page.waitForURL((url) => !url.pathname.endsWith('/admin/login'), { timeout: 5000 });
-            return;
-        } catch (_) {
-            if (!page.url().includes('/admin/login')) return;
+    // One attempt. Trying a list of candidate passwords walked straight
+    // into Fortify's five-per-minute login throttle.
+    await page.fill('#data\.email', ADMIN_EMAIL);
+    await page.fill('#data\.password', ADMIN_PASSWORD);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    try {
+        await page.waitForURL((url) => !url.pathname.endsWith('/admin/login'), { timeout: 15000 });
+    } catch (_) {
+        if (page.url().includes('/admin/login')) {
+            throw new Error(`Admin login failed for ${ADMIN_EMAIL}. Check AUTOMATED_TESTS_ADMIN_* in .env.`);
         }
     }
-    throw new Error('Unable to log in for doc5293 paragraph-gap regression.');
 }
 
 async function targetState(page) {

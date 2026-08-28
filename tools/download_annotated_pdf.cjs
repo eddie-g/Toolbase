@@ -16,8 +16,10 @@ if (fs.existsSync(localBrowsers)) process.env.PLAYWRIGHT_BROWSERS_PATH = localBr
 const { chromium } = require('playwright');
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8081';
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'eddie.gray.biz@gmail.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'codex-test-admin-2861';
+const { requireAdminCredentials } = require('./admin-credentials.cjs');
+// Resolved from AUTOMATED_TESTS_ADMIN_* (the QA admin), never hardcoded:
+// a stale default here is what led to real admin passwords being reset.
+const { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } = requireAdminCredentials();
 
 const docId = Number(process.argv[2] || 2855);
 const outPath = process.argv[3] || `/tmp/doc${docId}_download.pdf`;

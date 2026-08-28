@@ -12,8 +12,10 @@ const { chromium } = require('playwright');
 
 const BASE_URL = process.env.BASE_URL || 'http://localhost:8081';
 const DOCUMENT_ID = Number(process.env.DOCUMENT_ID || 5293);
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'eddie.gray.biz@gmail.com';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'TestPwd123!';
+const { requireAdminCredentials } = require('../../tools/admin-credentials.cjs');
+// Resolved from AUTOMATED_TESTS_ADMIN_* (the QA admin), never hardcoded:
+// a stale default here is what led to real admin passwords being reset.
+const { email: ADMIN_EMAIL, password: ADMIN_PASSWORD } = requireAdminCredentials();
 const PAGE_NUMBER = 1;
 
 async function loginAdmin(page) {
