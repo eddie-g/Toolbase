@@ -1,6 +1,6 @@
-# Toolbase — Application Overview
+# Netkit — Application Overview
 
-Toolbase is a multi-tool SaaS platform built on **Laravel 11**. It bundles several distinct productivity products under one login and credit system: a PDF editor, an AI logo generator, a domain name search tool, an AI document generator, and an internal compliance test suite.
+Netkit is a multi-tool SaaS platform built on **Laravel 11**. It bundles several distinct productivity products under one login and credit system: a PDF editor, an AI logo generator, a domain name search tool, an AI document generator, and an internal compliance test suite.
 
 ---
 

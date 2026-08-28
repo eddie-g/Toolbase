@@ -1,6 +1,6 @@
 # Credits & Subscriptions
 
-Toolbase uses a **prepaid credit system** for AI feature usage (logo generation, domain AI, document generation) and **monthly subscriptions** for premium plan access. Both are processed through Stripe.
+Netkit uses a **prepaid credit system** for AI feature usage (logo generation, domain AI, document generation) and **monthly subscriptions** for premium plan access. Both are processed through Stripe.
 
 ---
 

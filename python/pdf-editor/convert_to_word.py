@@ -656,7 +656,7 @@ def main():
                 "pages": total_pages,
                 "file_size": file_size,
                 "layout": args.layout,
-                "engine": "toolbase_visual",
+                "engine": "netkit_visual",
                 "visual_fidelity": True,
                 "rendered_pages": rendered_pages,
             }
@@ -742,7 +742,7 @@ def main():
             "pages": total_pages,
             "file_size": file_size,
             "layout": args.layout,
-            "engine": "toolbase",
+            "engine": "netkit",
             "warnings": warnings,
         }
         

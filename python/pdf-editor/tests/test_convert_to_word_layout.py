@@ -55,7 +55,7 @@ class WordLayoutConversionTest(unittest.TestCase):
         return json_lines[-1]
 
     def test_exact_layout_preserves_tables_paragraph_spacing_and_alignment(self):
-        with tempfile.TemporaryDirectory(prefix="toolbase_word_test_") as directory:
+        with tempfile.TemporaryDirectory(prefix="netkit_word_test_") as directory:
             output = Path(directory) / "layout.docx"
             result = self.convert(FIXTURE, output)
             self.assertEqual(result["engine"], "pdf2docx")
@@ -89,7 +89,7 @@ class WordLayoutConversionTest(unittest.TestCase):
             self.assertAlmostEqual(first_section.right_margin.pt, 66.5, delta=2)
 
     def test_exact_layout_reconstructs_drylab_columns_and_optimizes_photos(self):
-        with tempfile.TemporaryDirectory(prefix="toolbase_word_drylab_test_") as directory:
+        with tempfile.TemporaryDirectory(prefix="netkit_word_drylab_test_") as directory:
             output = Path(directory) / "drylab.docx"
             result = self.convert(DRYLAB_FIXTURE, output)
 
@@ -115,7 +115,7 @@ class WordLayoutConversionTest(unittest.TestCase):
             self.assertGreaterEqual(len(two_column_sections), 3)
 
     def test_visual_fidelity_exact_preserves_rotated_page_paint(self):
-        with tempfile.TemporaryDirectory(prefix="toolbase_word_visual_test_") as directory:
+        with tempfile.TemporaryDirectory(prefix="netkit_word_visual_test_") as directory:
             source = Path(directory) / "edited-rotated.pdf"
             output = Path(directory) / "edited-rotated.docx"
             pdf = fitz.open()
@@ -128,7 +128,7 @@ class WordLayoutConversionTest(unittest.TestCase):
 
             result = self.convert(source, output, ["--visual-fidelity"])
 
-            self.assertEqual(result["engine"], "toolbase_visual")
+            self.assertEqual(result["engine"], "netkit_visual")
             self.assertTrue(result["visual_fidelity"])
             self.assertEqual(result["rendered_pages"], 1)
             document = Document(output)

@@ -74,7 +74,7 @@ into one shared shell with independent **Merge** and **Split** panels.
 - Producing several page ranges in one action.
 - Removing selected pages from the current document.
 - Dragging split pages into a different order.
-- Creating a new Toolbase library document or transferring editable annotation
+- Creating a new Netkit library document or transferring editable annotation
   records to another `documents` row.
 - Password entry for an encrypted current PDF.
 
