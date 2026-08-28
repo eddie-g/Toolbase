@@ -1541,13 +1541,6 @@
             padding: 2px;
             flex-shrink: 0;
         }
-        .shape-tool-panel.sfb-extra-collapsed .sfb-extra-shapes {
-            display: none;
-        }
-        .sfb-extra-shapes {
-            margin-left: -2px;
-            background: #eef2ff;
-        }
         .sfb-shape-btn {
             width: 28px;
             height: 28px;
@@ -1563,10 +1556,11 @@
             transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
         }
         .sfb-shape-btn:hover { background: #ffffff; color: #111827; }
-        .sfb-more-shapes-toggle[aria-expanded="true"] {
+        .sfb-shape-btn:focus-visible {
+            outline: 2px solid #2563eb;
+            outline-offset: 2px;
             background: #ffffff;
-            border-color: #c4b5fd;
-            color: #4c1d95;
+            color: #111827;
         }
         .sfb-shape-btn.is-active {
             background: #ffffff;

@@ -439,9 +439,7 @@ function shapePanelState(page) {
             return el.type === 'checkbox' ? el.checked : el.getAttribute('aria-pressed') === 'true';
         };
         const activeShape = document.querySelector('#shape-tool-panel .sfb-shape-btn.is-active[data-shape-tool]');
-        const moreToggle = document.getElementById('shape-more-toggle');
-        const moreGrid = document.getElementById('shape-more-grid');
-        const moreRect = moreGrid ? moreGrid.getBoundingClientRect() : null;
+        const shapeButtons = Array.from(document.querySelectorAll('#shape-tool-panel [data-shape-tool]'));
         return {
             activeShape: activeShape ? activeShape.dataset.shapeTool : null,
             strokeColor: value('shape-stroke-color'),
@@ -456,9 +454,11 @@ function shapePanelState(page) {
             fillOpacity: value('shape-fill-opacity'),
             fillOpacityLabel: text('shape-fill-opacity-value'),
             fillTransparent: checked('shape-fill-transparent'),
-            moreExpanded: moreToggle ? moreToggle.getAttribute('aria-expanded') : null,
-            moreVisible: !!moreRect && moreRect.width > 0 && moreRect.height > 0,
-            moreToggleActive: !!moreToggle && moreToggle.classList.contains('is-active'),
+            // NK_13: all seven shapes are in one grid; none are behind a toggle.
+            visibleShapes: shapeButtons.filter((b) => {
+                const rect = b.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            }).map((b) => b.dataset.shapeTool),
         };
     });
 }
@@ -468,14 +468,7 @@ function shapePanelState(page) {
  * shape lives behind the toggle.
  */
 async function pickShape(page, shapeType) {
-    if (MORE_SHAPES.includes(shapeType)) {
-        const expanded = await page.evaluate(() => document
-            .getElementById('shape-more-toggle')?.getAttribute('aria-expanded'));
-        if (expanded !== 'true') {
-            await page.click('#shape-more-toggle', { force: true });
-            await page.waitForTimeout(300);
-        }
-    }
+    // NK_13: every shape is in one grid now — there is no More toggle to expand.
     await page.click(`#shape-tool-panel [data-shape-tool="${shapeType}"]`, { force: true });
     await page.waitForTimeout(300);
 }
@@ -1253,27 +1246,36 @@ async function testPrimaryShapesDraw(page, { recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
-/** 04 — More shapes: star, X and heart. */
+/** 04 — Star, X and heart. */
 async function testMoreShapes(page, { recorder }) {
     const artifacts = [];
     await setShapeMode(page, true);
 
-    let panel = await shapePanelState(page);
-    recorder.equals('more-collapsed-initially', panel.moreExpanded, 'false',
-        'The More shapes toggle starts collapsed and says so through aria-expanded');
+    // NK_13 removed the "More shapes" gear: all seven shapes now sit in one grid,
+    // with nothing hidden behind a toggle. The gear was genuinely dead in the
+    // legacy editor (no JS ever wired it there) and misread as a settings button
+    // in the pdf.js one.
+    const panel = await shapePanelState(page);
+    recorder.assert('all-seven-visible-without-a-toggle',
+        MORE_SHAPES.every((t) => panel.visibleShapes.includes(t))
+        && PRIMARY_SHAPES.every((t) => panel.visibleShapes.includes(t)),
+        'Star, X and heart are visible alongside the primary shapes, with no toggle to expand',
+        JSON.stringify(panel.visibleShapes));
 
-    await page.click('#shape-more-toggle', { force: true });
-    await page.waitForTimeout(350);
-    panel = await shapePanelState(page);
-    recorder.equals('more-expands', panel.moreExpanded, 'true',
-        'Opening More shapes sets aria-expanded to true');
-    recorder.assert('more-grid-visible', panel.moreVisible,
-        'The extra shapes become visible', JSON.stringify(panel.moreVisible));
+    recorder.assert('no-more-toggle-remains',
+        await page.evaluate(() => !document.getElementById('shape-more-toggle')
+            && !document.getElementById('shape-more-grid')),
+        'The More shapes toggle and its separate grid are gone');
 
     let expected = 0;
     for (const shapeType of MORE_SHAPES) {
         // eslint-disable-next-line no-await-in-loop
         await pickShape(page, shapeType);
+        // eslint-disable-next-line no-await-in-loop
+        const picked = await shapePanelState(page);
+        recorder.equals(`picker-shows-${shapeType}`, picked.activeShape, shapeType,
+            `The picker shows ${shapeType} as the selected shape`);
+
         const fx = 0.14 + (expected * 0.26);
         // eslint-disable-next-line no-await-in-loop
         await setShapeMode(page, true);
@@ -1285,25 +1287,11 @@ async function testMoreShapes(page, { recorder }) {
         recorder.equals(`${shapeType}-stores-its-type`,
             boxes[boxes.length - 1]?.shapeType, shapeType,
             `${shapeType} draws and records its own shapeType`);
+        // eslint-disable-next-line no-await-in-loop
+        await page.keyboard.press('Escape');
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(250);
     }
-
-    // Picking a non-primary shape should show on the toggle itself.
-    panel = await shapePanelState(page);
-    recorder.ok('toggle-marks-non-primary-active',
-        panel.moreToggleActive
-            ? 'The More shapes toggle shows that a non-primary shape is active'
-            : 'The More shapes toggle does NOT indicate the active shape is one of its own',
-        JSON.stringify({ toggleActive: panel.moreToggleActive, activeShape: panel.activeShape }));
-
-    // Collapsing must not change the selection.
-    const before = (await shapePanelState(page)).activeShape;
-    await page.click('#shape-more-toggle', { force: true });
-    await page.waitForTimeout(350);
-    panel = await shapePanelState(page);
-    recorder.equals('more-collapses', panel.moreExpanded, 'false',
-        'The toggle collapses again');
-    recorder.equals('collapse-keeps-selection', panel.activeShape, before,
-        'Collapsing More shapes does not change the selected shape');
 
     artifacts.push(await capture(page, '04-more-shapes', 'more-shapes'));
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
@@ -2374,7 +2362,19 @@ async function testCutShape(page, { recorder }) {
         recorder.fail('cut-shows-armed-state', 'Cut could not be armed, so its state could not be checked');
     }
 
-    // A line must NOT offer cut.
+    // NK_14: heart is cuttable now. It was excluded for no reason anyone could
+    // point at, unlike line, which is gated on rotation as well.
+    await setShapeMode(page, true);
+    await pickShape(page, 'heart');
+    await setShapeMode(page, true);
+    await drawShape(page, { fx: 0.55, fy: 0.18 }, { dx: 170, dy: 140 });
+    let boxesNow = await shapeBoxes(page);
+    await ensureSelected(page, boxesNow.length - 1);
+    menu = await annMenuState(page);
+    recorder.assert('cut-offered-for-heart', menu.offered.includes('cut'),
+        'Cut is offered for a heart (NK_14)', JSON.stringify(menu.offered));
+
+    // A line must NOT offer cut — still gated on rotation, which excludes lines.
     await setShapeMode(page, true);
     await pickShape(page, 'line');
     await setShapeMode(page, true);
@@ -2816,21 +2816,12 @@ async function testDownloadFidelity(page, { recorder, saveRecorder, docId }) {
     // draw_shape rather than one representative.
     const types = [...PRIMARY_SHAPES, ...MORE_SHAPES];
     const failedToDraw = [];
-    let retypedByPicker = null;
+    // NK_15: shapes are drawn back to back WITHOUT deselecting between them.
+    // That used to be impossible — a shape stayed selected after being drawn and
+    // the picker committed to the selection, so choosing the next shape silently
+    // converted the one just drawn. Leaving the Escape out is the point: if the
+    // picker ever starts rewriting the selection again, this loop breaks.
     for (let i = 0; i < types.length; i++) {
-        // Deselect between draws. A shape stays SELECTED after being drawn, and
-        // picking a different shape commits to the selection — so without this
-        // each shape is silently converted to the next type picked. Captured
-        // once below as a finding rather than just worked around.
-        if (i > 0) {
-            // eslint-disable-next-line no-await-in-loop
-            const typesBefore = (await shapeBoxes(page)).map((b) => b.shapeType);
-            // eslint-disable-next-line no-await-in-loop
-            await page.keyboard.press('Escape');
-            // eslint-disable-next-line no-await-in-loop
-            await page.waitForTimeout(300);
-            if (retypedByPicker === null) retypedByPicker = typesBefore;
-        }
         // Two columns, and never right at the top edge: a press point too close
         // to the top leaves no room for the drag and the draw is silently lost.
         const fx = 0.14 + ((i % 2) * 0.42);
@@ -2863,27 +2854,23 @@ async function testDownloadFidelity(page, { recorder, saveRecorder, docId }) {
             }
         }
     }
-    // FINDING, recorded rather than asserted: this is a product behaviour that
-    // needs a decision, not a pass/fail. A shape stays selected after it is
-    // drawn (case 02), and the Shape options panel commits shapeType along with
-    // styling to whatever is selected. So picking a different shape converts the
-    // one just drawn instead of only setting up the next draw. Drawing several
-    // different shapes in a row is impossible without deselecting between them.
-    recorder.ok('picker-retypes-the-selected-shape',
-        'Picking a shape while one is selected CONVERTS that shape rather than only setting the next default. '
-        + 'Combined with shape mode staying on after a draw, several different shapes cannot be drawn in a row '
-        + 'without pressing Escape between them. Worth deciding whether the picker should apply to the selection at all.',
-        JSON.stringify({ observedBeforeDeselect: retypedByPicker }));
+    // NK_15, guarded: every shape kept the type it was drawn as, even though each
+    // was still selected when the next shape was picked.
+    const drawnTypes = (await shapeBoxes(page)).map((b) => b.shapeType);
+    recorder.assert('picker-does-not-retype-the-selection',
+        types.every((t) => drawnTypes.includes(t)),
+        'Choosing the next shape does not convert the one already drawn, so several different '
+        + 'shapes can be drawn in a row without deselecting (NK_15)',
+        JSON.stringify({ expected: types, drawn: drawnTypes }));
 
     recorder.assert('every-draw-landed', failedToDraw.length === 0,
         'Every shape type drew exactly one shape of that type',
         JSON.stringify(failedToDraw).slice(0, 400));
 
     // A shape with no stroke, and one with both partly transparent.
-    // Deselect first. The Shape options panel commits to the SELECTED shape, and
-    // that commit carries shapeType as well as styling — so picking a shape or
-    // changing a value while one is selected rewrites that shape rather than
-    // only setting up the next draw.
+    // Style values still commit to a selected shape (that is deliberate — see
+    // cases 12 and 15), so deselect before setting up the next draw. Only the
+    // shape TYPE stopped applying to the selection under NK_15.
     await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
     const typesBeforeSetup = (await shapeBoxes(page)).map((b) => b.shapeType);
@@ -3021,8 +3008,6 @@ async function testLayersAndIdentity(page, { recorder, saveRecorder, docId }) {
 async function testWriterOnlyShapes(page, { recorder }) {
     const artifacts = [];
     await setShapeMode(page, true);
-    await page.click('#shape-more-toggle', { force: true }).catch(() => {});
-    await page.waitForTimeout(300);
 
     const offered = await page.evaluate(() => Array.from(
         document.querySelectorAll('#shape-tool-panel [data-shape-tool]'),
@@ -3034,6 +3019,10 @@ async function testWriterOnlyShapes(page, { recorder }) {
         [...PRIMARY_SHAPES, ...MORE_SHAPES].every((t) => offered.includes(t)),
         'The picker offers circle, triangle, square, line, star, X and heart',
         JSON.stringify(offered));
+    recorder.assert('all-seven-reachable-directly',
+        (await shapePanelState(page)).visibleShapes.length === 7,
+        'All seven are reachable without expanding anything (NK_13)',
+        JSON.stringify((await shapePanelState(page)).visibleShapes));
 
     const writerOnly = ['arrow', 'checkmark', 'polygon'];
     const reachable = writerOnly.filter((t) => offered.includes(t));
@@ -3120,15 +3109,15 @@ async function testKeyboardAndAria(page, { recorder }) {
         'Picking a different shape moves aria-pressed onto it and clears the others',
         JSON.stringify(afterPick));
 
-    // More shapes toggle reports aria-expanded correctly, both ways.
-    const collapsed = await page.evaluate(() => document.getElementById('shape-more-toggle')?.getAttribute('aria-expanded'));
-    await page.click('#shape-more-toggle', { force: true });
-    await page.waitForTimeout(300);
-    const expanded = await page.evaluate(() => document.getElementById('shape-more-toggle')?.getAttribute('aria-expanded'));
-    recorder.assert('aria-expanded-tracks-the-toggle',
-        collapsed === 'false' && expanded === 'true',
-        'The More shapes toggle reports aria-expanded in both states',
-        JSON.stringify({ collapsed, expanded }));
+    // NK_13 removed the More shapes toggle, and with it the aria-expanded check
+    // that used to live here. Every shape is now directly reachable, which is
+    // strictly better for keyboard and screen-reader users than a disclosure
+    // they had to find first — so this asserts that instead.
+    const reachable = await page.evaluate(() => Array.from(
+        document.querySelectorAll('#shape-tool-panel [data-shape-tool]'),
+    ).filter((b) => b.tabIndex >= 0 && b.getBoundingClientRect().width > 0).length);
+    recorder.equals('every-shape-is-directly-reachable', reachable, 7,
+        'All seven shapes are focusable without opening a disclosure first');
 
     // Sliders must be operable by keyboard.
     const sliderBefore = await page.evaluate(() => document.getElementById('shape-stroke-width')?.value);
@@ -3142,7 +3131,7 @@ async function testKeyboardAndAria(page, { recorder }) {
 
     // Focus must be visible, not suppressed.
     const focusVisible = await page.evaluate(() => {
-        const el = document.getElementById('shape-more-toggle');
+        const el = document.querySelector('#shape-tool-panel [data-shape-tool="circle"]');
         el.focus();
         const style = window.getComputedStyle(el);
         return {
