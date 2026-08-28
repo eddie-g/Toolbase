@@ -167,11 +167,11 @@
             },
             {
                 "number": "15",
-                "id": "15-rotate-unavailable",
+                "id": "15-rotate-drawing",
                 "gid": null,
                 "area": "Manipulation",
-                "title": "NK_18: a drawing offers no rotate handle",
-                "summary": "annotationBoxCanRotate() returns false for any box with a non-empty annotationType other than shape or signature. A drawing is type image, so it falls into that branch and never gets a handle. The case asserts the handle is absent and skips the rotation assertions while the ticket is open, so it will start exercising them the moment NK_18 is fixed.",
+                "title": "NK_18: a drawing rotates",
+                "summary": "Fixed under NK_18. annotationBoxCanRotate() rejected any box whose annotationType is set and is not shape or signature, and a drawing is \"image\", so it never got a handle. A selected drawing now offers the rotate handle, dragging it records an angle and actually draws the content at it, and the angle survives a save and a reload rather than snapping upright. The export side is covered by python/pdf-editor/tests/test_direct_draw_rotation.py, which pins the sign and the centre.",
                 "automated": true,
                 "story": "draw-tool"
             },
@@ -180,8 +180,8 @@
                 "id": "16-draw-cursor-over-handles",
                 "gid": null,
                 "area": "Manipulation",
-                "title": "NK_19: whether draw mode can force a move cursor over the resize handles",
-                "summary": "With the tool off, every resize handle on a selected drawing shows its own resize cursor. Entering draw mode calls deselectAnnBox(), so a selection and draw mode never coexist and the wildcard rule NK_19 blames is latent rather than live. The rule is recorded anyway: it is one deselect-on-entry change away from becoming the reported bug.",
+                "title": "NK_19: the draw cursor must not swallow the handle cursors",
+                "summary": "With the tool off, every resize handle on a selected drawing shows its own resize cursor. Entering draw mode calls deselectAnnBox(), so a selection and draw mode never coexist and the wildcard rule NK_19 blames was latent rather than live -- it is nonetheless narrowed now, so the handles keep their own cursors if the deselect-on-entry ever changes. The rule is recorded either way.",
                 "automated": true,
                 "story": "draw-tool"
             },
@@ -190,9 +190,9 @@
                 "id": "17-move-and-resize",
                 "gid": null,
                 "area": "Manipulation",
-                "title": "Move and resize a drawing",
-                "summary": "Dragging the body moves the drawing and dragging each handle resizes it, with the stored geometry following the rendered box. A drawing scales its vector rather than stretching a raster, so the resized stroke should stay crisp.",
-                "automated": false,
+                "title": "Move and resize a drawing, including the edge handles",
+                "summary": "Drawings were built with corner handles only, like a raster image, so a stroke could be scaled proportionally but never stretched along one axis. They are stored as vectors and refit to any box, so they now get the full eight the Shapes tool has. The case asserts all eight exist, that the right edge changes width alone and the bottom edge height alone, that a corner still scales proportionally, that the body still drags, and that the new geometry saves.",
+                "automated": true,
                 "story": "draw-tool"
             },
             {

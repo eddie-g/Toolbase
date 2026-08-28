@@ -1659,34 +1659,74 @@ async function testSelectAndMenu(page, { recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
-/** 15 — NK_18: a drawing offers no rotate handle. */
-async function testRotateUnavailable(page, { recorder }) {
+/** 15 — NK_18: a drawing rotates. */
+async function testRotateDrawing(page, { recorder, saveRecorder }) {
     const artifacts = [];
 
     await setDrawMode(page, true);
-    await drawStroke(page, { fx: 0.2, fy: 0.3 }, { shape: (t) => ({ dx: 220 * t, dy: 60 * t }) });
+    await drawStroke(page, { fx: 0.25, fy: 0.3 }, { shape: (t) => ({ dx: 200 * t, dy: 60 * t }) });
     await setDrawMode(page, false);
     await ensureDrawingSelected(page, 0);
 
-    const handle = await rotateHandleAt(page);
     const boxes = await drawBoxes(page);
-
-    // annotationBoxCanRotate() returns false for any box with a non-empty
-    // annotationType other than shape or signature. A drawing is type "image",
-    // so it falls into that branch and never gets a handle. NK_18.
     recorder.assert('drawing-selected', !!boxes[0]?.selected, 'The drawing is selected');
-    recorder.assert('no-rotate-handle', !handle?.visible,
-        'NK_18: a selected drawing offers no rotate handle, so it cannot be rotated',
-        JSON.stringify(handle));
 
-    if (!handle?.visible) {
-        recorder.skip('rotate-applies', 'Cannot exercise rotation while NK_18 is open');
-    } else {
-        const turned = await dragRotateHandle(page, 30);
-        recorder.assert('rotate-applies', turned, 'Rotating a drawing takes effect');
-    }
+    // NK_18 was that annotationBoxCanRotate() rejected any box whose
+    // annotationType is set and is not shape or signature. A drawing is
+    // "image", so it fell into that branch and never got a handle.
+    const handle = await rotateHandleAt(page);
+    recorder.assert('rotate-handle-offered', !!handle?.visible,
+        'NK_18: a selected drawing offers a rotate handle', JSON.stringify(handle));
 
-    artifacts.push(await capture(page, '15-rotate-unavailable', 'selected'));
+    const before = await page.evaluate((selector) => Number(
+        document.querySelector(`${selector}.is-selected`)?.dataset?.rotation || '0',
+    ), DRAW_BOX_SELECTOR);
+    recorder.near('starts-upright', before, 0, 0.51, 'A new drawing starts upright');
+
+    const turned = await dragRotateHandle(page, 35);
+    recorder.assert('rotate-drag-works', turned, 'The rotate handle can be dragged');
+
+    const after = await page.evaluate((selector) => {
+        const box = document.querySelector(`${selector}.is-selected`) || document.querySelector(selector);
+        const content = box?.querySelector('.enpv-image-img, .enpv-page-rotated-content-frame');
+        return {
+            rotation: Number(box?.dataset?.rotation || '0'),
+            isRotated: !!box?.classList?.contains('is-rotated'),
+            transform: String(content?.style?.transform || ''),
+        };
+    }, DRAW_BOX_SELECTOR);
+
+    recorder.assert('rotation-recorded', Math.abs(after.rotation) > 5,
+        'Dragging the handle records an angle on the box', `rotation=${after.rotation}`);
+    recorder.assert('marked-rotated', after.isRotated,
+        'The box is marked rotated so the CSS chrome follows');
+    recorder.assert('content-transformed', after.transform.length > 0 && after.transform !== 'none',
+        'The drawing content is actually drawn at the angle, not just recorded',
+        after.transform.slice(0, 80));
+
+    // The angle has to survive the round trip, or the rotation is cosmetic.
+    await saveDocument(page, saveRecorder);
+    const saved = savedDrawAnnotations(saveRecorder);
+    recorder.assert('rotation-saved', Math.abs(Number(saved[0]?.rotation) || 0) > 5,
+        'The angle is written to the save payload', `rotation=${saved[0]?.rotation}`);
+
+    await saveAndReload(page, saveRecorder);
+    const reloaded = await page.evaluate((selector) => {
+        const box = document.querySelector(selector);
+        const content = box?.querySelector('.enpv-image-img, .enpv-page-rotated-content-frame');
+        return {
+            rotation: Number(box?.dataset?.rotation || '0'),
+            transform: String(content?.style?.transform || ''),
+        };
+    }, DRAW_BOX_SELECTOR);
+    recorder.assert('rotation-survives-reload', Math.abs(reloaded.rotation) > 5,
+        'A reloaded drawing comes back at its angle rather than snapping upright',
+        `rotation=${reloaded.rotation}`);
+    recorder.assert('reloaded-content-transformed',
+        reloaded.transform.length > 0 && reloaded.transform !== 'none',
+        'The reloaded drawing is redrawn rotated', reloaded.transform.slice(0, 80));
+
+    artifacts.push(await capture(page, '15-rotate-drawing', 'rotated'));
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
@@ -1780,6 +1820,121 @@ async function testDrawCursorOverHandles(page, { recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
+/**
+ * 17 — Move and resize a drawing, including the edge handles.
+ *
+ * Drawings used to be built with corner handles only, like a raster image, so
+ * a stroke could be scaled proportionally but never stretched along one axis.
+ * They are stored as vectors and refit to any box, so they now get the full
+ * eight the Shapes tool has.
+ */
+async function testMoveAndResize(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+
+    await setDrawMode(page, true);
+    await drawStroke(page, { fx: 0.25, fy: 0.3 }, { shape: (t) => ({ dx: 200 * t, dy: 70 * t }) });
+    await setDrawMode(page, false);
+    await ensureDrawingSelected(page, 0);
+
+    const edges = await page.evaluate((selector) => Array.from(
+        document.querySelectorAll(`${selector}.is-selected .enpv-resize-handle`),
+    ).map((handle) => handle.dataset.edge).sort(), DRAW_BOX_SELECTOR);
+
+    recorder.assert('all-eight-handles',
+        ['b', 'l', 'ne', 'nw', 'r', 'se', 'sw', 't'].every((edge) => edges.includes(edge)),
+        'A drawing offers edge handles as well as corners, so it can be stretched on one axis',
+        edges.join(','));
+
+    const dragHandle = async (edge, dx, dy) => {
+        const point = await page.evaluate(([selector, wanted]) => {
+            const handle = document.querySelector(`${selector}.is-selected .enpv-resize-handle[data-edge="${wanted}"]`);
+            if (!handle) return null;
+            const rect = handle.getBoundingClientRect();
+            return { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+        }, [DRAW_BOX_SELECTOR, edge]);
+        if (!point) return false;
+        await page.mouse.move(point.x, point.y);
+        await page.mouse.down();
+        for (let step = 1; step <= 8; step++) {
+            // eslint-disable-next-line no-await-in-loop
+            await page.mouse.move(point.x + ((dx * step) / 8), point.y + ((dy * step) / 8));
+            // eslint-disable-next-line no-await-in-loop
+            await page.waitForTimeout(30);
+        }
+        await page.mouse.up();
+        await page.waitForTimeout(600);
+        return true;
+    };
+
+    // Right edge: width only.
+    let start = (await drawBoxes(page))[0];
+    recorder.assert('right-edge-dragged', await dragHandle('r', 70, 0), 'The right edge handle can be dragged');
+    let now = (await drawBoxes(page))[0];
+    recorder.assert('right-edge-widens', now.width > start.width + 20,
+        'Dragging the right edge widens the drawing',
+        `${Math.round(start.width)} -> ${Math.round(now.width)}`);
+    recorder.near('right-edge-keeps-height', now.height, start.height, 3,
+        'Dragging the right edge leaves the height alone');
+
+    // Bottom edge: height only.
+    start = now;
+    recorder.assert('bottom-edge-dragged', await dragHandle('b', 0, 60), 'The bottom edge handle can be dragged');
+    now = (await drawBoxes(page))[0];
+    recorder.assert('bottom-edge-heightens', now.height > start.height + 15,
+        'Dragging the bottom edge makes the drawing taller',
+        `${Math.round(start.height)} -> ${Math.round(now.height)}`);
+    recorder.near('bottom-edge-keeps-width', now.width, start.width, 3,
+        'Dragging the bottom edge leaves the width alone');
+
+    // A corner still scales proportionally, which is the behaviour a drawing
+    // already had and which this change deliberately leaves alone.
+    start = now;
+    const startRatio = start.width / Math.max(1, start.height);
+    recorder.assert('corner-dragged', await dragHandle('se', 60, 20), 'The corner handle can be dragged');
+    now = (await drawBoxes(page))[0];
+    recorder.near('corner-keeps-aspect', now.width / Math.max(1, now.height), startRatio, 0.08,
+        'A corner drag still scales the drawing proportionally',
+        `${startRatio.toFixed(3)} -> ${(now.width / Math.max(1, now.height)).toFixed(3)}`);
+
+    // Moving by the body.
+    start = now;
+    await page.mouse.move(start.left + (start.width / 2), start.top + (start.height / 2));
+    await page.mouse.down();
+    for (let step = 1; step <= 8; step++) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.mouse.move(
+            start.left + (start.width / 2) + ((60 * step) / 8),
+            start.top + (start.height / 2) + ((40 * step) / 8),
+        );
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(30);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+    now = (await drawBoxes(page))[0];
+    recorder.assert('body-drag-moves', Math.abs(now.left - start.left) > 20,
+        'Dragging the body moves the drawing',
+        `left ${Math.round(start.left)} -> ${Math.round(now.left)}`);
+    recorder.near('move-keeps-size', now.width, start.width, 3,
+        'Moving does not change the size');
+
+    recorder.equals('still-a-drawing', now.directDraw, '1',
+        'It is still a drawing after every gesture');
+    recorder.equals('still-one', (await drawBoxes(page)).length, 1,
+        'No gesture duplicated the annotation');
+
+    await saveDocument(page, saveRecorder);
+    const saved = savedDrawAnnotations(saveRecorder);
+    recorder.equals('saved-one', saved.length, 1, 'The resized drawing saves as one annotation');
+    recorder.assert('geometry-saved',
+        Number(saved[0]?.pdfWidth) > 0 && Number(saved[0]?.pdfHeight) > 0,
+        'The new geometry is written to the save payload',
+        `${saved[0]?.pdfWidth} x ${saved[0]?.pdfHeight}`);
+
+    artifacts.push(await capture(page, '17-move-and-resize', 'after-gestures'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
 // ---------------------------------------------------------------------------
 // Registry and runner
 // ---------------------------------------------------------------------------
@@ -1799,8 +1954,9 @@ const TESTS = [
     { id: '12-defaults', number: '12', title: 'A fresh session starts from the documented defaults', run: testDefaults, signedIn: true },
     { id: '13-style-persists', number: '13', title: 'Style choices persist from one stroke to the next', run: testStylePersistsBetweenStrokes, signedIn: true },
     { id: '14-select-and-menu', number: '14', title: 'Select, deselect and the drawing hover menu', run: testSelectAndMenu, signedIn: true },
-    { id: '15-rotate-unavailable', number: '15', title: 'NK_18: a drawing offers no rotate handle', run: testRotateUnavailable, signedIn: true },
-    { id: '16-draw-cursor-over-handles', number: '16', title: 'NK_19: the draw cursor swallows the resize handles', run: testDrawCursorOverHandles, signedIn: true },
+    { id: '15-rotate-drawing', number: '15', title: 'NK_18: a drawing rotates', run: testRotateDrawing, signedIn: true },
+    { id: '16-draw-cursor-over-handles', number: '16', title: 'NK_19: the draw cursor must not swallow the handle cursors', run: testDrawCursorOverHandles, signedIn: true },
+    { id: '17-move-and-resize', number: '17', title: 'Move and resize a drawing, including the edge handles', run: testMoveAndResize, signedIn: true },
 ];
 
 function summarise(test, checks, artifacts, error, startedAt) {

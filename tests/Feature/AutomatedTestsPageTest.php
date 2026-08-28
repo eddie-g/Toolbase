@@ -418,7 +418,7 @@ class AutomatedTestsPageTest extends TestCase
             fn (array $test) => $test['automated'] === true,
         ));
 
-        $this->assertCount(16, $automated, 'The first draw batch automates 16 of the 26 specified cases');
+        $this->assertCount(17, $automated, 'The draw suite automates 17 of the 26 specified cases');
 
         $runner = (string) file_get_contents(base_path('tests/AutomatedTests/Draw/run_draw_tests.cjs'));
 
