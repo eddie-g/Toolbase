@@ -1221,11 +1221,19 @@ body.enpv-body .draw-tool-panel .draw-tool-panel__close {
     cursor: pointer;
     font-size: 0;
 }
-body.enpv-body .draw-tool-panel .draw-tool-panel__close:hover,
+body.enpv-body .draw-tool-panel .draw-tool-panel__close:hover {
+    background: #f1f5f9;
+    color: #0f172a;
+}
+/* Keyboard focus needs its own indicator, not the hover treatment. Same gap
+   the Shapes panel had before NK_13: the rule above covered :focus-visible too
+   AND set outline:none, so a keyboard user got a faint grey wash and nothing
+   else. */
 body.enpv-body .draw-tool-panel .draw-tool-panel__close:focus-visible {
     background: #f1f5f9;
     color: #0f172a;
-    outline: none;
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
 }
 body.enpv-body .draw-tool-panel .afb-divider {
     width: 100%;
@@ -1274,11 +1282,17 @@ body.enpv-body .draw-tool-panel .draw-tool-btn {
     border-radius: 8px;
     background: #f8fafc;
 }
-body.enpv-body .draw-tool-panel .draw-tool-btn:hover,
-body.enpv-body .draw-tool-panel .draw-tool-btn:focus-visible {
+body.enpv-body .draw-tool-panel .draw-tool-btn:hover {
     border-color: #94a3b8;
     background: #ffffff;
-    outline: none;
+}
+/* As above: Pen and Eraser are in the tab order, so keyboard focus has to be
+   distinguishable from hover rather than identical to it. */
+body.enpv-body .draw-tool-panel .draw-tool-btn:focus-visible {
+    border-color: #2563eb;
+    background: #ffffff;
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
 }
 body.enpv-body .draw-tool-panel .draw-tool-btn.is-active {
     border-color: #2563eb;
@@ -1335,6 +1349,17 @@ body.enpv-body .draw-tool-panel .draw-tool-panel__colors {
 body.enpv-body .draw-tool-panel .draw-color-swatch {
     width: 28px;
     height: 28px;
+}
+/* The ink swatches had no focus style at all. They are round and carry their
+   own colour, so the ring is offset rather than drawn on the swatch itself,
+   where a dark ink would swallow it. */
+body.enpv-body .draw-tool-panel .draw-color-swatch:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 3px;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__custom-color:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
 }
 body.enpv-body .draw-tool-panel .draw-tool-panel__custom-color {
     width: 44px;

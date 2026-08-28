@@ -963,6 +963,12 @@ function savedDrawAnnotations(saveRecorder) {
         || String(annotation?.directDrawTool || '') !== '');
 }
 
+/** Every annotation carried by the most recent save, drawing or not. */
+function lastSavedAnnotations(saveRecorder) {
+    const last = saveRecorder?.saves?.[saveRecorder.saves.length - 1];
+    return Array.isArray(last?.annotations) ? last.annotations : [];
+}
+
 /** The first stroke of a drawing annotation, which is where the style rides. */
 function primaryStroke(annotation) {
     const strokes = Array.isArray(annotation?.directDrawVector?.strokes)
@@ -1012,6 +1018,143 @@ async function ensureDrawingSelected(page, index = 0) {
         await page.waitForTimeout(350);
     }
     return false;
+}
+
+/**
+ * POST an annotation payload straight at the save endpoint.
+ *
+ * Used to plant state the UI can no longer produce -- a stroke saved before
+ * NK_16 added the smoothing field, for instance.
+ *
+ * The editor scopes saved state by a session id it keeps in localStorage, and
+ * the server filters on it. Inventing one here writes to a bucket the reload
+ * never reads, so the write looks like it succeeded and silently changes
+ * nothing -- the editor's own id is read back and reused instead.
+ */
+async function saveAnnotationsDirectly(page, docId, annotations) {
+    return page.evaluate(async ([id, payload]) => {
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+        let sessionId = '';
+        try { sessionId = window.localStorage.getItem(`edit_new_session_${id}`) || ''; } catch (_) { sessionId = ''; }
+        if (!sessionId) return { ok: false, status: 0, reason: 'no editor session id in localStorage' };
+        const response = await fetch(`/documents/${id}/save-annotation-state`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+                'X-CSRF-TOKEN': csrf,
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                annotations: payload,
+                session_annotations: payload,
+                session_id: sessionId,
+            }),
+        });
+        return { ok: response.ok, status: response.status, sessionId };
+    }, [docId, annotations]);
+}
+
+/** Reload the editor without saving first, so planted state is what loads. */
+async function reloadEditor(page) {
+    await page.reload({ waitUntil: 'load', timeout: 45000 });
+    await page.waitForSelector('#viewer .page canvas', { timeout: 30000 });
+    await page.waitForTimeout(1400);
+}
+
+/**
+ * Download the annotated PDF through the real endpoint and write it to the
+ * artifact directory, so a case can inspect what a user would actually get.
+ *
+ * The annotations are passed in rather than collected from the page: the
+ * pdf.js editor has no collectSessionAnnotations global (that belongs to the
+ * legacy editor), and the state recorded from the last save is exactly what
+ * the server is holding anyway.
+ */
+async function downloadAnnotatedPdf(page, docId, testId, annotations) {
+    const encoded = await page.evaluate(async ([id, sessionAnnotations]) => {
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
+        const response = await fetch(`/documents/${id}/download-annotated-pdf`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/pdf',
+                'X-CSRF-TOKEN': csrf,
+            },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                annotations: sessionAnnotations,
+                session_annotations: sessionAnnotations,
+                use_exact_download_path: true,
+                session_id: `draw-suite-download-${Date.now()}`,
+            }),
+        });
+        if (!response.ok) {
+            return { ok: false, status: response.status, body: (await response.text()).slice(0, 300) };
+        }
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        let binary = '';
+        for (let index = 0; index < bytes.length; index += 1) binary += String.fromCharCode(bytes[index]);
+        return { ok: true, count: sessionAnnotations.length, base64: btoa(binary) };
+    }, [docId, annotations]);
+
+    if (!encoded.ok) return { ok: false, status: encoded.status, body: encoded.body };
+
+    ensureArtifactDir();
+    const filePath = path.join(ARTIFACT_DIR, `${testId}__download.pdf`);
+    const buffer = Buffer.from(encoded.base64, 'base64');
+    fs.writeFileSync(filePath, buffer);
+    try { fs.chmodSync(filePath, 0o666); } catch (_) { /* best effort */ }
+    return { ok: true, filePath, bytes: buffer.length, count: encoded.count };
+}
+
+/**
+ * Ask PyMuPDF what images a PDF actually contains, and where.
+ *
+ * The runner has no PDF reader, and asserting on raw bytes would prove almost
+ * nothing. The app already resolves a python that has fitz -- the same one it
+ * uses to write the file -- so the check reuses it.
+ */
+function imagesInPdf(filePath) {
+    const candidates = [
+        path.resolve(__dirname, '..', '..', '..', '.venv', 'bin', 'python'),
+        path.resolve(__dirname, '..', '..', '..', 'python', 'venv', 'bin', 'python'),
+        'python3',
+    ];
+    const program = [
+        'import json,sys',
+        'import fitz',
+        'doc = fitz.open(sys.argv[1])',
+        'out = []',
+        'for number, page in enumerate(doc):',
+        '    for info in page.get_image_info():',
+        '        bbox = info.get("bbox") or [0, 0, 0, 0]',
+        '        out.append({',
+        '            "page": number,',
+        '            "width": round(bbox[2] - bbox[0], 3),',
+        '            "height": round(bbox[3] - bbox[1], 3),',
+        '            "x": round(bbox[0], 3),',
+        '            "y": round(bbox[1], 3),',
+        '        })',
+        'print(json.dumps(out))',
+    ].join('\n');
+
+    for (const python of candidates) {
+        try {
+            const stdout = require('child_process').execFileSync(
+                python,
+                ['-c', program, filePath],
+                { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe'] },
+            );
+            return { ok: true, python, images: JSON.parse(stdout.trim()) };
+        } catch (error) {
+            // Try the next candidate; only the last failure is worth reporting.
+            if (python === candidates[candidates.length - 1]) {
+                return { ok: false, error: String(error.message || error).slice(0, 200) };
+            }
+        }
+    }
+    return { ok: false, error: 'no python with fitz' };
 }
 
 /** The cursor the browser resolves for an element, as CSS actually applies it. */
@@ -1935,6 +2078,701 @@ async function testMoveAndResize(page, { recorder, saveRecorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
+/**
+ * 21 — Reload fidelity.
+ *
+ * The individual style cases each prove one field survives its own save. This
+ * one draws a document's worth of different strokes and checks the whole set
+ * comes back together, which is where a field that is written but never read
+ * back shows up.
+ */
+async function testReloadFidelity(page, { recorder, saveRecorder, docId }) {
+    const artifacts = [];
+
+    const wanted = [
+        { swatch: '#dc2626', sizePx: 6, opacityPercent: 100, smoothingPercent: 0, fy: 0.16 },
+        { swatch: '#2563eb', sizePx: 20, opacityPercent: 50, smoothingPercent: 90, fy: 0.36 },
+        { swatch: '#16a34a', sizePx: 12, opacityPercent: 75, smoothingPercent: 58, fy: 0.56 },
+    ];
+
+    await setDrawMode(page, true);
+    for (const style of wanted) {
+        // eslint-disable-next-line no-await-in-loop
+        await setDrawStyle(page, style);
+        // eslint-disable-next-line no-await-in-loop
+        await drawStroke(page, { fx: 0.2, fy: style.fy }, { shape: (t) => ({ dx: 200 * t, dy: 30 * t }) });
+    }
+    // An eraser too, since it takes a different path through the styling code.
+    await pickDrawTool(page, 'eraser');
+    await drawStroke(page, { fx: 0.2, fy: 0.72 }, { shape: (t) => ({ dx: 160 * t, dy: 0 }) });
+
+    recorder.equals('four-drawn', await drawBoxCount(page), 4, 'Four drawings exist before the save');
+
+    await saveDocument(page, saveRecorder);
+    const before = savedDrawAnnotations(saveRecorder);
+    recorder.equals('four-saved', before.length, 4, 'All four are saved');
+
+    await saveAndReload(page, saveRecorder);
+
+    recorder.equals('four-after-reload', await drawBoxCount(page), 4,
+        'All four come back after a reload');
+
+    const boxes = await drawBoxes(page);
+    recorder.equals('tools-after-reload',
+        boxes.filter((box) => box.directDrawTool === 'eraser').length, 1,
+        'The eraser comes back as an eraser rather than a pen');
+
+    // Save again and compare the payloads field by field. Anything the reload
+    // failed to restore shows up as a difference here.
+    await saveDocument(page, saveRecorder);
+    const after = savedDrawAnnotations(saveRecorder);
+    recorder.equals('four-resaved', after.length, 4, 'The reloaded document saves all four again');
+
+    const key = (annotation) => String(annotation.id || '');
+    const beforeById = new Map(before.map((annotation) => [key(annotation), annotation]));
+    let compared = 0;
+    const drift = [];
+    for (const annotation of after) {
+        const original = beforeById.get(key(annotation));
+        if (!original) continue;
+        compared += 1;
+        const a = primaryStroke(original) || {};
+        const b = primaryStroke(annotation) || {};
+        const same = (field, tolerance = 0) => {
+            const left = a[field];
+            const right = b[field];
+            if (typeof left === 'number' || typeof right === 'number') {
+                if (Math.abs(Number(left) - Number(right)) > tolerance) {
+                    drift.push(`${field}: ${left} -> ${right}`);
+                }
+                return;
+            }
+            if (String(left ?? '').toLowerCase() !== String(right ?? '').toLowerCase()) {
+                drift.push(`${field}: ${left} -> ${right}`);
+            }
+        };
+        same('color');
+        same('brushSize', 0.01);
+        same('opacity', 0.001);
+        same('smoothing', 0.001);
+        for (const field of ['pdfX', 'pdfY', 'pdfWidth', 'pdfHeight']) {
+            if (Math.abs(Number(original[field]) - Number(annotation[field])) > 0.75) {
+                drift.push(`${field}: ${original[field]} -> ${annotation[field]}`);
+            }
+        }
+        if (String(original.directDrawTool) !== String(annotation.directDrawTool)) {
+            drift.push(`directDrawTool: ${original.directDrawTool} -> ${annotation.directDrawTool}`);
+        }
+    }
+
+    recorder.equals('all-matched-by-id', compared, 4,
+        'Every drawing keeps its identity across the reload');
+    recorder.assert('nothing-drifted', drift.length === 0,
+        'Colour, brush size, opacity, smoothing, tool and geometry all survive the round trip',
+        drift.slice(0, 6).join(' | '));
+
+    // Still re-editable, which is the point of keeping vectors at all.
+    const vectors = after.every((annotation) => {
+        const strokes = annotation?.directDrawVector?.strokes;
+        return Array.isArray(strokes) && strokes.length > 0
+            && Array.isArray(strokes[0].points) && strokes[0].points.length > 0;
+    });
+    recorder.assert('vectors-survive', vectors,
+        'Every reloaded drawing still carries its vector points, so it stays re-editable');
+
+    void docId;
+    artifacts.push(await capture(page, '21-reload-fidelity', 'after-reload'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/**
+ * 22 — NK_16: a stroke saved before the slider keeps the fit it was drawn with.
+ *
+ * The UI can no longer produce a stroke without a smoothing amount, so one is
+ * planted through the save endpoint. Without the fallback, an old drawing
+ * would silently refit to whatever the slider happened to be showing.
+ */
+async function testLegacyStrokes(page, { recorder, saveRecorder, docId }) {
+    const artifacts = [];
+
+    await setDrawMode(page, true);
+    await setDrawStyle(page, { smoothingPercent: 100, sizePx: 14 });
+    await drawStroke(page, { fx: 0.2, fy: 0.25 }, {
+        steps: 26,
+        shape: (t) => ({ dx: 220 * t, dy: (t * 26) % 2 < 1 ? -14 : 14 }),
+    });
+    await saveDocument(page, saveRecorder);
+
+    const saved = savedDrawAnnotations(saveRecorder);
+    recorder.equals('one-saved', saved.length, 1, 'A drawing exists to rewrite');
+    const template = saved[0];
+    recorder.assert('template-has-smoothing', Number.isFinite(Number(primaryStroke(template)?.smoothing)),
+        'The freshly drawn stroke carries an amount, which is what gets removed');
+
+    // Two legacy variants: one that was drawn with the old smooth-curve tool,
+    // and one that was drawn with the plain pen.
+    const makeLegacy = (smoothCurve) => {
+        const copy = JSON.parse(JSON.stringify(template));
+        copy.directDrawVector.strokes = copy.directDrawVector.strokes.map((stroke) => {
+            const next = { ...stroke, smoothCurve };
+            delete next.smoothing;
+            return next;
+        });
+        return copy;
+    };
+
+    for (const [label, smoothCurve, expected] of [
+        ['smooth-curve', true, 58],
+        ['plain-pen', false, 0],
+    ]) {
+        const legacy = makeLegacy(smoothCurve);
+        // eslint-disable-next-line no-await-in-loop
+        const posted = await saveAnnotationsDirectly(page, docId, [legacy]);
+        recorder.assert(`planted-${label}`, posted.ok,
+            `A ${label} stroke with no smoothing amount is accepted by the save endpoint`,
+            `status=${posted.status}`);
+
+        // eslint-disable-next-line no-await-in-loop
+        await reloadEditor(page);
+        // eslint-disable-next-line no-await-in-loop
+        const count = await drawBoxCount(page);
+        recorder.equals(`${label}-loads`, count, 1, `The ${label} stroke loads`);
+
+        // eslint-disable-next-line no-await-in-loop
+        await selectDrawing(page, 0);
+        // eslint-disable-next-line no-await-in-loop
+        const panel = await drawPanelState(page);
+        recorder.equals(`${label}-panel-shows-its-fit`, panel.smoothing.value, expected,
+            `Selecting a ${label} stroke shows the amount its fit matches, not a default`);
+    }
+
+    artifacts.push(await capture(page, '22-legacy-strokes', 'legacy-selected'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/**
+ * 25 — Downloaded PDF fidelity.
+ *
+ * The only case that exercises the export end to end. Drawings are
+ * deliberately rasterised on the way out, so the check is that the images are
+ * there and placed where the editor put them -- including the wider footprint
+ * a rotated drawing needs (NK_18).
+ */
+async function testDownloadFidelity(page, { recorder, saveRecorder, docId }) {
+    const artifacts = [];
+
+    await setDrawMode(page, true);
+    await setDrawStyle(page, { swatch: '#dc2626', sizePx: 14 });
+
+    // Two strokes of identical shape and size. One is left upright, the other
+    // is rotated -- so the rotated one's footprint in the PDF can be compared
+    // against a control rather than against a number worked out by hand.
+    const shape = (t) => ({ dx: 220 * t, dy: 0 });
+    await drawStroke(page, { fx: 0.2, fy: 0.2 }, { shape });
+    await drawStroke(page, { fx: 0.2, fy: 0.45 }, { shape });
+    recorder.equals('two-drawn', await drawBoxCount(page), 2, 'Two identical strokes exist');
+
+    await setDrawMode(page, false);
+    await ensureDrawingSelected(page, 1);
+    const turned = await dragRotateHandle(page, 40);
+    recorder.assert('second-rotated', turned, 'The second drawing is rotated');
+
+    await saveDocument(page, saveRecorder);
+    const savedAnnotations = savedDrawAnnotations(saveRecorder);
+    const rotations = savedAnnotations.map((annotation) => Math.abs(Number(annotation.rotation) || 0));
+    recorder.assert('one-upright-one-rotated',
+        rotations.filter((angle) => angle < 1).length === 1
+        && rotations.filter((angle) => angle > 5).length === 1,
+        'One drawing is upright and one is rotated before the download',
+        JSON.stringify(rotations));
+
+    const download = await downloadAnnotatedPdf(
+        page,
+        docId,
+        '25-download-fidelity',
+        lastSavedAnnotations(saveRecorder),
+    );
+    recorder.assert('download-succeeds', download.ok,
+        'The annotated PDF downloads', download.ok ? `${download.bytes} bytes` : `status=${download.status} ${download.body}`);
+
+    if (!download.ok) {
+        artifacts.push(await capture(page, '25-download-fidelity', 'download-failed'));
+        return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+    }
+
+    recorder.assert('download-is-a-pdf', download.bytes > 1000,
+        'The download is a real PDF rather than an error page', `${download.bytes} bytes`);
+
+    const inspected = imagesInPdf(download.filePath);
+    if (!inspected.ok) {
+        recorder.skip('images-in-pdf', 'No python with fitz available to inspect the PDF', inspected.error);
+        artifacts.push(await capture(page, '25-download-fidelity', 'not-inspected'));
+        return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+    }
+
+    const images = inspected.images || [];
+    recorder.assert('drawings-reach-the-pdf', images.length >= 2,
+        'Both drawings are placed in the exported PDF as images',
+        `${images.length} images found`);
+
+    if (images.length >= 2) {
+        const byArea = [...images].sort((a, b) => (a.width * a.height) - (b.width * b.height));
+        const smallest = byArea[0];
+        const largest = byArea[byArea.length - 1];
+
+        // Rotating a wide, short stroke by 40 degrees makes its axis-aligned
+        // footprint both wider and much taller. If the export ignored the
+        // angle the two would be the same size.
+        recorder.assert('rotated-drawing-has-a-bigger-footprint',
+            (largest.width * largest.height) > (smallest.width * smallest.height) * 1.2,
+            'NK_18: the rotated drawing takes a larger footprint in the PDF than the upright one, so the angle reached the file',
+            `upright ${smallest.width}x${smallest.height}, rotated ${largest.width}x${largest.height}`);
+
+        recorder.assert('rotated-drawing-is-taller',
+            largest.height > smallest.height * 1.2,
+            'The rotated drawing is taller than the upright one, which a flat export could not produce',
+            `${smallest.height} -> ${largest.height}`);
+
+        recorder.assert('images-on-first-page',
+            images.every((image) => image.page === 0),
+            'Both drawings land on the page they were drawn on',
+            images.map((image) => image.page).join(','));
+
+        recorder.assert('images-have-area',
+            images.every((image) => image.width > 1 && image.height > 1),
+            'No drawing collapses to nothing in the export');
+    }
+
+    artifacts.push(await capture(page, '25-download-fidelity', 'before-download'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 18 — Multi-select and group operations. */
+async function testMultiSelect(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+
+    await setDrawMode(page, true);
+    for (const fy of [0.18, 0.38, 0.58]) {
+        // eslint-disable-next-line no-await-in-loop
+        await drawStroke(page, { fx: 0.2, fy }, { shape: (t) => ({ dx: 180 * t, dy: 20 * t }) });
+    }
+    recorder.equals('three-drawn', await drawBoxCount(page), 3, 'Three drawings exist');
+
+    await setDrawMode(page, false);
+    await setEditMode(page, true);
+    await selectDrawing(page, 0);
+
+    // Shift-click reaches the same selection the marquee builds, one box at a time.
+    const shiftClick = async (index) => {
+        const box = (await drawBoxes(page))[index];
+        if (!box) return false;
+        await page.keyboard.down('Shift');
+        await page.mouse.click(box.left + (box.width / 2), box.top + (box.height / 2));
+        await page.keyboard.up('Shift');
+        await page.waitForTimeout(400);
+        return true;
+    };
+    await shiftClick(1);
+    await shiftClick(2);
+
+    const multi = await page.evaluate((selector) => ({
+        multi: document.querySelectorAll(`${selector}.is-multi-selected`).length,
+        single: document.querySelectorAll(`${selector}.is-selected`).length,
+    }), DRAW_BOX_SELECTOR);
+    recorder.assert('multi-selected', multi.multi >= 2,
+        'Shift-clicking builds a multi-selection across drawings', JSON.stringify(multi));
+
+    if (multi.multi < 2) {
+        recorder.skip('group-restyle', 'No multi-selection to operate on');
+        recorder.skip('group-delete', 'No multi-selection to operate on');
+        artifacts.push(await capture(page, '18-multi-select', 'no-multi'));
+        return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+    }
+
+    // The draw panel restyles every selected drawing at once.
+    await setDrawStyle(page, { swatch: '#7c3aed' });
+    await page.waitForTimeout(500);
+    await saveDocument(page, saveRecorder);
+    const restyled = savedDrawAnnotations(saveRecorder);
+    const violet = restyled.filter(
+        (annotation) => String(primaryStroke(annotation)?.color || '').toLowerCase() === '#7c3aed',
+    ).length;
+    recorder.assert('group-restyle', violet >= 2,
+        'A style change applies to every drawing in the selection',
+        `${violet} of ${restyled.length} are violet`);
+
+    // Delete removes the whole selection.
+    const before = await drawBoxCount(page);
+    await page.keyboard.press('Delete');
+    await page.waitForTimeout(700);
+    const after = await drawBoxCount(page);
+    recorder.assert('group-delete', after < before,
+        'Delete removes the whole selection rather than one drawing',
+        `${before} -> ${after}`);
+
+    artifacts.push(await capture(page, '18-multi-select', 'after-group-ops'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 19 — Undo and redo across the draw operations. */
+async function testUndoRedo(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+
+    await setDrawMode(page, true);
+    await drawStroke(page, { fx: 0.2, fy: 0.25 }, { shape: (t) => ({ dx: 200 * t, dy: 0 }) });
+    recorder.equals('one-after-draw', await drawBoxCount(page), 1, 'A stroke is committed');
+
+    await clickHistory(page, 'undo');
+    recorder.equals('undo-removes-stroke', await drawBoxCount(page), 0,
+        'Undo removes the committed stroke');
+
+    await clickHistory(page, 'redo');
+    recorder.equals('redo-restores-stroke', await drawBoxCount(page), 1,
+        'Redo brings it back');
+
+    // A second stroke, so undo has to unwind one step rather than everything.
+    await setDrawMode(page, true);
+    await drawStroke(page, { fx: 0.2, fy: 0.5 }, { shape: (t) => ({ dx: 200 * t, dy: 0 }) });
+    recorder.equals('two-after-second-draw', await drawBoxCount(page), 2, 'A second stroke is committed');
+    await clickHistory(page, 'undo');
+    recorder.equals('undo-is-one-step', await drawBoxCount(page), 1,
+        'Undo unwinds one stroke, not the whole document');
+    await clickHistory(page, 'redo');
+    recorder.equals('redo-is-one-step', await drawBoxCount(page), 2, 'Redo replays one step');
+
+    // Restyling is its own history entry, and undoing one has to put the old
+    // style back rather than removing the drawing.
+    await setDrawMode(page, false);
+    await selectDrawing(page, 0);
+    await saveDocument(page, saveRecorder);
+    const originalColour = String(primaryStroke(savedDrawAnnotations(saveRecorder)[0])?.color || '').toLowerCase();
+
+    await setDrawStyle(page, { swatch: '#ea580c' });
+    await page.waitForTimeout(600);
+    await saveDocument(page, saveRecorder);
+    const restyledColour = String(primaryStroke(savedDrawAnnotations(saveRecorder)[0])?.color || '').toLowerCase();
+    recorder.assert('restyle-changed-the-colour', restyledColour === '#ea580c' && restyledColour !== originalColour,
+        'Restyling a selected drawing changes its stored colour',
+        `${originalColour} -> ${restyledColour}`);
+
+    await clickHistory(page, 'undo');
+    recorder.equals('undo-keeps-both-drawings', await drawBoxCount(page), 2,
+        'Undoing a restyle does not delete the drawing');
+
+    await saveDocument(page, saveRecorder);
+    const undoneColour = String(primaryStroke(savedDrawAnnotations(saveRecorder)[0])?.color || '').toLowerCase();
+    recorder.equals('undo-reverts-the-style', undoneColour, originalColour,
+        'Undo puts the previous colour back rather than only redrawing the box');
+
+    artifacts.push(await capture(page, '19-undo-redo', 'after-history'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 20 — Autosave and explicit Save. */
+async function testAutosaveAndSave(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+
+    const before = saveRecorder.saves.length;
+    await setDrawMode(page, true);
+    await drawStroke(page, { fx: 0.2, fy: 0.25 }, { shape: (t) => ({ dx: 200 * t, dy: 0 }) });
+
+    // AUTO_SAVE_DELAY_MS is 1800; wait past it without touching Save.
+    const deadline = Date.now() + 12000;
+    while (saveRecorder.saves.length === before && Date.now() < deadline) {
+        // eslint-disable-next-line no-await-in-loop
+        await page.waitForTimeout(250);
+    }
+    recorder.assert('autosaves-without-save', saveRecorder.saves.length > before,
+        'A committed stroke autosaves without the Save control being touched',
+        `${saveRecorder.saves.length - before} save(s) observed`);
+
+    const autosaved = savedDrawAnnotations(saveRecorder);
+    recorder.equals('autosave-carries-the-drawing', autosaved.length, 1,
+        'The autosave carries the drawing itself, not an empty payload');
+    recorder.assert('autosave-ok',
+        saveRecorder.saves[saveRecorder.saves.length - 1]?.ok === true,
+        'The autosave request succeeds');
+
+    // An explicit Save must not duplicate what the autosave already wrote.
+    await saveDocument(page, saveRecorder);
+    const explicit = savedDrawAnnotations(saveRecorder);
+    recorder.equals('explicit-save-does-not-duplicate', explicit.length, 1,
+        'An explicit Save writes the same drawing rather than a second copy');
+    recorder.equals('same-id',
+        String(explicit[0]?.id || ''), String(autosaved[0]?.id || ''),
+        'The drawing keeps its identity between the autosave and the explicit save');
+
+    artifacts.push(await capture(page, '20-autosave-and-save', 'saved'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 23 — Drawing stays accurate across zoom levels. */
+async function testZoomAccuracy(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+
+    await setDrawMode(page, true);
+    await drawStroke(page, { fx: 0.2, fy: 0.25 }, { shape: (t) => ({ dx: 180 * t, dy: 0 }) });
+    await saveDocument(page, saveRecorder);
+    const atDefault = savedDrawAnnotations(saveRecorder)[0];
+    recorder.assert('drawn-at-default-zoom', !!atDefault, 'A stroke exists at the starting zoom');
+
+    const startZoom = await readZoom(page);
+    const zoomed = await stepZoom(page, 'in', 2);
+    recorder.assert('zoom-changed', zoomed.scale > startZoom.scale,
+        'The viewer zooms in', `${startZoom.scale} -> ${zoomed.scale}`);
+
+    // Zooming must not move the drawing on the page.
+    await saveDocument(page, saveRecorder);
+    const afterZoom = savedDrawAnnotations(saveRecorder)[0];
+    for (const field of ['pdfX', 'pdfY', 'pdfWidth', 'pdfHeight']) {
+        recorder.near(`zoom-keeps-${field}`, Number(afterZoom?.[field]), Number(atDefault?.[field]), 0.75,
+            `Zooming leaves ${field} alone`);
+    }
+
+    // The box has to grow with the zoom, or the drawing would drift visually.
+    // Sized against the annotation layer's own scale rather than
+    // pdfViewer.currentScale: the layer scale carries the 96/72 point-to-CSS-px
+    // conversion as well, and that factor of 4/3 is what the box is drawn with.
+    const box = (await drawBoxes(page))[0];
+    const layerScale = await page.evaluate((selector) => {
+        const target = document.querySelector(selector);
+        return Number.parseFloat(target?.parentElement?.dataset?.scale || '') || 0;
+    }, DRAW_BOX_SELECTOR);
+    recorder.assert('layer-scale-known', layerScale > 0,
+        'The annotation layer reports the scale it is drawn at', `scale=${layerScale}`);
+    const expectedWidth = Number(atDefault?.pdfWidth) * layerScale;
+    recorder.assert('box-scales-with-zoom',
+        Math.abs(box.width - expectedWidth) <= Math.max(6, expectedWidth * 0.08),
+        'The rendered drawing scales with the zoom',
+        `expected ~${Math.round(expectedWidth)}, got ${Math.round(box.width)}`);
+
+    // A stroke drawn while zoomed in must land where the pointer went.
+    await setDrawMode(page, true);
+    const stroke = await drawStroke(page, { fx: 0.3, fy: 0.5 }, { shape: (t) => ({ dx: 120 * t, dy: 0 }) });
+    const boxes = await drawBoxes(page);
+    recorder.equals('second-stroke-committed', boxes.length, 2, 'A stroke drawn while zoomed commits');
+
+    const drawn = boxes.find((candidate) => Math.abs(candidate.top - stroke.start.y) < 90
+        && Math.abs(candidate.left - stroke.start.x) < 90);
+    recorder.assert('zoomed-stroke-lands-under-the-pointer', !!drawn,
+        'A stroke drawn while zoomed in appears where the pointer went',
+        `pointer ${Math.round(stroke.start.x)},${Math.round(stroke.start.y)}; boxes ${boxes.map((b) => `${Math.round(b.left)},${Math.round(b.top)}`).join(' | ')}`);
+
+    await saveDocument(page, saveRecorder);
+    const both = savedDrawAnnotations(saveRecorder);
+    recorder.equals('both-saved', both.length, 2, 'Both strokes save');
+    recorder.assert('zoomed-stroke-has-sane-geometry',
+        both.every((annotation) => Number(annotation.pdfWidth) > 1 && Number(annotation.pdfHeight) > 0
+            && Number(annotation.pdfX) >= -1 && Number(annotation.pdfX) < 612),
+        'The stroke drawn while zoomed stores page geometry, not viewport pixels',
+        JSON.stringify(both.map((a) => ({ x: Math.round(a.pdfX), w: Math.round(a.pdfWidth) }))));
+
+    artifacts.push(await capture(page, '23-zoom-accuracy', 'zoomed'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/**
+ * 24 — Drawing on a rotated page is refused, by design.
+ *
+ * pageHasUnsupportedEditRotation() treats ANY non-zero page rotation as
+ * unsupported, and guardRotatedPagePointerInteraction swallows the pointer for
+ * every mutation tool -- draw included -- before the gesture starts. So the
+ * behaviour worth pinning is not that drawing works on a rotated page but that
+ * it is refused, says so, and comes back when the page is straightened.
+ */
+async function testRotatedPages(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+
+    // A drawing made before the rotation, so the case can also prove the
+    // rotation does not destroy work already on the page.
+    await setDrawMode(page, true);
+    await drawStroke(page, { fx: 0.25, fy: 0.3 }, { shape: (t) => ({ dx: 150 * t, dy: 0 }) });
+    await saveDocument(page, saveRecorder);
+    const beforeRotation = savedDrawAnnotations(saveRecorder)[0];
+    recorder.equals('one-before-rotation', await drawBoxCount(page), 1,
+        'A drawing exists before the page is rotated');
+
+    const rotated = await rotatePage(page, 1, 'right');
+    recorder.equals('page-rotated', rotated.rotation, 90, 'Page 1 rotates to 90 degrees');
+    recorder.assert('rotation-warns-about-editing', rotated.dialogShown,
+        'Rotating a page warns that editing is unavailable while it is turned',
+        rotated.dialogMessage);
+
+    // The existing drawing has to survive the rotation.
+    recorder.equals('drawing-survives-rotation', await drawBoxCount(page), 1,
+        'The drawing made before the rotation is still on the page');
+
+    // Now try to draw on it. The guard runs on pointerdown, in the capture
+    // phase, so nothing should be committed at all.
+    await page.evaluate(() => {
+        const dialog = document.getElementById('enpv-rotated-edit-dialog');
+        if (dialog) dialog.hidden = true;
+    });
+    await setDrawMode(page, true);
+    await drawStroke(page, { fx: 0.4, fy: 0.5 }, { shape: (t) => ({ dx: 120 * t, dy: 30 * t }) });
+
+    recorder.equals('draw-is-refused', await drawBoxCount(page), 1,
+        'Dragging on a rotated page commits nothing');
+
+    const refusal = await page.evaluate(() => {
+        const dialog = document.getElementById('enpv-rotated-edit-dialog');
+        return {
+            dialogShown: !!dialog && dialog.hidden === false,
+            message: document.getElementById('enpv-rotated-edit-dialog-description')?.textContent?.trim() || '',
+            status: document.getElementById('enpv-status')?.textContent?.trim() || '',
+        };
+    });
+    recorder.assert('refusal-is-explained', refusal.dialogShown || /rotat/i.test(refusal.status),
+        'The refusal is explained rather than the drag silently doing nothing',
+        JSON.stringify(refusal).slice(0, 200));
+
+    // Straightening the page has to give the tool back.
+    await page.evaluate(() => {
+        const dialog = document.getElementById('enpv-rotated-edit-dialog');
+        if (dialog) dialog.hidden = true;
+    });
+    const straightened = await rotatePage(page, 1, 'left');
+    recorder.equals('page-straightened', straightened.rotation, 0, 'The page rotates back to 0');
+
+    await setDrawMode(page, true);
+    await drawStroke(page, { fx: 0.4, fy: 0.5 }, { shape: (t) => ({ dx: 120 * t, dy: 30 * t }) });
+    recorder.equals('draw-works-again', await drawBoxCount(page), 2,
+        'Drawing works again once the page is straight');
+
+    await saveDocument(page, saveRecorder);
+    const after = savedDrawAnnotations(saveRecorder);
+    recorder.equals('both-saved', after.length, 2, 'Both drawings save');
+
+    const original = after.find((annotation) => String(annotation.id) === String(beforeRotation?.id));
+    recorder.assert('original-geometry-intact', !!original
+        && Math.abs(Number(original.pdfX) - Number(beforeRotation.pdfX)) < 1
+        && Math.abs(Number(original.pdfWidth) - Number(beforeRotation.pdfWidth)) < 1,
+        'The drawing made before the rotation keeps its geometry through the round trip',
+        original ? `${Math.round(original.pdfX)} vs ${Math.round(Number(beforeRotation.pdfX))}` : 'not found');
+
+    artifacts.push(await capture(page, '24-rotated-pages', 'after-round-trip'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
+/** 26 — Keyboard access and ARIA on the Draw Options panel. */
+async function testKeyboardAndAria(page, { recorder }) {
+    const artifacts = [];
+
+    await setDrawMode(page, true);
+    const panel = await drawPanelState(page);
+    recorder.equals('aria-hidden-false-when-open', panel.ariaHidden, 'false',
+        'The open panel is exposed to assistive technology');
+
+    // Every interactive control has to be reachable and labelled.
+    const controls = await page.evaluate(() => {
+        const panelEl = document.getElementById('draw-tool-panel');
+        if (!panelEl) return [];
+        return Array.from(panelEl.querySelectorAll('button, input')).map((el) => ({
+            id: el.id || '',
+            tag: el.tagName.toLowerCase(),
+            type: el.getAttribute('type') || '',
+            disabled: !!el.disabled,
+            tabIndex: el.tabIndex,
+            label: el.getAttribute('aria-label') || el.getAttribute('title') || '',
+            hiddenBranch: !!el.closest('[hidden]'),
+        }));
+    });
+
+    const reachable = controls.filter((control) => !control.hiddenBranch && !control.disabled);
+    recorder.assert('controls-found', reachable.length > 0, 'The panel exposes controls',
+        `${reachable.length} reachable of ${controls.length}`);
+    recorder.assert('no-control-removed-from-tab-order',
+        reachable.every((control) => control.tabIndex >= 0),
+        'No reachable control is taken out of the tab order',
+        reachable.filter((control) => control.tabIndex < 0).map((control) => control.id).join(','));
+    recorder.assert('controls-are-labelled',
+        reachable.every((control) => control.label.length > 0),
+        'Every reachable control carries a label',
+        reachable.filter((control) => !control.label).map((control) => `${control.tag}#${control.id}`).join(','));
+
+    const closeButton = controls.find((control) => control.id === 'draw-tool-close');
+    recorder.assert('close-is-labelled', !!closeButton && closeButton.label.length > 0,
+        'The close button is labelled', closeButton?.label);
+
+    // The sliders have to be operable from the keyboard, not just the mouse.
+    const stepped = await page.evaluate(() => {
+        const input = document.getElementById('draw-tool-size');
+        if (!input) return null;
+        input.focus();
+        return { focused: document.activeElement === input, before: Number(input.value) };
+    });
+    recorder.assert('slider-focusable', !!stepped?.focused, 'A slider can take keyboard focus');
+
+    await page.keyboard.press('ArrowRight');
+    await page.waitForTimeout(250);
+    const afterArrow = await drawPanelState(page);
+    recorder.assert('arrow-key-moves-the-slider', afterArrow.size.value > (stepped?.before ?? 0),
+        'An arrow key changes the slider and the readout follows',
+        `${stepped?.before} -> ${afterArrow.size.value} (${afterArrow.size.readout})`);
+
+    // Focus has to be VISIBLE, or keyboard reachability is hollow.
+    //
+    // :focus-visible only matches when the browser decides the focus came from
+    // the keyboard, so the ring has to be checked after real Tab navigation --
+    // element.focus() after a mouse click leaves the modality as pointer and
+    // the rule never applies, which would report a passing ring that a keyboard
+    // user never sees.
+    const ringFor = async (selector, label) => {
+        await page.evaluate((target) => {
+            const el = document.querySelector(target);
+            const previous = el?.previousElementSibling;
+            // Focus the control BEFORE the target, then Tab onto it, so the
+            // browser records the focus as keyboard-driven.
+            if (previous instanceof HTMLElement && (previous.tabIndex >= 0)) previous.focus();
+            else if (el instanceof HTMLElement) el.focus();
+        }, selector);
+        await page.keyboard.press('Tab');
+        await page.waitForTimeout(200);
+
+        return page.evaluate((target) => {
+            const el = document.querySelector(target);
+            if (!el) return null;
+            if (document.activeElement !== el) {
+                if (el instanceof HTMLElement) el.focus();
+            }
+            const style = window.getComputedStyle(el);
+            const hover = window.getComputedStyle(el, null);
+            return {
+                focused: document.activeElement === el,
+                matchesFocusVisible: typeof el.matches === 'function' && el.matches(':focus-visible'),
+                outlineStyle: style.outlineStyle,
+                outlineWidth: style.outlineWidth,
+                boxShadow: hover.boxShadow,
+            };
+        }, selector);
+    };
+
+    for (const [selector, label] of [
+        ['[data-draw-direct-tool="eraser"]', 'a tool button'],
+        ['[data-draw-color="#dc2626"]', 'an ink swatch'],
+        ['#draw-tool-close', 'the close button'],
+    ]) {
+        // eslint-disable-next-line no-await-in-loop
+        const ring = await ringFor(selector, label);
+        const visible = !!ring && ring.matchesFocusVisible && (
+            (ring.outlineStyle !== 'none' && Number.parseFloat(ring.outlineWidth) > 0)
+            || (ring.boxShadow && ring.boxShadow !== 'none')
+        );
+        recorder.assert(`focus-visible-${selector.replace(/[^a-z0-9]+/gi, '-')}`, visible,
+            `Keyboard focus on ${label} shows a visible ring rather than the hover treatment`,
+            JSON.stringify(ring));
+    }
+
+    // And the panel has to drop out of the accessibility tree when it closes.
+    await setDrawMode(page, false);
+    const closed = await drawPanelState(page);
+    recorder.equals('aria-hidden-true-when-closed', closed.ariaHidden, 'true',
+        'The closed panel is hidden from assistive technology again');
+
+    artifacts.push(await capture(page, '26-keyboard-and-aria', 'panel-focus'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
 // ---------------------------------------------------------------------------
 // Registry and runner
 // ---------------------------------------------------------------------------
@@ -1957,6 +2795,15 @@ const TESTS = [
     { id: '15-rotate-drawing', number: '15', title: 'NK_18: a drawing rotates', run: testRotateDrawing, signedIn: true },
     { id: '16-draw-cursor-over-handles', number: '16', title: 'NK_19: the draw cursor must not swallow the handle cursors', run: testDrawCursorOverHandles, signedIn: true },
     { id: '17-move-and-resize', number: '17', title: 'Move and resize a drawing, including the edge handles', run: testMoveAndResize, signedIn: true },
+    { id: '18-multi-select', number: '18', title: 'Multi-select and group operations', run: testMultiSelect, signedIn: true },
+    { id: '19-undo-redo', number: '19', title: 'Undo and redo across the draw operations', run: testUndoRedo, signedIn: true },
+    { id: '20-autosave-and-save', number: '20', title: 'Autosave and explicit Save', run: testAutosaveAndSave, signedIn: true },
+    { id: '21-reload-fidelity', number: '21', title: 'Reload fidelity', run: testReloadFidelity, signedIn: true },
+    { id: '22-legacy-strokes', number: '22', title: 'NK_16: a stroke saved before the slider keeps its fit', run: testLegacyStrokes, signedIn: true },
+    { id: '23-zoom-accuracy', number: '23', title: 'Drawing stays accurate across zoom levels', run: testZoomAccuracy, signedIn: true },
+    { id: '24-rotated-pages', number: '24', title: 'Drawing on a rotated page is refused, by design', run: testRotatedPages, signedIn: true },
+    { id: '25-download-fidelity', number: '25', title: 'Downloaded PDF fidelity', run: testDownloadFidelity, signedIn: true },
+    { id: '26-keyboard-and-aria', number: '26', title: 'Keyboard access and ARIA on the Draw Options panel', run: testKeyboardAndAria, signedIn: true },
 ];
 
 function summarise(test, checks, artifacts, error, startedAt) {
@@ -2099,7 +2946,12 @@ module.exports = {
     tapOnPage,
     attachSaveRecorder,
     savedDrawAnnotations,
+    lastSavedAnnotations,
     primaryStroke,
+    saveAnnotationsDirectly,
+    reloadEditor,
+    downloadAnnotatedPdf,
+    imagesInPdf,
     saveDocument,
     saveAndReload,
     readZoom,

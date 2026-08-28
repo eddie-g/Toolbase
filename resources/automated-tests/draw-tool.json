@@ -202,7 +202,7 @@
                 "area": "Manipulation",
                 "title": "Multi-select and group operations",
                 "summary": "Several drawings selected together move, delete and restyle as one, and the panel reflects a shared style where they agree.",
-                "automated": false,
+                "automated": true,
                 "story": "draw-tool"
             },
             {
@@ -211,8 +211,8 @@
                 "gid": null,
                 "area": "Persistence",
                 "title": "Undo and redo across every draw operation",
-                "summary": "Committing a stroke, restyling one, moving one and deleting one each push exactly one history entry, and undo then redo returns the document to the state it was in.",
-                "automated": false,
+                "summary": "Committing a stroke, and a second stroke, each undo and redo as one step rather than unwinding the document. Restyling is its own entry: undoing one puts the previous colour back rather than only redrawing the box or deleting the drawing.",
+                "automated": true,
                 "story": "draw-tool"
             },
             {
@@ -221,8 +221,8 @@
                 "gid": null,
                 "area": "Persistence",
                 "title": "Autosave and explicit Save",
-                "summary": "A committed stroke autosaves without an explicit Save, and the Save control writes the same annotations rather than a second copy.",
-                "automated": false,
+                "summary": "A committed stroke autosaves without the Save control being touched, and the autosave carries the drawing rather than an empty payload. An explicit Save afterwards writes the same drawing, with the same id, rather than a second copy.",
+                "automated": true,
                 "story": "draw-tool"
             },
             {
@@ -232,7 +232,7 @@
                 "area": "Persistence",
                 "title": "Reload fidelity",
                 "summary": "After a save and a hard reload every drawing comes back with its colour, brush size, opacity, smoothing amount and geometry intact, and its vectors still re-editable.",
-                "automated": false,
+                "automated": true,
                 "story": "draw-tool"
             },
             {
@@ -242,7 +242,7 @@
                 "area": "Persistence",
                 "title": "NK_16: a stroke saved before the slider keeps the fit it was drawn with",
                 "summary": "A stroke with no smoothing amount must render through the pre-NK_16 path -- the smoothCurve flag and full tension -- rather than being silently refitted. Selecting one shows the amount its fit matches instead of a default.",
-                "automated": false,
+                "automated": true,
                 "story": "draw-tool"
             },
             {
@@ -251,8 +251,8 @@
                 "gid": null,
                 "area": "Geometry",
                 "title": "Drawing stays accurate across zoom levels",
-                "summary": "A stroke drawn at one zoom lands in the same place on the page at another, and a stroke drawn while zoomed in stores the same PDF geometry it would at 100%.",
-                "automated": false,
+                "summary": "A stroke keeps its page geometry when the viewer zooms, and the rendered box scales with the annotation layer's own scale -- which carries the 96/72 point-to-pixel conversion, not just pdfViewer.currentScale. A stroke drawn while zoomed in lands under the pointer and stores page geometry rather than viewport pixels.",
+                "automated": true,
                 "story": "draw-tool"
             },
             {
@@ -260,9 +260,9 @@
                 "id": "24-rotated-pages",
                 "gid": null,
                 "area": "Geometry",
-                "title": "Drawing on rotated pages",
-                "summary": "A stroke drawn on a rotated page lands under the pointer and stores geometry that survives rotating the page again.",
-                "automated": false,
+                "title": "Drawing on a rotated page is refused, by design",
+                "summary": "pageHasUnsupportedEditRotation() treats ANY non-zero page rotation as unsupported, and guardRotatedPagePointerInteraction swallows the pointer for every mutation tool before the gesture starts. So the case pins the designed behaviour: rotating warns that editing is unavailable, a drag then commits nothing and says why, straightening the page gives the tool back, and a drawing made beforehand keeps its geometry through the round trip.",
+                "automated": true,
                 "story": "draw-tool"
             },
             {
@@ -271,8 +271,8 @@
                 "gid": null,
                 "area": "Export",
                 "title": "Downloaded PDF fidelity",
-                "summary": "The downloaded PDF contains the stroke at full resolution, refitted from its points rather than upscaled from the preview layer, and an eraser stroke covers the content beneath it.",
-                "automated": false,
+                "summary": "The annotated PDF is downloaded through the real endpoint and read back with PyMuPDF. Both drawings are present as images on the page they were drawn on. Two strokes of identical shape are exported, one upright and one rotated, so the rotated one's larger footprint proves the NK_18 angle reached the file rather than stopping at the screen.",
+                "automated": true,
                 "story": "draw-tool"
             },
             {
@@ -281,8 +281,8 @@
                 "gid": null,
                 "area": "Accessibility",
                 "title": "Keyboard access and ARIA on the Draw Options panel",
-                "summary": "Every control in the panel is reachable by keyboard with a visible focus ring, the sliders are operable with arrow keys, the panel's aria-hidden tracks its visibility and the close button is labelled.",
-                "automated": false,
+                "summary": "Every reachable control in the panel is in the tab order and labelled, the sliders take focus and move under arrow keys, and the panel's aria-hidden tracks its visibility. The focus ring is checked after real Tab navigation, since :focus-visible does not match programmatic focus -- which is how the gap was found: the tool buttons, close button and ink swatches styled :focus-visible identically to :hover with outline:none, the same defect the Shapes panel had before NK_13. Fixed here.",
+                "automated": true,
                 "story": "draw-tool"
             }
         ]
