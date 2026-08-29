@@ -11544,12 +11544,142 @@ function applyRotatedBackgroundToBox(box, rotation, transform) {
 // gated on shapeBoxCanRotate(), which excludes lines, and "cut" for a
 // one-dimensional segment would mean splitting it in two, which is a different
 // operation from the area split this implements. Left on the ticket for a spec.
-const CUTTABLE_SHAPE_TYPES = new Set(['square', 'circle', 'triangle', 'star', 'polygon', 'heart']);
+const CUTTABLE_SHAPE_TYPES = new Set(['square', 'circle', 'triangle', 'star', 'polygon', 'heart', 'line']);
 
+/**
+ * NK_20: cut used to borrow its eligibility from shapeBoxCanRotate(), which
+ * excludes lines — so a line could never be cut no matter what the set said.
+ * The two questions are unrelated: a line does not rotate because its geometry
+ * is two endpoints rather than a box, but it splits perfectly well.
+ */
 function canCutShapeBox(box) {
-    if (!shapeBoxCanRotate(box)) return false;
+    if (box?.dataset?.annotationType !== 'shape') return false;
     if (isAnnBoxLocked(box)) return false;
     return CUTTABLE_SHAPE_TYPES.has(normalizeShapeType(box.dataset.shapeType));
+}
+
+/** The shortest segment a cut may leave behind, in PDF points (NK_20). */
+const MIN_LINE_CUT_SEGMENT_PTS = 3;
+
+/**
+ * A line annotation's endpoints in absolute PDF space.
+ *
+ * The annotation stores them as units inside its own box, with Y measured from
+ * the top, so they have to be projected back out before any geometry is done.
+ */
+function lineEndpointsPdfFromAnnotation(annotation) {
+    const x = Number(annotation?.pdfX);
+    const y = Number(annotation?.pdfY);
+    const width = Number(annotation?.pdfWidth);
+    const height = Number(annotation?.pdfHeight);
+    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+    const startX = clampLineUnit(annotation?.lineStartX, 0);
+    const startY = clampLineUnit(annotation?.lineStartY, 0);
+    const endX = clampLineUnit(annotation?.lineEndX, 1);
+    const endY = clampLineUnit(annotation?.lineEndY, 1);
+    return {
+        start: { x: x + (width * startX), y: y + (height * (1 - startY)) },
+        end: { x: x + (width * endX), y: y + (height * (1 - endY)) },
+    };
+}
+
+/**
+ * Build a line annotation covering two absolute PDF points, inheriting the
+ * template's stroke. `identity` lets the caller hand the result the original
+ * annotation's id, which is how the first half of a cut keeps its place in the
+ * layers panel and its z-order.
+ */
+function createLineAnnotationFromPdfPoints(templateAnn, pageIndex, start, end, identity = null) {
+    if (!start || !end) return null;
+    if (![start.x, start.y, end.x, end.y].every(Number.isFinite)) return null;
+    const geometry = computeLineBoxGeometry(start.x, start.y, end.x, end.y);
+    const uid = identity?._uid || `shape_${generateUuidV4()}`;
+    return normalizeShapeAnnotation({
+        id: identity?.id || buildPdfjsAnnotationId(pageIndex, uid),
+        _uid: uid,
+        pageIndex,
+        type: 'shape',
+        shapeType: 'line',
+        pdfX: geometry.left,
+        pdfY: geometry.bottom,
+        pdfWidth: geometry.width,
+        pdfHeight: geometry.height,
+        lineStartX: geometry.lineStartX,
+        lineStartY: geometry.lineStartY,
+        lineEndX: geometry.lineEndX,
+        lineEndY: geometry.lineEndY,
+        rotation: 0,
+        userCreated: true,
+        strokeColor: templateAnn.strokeColor,
+        strokeOpacity: templateAnn.strokeOpacity,
+        strokeWidth: templateAnn.strokeWidth,
+        strokeTransparent: templateAnn.strokeTransparent,
+        fillColor: templateAnn.fillColor,
+        fillOpacity: templateAnn.fillOpacity,
+        fillTransparent: templateAnn.fillTransparent,
+        lineCap: templateAnn.lineCap,
+        locked: false,
+        zIndex: templateAnn.zIndex,
+        text: '',
+    });
+}
+
+/**
+ * Split a line where the cut line crosses it (NK_20).
+ *
+ * The cut line is treated as infinite, exactly as the polygon path does — what
+ * decides whether the cut lands is that the crossing has to fall strictly
+ * inside the target segment. A parallel cut, or one whose crossing falls beyond
+ * an endpoint, is a miss.
+ *
+ * Unlike the polygon path, the original annotation is NOT deleted: the half
+ * running from the original start point keeps its id, so undo has one creation
+ * to unwind and the layers panel keeps a familiar row.
+ */
+function cutLineAnnotationWithLine(box, source, pageIndex, cutStart, cutEnd) {
+    const endpoints = lineEndpointsPdfFromAnnotation(source);
+    if (!endpoints) return { ok: false, message: 'Line geometry is unavailable.' };
+
+    const { start, end } = endpoints;
+    const lineDx = end.x - start.x;
+    const lineDy = end.y - start.y;
+    const cutDx = cutEnd.x - cutStart.x;
+    const cutDy = cutEnd.y - cutStart.y;
+
+    const denominator = (lineDx * cutDy) - (lineDy * cutDx);
+    if (Math.abs(denominator) < 1e-9) {
+        return { ok: false, message: 'The cut line must cross the line.' };
+    }
+    const t = (((cutStart.x - start.x) * cutDy) - ((cutStart.y - start.y) * cutDx)) / denominator;
+    if (!Number.isFinite(t) || t <= 0 || t >= 1) {
+        return { ok: false, message: 'The cut line must cross the line.' };
+    }
+
+    const split = { x: start.x + (lineDx * t), y: start.y + (lineDy * t) };
+    const firstLength = Math.hypot(split.x - start.x, split.y - start.y);
+    const secondLength = Math.hypot(end.x - split.x, end.y - split.y);
+    if (firstLength < MIN_LINE_CUT_SEGMENT_PTS || secondLength < MIN_LINE_CUT_SEGMENT_PTS) {
+        return { ok: false, message: 'Cut further from the end of the line.' };
+    }
+
+    const firstHalf = createLineAnnotationFromPdfPoints(source, pageIndex, start, split, source);
+    const secondHalf = createLineAnnotationFromPdfPoints(source, pageIndex, split, end);
+    if (!firstHalf || !secondHalf) return { ok: false, message: 'Unable to cut this line.' };
+
+    pushHistorySnapshot('cut shape');
+    upsertPersistedAnnotation(firstHalf);
+    upsertPersistedAnnotation(secondHalf);
+    selectedAnnBoxUid = firstHalf._uid || firstHalf.id || null;
+    selectedAnnBoxIsEditing = false;
+    if (annMenu) annMenu.hidden = true;
+    hideAnnotationFormatBar();
+    renderAnnotationBoxLayer(pageIndex);
+    const cutBox = pdfViewer.getPageView(pageIndex)?.div
+        ?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(firstHalf.id)}"]`) || null;
+    if (cutBox) selectAnnBox(cutBox);
+    markManualSaveNeeded();
+    void box;
+    return { ok: true, annotations: [firstHalf, secondHalf] };
 }
 
 function isShapeCutModeArmedForBox(box) {
@@ -11695,8 +11825,6 @@ function cutShapeBoxWithLine(box, startPoint, endPoint) {
     const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     const source = normalizeShapeAnnotation(buildAnnotationFromBox(box, existing) || existing || {});
-    const polygon = getShapePolygonPointsPdf(source);
-    if (polygon.length < 3) return { ok: false, message: 'Shape outline is unavailable.' };
     const startPt = { x: Number(startPoint?.pdfX), y: Number(startPoint?.pdfY) };
     const endPt = { x: Number(endPoint?.pdfX), y: Number(endPoint?.pdfY) };
     const lineDx = endPt.x - startPt.x;
@@ -11704,6 +11832,12 @@ function cutShapeBoxWithLine(box, startPoint, endPoint) {
     if (![startPt.x, startPt.y, endPt.x, endPt.y].every(Number.isFinite) || Math.hypot(lineDx, lineDy) < 4) {
         return { ok: false, message: 'Drag a longer cut line through the shape.' };
     }
+    // NK_20: a line has no area to clip, so it splits at the crossing instead.
+    if (normalizeShapeType(source.shapeType) === 'line') {
+        return cutLineAnnotationWithLine(box, source, pageIndex, startPt, endPt);
+    }
+    const polygon = getShapePolygonPointsPdf(source);
+    if (polygon.length < 3) return { ok: false, message: 'Shape outline is unavailable.' };
     const firstHalf = clipPolygonAgainstInfiniteLine(polygon, startPt, endPt, true);
     const secondHalf = clipPolygonAgainstInfiniteLine(polygon, startPt, endPt, false);
     const cutA = createPolygonAnnotationFromPdfPoints(source, pageIndex, firstHalf);

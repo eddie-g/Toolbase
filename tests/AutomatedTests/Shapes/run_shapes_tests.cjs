@@ -1816,7 +1816,9 @@ async function testLineEndpoints(page, { recorder, saveRecorder }) {
         'A line offers no visible rotate handle, matching its exclusion from rotation',
         JSON.stringify(rotatable));
 
-    // Cut is offered on square, circle, triangle, star and polygon only.
+    // NK_20: cut IS offered for a line now. It used to be blocked because cut
+    // borrowed its eligibility from the rotation predicate, which excludes
+    // lines -- two unrelated questions that have been separated.
     await selectShape(page, 0);
     const cutOffered = await page.evaluate(() => {
         const button = document.querySelector('#enpv-ann-menu [data-action="cut"]');
@@ -1824,8 +1826,8 @@ async function testLineEndpoints(page, { recorder, saveRecorder }) {
         const rect = button.getBoundingClientRect();
         return { present: true, visible: rect.width > 0 && rect.height > 0 };
     });
-    recorder.assert('line-not-cuttable', !cutOffered.visible,
-        'Cut is not offered for a line, matching CUTTABLE_SHAPE_TYPES',
+    recorder.assert('line-is-cuttable', cutOffered.visible,
+        'Cut is offered for a line (NK_20), even though a line still does not rotate',
         JSON.stringify(cutOffered));
 
     await saveAndReload(page, saveRecorder);
@@ -2323,7 +2325,7 @@ async function testRotate(page, { recorder, saveRecorder }) {
 }
 
 /** 23 — Cut a shape. */
-async function testCutShape(page, { recorder }) {
+async function testCutShape(page, { recorder, saveRecorder }) {
     const artifacts = [];
 
     // Cut is offered on square, circle, triangle, star and polygon; not on line.
@@ -2374,16 +2376,142 @@ async function testCutShape(page, { recorder }) {
     recorder.assert('cut-offered-for-heart', menu.offered.includes('cut'),
         'Cut is offered for a heart (NK_14)', JSON.stringify(menu.offered));
 
-    // A line must NOT offer cut — still gated on rotation, which excludes lines.
+    // NK_20: a line offers cut too now, and splits into two segments rather
+    // than being clipped as an area.
     await setShapeMode(page, true);
     await pickShape(page, 'line');
     await setShapeMode(page, true);
     await drawShape(page, { fx: 0.20, fy: 0.55 }, { dx: 200, dy: 120 });
     const boxes = await shapeBoxes(page);
-    await selectShape(page, boxes.length - 1);
+    const lineIndex = boxes.length - 1;
+    await ensureSelected(page, lineIndex);
     menu = await annMenuState(page);
-    recorder.assert('cut-not-offered-for-line', !menu.offered.includes('cut'),
-        'Cut is not offered for a line', JSON.stringify(menu.offered));
+    recorder.assert('cut-offered-for-line', menu.offered.includes('cut'),
+        'Cut is offered for a line (NK_20)', JSON.stringify(menu.offered));
+
+    const beforeCount = (await shapeBoxes(page)).length;
+    const lineAnnotationId = (await shapeBoxes(page))[lineIndex]?.annotationId;
+
+    // shapeBoxes() reports layer-relative geometry; the pointer needs viewport
+    // coordinates, so the rect is read straight off the box.
+    const lineBefore = await page.evaluate(([selector, id]) => {
+        const box = Array.from(document.querySelectorAll(selector))
+            .find((candidate) => candidate.dataset.annotationId === id);
+        if (!box) return null;
+        const rect = box.getBoundingClientRect();
+        return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+    }, [SHAPE_BOX_SELECTOR, lineAnnotationId]);
+    recorder.assert('line-rect-found', !!lineBefore,
+        'The line box can be located on screen', JSON.stringify(lineBefore));
+
+    // The original's length in PDF points, so the two halves can be measured
+    // against it: a split must conserve length, not invent or lose it.
+    await saveDocument(page, saveRecorder);
+    const lineLengthPts = (annotation) => {
+        if (!annotation) return null;
+        const x = Number(annotation.pdfX);
+        const y = Number(annotation.pdfY);
+        const w = Number(annotation.pdfWidth);
+        const h = Number(annotation.pdfHeight);
+        const sx = x + (w * Number(annotation.lineStartX ?? 0));
+        const sy = y + (h * (1 - Number(annotation.lineStartY ?? 0)));
+        const ex = x + (w * Number(annotation.lineEndX ?? 1));
+        const ey = y + (h * (1 - Number(annotation.lineEndY ?? 1)));
+        return Math.hypot(ex - sx, ey - sy);
+    };
+    const originalLine = savedShapeAnnotations(saveRecorder)
+        .find((annotation) => String(annotation.id) === String(lineAnnotationId));
+    const originalLength = lineLengthPts(originalLine);
+    recorder.assert('original-length-known', Number.isFinite(originalLength) && originalLength > 0,
+        'The line length before the cut is known', `${originalLength}`);
+
+    // A cut that misses must leave the line alone and keep cut mode armed, so
+    // the user can simply try again.
+    //
+    // The cut line is treated as infinite, so "missing" cannot mean "drawn far
+    // away" -- an infinite line crosses the segment from almost anywhere. A cut
+    // drawn PARALLEL to the line is the unambiguous miss: it never crosses, at
+    // any distance, and it stays comfortably on screen.
+    await annotationMenuAction(page, 'cut');
+    const parallelFrom = { x: lineBefore.left + 12, y: lineBefore.top + 46 };
+    const parallelTo = {
+        x: parallelFrom.x + (lineBefore.width * 0.5),
+        y: parallelFrom.y + (lineBefore.height * 0.5),
+    };
+    await page.mouse.move(parallelFrom.x, parallelFrom.y);
+    await page.mouse.down();
+    await page.mouse.move(parallelTo.x, parallelTo.y, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+    recorder.equals('missed-cut-changes-nothing', (await shapeBoxes(page)).length, beforeCount,
+        'A cut line that does not cross the line leaves it untouched');
+    const stillArmed = await page.evaluate(() => document.body.classList.contains('enpv-shape-cut-armed'));
+    recorder.assert('missed-cut-stays-armed', stillArmed,
+        'Cut mode stays armed after a miss, so the cut can be retried');
+
+    // Now a real cut, straight across the middle of the line.
+    const midX = lineBefore.left + (lineBefore.width / 2);
+    const midY = lineBefore.top + (lineBefore.height / 2);
+    await page.mouse.move(midX - 70, midY + 70);
+    await page.mouse.down();
+    await page.mouse.move(midX + 70, midY - 70, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+
+    const afterCut = await shapeBoxes(page);
+    recorder.equals('cut-makes-two-lines', afterCut.length, beforeCount + 1,
+        'Cutting a line leaves one more annotation than before');
+    const lines = afterCut.filter((shape) => shape.shapeType === 'line');
+    recorder.equals('both-halves-are-lines', lines.length, 2,
+        'Both halves are lines rather than polygons',
+        afterCut.map((shape) => shape.shapeType).join(','));
+    recorder.assert('first-half-keeps-its-id',
+        lines.some((shape) => shape.annotationId === lineAnnotationId),
+        'The half from the original start point keeps the original annotation id (NK_20)',
+        `original ${lineAnnotationId}, now ${lines.map((l) => l.annotationId).join(' | ')}`);
+
+    await saveDocument(page, saveRecorder);
+    const savedLines = savedShapeAnnotations(saveRecorder)
+        .filter((annotation) => String(annotation.shapeType).toLowerCase() === 'line');
+    recorder.equals('two-lines-saved', savedLines.length, 2, 'Both halves save');
+    recorder.assert('halves-inherit-the-stroke',
+        savedLines.every((annotation) => String(annotation.strokeColor).toLowerCase()
+            === String(savedLines[0].strokeColor).toLowerCase()
+            && Number(annotation.strokeWidth) === Number(savedLines[0].strokeWidth)),
+        'Both halves inherit the original stroke colour and width',
+        JSON.stringify(savedLines.map((a) => ({ c: a.strokeColor, w: a.strokeWidth }))));
+
+    // A split conserves length: the two halves together must measure what the
+    // original did, or the cut moved an endpoint rather than dividing at one.
+    const halvesLength = savedLines.reduce((sum, annotation) => sum + (lineLengthPts(annotation) || 0), 0);
+    recorder.near('halves-conserve-length', halvesLength, originalLength, 1.5,
+        'The two halves together are as long as the line was before the cut');
+
+    // NK_20: a cut that would leave a sliver is refused. Below a few points a
+    // segment is invisible and unselectable but still saves and exports.
+    const sliverTarget = await page.evaluate(([selector, id]) => {
+        const box = Array.from(document.querySelectorAll(selector))
+            .find((candidate) => candidate.dataset.annotationId === id);
+        if (!box) return null;
+        const rect = box.getBoundingClientRect();
+        return { x: rect.left + rect.width, y: rect.top + rect.height };
+    }, [SHAPE_BOX_SELECTOR, lineAnnotationId]);
+
+    if (!sliverTarget) {
+        recorder.skip('sliver-cut-refused', 'Could not locate the half to attempt a sliver cut on');
+    } else {
+        const countBeforeSliver = (await shapeBoxes(page)).length;
+        await ensureSelected(page, 0, lineAnnotationId);
+        await annotationMenuAction(page, 'cut');
+        // Cross the line perpendicular, one pixel inside its own end point.
+        await page.mouse.move(sliverTarget.x - 40, sliverTarget.y + 39);
+        await page.mouse.down();
+        await page.mouse.move(sliverTarget.x + 39, sliverTarget.y - 40, { steps: 8 });
+        await page.mouse.up();
+        await page.waitForTimeout(700);
+        recorder.equals('sliver-cut-refused', (await shapeBoxes(page)).length, countBeforeSliver,
+            'A cut a pixel from the end of the line is refused rather than leaving a sliver');
+    }
 
     artifacts.push(await capture(page, '23-cut-shape', 'cut'));
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
