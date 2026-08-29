@@ -47,6 +47,11 @@ class AutomatedTests extends Page
                 'label' => 'Draw tool',
                 'available' => true,
             ],
+            [
+                'key' => 'highlight-tool',
+                'label' => 'Highlight tool',
+                'available' => true,
+            ],
         ];
     }
 }
