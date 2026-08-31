@@ -3757,6 +3757,18 @@ document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && passwordModal?.hidden === false) closePasswordModal();
 });
 
+/**
+ * A drawing box, identified from the DOM alone.
+ *
+ * createImageBoxElement() stamps data-direct-draw on every direct-draw
+ * annotation, so this works during a gesture when the persisted annotation is
+ * not to hand.
+ */
+function isDirectDrawBox(box) {
+    return box?.dataset?.directDraw === '1'
+        || Boolean(box?.classList?.contains('enpv-direct-draw-box'));
+}
+
 function isImageBox(box, existingAnnotation = null) {
     return String(box?.dataset?.annotationType || '').toLowerCase() === 'image'
         || isImageAnnotation(existingAnnotation);
@@ -11375,6 +11387,13 @@ function annotationBoxCanRotate(box) {
     const type = String(box.dataset.annotationType || '').toLowerCase();
     if (type === 'shape') return shapeBoxCanRotate(box);
     if (type === 'signature') return true;
+    // NK_18: a drawing is stored as an image annotation, so it used to fall
+    // into the blanket `if (type) return false` below and never got a handle.
+    // It is user-authored content like a signature and rotates the same way.
+    // A placed raster image stays excluded until someone decides it should
+    // not: unlike a drawing it has no vector to refit, so rotating it is a
+    // different question.
+    if (type === 'image') return isDirectDrawBox(box);
     if (type) return false;
     return isUserCreatedTextBox(box);
 }
@@ -11422,8 +11441,14 @@ function updateTextSelectionChromeForBox(box, rotation) {
     });
 }
 
+/**
+ * The rotated selection frame. Named for signatures, which had it first, but
+ * the geometry is generic — NK_18 reuses it for drawings rather than cloning
+ * it, so both get the same frame and the same repositioned handles.
+ */
 function ensureSignatureSelectionFrame(box) {
-    if (!box || box.dataset.annotationType !== 'signature') return null;
+    const frameType = String(box?.dataset?.annotationType || '').toLowerCase();
+    if (!box || !(frameType === 'signature' || (frameType === 'image' && isDirectDrawBox(box)))) return null;
     let frame = box.querySelector(':scope > .enpv-signature-selection-frame');
     if (frame) return frame;
     frame = document.createElement('div');
@@ -11493,15 +11518,20 @@ function applyAnnotationRotationToBox(box, rotation = null) {
     const frameHeight = pageFrame.rotation === 0 ? height : pageFrame.height;
     const transform = contentRotationTransform(pageFrame.transform, frameWidth, frameHeight, angle);
 
+    // On a rotated page the content is wrapped in a frame that already carries
+    // the page transform, and `transform` composes both — so the frame is the
+    // element to write to when one exists.
     const targets = type === 'signature'
         ? box.querySelectorAll(':scope > .enpv-signature-img')
-        : box.querySelectorAll(':scope > .enpv-text-content');
+        : (type === 'image'
+            ? box.querySelectorAll(':scope > .enpv-page-rotated-content-frame, :scope > .enpv-image-img')
+            : box.querySelectorAll(':scope > .enpv-text-content'));
     targets.forEach((element) => {
         element.style.transformOrigin = '0 0';
         element.style.transform = transform;
     });
     if (!type) applyRotatedBackgroundToBox(box, angle, transform);
-    if (type === 'signature') updateSignatureSelectionChromeForBox(box, angle);
+    if (type === 'signature' || type === 'image') updateSignatureSelectionChromeForBox(box, angle);
     else if (!type) updateTextSelectionChromeForBox(box, angle);
 }
 
@@ -13932,11 +13962,18 @@ function addEditableBoxChrome(box) {
     box.addEventListener('pointerdown', onAnnBoxPointerDown);
     box.addEventListener('dblclick', onAnnBoxDblClick);
     const shapeType = box.dataset.annotationType === 'shape' ? normalizeShapeType(box.dataset.shapeType) : '';
+    // A raster image keeps corners only, where the resize is aspect-locked, so
+    // it can never be stretched out of proportion. A drawing is stored as
+    // vectors and refits cleanly to any box, so it gets the full eight the
+    // Shapes tool has: corners still scale proportionally, and the edges are
+    // there to stretch one axis deliberately.
     const edges = shapeType === 'line'
         ? ['line-start', 'line-end']
         : (box.dataset.annotationType === 'shape'
             ? ['nw', 'ne', 'sw', 'se', 't', 'b', 'l', 'r']
-            : (isImageBox(box) ? ['nw', 'ne', 'sw', 'se'] : ['t', 'b', 'l', 'r']));
+            : (isDirectDrawBox(box)
+                ? ['nw', 'ne', 'sw', 'se', 't', 'b', 'l', 'r']
+                : (isImageBox(box) ? ['nw', 'ne', 'sw', 'se'] : ['t', 'b', 'l', 'r'])));
     for (const edge of edges) {
         const handle = document.createElement('div');
         handle.className = `enpv-resize-handle ${edge}`;
@@ -17263,6 +17300,9 @@ function createImageBoxElement(annotation, pageIndex, viewport, scale, editModeO
     box.dataset.annotationId = String(annotation.id || '');
     box.dataset.pageIndex = String(pageIndex);
     box.dataset.annotationType = 'image';
+    // NK_18: keep the box's angle in sync with the annotation, so a re-render
+    // redraws a rotated drawing at its angle rather than snapping it upright.
+    box.dataset.rotation = String(normalizeAnnotationRotation(annotation?.rotation));
     box.dataset.locked = annotation.locked ? '1' : '0';
     box.dataset.zIndex = String(Number(annotation.zIndex) || (isDirectDrawEraserAnnotation(annotation) ? 1000 : (isDirectDrawAnnotation(annotation) ? 2 : 6)));
     if (isDirectDrawAnnotation(annotation)) {
@@ -17295,7 +17335,12 @@ function createImageBoxElement(annotation, pageIndex, viewport, scale, editModeO
 
     if (hooks) {
         box.addEventListener('pointerdown', hooks.onAnnBoxPointerDown);
-        for (const edge of ['nw', 'ne', 'sw', 'se']) {
+        // Must match addEditableBoxChrome(): a drawing refits to any box, so it
+        // gets edges as well as corners. A raster image keeps corners only.
+        const edges = isDirectDrawAnnotation(annotation)
+            ? ['nw', 'ne', 'sw', 'se', 't', 'b', 'l', 'r']
+            : ['nw', 'ne', 'sw', 'se'];
+        for (const edge of edges) {
             const handle = document.createElement('div');
             handle.className = `enpv-resize-handle ${edge}`;
             handle.dataset.edge = edge;
@@ -21928,7 +21973,12 @@ function renderAnnotationBoxLayer(pageIndex) {
             onAnnBoxPointerDown,
             onResizeHandlePointerDown,
         });
-        if (imageBox) layer.appendChild(imageBox);
+        if (imageBox) {
+            // NK_18: redraw a rotated drawing at its angle instead of letting
+            // the re-render snap it upright.
+            applyAnnotationRotationToBox(imageBox, annotation.rotation);
+            layer.appendChild(imageBox);
+        }
     }
     for (const annotation of preRenderedVisibleTextAnnotations) {
         const allowInteraction = editModeOn || (addTextModeOn && isUserCreatedTextAnnotation(annotation));
@@ -21972,7 +22022,10 @@ function renderAnnotationBoxLayer(pageIndex) {
             onAnnBoxPointerDown,
             onResizeHandlePointerDown,
         });
-        if (imageBox) layer.appendChild(imageBox);
+        if (imageBox) {
+            applyAnnotationRotationToBox(imageBox, annotation.rotation);
+            layer.appendChild(imageBox);
+        }
     }
     for (const annotation of persistedFieldAnnotations) {
         const fieldBox = createFieldBoxElement(annotation, pageIndex, viewport, scale, {
@@ -21986,7 +22039,10 @@ function renderAnnotationBoxLayer(pageIndex) {
             onAnnBoxPointerDown,
             onResizeHandlePointerDown,
         });
-        if (imageBox) layer.appendChild(imageBox);
+        if (imageBox) {
+            applyAnnotationRotationToBox(imageBox, annotation.rotation);
+            layer.appendChild(imageBox);
+        }
     }
 
     if (!editModeOn) {

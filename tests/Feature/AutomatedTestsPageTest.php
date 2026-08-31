@@ -192,6 +192,8 @@ class AutomatedTestsPageTest extends TestCase
         $this->assertContains('signature-tool', $keys);
         $this->assertContains('text-tool', $keys, 'The text tool needs its own tab');
         $this->assertContains('shapes-tool', $keys, 'The shapes tool needs its own tab');
+        $this->assertContains('draw-tool', $keys, 'The draw tool needs its own tab');
+        $this->assertContains('highlight-tool', $keys, 'The highlight tool needs its own tab');
 
         // The switcher only renders with more than one suite, so the labels
         // have to reach the page for the tabs to be usable.
@@ -370,6 +372,152 @@ class AutomatedTestsPageTest extends TestCase
         // different cases indistinguishable there.
         $numbers = array_column($catalogue['suite']['tests'], 'number');
         $this->assertSame(array_unique($numbers), $numbers, 'Two shapes cases share a number');
+    }
+
+    // ---- Draw tool suite --------------------------------------------------
+
+    public function test_draw_tool_suite_endpoint_requires_admin_authentication(): void
+    {
+        $this->getJson('/automated-tests/draw-tool/suite')->assertUnauthorized();
+    }
+
+    public function test_draw_tool_suite_returns_the_catalogue(): void
+    {
+        $response = $this->actingAs($this->admin(), 'admin')
+            ->getJson('/automated-tests/draw-tool/suite')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('suite.key', 'draw-tool');
+
+        $tests = $response->json('suite.tests');
+        $this->assertCount(26, $tests, 'The draw story specifies 26 cases');
+
+        foreach ($tests as $test) {
+            $this->assertSame('draw-tool', $test['story']);
+        }
+
+        // Unlike the other suites, the draw cases were specified here rather
+        // than mirrored from an Asana task, so they carry no subtask gids yet.
+        // Asserted deliberately: once "[QA] - Draw tool" exists and the gids
+        // are filled in, this expectation should be tightened to match the
+        // shapes one rather than quietly left as it is.
+        $gids = array_filter(array_column($tests, 'gid'));
+        $this->assertEmpty(
+            $gids,
+            'Draw cases have started carrying Asana gids -- tighten this test to assert they are unique',
+        );
+    }
+
+    public function test_every_automated_draw_case_exists_in_the_runner(): void
+    {
+        $catalogue = json_decode(
+            (string) file_get_contents(resource_path('automated-tests/draw-tool.json')),
+            true,
+        );
+        $automated = array_values(array_filter(
+            $catalogue['suite']['tests'],
+            fn (array $test) => $test['automated'] === true,
+        ));
+
+        $this->assertCount(26, $automated, 'Every specified draw case is automated');
+
+        $runner = (string) file_get_contents(base_path('tests/AutomatedTests/Draw/run_draw_tests.cjs'));
+
+        foreach ($automated as $test) {
+            $this->assertStringContainsString(
+                "id: '".$test['id']."'",
+                $runner,
+                "The runner must register {$test['id']}, or the admin page offers a test that cannot run",
+            );
+        }
+
+        // The reverse direction too: a case registered in the runner but left
+        // out of the catalogue can never be reached from the admin page.
+        // Anchored on the number that follows, so this matches the registry
+        // entries rather than every object literal that happens to have an id.
+        preg_match_all("/\{ id: '([^']+)', number: '/", $runner, $matches);
+        $catalogued = array_column($catalogue['suite']['tests'], 'id');
+        foreach ($matches[1] as $registered) {
+            $this->assertContains(
+                $registered,
+                $catalogued,
+                "The runner registers {$registered}, which the catalogue does not list",
+            );
+        }
+
+        $numbers = array_column($catalogue['suite']['tests'], 'number');
+        $this->assertSame(array_unique($numbers), $numbers, 'Two draw cases share a number');
+    }
+
+    // ---- Highlight tool suite ---------------------------------------------
+
+    public function test_highlight_tool_suite_endpoint_requires_admin_authentication(): void
+    {
+        $this->getJson('/automated-tests/highlight-tool/suite')->assertUnauthorized();
+    }
+
+    public function test_highlight_tool_suite_returns_the_catalogue(): void
+    {
+        $response = $this->actingAs($this->admin(), 'admin')
+            ->getJson('/automated-tests/highlight-tool/suite')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('suite.key', 'highlight-tool');
+
+        $tests = $response->json('suite.tests');
+        $this->assertCount(22, $tests, 'The highlight story specifies 22 cases');
+
+        foreach ($tests as $test) {
+            $this->assertSame('highlight-tool', $test['story']);
+        }
+
+        // Specified here rather than mirrored from an Asana task, so no subtask
+        // gids yet. Same expectation as the draw suite: once the task exists and
+        // the gids are filled in, tighten this to assert they are unique.
+        $gids = array_filter(array_column($tests, 'gid'));
+        $this->assertEmpty(
+            $gids,
+            'Highlight cases have started carrying Asana gids -- tighten this test to assert they are unique',
+        );
+    }
+
+    public function test_every_automated_highlight_case_exists_in_the_runner(): void
+    {
+        $catalogue = json_decode(
+            (string) file_get_contents(resource_path('automated-tests/highlight-tool.json')),
+            true,
+        );
+        $automated = array_values(array_filter(
+            $catalogue['suite']['tests'],
+            fn (array $test) => $test['automated'] === true,
+        ));
+
+        $this->assertCount(22, $automated, 'Every specified highlight case is automated');
+
+        $runner = (string) file_get_contents(base_path('tests/AutomatedTests/Highlight/run_highlight_tests.cjs'));
+
+        foreach ($automated as $test) {
+            $this->assertStringContainsString(
+                "id: '".$test['id']."'",
+                $runner,
+                "The runner must register {$test['id']}, or the admin page offers a test that cannot run",
+            );
+        }
+
+        // Anchored on the number that follows, so this matches the registry
+        // entries rather than every object literal that happens to have an id.
+        preg_match_all("/\{ id: '([^']+)', number: '/", $runner, $matches);
+        $catalogued = array_column($catalogue['suite']['tests'], 'id');
+        foreach ($matches[1] as $registered) {
+            $this->assertContains(
+                $registered,
+                $catalogued,
+                "The runner registers {$registered}, which the catalogue does not list",
+            );
+        }
+
+        $numbers = array_column($catalogue['suite']['tests'], 'number');
+        $this->assertSame(array_unique($numbers), $numbers, 'Two highlight cases share a number');
     }
 
     public function test_every_automated_signature_case_exists_in_the_runner(): void

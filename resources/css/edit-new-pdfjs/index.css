@@ -1221,11 +1221,19 @@ body.enpv-body .draw-tool-panel .draw-tool-panel__close {
     cursor: pointer;
     font-size: 0;
 }
-body.enpv-body .draw-tool-panel .draw-tool-panel__close:hover,
+body.enpv-body .draw-tool-panel .draw-tool-panel__close:hover {
+    background: #f1f5f9;
+    color: #0f172a;
+}
+/* Keyboard focus needs its own indicator, not the hover treatment. Same gap
+   the Shapes panel had before NK_13: the rule above covered :focus-visible too
+   AND set outline:none, so a keyboard user got a faint grey wash and nothing
+   else. */
 body.enpv-body .draw-tool-panel .draw-tool-panel__close:focus-visible {
     background: #f1f5f9;
     color: #0f172a;
-    outline: none;
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
 }
 body.enpv-body .draw-tool-panel .afb-divider {
     width: 100%;
@@ -1274,11 +1282,17 @@ body.enpv-body .draw-tool-panel .draw-tool-btn {
     border-radius: 8px;
     background: #f8fafc;
 }
-body.enpv-body .draw-tool-panel .draw-tool-btn:hover,
-body.enpv-body .draw-tool-panel .draw-tool-btn:focus-visible {
+body.enpv-body .draw-tool-panel .draw-tool-btn:hover {
     border-color: #94a3b8;
     background: #ffffff;
-    outline: none;
+}
+/* As above: Pen and Eraser are in the tab order, so keyboard focus has to be
+   distinguishable from hover rather than identical to it. */
+body.enpv-body .draw-tool-panel .draw-tool-btn:focus-visible {
+    border-color: #2563eb;
+    background: #ffffff;
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
 }
 body.enpv-body .draw-tool-panel .draw-tool-btn.is-active {
     border-color: #2563eb;
@@ -1335,6 +1349,17 @@ body.enpv-body .draw-tool-panel .draw-tool-panel__colors {
 body.enpv-body .draw-tool-panel .draw-color-swatch {
     width: 28px;
     height: 28px;
+}
+/* The ink swatches had no focus style at all. They are round and carry their
+   own colour, so the ring is offset rather than drawn on the swatch itself,
+   where a dark ink would swallow it. */
+body.enpv-body .draw-tool-panel .draw-color-swatch:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 3px;
+}
+body.enpv-body .draw-tool-panel .draw-tool-panel__custom-color:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
 }
 body.enpv-body .draw-tool-panel .draw-tool-panel__custom-color {
     width: 44px;
@@ -4570,6 +4595,13 @@ body:not(.enpv-edit-on) .enpv-annotation-box.is-rotated.has-signature-selection-
 .enpv-annotation-box.is-selected:not(.is-locked)[data-user-created="1"]:not([data-annotation-type]) .enpv-shape-rotate-handle {
     display: flex;
 }
+/* NK_18: a drawing rotates as well. Matched on the direct-draw marker rather
+ * than data-annotation-type="image", so a placed raster image is left out --
+ * it has no vector to refit and is a separate decision. Keeps the
+ * :not(.is-locked) guard for the same specificity reason as the shape rule. */
+.enpv-annotation-box.is-selected:not(.is-locked)[data-direct-draw="1"] .enpv-shape-rotate-handle {
+    display: flex;
+}
 .enpv-shape-angle-badge {
     position: absolute;
     left: 50%;
@@ -4636,6 +4668,19 @@ body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected,
 body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected * {
     cursor: move !important;
 }
+/* NK_19 guard: the rule above is a wildcard over descendants, so it also
+ * claims the resize and rotate handles. Draw mode currently deselects on
+ * entry, which is why nobody has hit it -- but the handles must keep their
+ * own cursors if that ever changes. */
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected > .enpv-resize-handle.t,
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected > .enpv-resize-handle.b { cursor: ns-resize !important; }
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected > .enpv-resize-handle.l,
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected > .enpv-resize-handle.r { cursor: ew-resize !important; }
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected > .enpv-resize-handle.nw,
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected > .enpv-resize-handle.se { cursor: nwse-resize !important; }
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected > .enpv-resize-handle.ne,
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected > .enpv-resize-handle.sw { cursor: nesw-resize !important; }
+body.enpv-draw-on .enpv-annotation-box.enpv-direct-draw-box.is-selected > .enpv-shape-rotate-handle { cursor: grab !important; }
 body.enpv-highlight-on .pdfViewer .page,
 body.enpv-highlight-on .textLayer,
 body.enpv-highlight-on .textLayer span,
