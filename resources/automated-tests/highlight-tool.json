@@ -1,0 +1,250 @@
+{
+    "suite": {
+        "key": "highlight-tool",
+        "name": "Highlight tool",
+        "tool_label": "Highlight tool",
+        "target_url": "/documents/{document}/edit-new?pdfjs=1",
+        "runner": "tests/AutomatedTests/Highlight/run_highlight_tests.cjs",
+        "workspace": "My workspace",
+        "project": "Netkit",
+        "section": "Claude QA Agent",
+        "stories": [
+            {
+                "key": "highlight-tool",
+                "short": "Highlight tool",
+                "task_gid": null,
+                "task_name": "[QA] - Highlight tool (not yet created in Asana)",
+                "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752",
+                "instructions": [
+                    "Start with a blank pdf project for edit-new?pdfjs=1",
+                    "Click the Highlight tool in the floating toolbar",
+                    "The tool has two creation paths: selecting text, and dragging over the page",
+                    "A drag that covers text snaps to the text rectangles; only a drag covering none uses the dragged box",
+                    "Cases 04, 05 and 18 depend on the page having a real text layer"
+                ]
+            }
+        ],
+        "tests": [
+            {
+                "number": "01",
+                "id": "01-blank-project-loads",
+                "gid": null,
+                "area": "Entry",
+                "title": "Setup: blank PDF project loads in /edit-new?pdfjs=1 with the Highlight tool available",
+                "summary": "Precondition for the whole story: the page rasterises, the floating toolbar Highlight button is present and enabled, no highlight exists, the panel is closed, and the console is clean. Also asserts the page renders a text layer, since without one the text-selection path cannot work at all and half the tool would be silently untested.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "02",
+                "id": "02-tool-exclusivity",
+                "gid": null,
+                "area": "Tool mode",
+                "title": "Highlight toggles and is exclusive with the other tools",
+                "summary": "Clicking Highlight opens the Highlight Options panel and puts the body into highlight mode. Draw, Shapes, Add Text and edit mode each cancel it and vice versa, the panel closes with the mode, and aria-pressed tracks the state in both directions.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "03",
+                "id": "03-area-highlight",
+                "gid": null,
+                "area": "Creation",
+                "title": "Dragging over empty page area commits an area highlight",
+                "summary": "A drag where there is no text commits one highlight covering the dragged rectangle. Asserted against the annotation: it is a shape with shapeType highlight rather than a type of its own, its fill carries the highlight colour, and its stroke is transparent -- a highlight is a wash over the page, not a box around it.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "04",
+                "id": "04-drag-over-text",
+                "gid": null,
+                "area": "Creation",
+                "title": "Dragging across text snaps to the text rather than the dragged box",
+                "summary": "The two creation paths disagree on purpose. A tall drag that crosses the text line commits highlights the height of the LINE, not the height of the drag, because the drag snaps to the text rectangles it covers. Only a drag covering no text falls back to the dragged box.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "05",
+                "id": "05-text-selection",
+                "gid": null,
+                "area": "Creation",
+                "title": "Selecting text commits a highlight over it",
+                "summary": "Selecting text with the tool active commits a highlight on the selected line, one line tall, positioned on the line that was selected. The selection is then released, or the next click would re-commit the same text.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "06",
+                "id": "06-live-preview",
+                "gid": null,
+                "area": "Creation",
+                "title": "A live preview paints during the drag and commits on release",
+                "summary": "Nothing is committed while the pointer is down: a sized preview element is on the page instead, and the highlight appears only on release. The preview is torn down afterwards rather than left behind.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "07",
+                "id": "07-tiny-drags",
+                "gid": null,
+                "area": "Creation",
+                "title": "Drags too small to be meant commit nothing",
+                "summary": "finishHighlightDrag needs the pointer to have moved, then a width of at least 6, and for an area highlight a height of at least 6 as well. A press with no movement, a sub-threshold drag and a wide but flat drag all commit nothing -- and a deliberate drag still works, so the guards are not simply swallowing everything.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "08",
+                "id": "08-colour",
+                "gid": null,
+                "area": "Styling",
+                "title": "Colour, from both the swatches and the custom picker",
+                "summary": "The panel offers the six documented swatches with yellow active by default. Picking one marks it active, drives the custom colour input, and is what the committed highlight stores as its fill. The custom picker takes an arbitrary colour, and no swatch then claims to be active.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "09",
+                "id": "09-opacity",
+                "gid": null,
+                "area": "Styling",
+                "title": "Opacity applies to the highlight",
+                "summary": "Opacity spans 15-80: never invisible, and never opaque enough to hide the text underneath. The readout follows the slider and the committed highlight stores the chosen fill opacity.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "10",
+                "id": "10-defaults",
+                "gid": null,
+                "area": "Styling",
+                "title": "A fresh highlight uses the documented defaults",
+                "summary": "Yellow at 35%, with a status line that mentions both ways of making a highlight. The stored annotation matches, and carries a low z-index so a highlight sits under other annotations rather than over them.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "11",
+                "id": "11-style-persists",
+                "gid": null,
+                "area": "Styling",
+                "title": "Style choices persist from one highlight to the next",
+                "summary": "Highlight mode survives committing one highlight, and the colour and opacity carry into the next one. Both save with the same style.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "12",
+                "id": "12-restyle-selected",
+                "gid": null,
+                "area": "Styling",
+                "title": "Selecting a highlight reflects its style, and restyling applies in place",
+                "summary": "Selecting a highlight opens the panel and reflects that highlight's own colour and opacity into it. Changing either restyles the selection in place -- one highlight, not a second -- and the new values are what get saved.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "13",
+                "id": "13-select-and-menu",
+                "gid": null,
+                "area": "Manipulation",
+                "title": "Select, deselect and the highlight hover menu",
+                "summary": "A highlight can be selected once the tool is off, and its menu is reachable and offers delete and lock. Escape deselects. The full action list is recorded.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "14",
+                "id": "14-move-and-resize",
+                "gid": null,
+                "area": "Manipulation",
+                "title": "Move and resize a highlight",
+                "summary": "A selected highlight offers resize handles, dragging the right edge widens it, and dragging the body moves it without changing its size. The new geometry saves.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "15",
+                "id": "15-undo-redo",
+                "gid": null,
+                "area": "Persistence",
+                "title": "Undo and redo across the highlight operations",
+                "summary": "Committing a highlight, and a second one, each undo and redo as one step rather than unwinding the document. Restyling is its own entry: undoing one puts the previous colour back rather than deleting the highlight.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "16",
+                "id": "16-autosave-and-save",
+                "gid": null,
+                "area": "Persistence",
+                "title": "Autosave and explicit Save",
+                "summary": "A committed highlight autosaves without the Save control being touched, and the autosave carries the highlight rather than an empty payload. An explicit Save afterwards writes the same highlight, with the same id, rather than a second copy.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "17",
+                "id": "17-reload-fidelity",
+                "gid": null,
+                "area": "Persistence",
+                "title": "Reload fidelity",
+                "summary": "Three highlights with different colours and opacities are saved, reloaded and re-saved, then compared field by field. Colour, opacity, shape type and geometry all have to survive, and each has to keep its identity.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "18",
+                "id": "18-download-fidelity",
+                "gid": null,
+                "area": "Export",
+                "title": "Downloaded PDF fidelity",
+                "summary": "The annotated PDF is downloaded through the real endpoint and read back with PyMuPDF. Unlike a drawing, a highlight exports as a vector fill rather than an image, so the case checks page.get_drawings(): the fill is present, is the colour that was chosen, has real area, and carries roughly the chosen opacity. It also asserts the text under the highlight still extracts -- tinting the page without destroying what is under it is the whole job.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "19",
+                "id": "19-rotated-pages",
+                "gid": null,
+                "area": "Geometry",
+                "title": "Highlighting on a rotated page is refused, by design",
+                "summary": "pageHasUnsupportedEditRotation() treats any non-zero page rotation as unsupported and the pointer guard swallows the gesture before it starts. Rotating warns, a drag then commits nothing, straightening the page gives the tool back, and a highlight made beforehand survives the round trip.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "20",
+                "id": "20-zoom-accuracy",
+                "gid": null,
+                "area": "Geometry",
+                "title": "Highlighting stays accurate across zoom levels",
+                "summary": "A highlight keeps its page geometry when the viewer zooms, and the rendered box scales with the annotation layer's own scale. A highlight made while zoomed in lands under the pointer and stores page geometry rather than viewport pixels.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "21",
+                "id": "21-multi-select",
+                "gid": null,
+                "area": "Manipulation",
+                "title": "Multi-select and group restyle",
+                "summary": "Shift-clicking builds a multi-selection across highlights. A colour change then applies to every one of them, and Delete removes the whole selection rather than a single highlight.",
+                "automated": true,
+                "story": "highlight-tool"
+            },
+            {
+                "number": "22",
+                "id": "22-keyboard-and-aria",
+                "gid": null,
+                "area": "Accessibility",
+                "title": "Keyboard access and ARIA on the Highlight Options panel",
+                "summary": "Every reachable control is in the tab order and labelled, the opacity slider takes focus and moves under arrow keys, and the panel's aria-hidden tracks its visibility. The focus ring is checked after real Tab navigation, since :focus-visible does not match programmatic focus. The panel reuses the .draw-tool-panel classes, so it inherits the focus rings added for the Draw tool -- these checks would have failed before that.",
+                "automated": true,
+                "story": "highlight-tool"
+            }
+        ]
+    }
+}
