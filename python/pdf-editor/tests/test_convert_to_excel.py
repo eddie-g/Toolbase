@@ -58,7 +58,7 @@ class ExcelConversionTest(unittest.TestCase):
         document.build([table])
 
     def test_tables_only_preserves_page_sheets_and_non_table_pages(self):
-        with tempfile.TemporaryDirectory(prefix="toolbase_excel_test_") as directory:
+        with tempfile.TemporaryDirectory(prefix="netkit_excel_test_") as directory:
             output = Path(directory) / "tables.xlsx"
             payload = self.convert(
                 LAYOUT_FIXTURE,
@@ -77,7 +77,7 @@ class ExcelConversionTest(unittest.TestCase):
             self.assertEqual(workbook["Page 3"]["A1"].value, "No tables detected on this page.")
 
     def test_zero_table_newsletter_preserves_reference_layout_structure(self):
-        with tempfile.TemporaryDirectory(prefix="toolbase_excel_drylab_test_") as directory:
+        with tempfile.TemporaryDirectory(prefix="netkit_excel_drylab_test_") as directory:
             output = Path(directory) / "drylab.xlsx"
             payload = self.convert(
                 DRYLAB_FIXTURE,
@@ -140,7 +140,7 @@ class ExcelConversionTest(unittest.TestCase):
             self.assertNotIn("No tables detected", page_one_text)
 
     def test_source_merged_cells_and_numeric_formats_are_preserved(self):
-        with tempfile.TemporaryDirectory(prefix="toolbase_excel_merge_test_") as directory:
+        with tempfile.TemporaryDirectory(prefix="netkit_excel_merge_test_") as directory:
             source = Path(directory) / "merged.pdf"
             output = Path(directory) / "merged.xlsx"
             self.build_merged_table_pdf(source)
@@ -162,7 +162,7 @@ class ExcelConversionTest(unittest.TestCase):
             self.assertEqual(list(load_workbook(unmerged_output).active.merged_cells.ranges), [])
 
     def test_all_content_mode_exports_positioned_text(self):
-        with tempfile.TemporaryDirectory(prefix="toolbase_excel_all_test_") as directory:
+        with tempfile.TemporaryDirectory(prefix="netkit_excel_all_test_") as directory:
             output = Path(directory) / "all.xlsx"
             payload = self.convert(
                 LAYOUT_FIXTURE,

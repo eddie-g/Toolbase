@@ -19,8 +19,8 @@ class AutomatedTests extends Page
     protected static string $view = 'filament.pages.automated-tests';
 
     /**
-     * Suites shown in the sidebar. Only the signature suite has a runner
-     * today; add an entry here as each new tool gets automated.
+     * Suites shown as tabs on the page. Add an entry here as each new tool
+     * gets a catalogue and a runner.
      *
      * @return array<int, array<string, mixed>>
      */
@@ -30,6 +30,31 @@ class AutomatedTests extends Page
             [
                 'key' => 'signature-tool',
                 'label' => 'Signature tool',
+                'available' => true,
+            ],
+            [
+                'key' => 'text-tool',
+                'label' => 'Text tool',
+                'available' => true,
+            ],
+            [
+                'key' => 'shapes-tool',
+                'label' => 'Shapes tool',
+                'available' => true,
+            ],
+            [
+                'key' => 'draw-tool',
+                'label' => 'Draw tool',
+                'available' => true,
+            ],
+            [
+                'key' => 'highlight-tool',
+                'label' => 'Highlight tool',
+                'available' => true,
+            ],
+            [
+                'key' => 'image-tool',
+                'label' => 'Image tool',
                 'available' => true,
             ],
         ];

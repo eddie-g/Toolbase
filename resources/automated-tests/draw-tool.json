@@ -1,0 +1,290 @@
+{
+    "suite": {
+        "key": "draw-tool",
+        "name": "Draw tool",
+        "tool_label": "Draw tool",
+        "target_url": "/documents/{document}/edit-new?pdfjs=1",
+        "runner": "tests/AutomatedTests/Draw/run_draw_tests.cjs",
+        "workspace": "My workspace",
+        "project": "Netkit",
+        "section": "Claude QA Agent",
+        "stories": [
+            {
+                "key": "draw-tool",
+                "short": "Draw tool",
+                "task_gid": null,
+                "task_name": "[QA] - Draw tool (not yet created in Asana)",
+                "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752",
+                "instructions": [
+                    "Start with a blank pdf project for edit-new?pdfjs=1",
+                    "Click the Draw tool in the floating toolbar",
+                    "Cases 15 and 16 document the open drawing tickets NK_18 and NK_19",
+                    "Cases 10, 11 and 22 cover the NK_16 smoothing slider",
+                    "Case 24 needs a document with a rotated page instead of the blank one"
+                ]
+            }
+        ],
+        "tests": [
+            {
+                "number": "01",
+                "id": "01-blank-project-loads",
+                "gid": null,
+                "area": "Entry",
+                "title": "Setup: blank PDF project loads in /edit-new?pdfjs=1 with the Draw tool available",
+                "summary": "Precondition for the whole story: the page rasterises, the floating toolbar Draw button is present and enabled, no drawing exists yet, the Draw Options panel is closed, and the console is clean. Also records that Draw has exactly one toggle, unlike Shapes which has a top-bar twin.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "02",
+                "id": "02-tool-exclusivity",
+                "gid": null,
+                "area": "Tool mode",
+                "title": "Draw toggles from the floating toolbar and is exclusive with the other tools",
+                "summary": "Clicking Draw opens the Draw Options panel and puts the body into draw mode. Shapes, Add Text, Highlight and edit mode each cancel draw mode and vice versa, and the panel closes with the mode. The control's aria-pressed tracks the state in both directions.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "03",
+                "id": "03-pen-draws-a-stroke",
+                "gid": null,
+                "area": "Drawing",
+                "title": "The pen commits a drawing annotation",
+                "summary": "One drag commits exactly one drawing. Asserted against the annotation rather than the look: the box carries data-direct-draw, records the pen as its tool, is an image annotation rather than a type of its own, and is cropped to the dragged path. The save payload keeps the stroke as vectors with the visited points, not only a raster.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "04",
+                "id": "04-eraser-tool",
+                "gid": null,
+                "area": "Tool mode",
+                "title": "The eraser is a draw tool, with its own panel state and stacking",
+                "summary": "Switching to the eraser greys out smoothing and opacity, hides the ink swatches, shows the fixed white eraser colour and changes the status line. An eraser stroke commits as its own drawing, is stored white, and stacks above the ink it is meant to cover. Switching back restores every pen control.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "05",
+                "id": "05-live-preview",
+                "gid": null,
+                "area": "Drawing",
+                "title": "A live preview paints during the drag and commits on release",
+                "summary": "Nothing is committed while the pointer is down: a preview canvas paints instead, and the annotation appears only on release. The preview layer is torn down afterwards rather than left behind.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "06",
+                "id": "06-degenerate-stroke",
+                "gid": null,
+                "area": "Drawing",
+                "title": "A press with no travel, and drags below the movement threshold",
+                "summary": "A press with no travel leaves a dot, which is recorded rather than asserted against a number the product has not committed to. What is asserted is that whatever commits is well formed -- real area, a proper drawing annotation, and a stored point -- and that a drag under the 0.5px move threshold behaves exactly like a tap.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "07",
+                "id": "07-brush-size-range",
+                "gid": null,
+                "area": "Styling",
+                "title": "Brush size across its whole range",
+                "summary": "The slider spans the documented 2-36 range, its readout follows it, and a stroke drawn at the minimum, middle and maximum stores that brush size. Bigger slider values must produce bigger stored strokes.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "08",
+                "id": "08-ink-colour",
+                "gid": null,
+                "area": "Styling",
+                "title": "Ink colour, from both the swatches and the custom picker",
+                "summary": "The panel offers the six documented swatches with black active by default. Picking a swatch marks it active, drives the custom colour input, and is what the drawn stroke stores. The custom picker takes an arbitrary colour, and no swatch then claims to be active.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "09",
+                "id": "09-opacity",
+                "gid": null,
+                "area": "Styling",
+                "title": "Opacity applies to the stroke",
+                "summary": "Opacity spans 10-100 so a stroke can never be dragged to fully transparent. The readout follows the slider and the drawn stroke stores the chosen amount.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "10",
+                "id": "10-smoothing-slider",
+                "gid": null,
+                "area": "Styling",
+                "title": "NK_16: smoothing is a stroke property with a real range",
+                "summary": "The slider spans 0-100 and defaults to 58%. Smooth curve is no longer offered as a tool mode beside Pen and Eraser -- the panel offers exactly two tools. A stroke drawn at 0, 58 and 100 stores that amount on itself, so smoothing rides the stroke rather than being a global setting.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "11",
+                "id": "11-smoothing-reeditable",
+                "gid": null,
+                "area": "Styling",
+                "title": "NK_16: smoothing is re-editable on an existing drawing",
+                "summary": "pdf.js keeps drawings as SVG vectors, so a saved stroke can be refitted. Selecting a drawing opens the panel and reflects that drawing's own smoothing, size and colour back into it. Dragging the slider restyles the selection in place -- one drawing, re-emitted as a vector rather than a stale raster -- and the new amount is what gets saved.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "12",
+                "id": "12-defaults",
+                "gid": null,
+                "area": "Styling",
+                "title": "A fresh session starts from the documented defaults",
+                "summary": "Pen, black ink, size 10, smoothing 58% and opacity 100%, with the panel opening on the pen status line. Asserted so that changing a default is a deliberate change in both the store slice and this suite.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "13",
+                "id": "13-style-persists",
+                "gid": null,
+                "area": "Styling",
+                "title": "Style choices persist from one stroke to the next",
+                "summary": "Draw mode survives committing a stroke, unlike Add Text which deliberately drops its mode after one placement. Size, smoothing, opacity and colour all carry into the next stroke, and both strokes save with the same style.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "14",
+                "id": "14-select-and-menu",
+                "gid": null,
+                "area": "Manipulation",
+                "title": "Select, deselect and the drawing hover menu",
+                "summary": "A drawing can be selected once the tool is off, and its menu is reachable. The menu is the shared image-annotation menu: it offers copy rather than the Shapes tool's duplicate, plus delete, lock and z-order. Escape deselects. The full action list is recorded, including that cut is offered here even though NK_14 withheld it from lines.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "15",
+                "id": "15-rotate-drawing",
+                "gid": null,
+                "area": "Manipulation",
+                "title": "NK_18: a drawing rotates",
+                "summary": "Fixed under NK_18. annotationBoxCanRotate() rejected any box whose annotationType is set and is not shape or signature, and a drawing is \"image\", so it never got a handle. A selected drawing now offers the rotate handle, dragging it records an angle and actually draws the content at it, and the angle survives a save and a reload rather than snapping upright. The export side is covered by python/pdf-editor/tests/test_direct_draw_rotation.py, which pins the sign and the centre.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "16",
+                "id": "16-draw-cursor-over-handles",
+                "gid": null,
+                "area": "Manipulation",
+                "title": "NK_19: the draw cursor must not swallow the handle cursors",
+                "summary": "With the tool off, every resize handle on a selected drawing shows its own resize cursor. Entering draw mode calls deselectAnnBox(), so a selection and draw mode never coexist and the wildcard rule NK_19 blames was latent rather than live -- it is nonetheless narrowed now, so the handles keep their own cursors if the deselect-on-entry ever changes. The rule is recorded either way.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "17",
+                "id": "17-move-and-resize",
+                "gid": null,
+                "area": "Manipulation",
+                "title": "Move and resize a drawing, including the edge handles",
+                "summary": "Drawings were built with corner handles only, like a raster image, so a stroke could be scaled proportionally but never stretched along one axis. They are stored as vectors and refit to any box, so they now get the full eight the Shapes tool has. The case asserts all eight exist, that the right edge changes width alone and the bottom edge height alone, that a corner still scales proportionally, that the body still drags, and that the new geometry saves.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "18",
+                "id": "18-multi-select",
+                "gid": null,
+                "area": "Manipulation",
+                "title": "Multi-select and group operations",
+                "summary": "Several drawings selected together move, delete and restyle as one, and the panel reflects a shared style where they agree.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "19",
+                "id": "19-undo-redo",
+                "gid": null,
+                "area": "Persistence",
+                "title": "Undo and redo across every draw operation",
+                "summary": "Committing a stroke, and a second stroke, each undo and redo as one step rather than unwinding the document. Restyling is its own entry: undoing one puts the previous colour back rather than only redrawing the box or deleting the drawing.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "20",
+                "id": "20-autosave-and-save",
+                "gid": null,
+                "area": "Persistence",
+                "title": "Autosave and explicit Save",
+                "summary": "A committed stroke autosaves without the Save control being touched, and the autosave carries the drawing rather than an empty payload. An explicit Save afterwards writes the same drawing, with the same id, rather than a second copy.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "21",
+                "id": "21-reload-fidelity",
+                "gid": null,
+                "area": "Persistence",
+                "title": "Reload fidelity",
+                "summary": "After a save and a hard reload every drawing comes back with its colour, brush size, opacity, smoothing amount and geometry intact, and its vectors still re-editable.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "22",
+                "id": "22-legacy-strokes",
+                "gid": null,
+                "area": "Persistence",
+                "title": "NK_16: a stroke saved before the slider keeps the fit it was drawn with",
+                "summary": "A stroke with no smoothing amount must render through the pre-NK_16 path -- the smoothCurve flag and full tension -- rather than being silently refitted. Selecting one shows the amount its fit matches instead of a default.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "23",
+                "id": "23-zoom-accuracy",
+                "gid": null,
+                "area": "Geometry",
+                "title": "Drawing stays accurate across zoom levels",
+                "summary": "A stroke keeps its page geometry when the viewer zooms, and the rendered box scales with the annotation layer's own scale -- which carries the 96/72 point-to-pixel conversion, not just pdfViewer.currentScale. A stroke drawn while zoomed in lands under the pointer and stores page geometry rather than viewport pixels.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "24",
+                "id": "24-rotated-pages",
+                "gid": null,
+                "area": "Geometry",
+                "title": "Drawing on a rotated page is refused, by design",
+                "summary": "pageHasUnsupportedEditRotation() treats ANY non-zero page rotation as unsupported, and guardRotatedPagePointerInteraction swallows the pointer for every mutation tool before the gesture starts. So the case pins the designed behaviour: rotating warns that editing is unavailable, a drag then commits nothing and says why, straightening the page gives the tool back, and a drawing made beforehand keeps its geometry through the round trip.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "25",
+                "id": "25-download-fidelity",
+                "gid": null,
+                "area": "Export",
+                "title": "Downloaded PDF fidelity",
+                "summary": "The annotated PDF is downloaded through the real endpoint and read back with PyMuPDF. Both drawings are present as images on the page they were drawn on. Two strokes of identical shape are exported, one upright and one rotated, so the rotated one's larger footprint proves the NK_18 angle reached the file rather than stopping at the screen.",
+                "automated": true,
+                "story": "draw-tool"
+            },
+            {
+                "number": "26",
+                "id": "26-keyboard-and-aria",
+                "gid": null,
+                "area": "Accessibility",
+                "title": "Keyboard access and ARIA on the Draw Options panel",
+                "summary": "Every reachable control in the panel is in the tab order and labelled, the sliders take focus and move under arrow keys, and the panel's aria-hidden tracks its visibility. The focus ring is checked after real Tab navigation, since :focus-visible does not match programmatic focus -- which is how the gap was found: the tool buttons, close button and ink swatches styled :focus-visible identically to :hover with outline:none, the same defect the Shapes panel had before NK_13. Fixed here.",
+                "automated": true,
+                "story": "draw-tool"
+            }
+        ]
+    }
+}

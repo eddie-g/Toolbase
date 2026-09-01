@@ -1,3 +1,9 @@
+@php
+    // NK_7: the debug mask and the annotation ID are maintenance tools, not
+    // end-user controls, so they are shown to signed-in admins only.
+    $afbIsPdfjs = request()->boolean('pdfjs');
+    $afbIsAdmin = auth('admin')->check();
+@endphp
 <!-- Text Format Bar — shown when an annotation is selected -->
 <div class="ann-format-bar" id="ann-format-bar">
     <div class="afb-sidebar-header">
@@ -78,14 +84,21 @@
     <div class="afb-divider"></div>
     <div class="afb-control-group afb-color-group">
         <span class="afb-control-label">Colors</span>
+        {{-- NK_7: the two swatches used to sit side by side unlabelled, so nothing
+             said which one was the background. They stay on one row, now captioned
+             and separated by a rule. --}}
         <div class="afb-control-row">
-            <!-- Text Color -->
-            <div class="afb-color-wrap" title="Text Color">
-                <input type="color" id="afb-text-color" value="#000000" />
+            <div class="afb-color-field">
+                <div class="afb-color-wrap" title="Text Color">
+                    <input type="color" id="afb-text-color" value="#000000" aria-labelledby="afb-text-color-caption" />
+                </div>
+                <span class="afb-color-caption" id="afb-text-color-caption">Text</span>
             </div>
-            <!-- Background Color -->
-            <div class="afb-color-wrap" title="Background Color">
-                <input type="color" id="afb-bg-color" value="#ffffff" />
+            <div class="afb-color-field is-background">
+                <div class="afb-color-wrap" title="Background Color">
+                    <input type="color" id="afb-bg-color" value="#ffffff" aria-labelledby="afb-bg-color-caption" />
+                </div>
+                <span class="afb-color-caption" id="afb-bg-color-caption">Background</span>
             </div>
         </div>
     </div>
@@ -119,10 +132,69 @@
             <button type="button" class="afb-btn" id="afb-italic" title="Italic" aria-pressed="false"><em>I</em></button>
             <!-- Underline -->
             <button type="button" class="afb-btn" id="afb-underline" title="Underline" aria-pressed="false" style="text-decoration:underline;">U</button>
+            <!-- Strikeout (NK_7) -->
+            <button type="button" class="afb-btn" id="afb-strikeout" title="Strikeout" aria-pressed="false" style="text-decoration:line-through;">S</button>
         </div>
     </div>
     <div class="afb-divider"></div>
-    @if(request()->boolean('pdfjs'))
+    <div class="afb-control-group afb-align-group">
+        <span class="afb-control-label">Alignment</span>
+        <div class="afb-control-row">
+            <!-- Text Align -->
+            <select id="afb-align" title="Text Alignment" style="width:76px;">
+                <option value="left">Left</option>
+                <option value="center">Center</option>
+                <option value="right">Right</option>
+            </select>
+            <!-- Vertical Align -->
+            <select id="afb-valign" title="Vertical Alignment" style="width:76px;">
+                <option value="top">Top</option>
+                <option value="middle">Middle</option>
+                <option value="bottom">Bottom</option>
+            </select>
+        </div>
+    </div>
+    <div class="afb-divider"></div>
+    {{-- NK_7: duplicate and delete moved up here so every per-annotation action
+         sits on one row with the case transforms, instead of in a separate
+         "Actions" group at the bottom of the panel. --}}
+    <div class="afb-control-group afb-text-tools-group">
+        <span class="afb-control-label">{{ $afbIsPdfjs ? 'Text tools' : 'Actions' }}</span>
+        <div class="afb-control-row">
+            @if($afbIsPdfjs)
+            <button type="button" class="afb-btn" id="afb-uppercase" title="Uppercase" aria-label="Uppercase">Tt</button>
+            <button type="button" class="afb-btn" id="afb-lowercase" title="Lowercase" aria-label="Lowercase">tl</button>
+            @endif
+            <!-- Duplicate -->
+            <button type="button" class="afb-btn" id="afb-copy" title="Duplicate annotation" aria-label="Duplicate annotation">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+            <!-- Delete -->
+            <button type="button" class="afb-btn is-danger" id="afb-delete" title="Delete annotation" aria-label="Delete annotation">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            </button>
+            @if($afbIsPdfjs && $afbIsAdmin)
+            <button type="button" class="afb-btn afb-debug" id="afb-debug" title="Debug mask" aria-label="Debug mask">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M9 9h6"></path><path d="M9 13h6"></path><path d="M12 17h.01"></path><rect x="5" y="6" width="14" height="15" rx="2"></rect></svg>
+            </button>
+            @endif
+        </div>
+        @if($afbIsPdfjs && $afbIsAdmin)
+        <label class="afb-annotation-id-label" for="afb-annotation-id">Annotation ID</label>
+        <input
+            class="afb-annotation-id"
+            id="afb-annotation-id"
+            type="text"
+            value=""
+            readonly
+            spellcheck="false"
+            aria-label="Selected annotation ID"
+            title="Click to select the annotation ID"
+        >
+        @endif
+    </div>
+    @if($afbIsPdfjs)
+    <div class="afb-divider"></div>
     <div class="afb-control-group afb-link-group">
         <label class="afb-control-label" for="afb-link-url">Hyperlink</label>
         <input
@@ -144,61 +216,5 @@
         </div>
         <p class="afb-link-help" id="afb-link-help">Select text in the PDF, then enter its destination.</p>
     </div>
-    <div class="afb-divider"></div>
     @endif
-    <div class="afb-control-group afb-align-group">
-        <span class="afb-control-label">Alignment</span>
-        <div class="afb-control-row">
-            <!-- Text Align -->
-            <select id="afb-align" title="Text Alignment" style="width:76px;">
-                <option value="left">Left</option>
-                <option value="center">Center</option>
-                <option value="right">Right</option>
-            </select>
-            <!-- Vertical Align -->
-            <select id="afb-valign" title="Vertical Alignment" style="width:76px;">
-                <option value="top">Top</option>
-                <option value="middle">Middle</option>
-                <option value="bottom">Bottom</option>
-            </select>
-        </div>
-    </div>
-    <div class="afb-divider"></div>
-    @if(request()->boolean('pdfjs'))
-    <div class="afb-control-group afb-text-tools-group">
-        <span class="afb-control-label">Text tools</span>
-        <div class="afb-control-row">
-            <button type="button" class="afb-btn" id="afb-uppercase" title="Uppercase" aria-label="Uppercase">Tt</button>
-            <button type="button" class="afb-btn" id="afb-lowercase" title="Lowercase" aria-label="Lowercase">tl</button>
-            <button type="button" class="afb-btn afb-debug" id="afb-debug" title="Debug mask" aria-label="Debug mask">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M9 9h6"></path><path d="M9 13h6"></path><path d="M12 17h.01"></path><rect x="5" y="6" width="14" height="15" rx="2"></rect></svg>
-            </button>
-        </div>
-        <label class="afb-annotation-id-label" for="afb-annotation-id">Annotation ID</label>
-        <input
-            class="afb-annotation-id"
-            id="afb-annotation-id"
-            type="text"
-            value=""
-            readonly
-            spellcheck="false"
-            aria-label="Selected annotation ID"
-            title="Click to select the annotation ID"
-        >
-    </div>
-    <div class="afb-divider"></div>
-    @endif
-    <div class="afb-control-group afb-action-group">
-        <span class="afb-control-label">Actions</span>
-        <div class="afb-control-row">
-            <!-- Duplicate -->
-            <button type="button" class="afb-btn" id="afb-copy" title="Duplicate annotation">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            </button>
-            <!-- Delete -->
-            <button type="button" class="afb-btn is-danger" id="afb-delete" title="Delete annotation">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-            </button>
-        </div>
-    </div>
 </div>

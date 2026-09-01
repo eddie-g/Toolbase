@@ -430,6 +430,17 @@
             },
             {
                 "number": "37",
+                "id": "37-rotate-bounding-frame",
+                "gid": "1217803120863165",
+                "area": "Placement",
+                "title": "Rotate a placed signature",
+                "summary": "A selected signature offers a rotate handle. Dragging it turns the image about the box centre, and the bounding frame and all eight resize handles follow the rotated image rather than staying square to the page. The angle reaches the save payload and survives a full reload.",
+                "automated": true,
+                "automation_note": "Added with [NK_9]. The export half is covered separately by python/test_helpers/regression_signature_rotation.py, which measures a probe mark's bounding box at 0, 45 and 90 degrees.",
+                "story": "signature-tool"
+            },
+            {
+                "number": "38",
                 "id": "nk6-stamp-follows-box",
                 "gid": "1217756051396473",
                 "area": "Editing",

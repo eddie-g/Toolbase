@@ -664,7 +664,7 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
     font_weight = resolve_annotation_font_weight(ann)
     font_style = resolve_annotation_font_style(ann)
     text_align = str(ann.get("textAlign") or "left").strip().lower()
-    text_decoration = "underline" if resolve_annotation_underline(ann) else "none"
+    text_decoration = annotation_text_decoration_css(ann)
     font_family = css_font_family(ann.get("fontFamily"))
     text_color = str(ann.get("textColor") or "#000000").strip() or "#000000"
     preserve_extracted_lines = should_preserve_promoted_source_lines(ann, ann.get("text") or "")
@@ -873,6 +873,47 @@ def resolve_annotation_underline(ann: Dict[str, Any]) -> bool:
         )
 
     return False
+
+
+# NK_7 strikeout placement. A strikeout crosses the glyph body rather than
+# sitting under the baseline. Two ratios because the draw sites measure from
+# different origins: some from the text baseline, some from the bottom of the
+# line box (which sits roughly a tenth of the font size below the baseline —
+# the same assumption the underline offsets already make).
+STRIKEOUT_BASELINE_RATIO = 0.28
+STRIKEOUT_LINE_BOX_RATIO = 0.40
+
+
+def resolve_annotation_strikeout(ann: Dict[str, Any]) -> bool:
+    """NK_7: strikeout, resolved exactly like underline.
+
+    Both are tokens of one CSS property, so a single-run rich-text annotation
+    can carry the decoration in its HTML rather than in the boolean flag.
+    """
+    if bool(ann.get("strikeout")):
+        return True
+
+    rich_html = str(ann.get("richTextHtml") or "").strip().lower()
+    text = str(ann.get("text") or "")
+    if rich_html and has_single_run_rich_text(ann, text):
+        return (
+            "text-decoration:line-through" in rich_html
+            or "text-decoration: line-through" in rich_html
+            or "text-decoration-line:line-through" in rich_html
+            or "text-decoration-line: line-through" in rich_html
+        )
+
+    return False
+
+
+def annotation_text_decoration_css(ann: Dict[str, Any]) -> str:
+    """The CSS decoration value an annotation's own flags ask for (NK_7)."""
+    tokens = []
+    if resolve_annotation_underline(ann):
+        tokens.append("underline")
+    if resolve_annotation_strikeout(ann):
+        tokens.append("line-through")
+    return " ".join(tokens) if tokens else "none"
 
 
 def is_bold_weight(value: Any) -> bool:
@@ -2439,6 +2480,19 @@ def draw_text_using_exact_source_lines(
                 morph=morph,
             )
 
+        # NK_7: a strikeout crosses the glyph body instead of sitting under it.
+        if resolve_annotation_strikeout(line_ann):
+            strike_y = line_rect.y1 - max(0.5, line_font_size * STRIKEOUT_LINE_BOX_RATIO)
+            draw_rotated_line(
+                page,
+                fitz.Point(draw_x, strike_y),
+                fitz.Point(draw_x + text_width, strike_y),
+                color=line_color,
+                width=max(0.5, line_font_size * 0.06),
+                opacity=opacity,
+                morph=morph,
+            )
+
     return True
 
 
@@ -2678,6 +2732,18 @@ def draw_text_using_exact_source_spans(
                     page,
                     fitz.Point(span_rect.x0, underline_y),
                     fitz.Point(span_rect.x1, underline_y),
+                    color=span_color,
+                    width=max(0.5, span_font_size * 0.04),
+                    opacity=opacity,
+                    morph=morph,
+                )
+
+            if resolve_annotation_strikeout(span_ann):
+                strike_y = span_rect.y1 - max(0.5, span_font_size * STRIKEOUT_LINE_BOX_RATIO)
+                draw_rotated_line(
+                    page,
+                    fitz.Point(span_rect.x0, strike_y),
+                    fitz.Point(span_rect.x1, strike_y),
                     color=span_color,
                     width=max(0.5, span_font_size * 0.04),
                     opacity=opacity,
@@ -3826,6 +3892,18 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
                     opacity=opacity,
                     morph=morph,
                 )
+
+            if resolve_annotation_strikeout(ann) and line:
+                strike_y = line_baseline_y - max(0.5, size * STRIKEOUT_BASELINE_RATIO)
+                draw_rotated_line(
+                    page,
+                    fitz.Point(draw_x, strike_y),
+                    fitz.Point(draw_x + text_width, strike_y),
+                    color=color,
+                    width=max(0.5, size * 0.06),
+                    opacity=opacity,
+                    morph=morph,
+                )
         return
 
     # Fallback for text annotations that do not include pdfWidth/pdfHeight
@@ -3894,31 +3972,118 @@ def draw_text(page: fitz.Page, ann: Dict[str, Any]) -> None:
             morph=morph,
         )
 
+    if resolve_annotation_strikeout(ann):
+        strike_width = fallback_font.text_length(text, fontsize=size)
+        strike_y = baseline_y - max(0.5, size * STRIKEOUT_BASELINE_RATIO)
+        draw_rotated_line(
+            page,
+            fitz.Point(draw_x, strike_y),
+            fitz.Point(draw_x + strike_width, strike_y),
+            color=color,
+            width=max(0.5, size * 0.06),
+            opacity=opacity,
+            morph=morph,
+        )
+
+
+def rotate_signature_image_bytes(
+    image_bytes: bytes,
+    rotation: float,
+) -> Optional[Tuple[bytes, float, float]]:
+    """Rotate a signature bitmap about its centre (NK_9).
+
+    page.insert_image only accepts rotations that are multiples of 90, so an
+    arbitrary angle has to be baked into the image itself. Returns the rotated
+    PNG plus the width/height ratio it grew by, so the caller can widen the
+    target rect to match — otherwise the image would be squashed back into the
+    original box.
+
+    Returns None when rotation is not needed or Pillow is unavailable, and the
+    caller falls back to drawing it flat.
+    """
+    if abs(normalize_rotation_degrees(rotation)) < 1e-6:
+        return None
+    try:
+        from PIL import Image
+    except Exception:
+        return None
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as source:
+            source = source.convert("RGBA")
+            original_width, original_height = source.size
+            # Pillow rotates counter-clockwise; the editor's angle is clockwise.
+            rotated = source.rotate(
+                -normalize_rotation_degrees(rotation),
+                resample=Image.BICUBIC,
+                expand=True,
+            )
+            buffer = io.BytesIO()
+            rotated.save(buffer, format="PNG")
+            width_ratio = rotated.size[0] / max(1, original_width)
+            height_ratio = rotated.size[1] / max(1, original_height)
+            return buffer.getvalue(), width_ratio, height_ratio
+    except Exception:
+        return None
+
+
+def rotated_signature_rect(rect: fitz.Rect, width_ratio: float, height_ratio: float) -> fitz.Rect:
+    """Grow a rect about its centre to hold the rotated image."""
+    half_width = (rect.width * width_ratio) / 2.0
+    half_height = (rect.height * height_ratio) / 2.0
+    cx = (rect.x0 + rect.x1) / 2.0
+    cy = (rect.y0 + rect.y1) / 2.0
+    return fitz.Rect(cx - half_width, cy - half_height, cx + half_width, cy + half_height)
+
 
 def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
     rect = to_rect(page, ann)
     if rect is None:
         return
 
+    rotation = normalize_rotation_degrees(ann.get("rotation", 0.0))
+
+    image_bytes = None
     asset_file_path = resolve_annotation_image_path(ann)
     if asset_file_path:
-        try:
-            # Match the editor's resized box exactly. PyMuPDF keeps aspect ratio
-            # by default, which would shrink one axis back toward the source image.
-            page.insert_image(rect, filename=asset_file_path, overlay=True, keep_proportion=False)
-            return
-        except Exception:
-            pass
+        if abs(rotation) < 1e-6:
+            try:
+                # Match the editor's resized box exactly. PyMuPDF keeps aspect
+                # ratio by default, which would shrink one axis back toward the
+                # source image.
+                page.insert_image(rect, filename=asset_file_path, overlay=True, keep_proportion=False)
+                return
+            except Exception:
+                pass
+        else:
+            try:
+                with open(asset_file_path, "rb") as handle:
+                    image_bytes = handle.read()
+            except Exception:
+                image_bytes = None
 
-    data_url = str(ann.get("dataUrl") or "")
-    if not data_url.startswith("data:image/"):
+    if image_bytes is None:
+        data_url = str(ann.get("dataUrl") or "")
+        if not data_url.startswith("data:image/"):
+            return
+        try:
+            _, payload = data_url.split(",", 1)
+            image_bytes = base64.b64decode(payload)
+        except Exception:
+            return
+
+    rotated = rotate_signature_image_bytes(image_bytes, rotation)
+    if rotated is not None:
+        rotated_bytes, width_ratio, height_ratio = rotated
+        page.insert_image(
+            rotated_signature_rect(rect, width_ratio, height_ratio),
+            stream=rotated_bytes,
+            overlay=True,
+            keep_proportion=False,
+        )
         return
-    try:
-        _, payload = data_url.split(",", 1)
-        img = base64.b64decode(payload)
-    except Exception:
-        return
-    page.insert_image(rect, stream=img, overlay=True, keep_proportion=False)
+
+    page.insert_image(rect, stream=image_bytes, overlay=True, keep_proportion=False)
 
 
 def resolve_annotation_image_path(ann: Dict[str, Any]) -> Optional[str]:

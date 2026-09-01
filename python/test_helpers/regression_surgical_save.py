@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Run an end-to-end surgical save regression against a live Toolbase document.
+Run an end-to-end surgical save regression against a live Netkit document.
 
 Default target is document 712 on localhost:8081. The script:
 1. Restores the original PDF.

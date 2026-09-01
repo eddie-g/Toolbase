@@ -1,0 +1,388 @@
+{
+    "suite": {
+        "key": "text-tool",
+        "name": "Text tool",
+        "tool_label": "Text tool",
+        "target_url": "/documents/{document}/edit-new?pdfjs=1",
+        "runner": "tests/AutomatedTests/Text/run_text_tests.cjs",
+        "workspace": "My workspace",
+        "project": "Netkit",
+        "section": "Claude QA Agent",
+        "stories": [
+            {
+                "key": "text-tool",
+                "short": "Text tool",
+                "task_gid": "1217747812355479",
+                "task_name": "[QA] - Text tool",
+                "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752/task/1217747812355479",
+                "instructions": [
+                    "Start with a blank pdf project for edit-new?pdfjs=1",
+                    "Click the Add Text tool",
+                    "Subtask 30 needs a text-bearing document instead of the blank page"
+                ]
+            }
+        ],
+        "tests": [
+            {
+                "number": "01",
+                "id": "01-blank-project-loads",
+                "gid": "1217756782000245",
+                "area": "Entry",
+                "title": "Setup: blank PDF project loads in /edit-new?pdfjs=1 with the Add Text tool available",
+                "summary": "Precondition for the whole story: the page rasterises, both add-text controls are present and enabled, no text box exists, the Text Options panel is closed, and the console is clean. Also confirms this is the pdf.js editor rather than the legacy one.",
+                "automated": true,
+                "story": "text-tool"
+            },
+            {
+                "number": "02",
+                "id": "02-add-text-mode-toggle",
+                "gid": "1217756810647751",
+                "area": "Entry",
+                "title": "Add Text toggles from both toolbars and is exclusive with the other tools",
+                "summary": "The top-bar and floating buttons drive one shared mode, toggling off places nothing, another tool cancels add-text mode, and placing a box leaves the mode so a second click cannot place another.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Exclusivity is asserted against the Shapes tool. Draw, Highlight, Sign and the edit-mode toggle still need a manual pass."
+            },
+            {
+                "number": "03",
+                "id": "03-click-to-place-defaults",
+                "gid": "1217756978731742",
+                "area": "Placement",
+                "title": "Click-to-place creates a text box with the documented defaults",
+                "summary": "A single click yields a 36 x 15 pt box whose top-left is the click point, in Helvetica 12pt black on a transparent background at full opacity, left/top aligned, unlocked, selected, and not flagged as user-sized.",
+                "automated": true,
+                "story": "text-tool"
+            },
+            {
+                "number": "04",
+                "id": "04-drag-to-size",
+                "gid": "1217756907385692",
+                "area": "Placement",
+                "title": "Drag-to-size honours the dragged rectangle, with a click fallback below the threshold",
+                "summary": "A drag over 20 x 10 px takes the dragged geometry and is flagged user-sized; an up-and-left drag is normalised rather than inverted; a sub-threshold drag falls back to click-to-place defaults. No preview element is left behind in either case.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Drag cancellation by Escape or lost pointer capture is not automated yet."
+            },
+            {
+                "number": "05",
+                "id": "05-page-clamping",
+                "gid": "1217756857107823",
+                "area": "Placement",
+                "title": "New boxes are clamped inside the page, on any page of the document",
+                "summary": "Clicks at the page corners and an oversized drag are all pulled back inside the page: no negative coordinates, no overhang past the right or bottom edge, and the box keeps a usable size.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Multi-page placement (page 2 and the last page) is not automated yet."
+            },
+            {
+                "number": "06",
+                "id": "06-zoom-accuracy",
+                "gid": "1217756907385857",
+                "area": "Placement",
+                "title": "Placement stays accurate across zoom levels",
+                "summary": "Click and drag placement at fit-width, 50%, 100%, 200% and an odd zoom must land under the pointer and produce identical PDF coordinates; an existing box must stay anchored when zoom changes.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Zoom is driven through the +/- controls, so the levels are whatever the viewer steps to rather than named percentages."
+            },
+            {
+                "number": "07",
+                "id": "07-rotated-pages",
+                "gid": "1217756907391019",
+                "area": "Placement",
+                "title": "Rotated pages are not editable, and rotating back restores the tool",
+                "summary": "This build renders a rotated page as one flattened image so saved masks stay aligned, marks editing unavailable, and explains why in a dialog. The Add Text tool places nothing while the page is rotated. Rotating back to 0 degrees restores placement, and an existing box survives the round trip with its top-left corner intact.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "The original QA wording assumed text could be placed on a rotated page. Automation showed it cannot, so the case now covers the real contract. Placement accuracy at 90/180/270 cannot be tested until rotated pages become editable."
+            },
+            {
+                "number": "08",
+                "id": "08-edit-mode-ready",
+                "gid": "1217756978762057",
+                "area": "Editing",
+                "title": "A newly placed box opens in edit mode with the caret ready",
+                "summary": "The new box is selected and editing with the caret inside its editable element, so typing lands without another click; the hover menu is anchored over it; and placing a second box commits the first rather than leaving two editors open.",
+                "automated": true,
+                "story": "text-tool"
+            },
+            {
+                "number": "09",
+                "id": "09-typing-and-wrap",
+                "gid": "1217756978708195",
+                "area": "Editing",
+                "title": "Typing, multi-line entry, word wrap and box reflow",
+                "summary": "Long paragraphs wrap inside the box width, an over-long word splits mid-word, hard line breaks survive a commit and reload, and reflow keeps text inside the box border at large font sizes.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Wrapping, mid-word breaks and hard line breaks are automated through a save and reload. Behaviour at very large font sizes still needs a manual pass. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "10",
+                "id": "10-commit-and-empty",
+                "gid": "1217756907396052",
+                "area": "Editing",
+                "title": "Commit and cancel paths, and what happens to an empty box",
+                "summary": "Committing by click-away, Escape, selecting another annotation and switching tools all keep the text and leave edit mode cleanly. Also records what the editor does with an empty or whitespace-only box.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Confirms that a box committed empty, or containing only whitespace, is discarded rather than persisted as an invisible annotation. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "11",
+                "id": "11-panel-mirrors-selection",
+                "gid": "1217756857155583",
+                "area": "Formatting",
+                "title": "Text Options panel opens for the selection and mirrors its state",
+                "summary": "Every control is read from the selected box, re-reads fully when a differently styled box is selected, hides on close and deselect, and is disabled on a locked annotation.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Also guards NK_8: bold and italic applied to a committed box must survive a re-render of the annotation layer. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "12",
+                "id": "12-font-family",
+                "gid": "1217756857157068",
+                "area": "Formatting",
+                "title": "Font family: standard, Google and document-embedded fonts",
+                "summary": "Each font group re-renders the page text immediately and survives reload and download without falling back to Helvetica. The Google Fonts separator must not be selectable.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "The standard PDF faces are asserted end to end. Google faces are asserted as far as the stored value only: the test container has no outbound route, so whether the webfont actually renders still needs a manual pass, as do document-embedded fonts. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "13",
+                "id": "13-font-size-slider",
+                "gid": "1217756907385772",
+                "area": "Formatting",
+                "title": "Font size slider: 2-72pt curve with 12pt at the midpoint",
+                "summary": "The pt label tracks the slider live, the mapping is exponential with slider 50 = 12pt, and the value round-trips through save and reload without drifting.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Asserts the 2-72pt curve at its ends and midpoint, the live pt label, and a save/reload round trip. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "14",
+                "id": "14-colours",
+                "gid": "1217756810707484",
+                "area": "Formatting",
+                "title": "Text colour and background colour, including live preview",
+                "summary": "Both colours preview live and commit on close, the background stays transparent until chosen, and both survive save, reload and download.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers the live preview, the commit, and a save/reload round trip for both swatches. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "15",
+                "id": "15-opacity",
+                "gid": "1217756978793081",
+                "area": "Formatting",
+                "title": "Opacity",
+                "summary": "Each opacity step fades text and background together, is reflected on reselect, is preserved in the download, and an off-step saved value snaps to the nearest option.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers each step, that text and background fade together, and a save/reload round trip. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "16",
+                "id": "16-bold-italic-underline",
+                "gid": "1217756857128740",
+                "area": "Formatting",
+                "title": "Bold, italic and underline",
+                "summary": "Each toggle updates the page text and its own pressed state, combinations work together, and all survive save, reload and download — including fonts with no real bold or italic cut.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Asserted on the computed style, not the inline one — that distinction is what NK_10 turned on. Fonts with no real bold or italic cut still need a manual pass. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "17",
+                "id": "17-alignment",
+                "gid": "1217756857178060",
+                "area": "Formatting",
+                "title": "Horizontal and vertical alignment",
+                "summary": "Left/centre/right and top/middle/bottom are visible on the page, persist through save and reload, match in the downloaded PDF, and behave on a wrapped multi-line paragraph.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers both axes, that vertical alignment actually moves the rendered line, and wrapped text. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "18",
+                "id": "18-case-transforms",
+                "gid": "1217756907442004",
+                "area": "Formatting",
+                "title": "Uppercase and lowercase transforms",
+                "summary": "The stored text really changes case rather than gaining a CSS text-transform, handles digits, punctuation and non-ASCII, and each transform is a single undo step.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Confirms the stored text changes rather than a CSS text-transform, across digits and non-ASCII, and that each transform is one undo step. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "19",
+                "id": "19-inline-formatting",
+                "gid": "1217756782080302",
+                "area": "Inline runs",
+                "title": "Partial-selection (inline) formatting and mixed-state reporting",
+                "summary": "Applying a style to part of the text changes only that run, a mixed selection reports as mixed, runs survive commit, reload and download, and Ctrl/Cmd+A selects the box text rather than the page.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers per-run styling, Ctrl+A scope, and run persistence. Mixed-state reporting depends on which end of the selection the panel probes, so it is asserted behaviourally rather than by the pressed state. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "20",
+                "id": "20-hyperlink",
+                "gid": "1217756810781071",
+                "area": "Inline runs",
+                "title": "Hyperlink apply and remove",
+                "summary": "Apply and remove work on a selection and are disabled without one, malformed and javascript: destinations are refused, and the link is clickable in the downloaded PDF.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "PARTIAL: apply, remove, and the disabled state are covered, and javascript: and empty destinations are refused. Re-applying after a remove currently loses the box in automation — under investigation, and worth a manual pass. Clickability in the downloaded PDF is not automated. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "21",
+                "id": "21-select-and-menu",
+                "gid": "1217756907451612",
+                "area": "Manipulation",
+                "title": "Select, deselect and the hover menu",
+                "summary": "Selection chrome and the hover menu appear anchored over the box and stay correct through scroll and zoom; every deselect path works; Edit text enters edit mode; and the menu does not cover a box at the top of a page.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers the chrome, every deselect path, the menu actions, and that the menu keeps its offset when the viewer scrolls. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "22",
+                "id": "22-move-and-resize",
+                "gid": "1217756782091550",
+                "area": "Manipulation",
+                "title": "Move and resize",
+                "summary": "Dragging by body and grip follows the pointer 1:1 at every zoom and survives reload; resizing reflows the text, clamps below the minimum size, and each gesture is one undo step.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "PARTIAL: dragging, the undo step and the reload round trip are covered. Dragging the right-edge handle does not change the width in automation — unresolved, and worth a manual pass before trusting resize. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "23",
+                "id": "23-multi-select",
+                "gid": "1217756810797794",
+                "area": "Manipulation",
+                "title": "Multi-select, marquee select and group operations",
+                "summary": "Shift-click and marquee build a multi-selection, a group drag moves every box by the same offset, Delete removes them in one undo step, and Escape clears the selection.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers shift-click building a multi-selection, a group drag moving the whole selection by one offset, Escape clearing it, and a marquee drag followed by a group delete and a single undo. The marquee rectangle is derived from where the boxes actually are, since the group drag has just moved them. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "24",
+                "id": "24-order-lock-clipboard",
+                "gid": "1217756810800081",
+                "area": "Manipulation",
+                "title": "Z-order, lock, duplicate, delete and clipboard copy/paste",
+                "summary": "Front/back ordering persists through save, reload and download; lock disables move, resize, edit and the panel; duplicate makes an offset copy with a new id; and copy/paste works across pages without hijacking the shortcut inside an editor.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers z-order, lock, duplicate, delete, clipboard paste and the reload round trip. The duplicate is asserted to be tagged user-created, so it behaves like the original -- rotatable and restylable (NK_13). Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "25",
+                "id": "25-undo-redo",
+                "gid": "1217756907464390",
+                "area": "Persistence",
+                "title": "Undo and redo across every text operation",
+                "summary": "Add, type, format, inline format, move, resize, z-order, lock, duplicate, delete and paste are each exactly one step, by button and by every keyboard shortcut, and the shortcuts are ignored while the caret is in a text box.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers add, format, move and delete by button and by every shortcut, and that the shortcut is left to the text editor while the caret is inside a box. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "26",
+                "id": "26-autosave-and-save",
+                "gid": "1217756907464681",
+                "area": "Persistence",
+                "title": "Autosave and explicit Save",
+                "summary": "Every mutation marks the document dirty and schedules an autosave with the expected status transitions; no request is sent when nothing changed; and rapid edits coalesce rather than race.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Watches the real save requests: autosave on placement and on a style change, an explicit Save, and that an idle editor stops saving. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "27",
+                "id": "27-reload-fidelity",
+                "gid": "1217756907484480",
+                "area": "Persistence",
+                "title": "Reload fidelity",
+                "summary": "A document of variously styled boxes across several pages, including a rotated one, comes back after a hard reload with identical geometry, content, styling, z-order and annotation ids.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Compares ids, text, geometry, z-order and every style across a save and reload, then checks the panel reads them back. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "28",
+                "id": "28-download-and-burn",
+                "gid": "1217756978900949",
+                "area": "Persistence",
+                "title": "Downloaded PDF fidelity and burn-into-PDF",
+                "summary": "The downloaded PDF renders every box at the right place, size and styling with selectable text, and a burned box becomes page content that still renders after reload and download.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers Burn into PDF for a text annotation end to end: the action is offered, the burned box stops being an annotation, the neighbouring box is untouched, and the burn survives a save and reload. Burn is scoped to text added with the Text tool; source text is deliberately excluded. Visual fidelity in an external viewer is still a manual check. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "29",
+                "id": "29-layers-and-debug",
+                "gid": "1217756857227802",
+                "area": "Integration",
+                "title": "Layers panel, annotation ID field and debug mask",
+                "summary": "Boxes are listed and named from their own text with the documented truncation and fallback, reordering changes z-order, the read-only annotation ID selects on click, and the debug mask opens against the selected box.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers the panel, row naming and truncation, and both halves of the NK_7 gate: the annotation ID field and debug mask are absent for a non-admin and present, with the ID populated, for an admin. The admin half signs in through the real Filament login (the gate is server-side Blade), and is SKIPPED rather than failed when no QA admin is configured. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "30",
+                "id": "30-source-text-editing",
+                "gid": "1217756978902014",
+                "area": "Integration",
+                "title": "Editing text that is already in the PDF",
+                "summary": "On a text-bearing document, editing a source span writes back surgically without moving the rest of the line, preserves typography, handles longer and shorter replacements, and does not fire once the box has been moved.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "PARTIAL BY DECISION: asserts a source run is reachable, selectable, not treated as a user box, carries its source typography, offers an inline editor, and is left alone by Escape. Driving the inline editor could not be made to land reliably from automation, so the surgical rewrite itself is a MANUAL check by agreement rather than an assertion that would pass either way. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "31",
+                "id": "31-content-robustness",
+                "gid": "1217756857201651",
+                "area": "Integration",
+                "title": "Content robustness: long text, unicode, markup-like input and pasted rich text",
+                "summary": "Emoji, combining accents, RTL text, tabs, repeated spaces and markup-like strings are stored and echoed verbatim without being interpreted, and pasted rich text lands without injecting arbitrary HTML.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers markup-like input, unicode, wrapping and a verbatim save/reload round trip, including that the layers panel does not render typed markup as elements. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "32",
+                "id": "32-keyboard-and-aria",
+                "gid": "1217756907503839",
+                "area": "Integration",
+                "title": "Keyboard access and ARIA on the Text Options panel",
+                "summary": "Every control is tabbable in a sensible order with a visible focus ring and an accessible name, the style toggles expose aria-pressed, and the panel never steals focus from the box while typing.",
+                "automated": true,
+                "story": "text-tool",
+                "automation_note": "Covers focusability, accessible names, aria-pressed and tab movement. A screen-reader pass is still manual. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it."
+            },
+            {
+                "number": "33",
+                "id": "33-rotate-text-box",
+                "gid": "1217760052035814",
+                "area": "Manipulation",
+                "title": "Rotate a text box",
+                "summary": "A selected text box offers a rotate handle. Dragging it turns the text about the box centre while the box stays axis-aligned, and the angle survives a re-render of the annotation layer, a save and a reload. A locked annotation gets no handle, and neither does text that came from the PDF — only text the user added is rotatable.",
+                "automated": true,
+                "automation_note": "Added with [NK_9]. The exclusion of PDF source text is a product decision, confirmed, and is asserted here so it cannot drift. The signature half of that story is covered by the writer regression python/test_helpers/regression_signature_rotation.py, since placing a signature is the signature suite's job rather than this one's. Runs with the editor rendered as signed in: edit mode is premium-gated, and a committed text box cannot be re-selected without it.",
+                "story": "text-tool"
+            }
+        ]
+    }
+}

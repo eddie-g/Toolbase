@@ -4844,7 +4844,7 @@ class DocumentController extends Controller
             return false;
         }
 
-        if (!empty($annotation['underline'])) {
+        if (!empty($annotation['underline']) || !empty($annotation['strikeout'])) {
             return false;
         }
 
@@ -6415,6 +6415,7 @@ class DocumentController extends Controller
                 'backgroundColor' => 'transparent',
                 'opacity' => 1,
                 'underline' => false,
+                'strikeout' => false,
                 'textAlign' => 'left',
                 'verticalAlign' => $multiLine ? 'top' : 'middle',
                 'locked' => false,
@@ -7153,10 +7154,19 @@ class DocumentController extends Controller
         $isDirectDrawing = $type === 'image'
             && strtolower(trim((string) ($annotation['imageToolSource'] ?? ''))) === 'direct-draw';
 
-        if ($type !== 'shape' && !$isDirectDrawing) {
+        // Text added with the Text tool can be burned as well. Source text is left
+        // out on purpose: burning it would redact the page's own words and stamp
+        // the identical words back over the hole.
+        $isUserCreatedText = $type === 'text' && (
+            filter_var($annotation['userCreated'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            || filter_var($annotation['userAuthored'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            || filter_var($annotation['skipPdfjsSourceMask'] ?? false, FILTER_VALIDATE_BOOLEAN)
+        );
+
+        if ($type !== 'shape' && !$isDirectDrawing && !$isUserCreatedText) {
             return response()->json([
                 'success' => false,
-                'message' => 'Only shapes and direct drawings can be burned into the PDF.',
+                'message' => 'Only shapes, direct drawings, and text added with the Text tool can be burned into the PDF.',
             ], 422);
         }
 
@@ -9282,11 +9292,13 @@ class DocumentController extends Controller
 
     /**
      * Bake all unedited promoted annotations into the clean base PDF using the
-     * exact writer + normalization pipeline that /admin/pdf-comparison's
-     * "Edit-new snapshot" panel uses. /edit-new loads this as the base so the
-     * canvas does not need to redraw promoted source spans (eliminating the
-     * overprint/duplicate-text class of bugs and guaranteeing pixel-equivalence
-     * with the comparison snapshot).
+     * exact writer + normalization pipeline the editor itself uses. /edit-new
+     * loads this as the base so the canvas does not need to redraw promoted
+     * source spans, eliminating the overprint/duplicate-text class of bugs.
+     *
+     * buildEditNewComparisonAnnotations() keeps its name from the retired
+     * /admin/pdf-comparison page, but this is the live editor path and is the
+     * only caller left.
      */
     public function bakedPdf(Request $request, Document $document)
     {
@@ -13395,7 +13407,7 @@ class DocumentController extends Controller
                     'include_images' => $includeImages,
                     'ocr' => $ocr,
                     'file_size' => filesize($tempOutputPath),
-                    'engine' => $result['engine'] ?? 'toolbase',
+                    'engine' => $result['engine'] ?? 'netkit',
                     'provider_requested' => $requestedProvider,
                     'provider_used' => $providerUsed,
                     'provider_fallback_used' => $providerFallbackUsed,
@@ -13415,7 +13427,7 @@ class DocumentController extends Controller
             'success' => true,
             'download_token' => $downloadToken,
             'download_name' => $downloadName,
-            'engine' => $result['engine'] ?? 'toolbase',
+            'engine' => $result['engine'] ?? 'netkit',
             'provider' => $providerUsed,
             'provider_fallback_used' => $providerFallbackUsed,
             'charge_usd' => $conversionQuote['charge_usd'],
@@ -13628,7 +13640,7 @@ class DocumentController extends Controller
                     'fallback_used' => $result['fallback_used'] ?? false,
                     'layout_engine' => $result['layout_engine'] ?? null,
                     'images_embedded' => $result['images_embedded'] ?? 0,
-                    'engine' => $result['engine'] ?? 'toolbase',
+                    'engine' => $result['engine'] ?? 'netkit',
                     'provider_requested' => $requestedProvider,
                     'provider_used' => $providerUsed,
                     'provider_fallback_used' => $providerFallbackUsed,
@@ -13654,7 +13666,7 @@ class DocumentController extends Controller
             'fallback_used' => $result['fallback_used'] ?? false,
             'layout_engine' => $result['layout_engine'] ?? null,
             'images_embedded' => $result['images_embedded'] ?? 0,
-            'engine' => $result['engine'] ?? 'toolbase',
+            'engine' => $result['engine'] ?? 'netkit',
             'provider' => $providerUsed,
             'provider_fallback_used' => $providerFallbackUsed,
             'charge_usd' => $conversionQuote['charge_usd'],
@@ -13754,7 +13766,7 @@ class DocumentController extends Controller
                 service: 'document_conversion',
                 modelName: $provider === DocumentConversionSetting::PROVIDER_ADOBE
                     ? 'adobe-pdf-services-export'
-                    : 'toolbase-local-converter',
+                    : 'netkit-local-converter',
                 description: $description,
                 metadata: $metadata,
             );

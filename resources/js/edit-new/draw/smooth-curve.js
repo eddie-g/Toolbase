@@ -1,3 +1,37 @@
+/*
+ * draw/smooth-curve.
+ *
+ * Fits a freehand point list to a curve, with an adjustable
+ * smoothing amount in [0, 1] (NK_16). The amount drives two things
+ * at once:
+ *
+ *   - passes:  how many neighbour-averaging passes run over the raw
+ *              points first, which is what removes hand jitter
+ *   - tension: how far the bezier control points reach out from each
+ *              segment, which is what rounds the corners
+ *
+ * At 0 both collapse and the result is a polyline through the exact
+ * points the pointer visited. Callers that pass no amount at all keep
+ * the pre-NK_16 fixed behaviour (2 passes, full tension) so the
+ * pdf.js editor, which shares this module, is unaffected.
+ */
+
+export const DEFAULT_DRAW_SMOOTHING = 0.58;
+
+const MAX_SMOOTHING_PASSES = 4;
+
+/** Clamp a smoothing amount into [0, 1], falling back when unusable. */
+export function normalizeDrawSmoothing(value, fallback = DEFAULT_DRAW_SMOOTHING) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return fallback;
+    return Math.max(0, Math.min(1, amount));
+}
+
+/** Averaging passes for a smoothing amount: 0 -> 0, 1 -> MAX_SMOOTHING_PASSES. */
+export function drawSmoothingPasses(amount) {
+    return Math.round(normalizeDrawSmoothing(amount, 0) * MAX_SMOOTHING_PASSES);
+}
+
 function finitePoint(point) {
     const x = Number(point?.x);
     const y = Number(point?.y);
@@ -37,8 +71,9 @@ export function smoothDrawCurvePoints(points, passes = 2) {
     return result;
 }
 
-export function smoothDrawCurveSegments(points) {
+export function smoothDrawCurveSegments(points, tension = 1) {
     const clean = normalizeSmoothCurvePoints(points);
+    const reach = normalizeDrawSmoothing(tension, 1) / 6;
     const segments = [];
     for (let index = 0; index < clean.length - 1; index += 1) {
         const p0 = clean[Math.max(0, index - 1)];
@@ -48,12 +83,12 @@ export function smoothDrawCurveSegments(points) {
         segments.push({
             start: p1,
             control1: {
-                x: p1.x + ((p2.x - p0.x) / 6),
-                y: p1.y + ((p2.y - p0.y) / 6),
+                x: p1.x + ((p2.x - p0.x) * reach),
+                y: p1.y + ((p2.y - p0.y) * reach),
             },
             control2: {
-                x: p2.x - ((p3.x - p1.x) / 6),
-                y: p2.y - ((p3.y - p1.y) / 6),
+                x: p2.x - ((p3.x - p1.x) * reach),
+                y: p2.y - ((p3.y - p1.y) * reach),
             },
             end: p2,
         });
@@ -65,14 +100,14 @@ function svgNumber(value) {
     return Number(value).toFixed(3);
 }
 
-export function smoothDrawCurveSvgPathD(points) {
+export function smoothDrawCurveSvgPathD(points, tension = 1) {
     const clean = normalizeSmoothCurvePoints(points);
     if (!clean.length) return '';
     const first = clean[0];
     if (clean.length === 1) {
         return `M ${svgNumber(first.x)} ${svgNumber(first.y)} L ${svgNumber(first.x + 0.01)} ${svgNumber(first.y)}`;
     }
-    const curves = smoothDrawCurveSegments(clean)
+    const curves = smoothDrawCurveSegments(clean, tension)
         .map((segment) => (
             `C ${svgNumber(segment.control1.x)} ${svgNumber(segment.control1.y)} `
             + `${svgNumber(segment.control2.x)} ${svgNumber(segment.control2.y)} `
@@ -81,10 +116,15 @@ export function smoothDrawCurveSvgPathD(points) {
     return `M ${svgNumber(first.x)} ${svgNumber(first.y)} ${curves.join(' ')}`;
 }
 
-export function paintSmoothDrawCurve(ctx, stroke, defaultColor = '#111827', defaultWidth = 3) {
+export function paintSmoothDrawCurve(ctx, stroke, defaultColor = '#111827', defaultWidth = 3, smoothing = null) {
     if (!ctx) return;
-    const points = smoothDrawCurvePoints(stroke?.points);
+    // No amount from either the argument or the stroke -> pre-NK_16 behaviour.
+    const requested = smoothing === null || smoothing === undefined ? stroke?.smoothing : smoothing;
+    const hasAmount = Number.isFinite(Number(requested));
+    const amount = hasAmount ? normalizeDrawSmoothing(requested) : null;
+    const points = smoothDrawCurvePoints(stroke?.points, hasAmount ? drawSmoothingPasses(amount) : 2);
     if (!points.length) return;
+    const tension = hasAmount ? amount : 1;
     const color = stroke?.color || defaultColor;
     const width = Math.max(1, Number(stroke?.width) || defaultWidth);
 
@@ -103,7 +143,7 @@ export function paintSmoothDrawCurve(ctx, stroke, defaultColor = '#111827', defa
     }
     ctx.beginPath();
     ctx.moveTo(points[0].x, points[0].y);
-    smoothDrawCurveSegments(points).forEach((segment) => {
+    smoothDrawCurveSegments(points, tension).forEach((segment) => {
         ctx.bezierCurveTo(
             segment.control1.x,
             segment.control1.y,

@@ -17,7 +17,7 @@ from prepare_pdf_for_adobe import prepare_pdf  # noqa: E402
 
 class PreparePdfForAdobeTest(unittest.TestCase):
     def test_rotated_page_keeps_native_text_vector_shapes_and_images(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="toolbase_adobe_prepare_test_") as directory:
+        with tempfile.TemporaryDirectory(prefix="netkit_adobe_prepare_test_") as directory:
             source = Path(directory) / "edited-rotated.pdf"
             output = Path(directory) / "adobe-input.pdf"
 

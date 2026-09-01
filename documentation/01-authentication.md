@@ -1,6 +1,6 @@
 # Authentication
 
-Toolbase uses **Laravel Fortify** as the authentication backend, supplemented by **Laravel Sanctum** for API tokens and **Laravel Socialite** for Google OAuth. There are two separate guard contexts: `web` for regular users and `admin` for the Filament admin panel.
+Netkit uses **Laravel Fortify** as the authentication backend, supplemented by **Laravel Sanctum** for API tokens and **Laravel Socialite** for Google OAuth. There are two separate guard contexts: `web` for regular users and `admin` for the Filament admin panel.
 
 ---
 

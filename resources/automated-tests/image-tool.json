@@ -1,0 +1,270 @@
+{
+    "suite": {
+        "key": "image-tool",
+        "name": "Image tool",
+        "tool_label": "Image tool",
+        "target_url": "/documents/{document}/edit-new?pdfjs=1",
+        "runner": "tests/AutomatedTests/Image/run_image_tests.cjs",
+        "workspace": "My workspace",
+        "project": "Netkit",
+        "section": "Claude QA Agent",
+        "stories": [
+            {
+                "key": "image-tool",
+                "short": "Image tool",
+                "task_gid": "1218072985049651",
+                "task_name": "[QA] - Image tool",
+                "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752/task/1218072985049651",
+                "instructions": [
+                    "Start with a blank pdf project for edit-new?pdfjs=1",
+                    "Click the Add Image tool in the floating toolbar",
+                    "Import is a two-step flow: the modal chooses an asset, then Apply arms a click-to-place on the page",
+                    "The modal will not open while edit mode is on, so cases drive it from the normal viewing mode",
+                    "Fixtures are generated at runtime -- PNGs byte by byte, the other formats by the browser's canvas encoder"
+                ]
+            }
+        ],
+        "tests": [
+            {
+                "number": "01",
+                "id": "01-blank-project-loads",
+                "gid": "1218073068642773",
+                "area": "Entry",
+                "title": "Setup: blank PDF project loads with the Add Image tool available",
+                "summary": "Precondition for the whole story: the page rasterises, the floating toolbar Add Image button is present and enabled, no image annotation exists, the import modal is in the DOM but closed and aria-hidden, and the console is clean.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "02",
+                "id": "02-modal-open-close",
+                "gid": "1218073068822898",
+                "area": "Modal",
+                "title": "The Import an image modal opens from the toolbar and closes via X, Cancel, scrim and Escape",
+                "summary": "The Add Image button opens the modal as a labelled dialog with aria-hidden false, Apply disabled until something is chosen, and the Upload tab active. All four documented dismissals close it and restore aria-hidden true.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "03",
+                "id": "03-upload-sources",
+                "gid": "1218073050922600",
+                "area": "Import",
+                "title": "Upload tab: browse, drag-and-drop and clipboard paste each load a preview",
+                "summary": "All three routes into the modal reach the same loader. Browse goes through the real file input; drop and paste are dispatched as genuine DragEvent and ClipboardEvent with a live DataTransfer, since neither can be driven from Node. Each ends at 'Ready to insert.' with Apply enabled.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "04",
+                "id": "04-accepted-formats",
+                "gid": "1218072982346360",
+                "area": "Import",
+                "title": "Accepted formats: JPG, PNG, GIF, WebP and SVG; other files are refused",
+                "summary": "PNG and SVG are built here, JPEG and WebP are encoded by the browser under test so the fixture is guaranteed valid for that decoder, and GIF is a known-good minimal file. A .txt file is refused with the documented message, styled as an error, leaving Apply disabled.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "05",
+                "id": "05-size-limit",
+                "gid": "1218072985633961",
+                "area": "Import",
+                "title": "The 25 MB size limit is enforced",
+                "summary": "A file over IMAGE_IMPORT_MAX_BYTES is refused with 'File is too large (max 25 MB).', shows no preview and leaves Apply disabled. A large file under the ceiling still loads, proving the guard is a ceiling rather than a blanket refusal.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "06",
+                "id": "06-preview-metadata",
+                "gid": "1218073151243377",
+                "area": "Import",
+                "title": "The preview shows the file name and pixel dimensions, and the clear button resets it",
+                "summary": "The preview names the file, reports the intrinsic dimensions of the generated fixture, and renders the decoded bitmap. The clear button hides the preview, disables Apply, forgets the name and restores the invitation to choose an image.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "07",
+                "id": "07-logos-tab",
+                "gid": "1218073151342625",
+                "area": "Import",
+                "title": "Generated logos tab: lists the account logos and switches back to Upload",
+                "summary": "The logos tab activates, shows its panel, hides the upload panel and tracks aria-selected on both. The grid and its refresh are asserted; a throwaway QA account normally has no generated logos, so an empty grid is recorded as a skip rather than a failure.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "08",
+                "id": "08-apply-arms-placement",
+                "gid": "1218072934992970",
+                "area": "Placement",
+                "title": "Apply arms click-to-place: the modal closes and the status prompts for a page location",
+                "summary": "Apply is not the insert. It closes the modal, puts the body into image-placement mode and asks for a page location, having placed nothing yet. The subsequent page click places exactly one image and disarms the mode.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "09",
+                "id": "09-click-places-image",
+                "gid": "1218073044268464",
+                "area": "Placement",
+                "title": "Clicking the page places the image centred on the click, clamped inside the page",
+                "summary": "The placed box is centred on the click point within a few pixels, sits wholly inside the page, and renders the imported bitmap. A second image dropped at the far page edge is clamped inside rather than overflowing. The result saves as an image annotation.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "10",
+                "id": "10-initial-size",
+                "gid": "1218073044389065",
+                "area": "Placement",
+                "title": "Initial size preserves the aspect ratio inside the 40%-width / 28%-height cap",
+                "summary": "Asserted in PDF units from the save payload rather than in CSS pixels. A 2:1 image comes back 2:1 within the width cap; a 1:2 image is capped by height and made narrower rather than stretched, and both clear the minimum size floor.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "11",
+                "id": "11-escape-cancels",
+                "gid": "1218072985963389",
+                "area": "Placement",
+                "title": "Escape cancels a pending placement",
+                "summary": "Escape leaves placement mode and says so in the status bar. The check that matters is the one after: a later click on the page must place nothing, rather than dropping a stale armed asset.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "12",
+                "id": "12-auto-selected",
+                "gid": "1218072985716037",
+                "area": "Selection",
+                "title": "A newly placed image is auto-selected with its hover menu showing",
+                "summary": "The image is selected the moment it lands, is interactive rather than a read-only overlay, and brings up the annotation menu offering at least delete and lock. Escape deselects it. The full action list is recorded for the manual pass.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "13",
+                "id": "13-corner-resize",
+                "gid": "1218072985788730",
+                "area": "Geometry",
+                "title": "Resize is corner-only and aspect-locked; no edge handles on a raster image",
+                "summary": "A raster image offers exactly the four corner handles -- a drawing gets eight, an imported image must not, since an edge handle would let it be skewed. A deliberately lopsided corner drag (80px across, 10px down) resizes it while preserving the ratio.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "14",
+                "id": "14-move-and-zoom",
+                "gid": "1218073068862318",
+                "area": "Geometry",
+                "title": "Move by dragging the body; placement stays accurate across zoom levels",
+                "summary": "Dragging the body moves the image without resizing it. Zoom changes every CSS dimension, so the invariant asserted is the image's position and size relative to its page, which must survive two steps in and back out again.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "15",
+                "id": "15-rotation",
+                "gid": "1218073212004146",
+                "area": "Geometry",
+                "title": "Rotating an imported image (NK_18)",
+                "summary": "NK_18 covers image annotations and the rotation gate. This case reports what the build actually offers rather than asserting a fix that may not have landed: if a selected image exposes a rotate handle, dragging it must change the annotation's angle; if it does not, the case skips and says so. As of 2026-09-01 it skips -- this build offers no rotate handle on an imported image, which is NK_18 still open.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "16",
+                "id": "16-rotated-page",
+                "gid": "1218073151415804",
+                "area": "Guards",
+                "title": "Placing an image on a rotated page is refused, by design",
+                "summary": "With page 1 rotated through the page manager, an armed placement click puts nothing on the page and the refusal is explained by the rotated-edit dialog rather than failing silently.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "17",
+                "id": "17-hover-menu",
+                "gid": "1218072986261224",
+                "area": "Actions",
+                "title": "Hover menu on an image: lock, z-order and delete behave",
+                "summary": "Send to back lowers the image in the stack and bring to front raises it; lock marks the box and a locked image cannot be dragged; delete removes it. Any action the menu does not offer for an image is recorded as a skip rather than a failure.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "18",
+                "id": "18-locked-background",
+                "gid": "1218073195676110",
+                "area": "Actions",
+                "title": "A locked imported image acts as a background: later annotations land on top (NK_21)",
+                "summary": "NK_21, and currently the suite's one expected-red check. An image is placed and locked, then a highlight is drawn straight over it. The assertion is the stacking order -- the later annotation must carry a higher z-index than the locked image -- since that is what decides both what the user sees and what they can click. As of 2026-09-01 it fails exactly as NK_21 describes: an imported image is created at z-index 6 while shapes default to 1-2, so the later annotation is stacked underneath. Left as an assertion rather than a skip so it turns green on its own once the ordering is fixed.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "19",
+                "id": "19-multi-page",
+                "gid": "1218073151375007",
+                "area": "Placement",
+                "title": "Images can be placed on any page and stay on their page",
+                "summary": "Runs against a three-page fixture. One image on page 1 and one on page 3 stay on their own pages in the DOM, and each saves against its own page index rather than collapsing onto the first page.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "20",
+                "id": "20-undo-redo",
+                "gid": "1218073045079471",
+                "area": "History",
+                "title": "Undo and redo across the image operations",
+                "summary": "Undo removes a placed image and redo puts it back. A move is a separate history entry: undoing it restores the previous position without removing the image.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "21",
+                "id": "21-autosave-and-save",
+                "gid": "1218073045363187",
+                "area": "Persistence",
+                "title": "Autosave and explicit Save",
+                "summary": "Save posts the annotation state and the server accepts it. The payload carries the image with type image, its bitmap data, and a real rectangle in PDF units.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "22",
+                "id": "22-reload-fidelity",
+                "gid": "1218073195921198",
+                "area": "Persistence",
+                "title": "Reload fidelity",
+                "summary": "After a save and a hard reload the image comes back at the same size and the same place relative to its page, with the bitmap itself restored rather than an empty box, and without being duplicated.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "23",
+                "id": "23-download-fidelity",
+                "gid": "1218073045238509",
+                "area": "Output",
+                "title": "Downloaded PDF fidelity",
+                "summary": "The annotated PDF is downloaded and inspected with PyMuPDF: it really contains a raster image, drawn at the width the annotation asked for, still 2:1 for a 2:1 source, on the page it was placed on. Skips cleanly when no interpreter has fitz.",
+                "automated": true,
+                "story": "image-tool"
+            },
+            {
+                "number": "24",
+                "id": "24-keyboard-and-aria",
+                "gid": "1218073151706317",
+                "area": "Accessibility",
+                "title": "Keyboard access and ARIA on the import modal",
+                "summary": "The modal is a labelled dialog, the source picker is a real tablist whose tabs name the panels they control, the dropzone is focusable and opens the file picker on Enter, the close button has an accessible name, and Escape closes the modal from the keyboard.",
+                "automated": true,
+                "story": "image-tool"
+            }
+        ]
+    }
+}

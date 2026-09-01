@@ -10563,6 +10563,13 @@ def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
         # shape and distorts the drawing during Word conversion.
         raster_bytes = render_direct_draw_vector_image_bytes(ann)
         if raster_bytes is not None:
+            # NK_18: a drawing can be rotated in the editor, so the raster is
+            # turned to match before it is placed.
+            raster_bytes, rect = rotate_direct_draw_raster(
+                raster_bytes,
+                rect,
+                ann.get("rotation"),
+            )
             page.insert_image(
                 rect,
                 overlay=True,
@@ -10845,6 +10852,63 @@ def draw_direct_draw_vector_annotation(page: fitz.Page, ann: Dict[str, Any], rec
         shape.commit(overlay=True)
         drew_any = True
     return drew_any
+
+
+def rotate_direct_draw_raster(
+    image_bytes: bytes,
+    rect: "fitz.Rect",
+    rotation: float,
+) -> Tuple[bytes, "fitz.Rect"]:
+    """Turn an exported drawing to match the angle it was given in the editor.
+
+    NK_18. The editor keeps a rotated drawing's box axis-aligned and turns only
+    its content, so the turned bitmap no longer fits the box it came from -- its
+    corners now stick out. PIL is asked to expand the canvas, and the rect grows
+    by the same ratio about the same centre, which puts the drawing back exactly
+    where the editor showed it.
+
+    PIL rotates anti-clockwise for a positive angle; a positive editor rotation
+    is clockwise, the same convention build_rotation_morph() uses. Hence the
+    flipped sign.
+
+    Falls back to the untouched image and rect if anything goes wrong, so a
+    rotation can never cost the drawing itself.
+    """
+    if Image is None or not image_bytes:
+        return image_bytes, rect
+    angle = normalize_rotation_degrees(rotation)
+    if not angle:
+        return image_bytes, rect
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as source:
+            rgba = source.convert("RGBA")
+            original_width, original_height = rgba.size
+            if original_width <= 0 or original_height <= 0:
+                return image_bytes, rect
+            turned = rgba.rotate(
+                -angle,
+                resample=Image.BICUBIC,
+                expand=True,
+                fillcolor=(255, 255, 255, 0),
+            )
+            output = io.BytesIO()
+            turned.save(output, format="PNG")
+
+            width_ratio = turned.width / float(original_width)
+            height_ratio = turned.height / float(original_height)
+            half_width = (rect.width * width_ratio) / 2.0
+            half_height = (rect.height * height_ratio) / 2.0
+            centre_x = (rect.x0 + rect.x1) / 2.0
+            centre_y = (rect.y0 + rect.y1) / 2.0
+            expanded = fitz.Rect(
+                centre_x - half_width,
+                centre_y - half_height,
+                centre_x + half_width,
+                centre_y + half_height,
+            )
+            return output.getvalue(), expanded
+    except Exception:
+        return image_bytes, rect
 
 
 def load_annotation_image_bytes(ann: Dict[str, Any]) -> Optional[bytes]:

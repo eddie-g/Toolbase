@@ -1,6 +1,6 @@
 # Database
 
-Toolbase uses **MySQL/MariaDB** with the Eloquent ORM. The schema is managed entirely through timestamped migrations in `database/migrations/`, which have grown incrementally from January 2026 onwards. All changes are additive — new columns and new tables only, no destructive migrations in production.
+Netkit uses **MySQL/MariaDB** with the Eloquent ORM. The schema is managed entirely through timestamped migrations in `database/migrations/`, which have grown incrementally from January 2026 onwards. All changes are additive — new columns and new tables only, no destructive migrations in production.
 
 ---
 

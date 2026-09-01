@@ -820,7 +820,7 @@ def _write_tables_page(worksheet, tables, merge_cells, start_row=1):
 def convert_pdf(input_pdf, output_xlsx, mode="all", merge_cells=True, sheet_per_page=True):
     workbook = Workbook()
     workbook.remove(workbook.active)
-    workbook.properties.creator = "Toolbase"
+    workbook.properties.creator = "Netkit"
     workbook.properties.title = f"Excel export of {Path(input_pdf).name}"
 
     tables_found = 0

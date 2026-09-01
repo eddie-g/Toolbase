@@ -123,11 +123,16 @@ function normalizeDirectDrawVector(vector) {
             y: Math.max(0, Math.min(height, Number(point?.y) || 0)),
         }));
         if (!normalizedPoints.length) return null;
+        // NK_16: `smoothing` is the amount the stroke was drawn at. It is only
+        // written when known — a stroke saved before NK_16 has none, and keeps
+        // rendering from the `smoothCurve` flag it was drawn with.
+        const smoothing = Number(stroke?.smoothing);
         return {
             color: normalizeHexColor(stroke?.color, '#111827'),
             opacity: clamp01(stroke?.opacity ?? 1, 1),
             brushSize: Math.max(0.25, Number(stroke?.brushSize) || 1),
             smoothCurve: Boolean(stroke?.smoothCurve),
+            ...(Number.isFinite(smoothing) ? { smoothing: Math.max(0, Math.min(1, smoothing)) } : {}),
             points: normalizedPoints,
         };
     }).filter(Boolean);

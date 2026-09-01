@@ -203,6 +203,12 @@ const TESTS = [
         run: testSavePersistence,
     },
     {
+        id: '37-rotate-bounding-frame',
+        number: '37',
+        title: 'Rotated signature: image, bounding frame and handles stay together',
+        run: testRotateBoundingFrame,
+    },
+    {
         id: 'nk5-01-retired-copy',
         number: 'NK5-01',
         title: 'Retired copy is gone from the modal',
@@ -1046,6 +1052,76 @@ function boxRects(page) {
             height: Math.round(rect.height),
         };
     }));
+}
+
+function signatureVisualRects(page) {
+    return page.evaluate(() => Array.from(
+        document.querySelectorAll('.enpv-annotation-box[data-annotation-type="signature"]'),
+    ).map((box) => {
+        const image = box.querySelector('.enpv-signature-img');
+        const frame = box.querySelector(':scope > .enpv-signature-selection-frame');
+        const boxRect = box.getBoundingClientRect();
+        const imageRect = image?.getBoundingClientRect();
+        const frameRect = frame?.getBoundingClientRect();
+        const handles = Array.from(box.querySelectorAll(':scope > .enpv-resize-handle')).map((handle) => {
+            const rect = handle.getBoundingClientRect();
+            return {
+                edge: handle.dataset.edge,
+                x: rect.left + (rect.width / 2),
+                y: rect.top + (rect.height / 2),
+            };
+        });
+        return {
+            rotation: Number.parseFloat(box.dataset.rotation || '0') || 0,
+            boxWidth: boxRect.width,
+            boxHeight: boxRect.height,
+            imageWidth: imageRect?.width || 0,
+            imageHeight: imageRect?.height || 0,
+            imageTransform: image?.style.transform || '',
+            frameWidth: frameRect?.width || 0,
+            frameHeight: frameRect?.height || 0,
+            frameLeft: frameRect?.left || 0,
+            frameTop: frameRect?.top || 0,
+            frameRight: frameRect?.right || 0,
+            frameBottom: frameRect?.bottom || 0,
+            frameTransform: frame?.style.transform || '',
+            frameVisible: !!frame && window.getComputedStyle(frame).display !== 'none',
+            handles,
+        };
+    }));
+}
+
+async function dragSignatureRotateHandle(page, degrees) {
+    const geometry = await page.evaluate(() => {
+        const box = document.querySelector('.enpv-annotation-box[data-annotation-type="signature"]');
+        const handle = box?.querySelector(':scope > .enpv-shape-rotate-handle');
+        if (!box || !handle) return null;
+        const boxRect = box.getBoundingClientRect();
+        const handleRect = handle.getBoundingClientRect();
+        return {
+            cx: boxRect.left + (boxRect.width / 2),
+            cy: boxRect.top + (boxRect.height / 2),
+            hx: handleRect.left + (handleRect.width / 2),
+            hy: handleRect.top + (handleRect.height / 2),
+        };
+    });
+    if (!geometry) throw new Error('No rotate handle on the selected signature');
+
+    const radius = Math.hypot(geometry.hx - geometry.cx, geometry.hy - geometry.cy);
+    const startAngle = Math.atan2(geometry.hy - geometry.cy, geometry.hx - geometry.cx);
+    const sweep = (degrees * Math.PI) / 180;
+    await page.mouse.move(geometry.hx, geometry.hy);
+    await page.mouse.down();
+    for (let step = 1; step <= 10; step++) {
+        const angle = startAngle + ((sweep * step) / 10);
+        await page.mouse.move(
+            geometry.cx + (Math.cos(angle) * radius),
+            geometry.cy + (Math.sin(angle) * radius),
+        );
+        await page.waitForTimeout(35);
+    }
+    await page.mouse.up();
+    await page.waitForTimeout(600);
 }
 
 /**
@@ -2907,6 +2983,7 @@ async function testMoveResizeLock(page, ctx) {
 
     await selectSignatureBox(page);
     const preResize = (await boxRects(page))[0];
+    const preResizeVisual = (await signatureVisualRects(page))[0];
     const seHandle = page.locator('.enpv-annotation-box[data-annotation-type="signature"] .enpv-resize-handle.se').first();
     await seHandle.scrollIntoViewIfNeeded({ timeout: 8000 });
     await page.waitForTimeout(250);
@@ -2924,6 +3001,35 @@ async function testMoveResizeLock(page, ctx) {
     r.assert('se-handle-resizes', postResize.width > preResize.width + 20,
         'Dragging the south-east handle grows the signature',
         `${preResize.width}x${preResize.height} -> ${postResize.width}x${postResize.height}`);
+    const grownVisual = (await signatureVisualRects(page))[0];
+    r.assert('signature-image-grows-with-box', !!grownVisual
+        && grownVisual.imageWidth > preResizeVisual.imageWidth + 20
+        && Math.abs(grownVisual.imageWidth - grownVisual.boxWidth) <= 2
+        && Math.abs(grownVisual.imageHeight - grownVisual.boxHeight) <= 2,
+        'The rendered signature grows with its selection box',
+        grownVisual
+            ? `box=${grownVisual.boxWidth.toFixed(1)}x${grownVisual.boxHeight.toFixed(1)} image=${grownVisual.imageWidth.toFixed(1)}x${grownVisual.imageHeight.toFixed(1)}`
+            : 'signature image missing');
+
+    const shrinkHandle = page.locator('.enpv-annotation-box[data-annotation-type="signature"] .enpv-resize-handle.se').first();
+    const shrinkBox = await shrinkHandle.boundingBox();
+    const shrinkX = shrinkBox.x + (shrinkBox.width / 2);
+    const shrinkY = shrinkBox.y + (shrinkBox.height / 2);
+    await page.mouse.move(shrinkX, shrinkY);
+    await page.mouse.down();
+    await page.mouse.move(shrinkX - 50, shrinkY - 30, { steps: 12 });
+    await page.mouse.up();
+    await page.waitForTimeout(800);
+    const shrunkVisual = (await signatureVisualRects(page))[0];
+    r.assert('signature-image-shrinks-with-box', !!shrunkVisual
+        && shrunkVisual.boxWidth < grownVisual.boxWidth - 15
+        && shrunkVisual.imageWidth < grownVisual.imageWidth - 15
+        && Math.abs(shrunkVisual.imageWidth - shrunkVisual.boxWidth) <= 2
+        && Math.abs(shrunkVisual.imageHeight - shrunkVisual.boxHeight) <= 2,
+        'The rendered signature shrinks with its selection box',
+        shrunkVisual
+            ? `box=${shrunkVisual.boxWidth.toFixed(1)}x${shrunkVisual.boxHeight.toFixed(1)} image=${shrunkVisual.imageWidth.toFixed(1)}x${shrunkVisual.imageHeight.toFixed(1)}`
+            : 'signature image missing');
 
     const resizedSave = await captureAutosave(page, ctx.saveRecorder);
     const resized = resizedSave.signatures[0];
@@ -3346,6 +3452,63 @@ async function testSavePersistence(page, ctx) {
     await page.waitForTimeout(200);
 
     const artifact = await capture(page, '20-save-persistence', 'after-reload');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// ---------------------------------------------------------------------------
+// Test 21 — Rotated signature bounding frame
+// ---------------------------------------------------------------------------
+
+async function testRotateBoundingFrame(page, ctx) {
+    const r = ctx.recorder;
+    await placeDrawnSignature(page, { pageNumber: 1, fx: 0.5, fy: 0.45, large: true });
+    await selectSignatureBox(page);
+    await dragSignatureRotateHandle(page, 90);
+
+    const rotated = (await signatureVisualRects(page))[0];
+    r.assert('signature-rotates-to-angle', Math.abs(rotated.rotation - 90) <= 6,
+        'Dragging the rotation handle turns the signature about 90 degrees',
+        `rotation=${rotated.rotation}`);
+    r.assert('signature-image-rotates', /rotate\(/.test(rotated.imageTransform)
+        && Math.abs(rotated.imageWidth - rotated.boxHeight) <= 3
+        && Math.abs(rotated.imageHeight - rotated.boxWidth) <= 3,
+        'The rendered signature image rotates with swapped visual bounds',
+        `box=${rotated.boxWidth.toFixed(1)}x${rotated.boxHeight.toFixed(1)} image=${rotated.imageWidth.toFixed(1)}x${rotated.imageHeight.toFixed(1)}`);
+    r.assert('signature-frame-rotates', rotated.frameVisible
+        && /rotate\(/.test(rotated.frameTransform)
+        && Math.abs(rotated.frameWidth - rotated.boxHeight) <= 3
+        && Math.abs(rotated.frameHeight - rotated.boxWidth) <= 3,
+        'The blue bounding frame rotates with the signature image',
+        `frame=${rotated.frameWidth.toFixed(1)}x${rotated.frameHeight.toFixed(1)} ${rotated.frameTransform}`);
+    const handlesOnFrame = rotated.handles.length === 8 && rotated.handles.every((handle) => Math.min(
+        Math.abs(handle.x - rotated.frameLeft),
+        Math.abs(handle.x - rotated.frameRight),
+        Math.abs(handle.y - rotated.frameTop),
+        Math.abs(handle.y - rotated.frameBottom),
+    ) <= 3);
+    r.assert('signature-handles-rotate', handlesOnFrame,
+        'All eight resize handles follow the rotated frame perimeter',
+        `handles=${rotated.handles.length}`);
+
+    const saved = await captureAutosave(page, ctx.saveRecorder);
+    r.assert('signature-rotation-persists', saved.signatures.length === 1
+        && Math.abs(num(saved.signatures[0].rotation) - rotated.rotation) <= 0.5,
+        'The rotated signature angle is included in the save payload',
+        `saved=${saved.signatures[0]?.rotation}`);
+
+    await openEditor(page, ctx.docId);
+    await page.waitForTimeout(1000);
+    await selectSignatureBox(page);
+    const reloaded = (await signatureVisualRects(page))[0];
+    r.assert('signature-frame-survives-reload', Math.abs(reloaded.rotation - rotated.rotation) <= 0.5
+        && reloaded.frameVisible
+        && /rotate\(/.test(reloaded.frameTransform)
+        && Math.abs(reloaded.frameWidth - reloaded.boxHeight) <= 3
+        && Math.abs(reloaded.frameHeight - reloaded.boxWidth) <= 3,
+        'The rotated image and bounding frame survive a full reload',
+        `rotation=${reloaded.rotation} frame=${reloaded.frameWidth.toFixed(1)}x${reloaded.frameHeight.toFixed(1)}`);
+
+    const artifact = await capture(page, '37-rotate-bounding-frame', 'after-reload');
     return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
 }
 

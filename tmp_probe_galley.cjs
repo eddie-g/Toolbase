@@ -1,4 +1,5 @@
 const { chromium } = require('playwright');
+const { requireAdminCredentials } = require('./tools/admin-credentials.cjs');
 const path = require('path');
 const fs = require('fs');
 (async () => {
@@ -6,14 +7,15 @@ const fs = require('fs');
   const page = await browser.newPage({ viewport: { width: 1600, height: 2000 } });
   // Login
   await page.goto('http://localhost:8081/admin/login');
-  await page.fill('#data\\.email', 'eddie.gray.biz@gmail.com');
-  await page.fill('#data\\.password', 'codex-test-admin-2861');
+  const admin = requireAdminCredentials();
+  await page.fill('#data\\.email', admin.email);
+  await page.fill('#data\\.password', admin.password);
   await page.click('button[type=submit]');
   await page.waitForLoadState('networkidle');
   // Upload f1040s1.pdf
   await page.goto('http://localhost:8081/pdf-editor');
   const fileInput = await page.locator('input[type=file]').first();
-  await fileInput.setInputFiles('/home/wolf/Toolbase/tests/OverlayEditor/f1040s1.pdf');
+  await fileInput.setInputFiles('/home/wolf/Netkit/tests/OverlayEditor/f1040s1.pdf');
   await page.waitForTimeout(3000);
   // Find the doc id from URL
   await page.waitForURL(/documents\/\d+\/edit/);

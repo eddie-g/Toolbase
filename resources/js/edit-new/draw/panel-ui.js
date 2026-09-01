@@ -13,12 +13,10 @@ import {
     drawStrokeColor,
     drawBrushSize,
     drawOpacity,
+    drawSmoothing,
 } from '../store/draw-tool-state.js';
 import { setDrawToolStatus } from './session.js';
-import {
-    DIRECT_DRAW_TOOL_ERASER,
-    DIRECT_DRAW_TOOL_SMOOTH_CURVE,
-} from './tool-type.js';
+import { DIRECT_DRAW_TOOL_ERASER } from './tool-type.js';
 
 export function syncDrawToolPanelUi(refs) {
     if (!refs) return;
@@ -29,6 +27,8 @@ export function syncDrawToolPanelUi(refs) {
         drawToolColorInput,
         drawToolSizeInput,
         drawToolSizeValue,
+        drawToolSmoothingInput,
+        drawToolSmoothingValue,
         drawToolOpacityInput,
         drawToolOpacityValue,
         drawToolStatus,
@@ -50,6 +50,12 @@ export function syncDrawToolPanelUi(refs) {
     if (drawToolColorInput) drawToolColorInput.value = normalizeHexColor(drawStrokeColor, '#111827');
     if (drawToolSizeInput) drawToolSizeInput.value = String(drawBrushSize);
     if (drawToolSizeValue) drawToolSizeValue.textContent = `${Math.round(drawBrushSize)}px`;
+    // NK_16: smoothing is a stroke property, like size and opacity — the
+    // eraser has no stroke to smooth, so it greys out alongside opacity.
+    const smoothingPercent = Math.round(drawSmoothing * 100);
+    if (drawToolSmoothingInput) drawToolSmoothingInput.value = String(smoothingPercent);
+    if (drawToolSmoothingValue) drawToolSmoothingValue.textContent = `${smoothingPercent}%`;
+    if (drawToolSmoothingInput) drawToolSmoothingInput.disabled = drawToolType === DIRECT_DRAW_TOOL_ERASER;
     if (drawToolOpacityInput) drawToolOpacityInput.value = String(Math.round(drawOpacity * 100));
     if (drawToolOpacityValue) drawToolOpacityValue.textContent = `${Math.round(drawOpacity * 100)}%`;
     if (drawToolOpacityInput) drawToolOpacityInput.disabled = drawToolType === DIRECT_DRAW_TOOL_ERASER;
@@ -57,8 +63,6 @@ export function syncDrawToolPanelUi(refs) {
         drawToolStatus,
         drawToolType === DIRECT_DRAW_TOOL_ERASER
             ? 'Eraser is active. Drag over a drawing to remove parts of it.'
-            : drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                ? 'Smooth curve mode is active. Drag directly on the page to draw a fitted curve.'
-                : 'Pen mode is active. Drag directly on the page to draw.',
+            : 'Pen mode is active. Drag directly on the page to draw.',
     );
 }

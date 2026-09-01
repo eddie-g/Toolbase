@@ -63,6 +63,11 @@ import {
     viewportPointToPdfPoint,
 } from './page-geometry.js';
 import {
+    normalizeAnnotationRotation,
+    isUprightRotation,
+    contentRotationTransform,
+} from './annotation-rotation.js';
+import {
     signatureMode,
     signatureDirty,
     signatureDrawing,
@@ -949,21 +954,38 @@ export function installSignatureFeature(deps) {
         img.style.top = '0';
         img.style.transformOrigin = '0 0';
 
-        // NK_DEV_6: the stamp must stay inside the box while it is resized.
-        // On an unrotated page that means no inline sizing at all, so the
-        // stylesheet's 100%/100% applies and the image follows the box live;
-        // inline pixels were computed once and went stale mid-drag.
-        const applyStamp = () => applyStampFrameStyle(
-            img,
-            stampFrameStyle(viewport?.rotation, box.clientWidth || rect.width, box.clientHeight || rect.height),
-        );
-        applyStamp();
+        // NK_9: the signature's own angle rides on top of any page rotation.
+        // The box stays axis-aligned; only the image spins, about its centre.
+        const signatureRotation = normalizeAnnotationRotation(annotation.rotation);
+        box.dataset.rotation = String(signatureRotation);
+        box.classList.toggle('is-rotated', !isUprightRotation(signatureRotation));
 
-        // A rotated page needs explicit pixel dimensions because the axes swap,
-        // so those have to be recomputed whenever the box changes size. The box
-        // is mutated directly during a drag without re-rendering the layer.
-        if (stampFrameStyle(viewport?.rotation, 1, 1).followsBox === false
-            && typeof ResizeObserver !== 'undefined') {
+        // NK_DEV_6: the stamp has to keep matching its box while the box is
+        // resized. An unrotated page needs no inline sizing at all, so the
+        // stylesheet's 100%/100% applies and the image follows the box on its
+        // own. A rotated page does need explicit pixels, because the axes swap
+        // -- and those go stale the moment the box is dragged, since resizing
+        // mutates the box directly without re-rendering the layer. So they are
+        // recomputed from the box's live size rather than from the size it had
+        // when it was first rendered.
+        //
+        // applyStampFrameStyle() writes the page frame's own transform; the
+        // composed one below replaces it, adding the signature's angle on top.
+        const applyStamp = () => {
+            const boxWidth = box.clientWidth || rect.width;
+            const boxHeight = box.clientHeight || rect.height;
+            const frame = stampFrameStyle(viewport?.rotation, boxWidth, boxHeight);
+            applyStampFrameStyle(img, frame);
+            img.style.transform = contentRotationTransform(
+                frame.transform,
+                frame.followsBox ? boxWidth : Number.parseFloat(frame.width),
+                frame.followsBox ? boxHeight : Number.parseFloat(frame.height),
+                signatureRotation,
+            );
+            return frame.followsBox;
+        };
+
+        if (!applyStamp() && typeof ResizeObserver !== 'undefined') {
             const observer = new ResizeObserver(() => {
                 if (!box.isConnected) {
                     observer.disconnect();
@@ -973,7 +995,6 @@ export function installSignatureFeature(deps) {
             });
             observer.observe(box);
         }
-
         box.appendChild(img);
         const label = document.createElement('span');
         label.className = 'enpv-signature-selection-label';

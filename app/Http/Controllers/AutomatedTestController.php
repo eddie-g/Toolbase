@@ -23,6 +23,31 @@ class AutomatedTestController extends Controller
             'runner' => 'tests/AutomatedTests/Signature/run_signature_tests.cjs',
             'artifacts' => 'tests/AutomatedTests/Signature/artifacts',
         ],
+        'text-tool' => [
+            'catalogue' => 'automated-tests/text-tool.json',
+            'runner' => 'tests/AutomatedTests/Text/run_text_tests.cjs',
+            'artifacts' => 'tests/AutomatedTests/Text/artifacts',
+        ],
+        'shapes-tool' => [
+            'catalogue' => 'automated-tests/shapes-tool.json',
+            'runner' => 'tests/AutomatedTests/Shapes/run_shapes_tests.cjs',
+            'artifacts' => 'tests/AutomatedTests/Shapes/artifacts',
+        ],
+        'draw-tool' => [
+            'catalogue' => 'automated-tests/draw-tool.json',
+            'runner' => 'tests/AutomatedTests/Draw/run_draw_tests.cjs',
+            'artifacts' => 'tests/AutomatedTests/Draw/artifacts',
+        ],
+        'highlight-tool' => [
+            'catalogue' => 'automated-tests/highlight-tool.json',
+            'runner' => 'tests/AutomatedTests/Highlight/run_highlight_tests.cjs',
+            'artifacts' => 'tests/AutomatedTests/Highlight/artifacts',
+        ],
+        'image-tool' => [
+            'catalogue' => 'automated-tests/image-tool.json',
+            'runner' => 'tests/AutomatedTests/Image/run_image_tests.cjs',
+            'artifacts' => 'tests/AutomatedTests/Image/artifacts',
+        ],
     ];
 
     /** Playwright drives a real browser per test — allow generous headroom. */
@@ -90,10 +115,19 @@ class AutomatedTestController extends Controller
             ], 422);
         }
 
+        // Admin-gated controls are rendered server-side behind the `admin` guard,
+        // so a suite that covers them signs in through the real login form. When
+        // no QA admin is configured the runner skips those assertions instead of
+        // failing, so this stays optional.
+        $runnerEnv = array_filter([
+            'AUTOMATED_TESTS_ADMIN_EMAIL' => config('automated_tests.admin_email'),
+            'AUTOMATED_TESTS_ADMIN_PASSWORD' => config('automated_tests.admin_password'),
+        ], static fn ($value) => is_string($value) && $value !== '');
+
         $process = new Process(
             ['node', $runner, '--run', implode(',', $ids)],
             base_path(),
-            null,
+            $runnerEnv === [] ? null : $runnerEnv,
             null,
             self::RUN_TIMEOUT_SECONDS,
         );

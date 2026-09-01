@@ -29,6 +29,12 @@ import {
 import html2canvas from 'html2canvas';
 import { generateUuidV4 } from '../edit-new/util/uuid.js';
 import { sliderValueToFontPt, fontPtToSliderValue } from '../edit-new/text/font-slider.js';
+import { composeTextDecorationLine, decorationTokensFromValue } from '../edit-new/text/decoration.js';
+import {
+    normalizeAnnotationRotation,
+    isUprightRotation,
+    contentRotationTransform,
+} from './annotation-rotation.js';
 import { computeLineBoxGeometry, constrainLineEndpointTo45, normalizeRotationDegrees } from '../edit-new/util/geometry.js';
 import {
     correctionToKeepPaintedAxisInside,
@@ -42,15 +48,17 @@ import {
 } from '../edit-new/shapes/inspector-ui.js';
 import { normalizeShapeAnnotation, normalizeImageAnnotation, applyShapeStateToAnnotation } from '../edit-new/annotations/normalize.js';
 import { getImageAnnotationSource } from '../edit-new/annotations/image-source.js';
-import { paintDrawDot, paintDrawSegment } from '../edit-new/draw/primitives.js';
+import { paintDrawDot } from '../edit-new/draw/primitives.js';
 import {
+    DEFAULT_DRAW_SMOOTHING,
+    drawSmoothingPasses,
+    normalizeDrawSmoothing,
     paintSmoothDrawCurve,
     smoothDrawCurvePoints,
     smoothDrawCurveSvgPathD,
 } from '../edit-new/draw/smooth-curve.js';
 import {
     DIRECT_DRAW_TOOL_ERASER,
-    DIRECT_DRAW_TOOL_SMOOTH_CURVE,
     normalizeDirectDrawTool,
 } from '../edit-new/draw/tool-type.js';
 import {
@@ -335,6 +343,7 @@ const afbOpacity = document.getElementById('afb-opacity');
 const afbBold = document.getElementById('afb-bold');
 const afbItalic = document.getElementById('afb-italic');
 const afbUnderline = document.getElementById('afb-underline');
+const afbStrikeout = document.getElementById('afb-strikeout');
 const afbLinkUrl = document.getElementById('afb-link-url');
 const afbLinkApply = document.getElementById('afb-link-apply');
 const afbLinkRemove = document.getElementById('afb-link-remove');
@@ -349,7 +358,6 @@ const afbDelete = document.getElementById('afb-delete');
 const shapeToolPanel = document.getElementById('shape-tool-panel');
 const shapeToolClose = document.getElementById('shape-tool-close');
 const shapeTypeButtons = Array.from(document.querySelectorAll('[data-shape-tool]'));
-const shapeMoreToggle = document.getElementById('shape-more-toggle');
 const shapeStrokeColorInput = document.getElementById('shape-stroke-color');
 const shapeStrokeHexInput = document.getElementById('shape-stroke-hex');
 const shapeStrokeTransparentInput = document.getElementById('shape-stroke-transparent');
@@ -365,6 +373,8 @@ const shapeFillOpacityValue = document.getElementById('shape-fill-opacity-value'
 const drawToolPanel = document.getElementById('draw-tool-panel');
 const drawToolClose = document.getElementById('draw-tool-close');
 const drawToolButtons = Array.from(document.querySelectorAll('[data-draw-direct-tool]'));
+const drawToolSmoothingInput = document.getElementById('draw-tool-smoothing');
+const drawToolSmoothingValue = document.getElementById('draw-tool-smoothing-value');
 const drawToolSizeInput = document.getElementById('draw-tool-size');
 const drawToolSizeValue = document.getElementById('draw-tool-size-value');
 const drawToolOpacityInput = document.getElementById('draw-tool-opacity');
@@ -542,8 +552,62 @@ const MERGE_MAX_PAGES = Math.max(1, Number(root.dataset.mergeMaxPages) || 1000);
 const IS_GUIDED_MODE = root.dataset.guided === '1';
 const TEMPLATE_TYPE = String(root.dataset.templateType || '').trim();
 const TEMPLATE_SLUG = String(root.dataset.templateSlug || '').trim();
-const CSRF = root.dataset.csrf;
+let CSRF = root.dataset.csrf;
 const DOC_ID = root.dataset.docId;
+
+// The CSRF token above dies with the session (SESSION_LIFETIME minutes of
+// inactivity), after which every POST from a still-open tab is rejected
+// with 419 "CSRF token mismatch" and nothing short of a reload — losing
+// unsaved work — recovers (NK_22). Three defences: poll the token
+// endpoint so the session never idles out while the editor is open,
+// refresh on tab refocus (timers don't fire while a laptop sleeps), and
+// replay a request that still catches a 419 once with a fresh token.
+const CSRF_URL = root.dataset.csrfUrl || '/csrf-token';
+const CSRF_KEEP_ALIVE_MS = 10 * 60 * 1000;
+
+async function refreshCsrfToken() {
+    const resp = await fetch(CSRF_URL, {
+        headers: { Accept: 'application/json' },
+        credentials: 'same-origin',
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json().catch(() => ({}));
+    if (data && data.token) {
+        CSRF = data.token;
+        // Modules that re-read the meta tag per request (signature
+        // account library) pick the fresh token up from here.
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta) meta.content = CSRF;
+        root.dataset.csrf = CSRF;
+    }
+    return CSRF;
+}
+
+setInterval(() => { refreshCsrfToken().catch(() => {}); }, CSRF_KEEP_ALIVE_MS);
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshCsrfToken().catch(() => {});
+});
+
+// Header objects are built at call time from the CSRF variable, so after
+// a refresh new requests are already correct. This wrapper catches the
+// losing race — a request fired with the stale token just before the
+// refresh landed — by answering its 419 with one refresh-and-replay.
+{
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async function csrfRetryingFetch(input, init) {
+        const resp = await nativeFetch(input, init);
+        if (resp.status !== 419 || !init || !init.headers) return resp;
+        const headers = new Headers(init.headers);
+        if (!headers.has('X-CSRF-TOKEN')) return resp;
+        try {
+            await refreshCsrfToken();
+        } catch (_e) {
+            return resp;
+        }
+        headers.set('X-CSRF-TOKEN', CSRF);
+        return nativeFetch(input, { ...init, headers });
+    };
+}
 const IS_UPLOAD_TEST_REVIEW = root.dataset.uploadTestReview === '1';
 const UPLOAD_TEST_SAVE_URL = root.dataset.uploadTestSaveUrl || '';
 const INFO_URL = editNewRoot?.dataset?.infoUrl;
@@ -938,6 +1002,7 @@ let drawToolType = 'pen';
 let drawStrokeColor = '#111827';
 let drawOpacity = 1;
 let drawBrushSize = 10;
+let drawSmoothing = DEFAULT_DRAW_SMOOTHING;
 let drawStyleLiveEditHistoryCaptured = false;
 let activeDrawSession = null;
 let highlightModeActive = false;
@@ -1658,7 +1723,12 @@ function isDirectDrawEraserAnnotation(annotation) {
 }
 
 function canBurnAnnotation(annotation) {
-    return isShapeAnnotation(annotation) || isDirectDrawAnnotation(annotation);
+    return isShapeAnnotation(annotation)
+        || isDirectDrawAnnotation(annotation)
+        // Text added with the Text tool burns too. Source text stays excluded on
+        // purpose: burning it would erase the page's own words only to stamp the
+        // very same words straight back over the hole.
+        || isUserCreatedTextAnnotation(annotation);
 }
 
 function pdfjsAnnotationLayerKey(annotation) {
@@ -3741,6 +3811,18 @@ document.addEventListener('keydown', (event) => {
     if (event.key === 'Escape' && passwordModal?.hidden === false) closePasswordModal();
 });
 
+/**
+ * A drawing box, identified from the DOM alone.
+ *
+ * createImageBoxElement() stamps data-direct-draw on every direct-draw
+ * annotation, so this works during a gesture when the persisted annotation is
+ * not to hand.
+ */
+function isDirectDrawBox(box) {
+    return box?.dataset?.directDraw === '1'
+        || Boolean(box?.classList?.contains('enpv-direct-draw-box'));
+}
+
 function isImageBox(box, existingAnnotation = null) {
     return String(box?.dataset?.annotationType || '').toLowerCase() === 'image'
         || isImageAnnotation(existingAnnotation);
@@ -4272,6 +4354,7 @@ function normalizedRichTextRunStyle(node, renderScale) {
         fontStyle,
         color: cssColorToHex(cs.color || element.style?.color || '', '#000000'),
         underline: decoration.includes('underline') || isUnderlineElement(element),
+        strikeout: decoration.includes('line-through') || isStrikeoutElement(element),
         linkUrl: linkUrl || undefined,
     };
 }
@@ -4286,6 +4369,7 @@ function richTextRunStyleKey(style) {
         style?.fontStyle || '',
         style?.color || '',
         style?.underline ? '1' : '0',
+        style?.strikeout ? '1' : '0',
         style?.linkUrl || '',
     ].join('|');
 }
@@ -4392,7 +4476,8 @@ function canonicalRichTextHtmlFromRuns(runs) {
         if (run.fontWeight) span.style.fontWeight = String(run.fontWeight);
         if (run.fontStyle) span.style.fontStyle = String(run.fontStyle);
         if (run.color) span.style.color = String(run.color);
-        if (run.underline) span.style.textDecorationLine = 'underline';
+        const runDecorationLine = composeTextDecorationLine(run.underline, run.strikeout);
+        if (runDecorationLine !== 'none') span.style.textDecorationLine = runDecorationLine;
         if (linkUrl) {
             span.href = linkUrl;
             span.target = '_blank';
@@ -4477,7 +4562,8 @@ function renderRichTextRunsIntoElement(root, runs, renderScale, expectedText = '
             span.dataset.sourcePdfFontName = documentFont.pdfFontName;
         }
         if (run.color) span.style.color = cssColorToHex(run.color, '#000000');
-        if (run.underline) span.style.textDecorationLine = 'underline';
+        const runDecorationLine = composeTextDecorationLine(run.underline, run.strikeout);
+        if (runDecorationLine !== 'none') span.style.textDecorationLine = runDecorationLine;
         if (linkUrl) {
             span.href = linkUrl;
             span.target = '_blank';
@@ -5574,6 +5660,12 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
             pdfHeight: pdfRect.h,
             locked: box.dataset.locked != null ? box.dataset.locked === '1' : Boolean(existingAnnotation.locked),
             zIndex: Number.parseInt(box.style.zIndex || box.dataset.zIndex || existingAnnotation.zIndex || '6', 10) || 6,
+            // NK_9
+            rotation: normalizeAnnotationRotation(
+                box.dataset.rotation != null
+                    ? Number.parseFloat(box.dataset.rotation)
+                    : existingAnnotation.rotation,
+            ),
         });
     }
     let displayMarkupTextOverride = null;
@@ -5746,6 +5838,9 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     const underline = box.dataset.underline != null
         ? box.dataset.underline === '1'
         : boolish(existingAnnotation?.underline);
+    const strikeout = box.dataset.strikeout != null
+        ? box.dataset.strikeout === '1'
+        : boolish(existingAnnotation?.strikeout);
     const textAlign = normalizeTextAlign(
         box.dataset.textAlign
         || box.style.getPropertyValue('--enpv-text-align')
@@ -5863,6 +5958,14 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         color: textColor,
         backgroundColor,
         underline,
+        strikeout,
+        // NK_9. Defaults to 0, so annotations saved before this keep rendering
+        // exactly as they did.
+        rotation: normalizeAnnotationRotation(
+            box.dataset.rotation != null
+                ? Number.parseFloat(box.dataset.rotation)
+                : existingAnnotation?.rotation,
+        ),
         textAlign,
         verticalAlign,
         userSizedTextBox: box.dataset.userSizedTextBox === '1' || boolish(existingAnnotation?.userSizedTextBox),
@@ -6970,8 +7073,23 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     const documentFontStyle = documentFont?.source === 'pdfjs-runtime'
         ? pdfjsRuntimeRenderFontStyle(documentFont)
         : documentFont?.style;
-    box.style.setProperty('--enpv-font-weight', String(documentFontWeight || annotation?.fontWeight || sourceStyle?.fontWeight || 'normal'));
-    box.style.setProperty('--enpv-font-style', String(documentFontStyle || annotation?.fontStyle || sourceStyle?.fontStyle || 'normal'));
+    // NK_8: an embedded or runtime document font carries its own weight and
+    // style. Those describe the face the text came from, not what the user
+    // asked for, so they must not win over an explicit choice — otherwise
+    // clicking B set --enpv-font-weight, and the next re-render of the
+    // annotation layer quietly put the document's weight back, reverting the
+    // bold on the page. Same rule as preferSourceColor below: only untouched
+    // source text defers to the document font.
+    const preferDocumentTypography = !boolish(annotation?.styleDirty)
+        && !boolish(annotation?.userForcedRichText);
+    box.style.setProperty('--enpv-font-weight', String(
+        (preferDocumentTypography ? documentFontWeight : null)
+        || annotation?.fontWeight || sourceStyle?.fontWeight || 'normal',
+    ));
+    box.style.setProperty('--enpv-font-style', String(
+        (preferDocumentTypography ? documentFontStyle : null)
+        || annotation?.fontStyle || sourceStyle?.fontStyle || 'normal',
+    ));
     const preferSourceColor = !boolish(annotation?.styleDirty)
         && !boolish(annotation?.userForcedRichText)
         && String(annotation?.pdfjsEditorMode || '') !== 'rich';
@@ -7006,14 +7124,19 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
     box.style.opacity = String(opacity);
     box.style.setProperty('--enpv-opacity', String(opacity));
     const underline = boolish(annotation?.underline);
+    // NK_9: keep the box's angle in sync with the annotation, so a re-render
+    // redraws it rotated rather than snapping it upright.
+    box.dataset.rotation = String(normalizeAnnotationRotation(annotation?.rotation));
+    const strikeout = boolish(annotation?.strikeout);
+    const decorationLine = composeTextDecorationLine(underline, strikeout);
     box.dataset.underline = underline ? '1' : '0';
-    box.style.setProperty('--enpv-text-decoration-line', underline ? 'underline' : 'none');
-    box.style.setProperty('--enpv-text-decoration', underline ? 'underline' : 'none');
+    box.dataset.strikeout = strikeout ? '1' : '0';
+    box.style.setProperty('--enpv-text-decoration-line', decorationLine);
+    box.style.setProperty('--enpv-text-decoration', decorationLine);
     const textAlign = normalizeTextAlign(annotation?.textAlign);
     box.dataset.textAlign = textAlign;
     box.style.setProperty('--enpv-text-align', textAlign);
-    const verticalAlign = normalizeVerticalAlign(annotation?.verticalAlign);
-    box.dataset.verticalAlign = verticalAlign;
+    setAnnotationBoxVerticalAlign(box, annotation?.verticalAlign);
 }
 
 function captureSourceSpanRunsForBox(box, group, layerEl) {
@@ -11307,12 +11430,340 @@ function shapeBoxCanRotate(box) {
         && normalizeShapeType(box.dataset.shapeType) !== 'line';
 }
 
-const CUTTABLE_SHAPE_TYPES = new Set(['square', 'circle', 'triangle', 'star', 'polygon']);
+/**
+ * NK_9: text boxes and signatures rotate too.
+ *
+ * Only annotations the user authored — a promoted source run keeps the geometry
+ * it was extracted with, and rotating it would fight the source mask.
+ */
+function annotationBoxCanRotate(box) {
+    if (!box) return false;
+    const type = String(box.dataset.annotationType || '').toLowerCase();
+    if (type === 'shape') return shapeBoxCanRotate(box);
+    if (type === 'signature') return true;
+    // NK_18: a drawing is stored as an image annotation, so it used to fall
+    // into the blanket `if (type) return false` below and never got a handle.
+    // It is user-authored content like a signature and rotates the same way.
+    // A placed raster image stays excluded until someone decides it should
+    // not: unlike a drawing it has no vector to refit, so rotating it is a
+    // different question.
+    if (type === 'image') return isDirectDrawBox(box);
+    if (type) return false;
+    return isUserCreatedTextBox(box);
+}
 
+/** The angle a box is currently drawn at. */
+function boxRotationDegrees(box) {
+    return normalizeAnnotationRotation(Number.parseFloat(box?.dataset?.rotation || '0') || 0);
+}
+
+function ensureTextSelectionFrame(box) {
+    if (!box || String(box.dataset.annotationType || '') || !annotationBoxCanRotate(box)) return null;
+    let frame = box.querySelector(':scope > .enpv-text-selection-frame');
+    if (frame) return frame;
+    frame = document.createElement('div');
+    frame.className = 'enpv-text-selection-frame';
+    frame.setAttribute('aria-hidden', 'true');
+    const firstHandle = box.querySelector(':scope > .enpv-resize-handle, :scope > .enpv-shape-rotate-handle');
+    box.insertBefore(frame, firstHandle || null);
+    box.classList.add('has-text-selection-frame');
+    return frame;
+}
+
+function updateTextSelectionChromeForBox(box, rotation) {
+    if (!box || String(box.dataset.annotationType || '') || !annotationBoxCanRotate(box)) return;
+    const frame = ensureTextSelectionFrame(box);
+    if (!frame) return;
+    const angle = normalizeAnnotationRotation(rotation);
+    frame.style.transform = isUprightRotation(angle) ? 'none' : `rotate(${angle}deg)`;
+    frame.dataset.rotation = String(Math.round(angle * 10) / 10);
+
+    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const anchors = {
+        t: { x: 0.5, y: 0 },
+        b: { x: 0.5, y: 1 },
+        l: { x: 0, y: 0.5 },
+        r: { x: 1, y: 0.5 },
+    };
+    Object.entries(anchors).forEach(([edge, anchor]) => {
+        const handle = box.querySelector(`:scope > .enpv-resize-handle[data-edge="${edge}"]`);
+        if (!handle) return;
+        const point = rotateShapeLocalPoint(anchor.x * width, anchor.y * height, width, height, angle);
+        handle.style.left = `${point.x}px`;
+        handle.style.top = `${point.y}px`;
+    });
+}
+
+/**
+ * The rotated selection frame. Named for signatures, which had it first, but
+ * the geometry is generic — NK_18 reuses it for drawings rather than cloning
+ * it, so both get the same frame and the same repositioned handles.
+ */
+function ensureSignatureSelectionFrame(box) {
+    const frameType = String(box?.dataset?.annotationType || '').toLowerCase();
+    if (!box || !(frameType === 'signature' || (frameType === 'image' && isDirectDrawBox(box)))) return null;
+    let frame = box.querySelector(':scope > .enpv-signature-selection-frame');
+    if (frame) return frame;
+    frame = document.createElement('div');
+    frame.className = 'enpv-signature-selection-frame';
+    frame.setAttribute('aria-hidden', 'true');
+    const firstHandle = box.querySelector(':scope > .enpv-resize-handle, :scope > .enpv-shape-rotate-handle');
+    box.insertBefore(frame, firstHandle || null);
+    box.classList.add('has-signature-selection-frame');
+    return frame;
+}
+
+function updateSignatureSelectionChromeForBox(box, rotation) {
+    const frame = ensureSignatureSelectionFrame(box);
+    if (!frame) return;
+    const angle = normalizeAnnotationRotation(rotation);
+    frame.style.transform = isUprightRotation(angle) ? 'none' : `rotate(${angle}deg)`;
+    frame.dataset.rotation = String(Math.round(angle * 10) / 10);
+
+    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const anchors = {
+        nw: { x: 0, y: 0 },
+        ne: { x: 1, y: 0 },
+        sw: { x: 0, y: 1 },
+        se: { x: 1, y: 1 },
+        t: { x: 0.5, y: 0 },
+        b: { x: 0.5, y: 1 },
+        l: { x: 0, y: 0.5 },
+        r: { x: 1, y: 0.5 },
+    };
+    Object.entries(anchors).forEach(([edge, anchor]) => {
+        const handle = box.querySelector(`:scope > .enpv-resize-handle[data-edge="${edge}"]`);
+        if (!handle) return;
+        const point = rotateShapeLocalPoint(anchor.x * width, anchor.y * height, width, height, angle);
+        handle.style.left = `${point.x}px`;
+        handle.style.top = `${point.y}px`;
+    });
+}
+
+/**
+ * Draw a text box or signature at its angle.
+ *
+ * The box itself stays axis-aligned — see annotation-rotation.js for why — so
+ * this only transforms the content, composing with any page rotation already
+ * applied to the same element.
+ */
+function applyAnnotationRotationToBox(box, rotation = null) {
+    if (!box) return;
+    const type = String(box.dataset.annotationType || '').toLowerCase();
+    if (type === 'shape' || !annotationBoxCanRotate(box)) return;
+
+    const angle = rotation == null ? boxRotationDegrees(box) : normalizeAnnotationRotation(rotation);
+    const wasRotated = box.classList.contains('is-rotated');
+    box.classList.toggle('is-rotated', !isUprightRotation(angle));
+    // An upright annotation that was never rotated is left completely alone —
+    // writing 'none' would stomp on a transform some other feature owns.
+    if (isUprightRotation(angle) && !wasRotated) return;
+
+    const width = Math.max(1, Number.parseFloat(box.style.width || '') || box.offsetWidth || 1);
+    const height = Math.max(1, Number.parseFloat(box.style.height || '') || box.offsetHeight || 1);
+    const pageFrame = viewportRotatedContentFrame(
+        { rotation: Number.parseFloat(box.dataset.pageRotation || '0') || 0 },
+        width,
+        height,
+    );
+    const frameWidth = pageFrame.rotation === 0 ? width : pageFrame.width;
+    const frameHeight = pageFrame.rotation === 0 ? height : pageFrame.height;
+    const transform = contentRotationTransform(pageFrame.transform, frameWidth, frameHeight, angle);
+
+    // On a rotated page the content is wrapped in a frame that already carries
+    // the page transform, and `transform` composes both — so the frame is the
+    // element to write to when one exists.
+    const targets = type === 'signature'
+        ? box.querySelectorAll(':scope > .enpv-signature-img')
+        : (type === 'image'
+            ? box.querySelectorAll(':scope > .enpv-page-rotated-content-frame, :scope > .enpv-image-img')
+            : box.querySelectorAll(':scope > .enpv-text-content'));
+    targets.forEach((element) => {
+        element.style.transformOrigin = '0 0';
+        element.style.transform = transform;
+    });
+    if (!type) applyRotatedBackgroundToBox(box, angle, transform);
+    if (type === 'signature' || type === 'image') updateSignatureSelectionChromeForBox(box, angle);
+    else if (!type) updateTextSelectionChromeForBox(box, angle);
+}
+
+/**
+ * Turn a text box's background colour with its text (NK_12).
+ *
+ * Rotation moves the CONTENT and leaves the box axis-aligned, so that drag,
+ * resize and hit-testing keep working on unrotated geometry. The background,
+ * though, is painted on the box itself — so a rotated box kept a square fill
+ * under tilted glyphs, and the exported PDF, which rotates the fill, no longer
+ * matched what the user was shown.
+ *
+ * While the box is rotated the fill moves to a layer that carries the same
+ * transform as the content, and the box's own background is suppressed. An
+ * upright box is left entirely on the original CSS path.
+ */
+function applyRotatedBackgroundToBox(box, rotation, transform) {
+    const upright = isUprightRotation(rotation);
+    let layer = box.querySelector(':scope > .enpv-annotation-bg');
+
+    if (upright) {
+        if (layer) layer.remove();
+        box.classList.remove('has-rotated-bg');
+        return;
+    }
+
+    if (!layer) {
+        layer = document.createElement('div');
+        layer.className = 'enpv-annotation-bg';
+        layer.setAttribute('aria-hidden', 'true');
+        // First child, so the text and every handle paint over it.
+        box.insertBefore(layer, box.firstChild);
+    }
+    layer.style.transformOrigin = '0 0';
+    layer.style.transform = transform;
+    box.classList.add('has-rotated-bg');
+}
+
+// NK_14: heart joins the cuttable set. Line deliberately does NOT — cut is
+// gated on shapeBoxCanRotate(), which excludes lines, and "cut" for a
+// one-dimensional segment would mean splitting it in two, which is a different
+// operation from the area split this implements. Left on the ticket for a spec.
+const CUTTABLE_SHAPE_TYPES = new Set(['square', 'circle', 'triangle', 'star', 'polygon', 'heart', 'line']);
+
+/**
+ * NK_20: cut used to borrow its eligibility from shapeBoxCanRotate(), which
+ * excludes lines — so a line could never be cut no matter what the set said.
+ * The two questions are unrelated: a line does not rotate because its geometry
+ * is two endpoints rather than a box, but it splits perfectly well.
+ */
 function canCutShapeBox(box) {
-    if (!shapeBoxCanRotate(box)) return false;
+    if (box?.dataset?.annotationType !== 'shape') return false;
     if (isAnnBoxLocked(box)) return false;
     return CUTTABLE_SHAPE_TYPES.has(normalizeShapeType(box.dataset.shapeType));
+}
+
+/** The shortest segment a cut may leave behind, in PDF points (NK_20). */
+const MIN_LINE_CUT_SEGMENT_PTS = 3;
+
+/**
+ * A line annotation's endpoints in absolute PDF space.
+ *
+ * The annotation stores them as units inside its own box, with Y measured from
+ * the top, so they have to be projected back out before any geometry is done.
+ */
+function lineEndpointsPdfFromAnnotation(annotation) {
+    const x = Number(annotation?.pdfX);
+    const y = Number(annotation?.pdfY);
+    const width = Number(annotation?.pdfWidth);
+    const height = Number(annotation?.pdfHeight);
+    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return null;
+    const startX = clampLineUnit(annotation?.lineStartX, 0);
+    const startY = clampLineUnit(annotation?.lineStartY, 0);
+    const endX = clampLineUnit(annotation?.lineEndX, 1);
+    const endY = clampLineUnit(annotation?.lineEndY, 1);
+    return {
+        start: { x: x + (width * startX), y: y + (height * (1 - startY)) },
+        end: { x: x + (width * endX), y: y + (height * (1 - endY)) },
+    };
+}
+
+/**
+ * Build a line annotation covering two absolute PDF points, inheriting the
+ * template's stroke. `identity` lets the caller hand the result the original
+ * annotation's id, which is how the first half of a cut keeps its place in the
+ * layers panel and its z-order.
+ */
+function createLineAnnotationFromPdfPoints(templateAnn, pageIndex, start, end, identity = null) {
+    if (!start || !end) return null;
+    if (![start.x, start.y, end.x, end.y].every(Number.isFinite)) return null;
+    const geometry = computeLineBoxGeometry(start.x, start.y, end.x, end.y);
+    const uid = identity?._uid || `shape_${generateUuidV4()}`;
+    return normalizeShapeAnnotation({
+        id: identity?.id || buildPdfjsAnnotationId(pageIndex, uid),
+        _uid: uid,
+        pageIndex,
+        type: 'shape',
+        shapeType: 'line',
+        pdfX: geometry.left,
+        pdfY: geometry.bottom,
+        pdfWidth: geometry.width,
+        pdfHeight: geometry.height,
+        lineStartX: geometry.lineStartX,
+        lineStartY: geometry.lineStartY,
+        lineEndX: geometry.lineEndX,
+        lineEndY: geometry.lineEndY,
+        rotation: 0,
+        userCreated: true,
+        strokeColor: templateAnn.strokeColor,
+        strokeOpacity: templateAnn.strokeOpacity,
+        strokeWidth: templateAnn.strokeWidth,
+        strokeTransparent: templateAnn.strokeTransparent,
+        fillColor: templateAnn.fillColor,
+        fillOpacity: templateAnn.fillOpacity,
+        fillTransparent: templateAnn.fillTransparent,
+        lineCap: templateAnn.lineCap,
+        locked: false,
+        zIndex: templateAnn.zIndex,
+        text: '',
+    });
+}
+
+/**
+ * Split a line where the cut line crosses it (NK_20).
+ *
+ * The cut line is treated as infinite, exactly as the polygon path does — what
+ * decides whether the cut lands is that the crossing has to fall strictly
+ * inside the target segment. A parallel cut, or one whose crossing falls beyond
+ * an endpoint, is a miss.
+ *
+ * Unlike the polygon path, the original annotation is NOT deleted: the half
+ * running from the original start point keeps its id, so undo has one creation
+ * to unwind and the layers panel keeps a familiar row.
+ */
+function cutLineAnnotationWithLine(box, source, pageIndex, cutStart, cutEnd) {
+    const endpoints = lineEndpointsPdfFromAnnotation(source);
+    if (!endpoints) return { ok: false, message: 'Line geometry is unavailable.' };
+
+    const { start, end } = endpoints;
+    const lineDx = end.x - start.x;
+    const lineDy = end.y - start.y;
+    const cutDx = cutEnd.x - cutStart.x;
+    const cutDy = cutEnd.y - cutStart.y;
+
+    const denominator = (lineDx * cutDy) - (lineDy * cutDx);
+    if (Math.abs(denominator) < 1e-9) {
+        return { ok: false, message: 'The cut line must cross the line.' };
+    }
+    const t = (((cutStart.x - start.x) * cutDy) - ((cutStart.y - start.y) * cutDx)) / denominator;
+    if (!Number.isFinite(t) || t <= 0 || t >= 1) {
+        return { ok: false, message: 'The cut line must cross the line.' };
+    }
+
+    const split = { x: start.x + (lineDx * t), y: start.y + (lineDy * t) };
+    const firstLength = Math.hypot(split.x - start.x, split.y - start.y);
+    const secondLength = Math.hypot(end.x - split.x, end.y - split.y);
+    if (firstLength < MIN_LINE_CUT_SEGMENT_PTS || secondLength < MIN_LINE_CUT_SEGMENT_PTS) {
+        return { ok: false, message: 'Cut further from the end of the line.' };
+    }
+
+    const firstHalf = createLineAnnotationFromPdfPoints(source, pageIndex, start, split, source);
+    const secondHalf = createLineAnnotationFromPdfPoints(source, pageIndex, split, end);
+    if (!firstHalf || !secondHalf) return { ok: false, message: 'Unable to cut this line.' };
+
+    pushHistorySnapshot('cut shape');
+    upsertPersistedAnnotation(firstHalf);
+    upsertPersistedAnnotation(secondHalf);
+    selectedAnnBoxUid = firstHalf._uid || firstHalf.id || null;
+    selectedAnnBoxIsEditing = false;
+    if (annMenu) annMenu.hidden = true;
+    hideAnnotationFormatBar();
+    renderAnnotationBoxLayer(pageIndex);
+    const cutBox = pdfViewer.getPageView(pageIndex)?.div
+        ?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(firstHalf.id)}"]`) || null;
+    if (cutBox) selectAnnBox(cutBox);
+    markManualSaveNeeded();
+    void box;
+    return { ok: true, annotations: [firstHalf, secondHalf] };
 }
 
 function isShapeCutModeArmedForBox(box) {
@@ -11458,8 +11909,6 @@ function cutShapeBoxWithLine(box, startPoint, endPoint) {
     const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     const source = normalizeShapeAnnotation(buildAnnotationFromBox(box, existing) || existing || {});
-    const polygon = getShapePolygonPointsPdf(source);
-    if (polygon.length < 3) return { ok: false, message: 'Shape outline is unavailable.' };
     const startPt = { x: Number(startPoint?.pdfX), y: Number(startPoint?.pdfY) };
     const endPt = { x: Number(endPoint?.pdfX), y: Number(endPoint?.pdfY) };
     const lineDx = endPt.x - startPt.x;
@@ -11467,6 +11916,12 @@ function cutShapeBoxWithLine(box, startPoint, endPoint) {
     if (![startPt.x, startPt.y, endPt.x, endPt.y].every(Number.isFinite) || Math.hypot(lineDx, lineDy) < 4) {
         return { ok: false, message: 'Drag a longer cut line through the shape.' };
     }
+    // NK_20: a line has no area to clip, so it splits at the crossing instead.
+    if (normalizeShapeType(source.shapeType) === 'line') {
+        return cutLineAnnotationWithLine(box, source, pageIndex, startPt, endPt);
+    }
+    const polygon = getShapePolygonPointsPdf(source);
+    if (polygon.length < 3) return { ok: false, message: 'Shape outline is unavailable.' };
     const firstHalf = clipPolygonAgainstInfiniteLine(polygon, startPt, endPt, true);
     const secondHalf = clipPolygonAgainstInfiniteLine(polygon, startPt, endPt, false);
     const cutA = createPolygonAnnotationFromPdfPoints(source, pageIndex, firstHalf);
@@ -11562,15 +12017,15 @@ function updateShapeSelectionChromeForBox(box) {
 }
 
 function ensureShapeRotateHandle(box) {
-    if (!box || box.dataset.annotationType !== 'shape') return null;
+    if (!box || !annotationBoxCanRotate(box)) return null;
     let handle = box.querySelector(':scope > .enpv-shape-rotate-handle');
     if (handle) return handle;
     handle = document.createElement('button');
     handle.type = 'button';
     handle.className = 'enpv-shape-rotate-handle';
-    handle.dataset.action = 'rotate-shape';
-    handle.title = 'Rotate shape';
-    handle.setAttribute('aria-label', 'Rotate shape');
+    handle.dataset.action = 'rotate-annotation';
+    handle.title = 'Rotate';
+    handle.setAttribute('aria-label', 'Rotate');
     handle.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v6h-6"></path></svg>';
     handle.addEventListener('pointerdown', onShapeRotateHandlePointerDown);
     box.appendChild(handle);
@@ -11578,8 +12033,8 @@ function ensureShapeRotateHandle(box) {
 }
 
 function updateShapeRotateHandleForBox(box) {
-    if (!box || box.dataset.annotationType !== 'shape') return;
-    const canRotate = shapeBoxCanRotate(box);
+    if (!box) return;
+    const canRotate = annotationBoxCanRotate(box) && !isAnnBoxLocked(box);
     const handle = canRotate
         ? ensureShapeRotateHandle(box)
         : box.querySelector(':scope > .enpv-shape-rotate-handle');
@@ -11870,6 +12325,10 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
         applyMovedOverlayRunMaskSegments(mask, box, maskRect, pageDiv);
         scheduleMovedOverlayRunMaskRefresh(mask, box, maskRect, pageDiv);
     }
+    // NK_9: last, so nothing later in the build resets the transform.
+    applyAnnotationRotationToBox(box, annotation.rotation);
+    // NK_11: the text element only exists by now.
+    applyVerticalAlignPresentationToBox(box);
     return { box, rect, mask, maskRect };
 }
 
@@ -13557,11 +14016,18 @@ function addEditableBoxChrome(box) {
     box.addEventListener('pointerdown', onAnnBoxPointerDown);
     box.addEventListener('dblclick', onAnnBoxDblClick);
     const shapeType = box.dataset.annotationType === 'shape' ? normalizeShapeType(box.dataset.shapeType) : '';
+    // A raster image keeps corners only, where the resize is aspect-locked, so
+    // it can never be stretched out of proportion. A drawing is stored as
+    // vectors and refits cleanly to any box, so it gets the full eight the
+    // Shapes tool has: corners still scale proportionally, and the edges are
+    // there to stretch one axis deliberately.
     const edges = shapeType === 'line'
         ? ['line-start', 'line-end']
         : (box.dataset.annotationType === 'shape'
             ? ['nw', 'ne', 'sw', 'se', 't', 'b', 'l', 'r']
-            : (isImageBox(box) ? ['nw', 'ne', 'sw', 'se'] : ['t', 'b', 'l', 'r']));
+            : (isDirectDrawBox(box)
+                ? ['nw', 'ne', 'sw', 'se', 't', 'b', 'l', 'r']
+                : (isImageBox(box) ? ['nw', 'ne', 'sw', 'se'] : ['t', 'b', 'l', 'r'])));
     for (const edge of edges) {
         const handle = document.createElement('div');
         handle.className = `enpv-resize-handle ${edge}`;
@@ -15733,9 +16199,7 @@ function syncDrawToolPanelUi() {
         floatingDrawButton.title = drawModeActive
             ? (drawToolType === DIRECT_DRAW_TOOL_ERASER
                 ? 'Eraser active — drag on the PDF to cover content'
-                : drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                    ? 'Smooth curve active — drag on the PDF to draw a fitted curve'
-                    : 'Draw active — drag on the PDF to draw')
+                : 'Draw active — drag on the PDF to draw')
             : 'Draw — sketch directly on the PDF';
     }
     drawToolButtons.forEach((button) => {
@@ -15749,6 +16213,14 @@ function syncDrawToolPanelUi() {
     if (drawToolColorInput) drawToolColorInput.value = cssColorToHex(drawStrokeColor, '#111827');
     if (drawToolSizeInput) drawToolSizeInput.value = String(Math.round(drawBrushSize));
     if (drawToolSizeValue) drawToolSizeValue.textContent = `${Math.round(drawBrushSize)}px`;
+    // NK_16: smoothing is a stroke property, like size and opacity — the
+    // eraser has no stroke to smooth, so it greys out alongside opacity.
+    const smoothingPercent = Math.round(drawSmoothing * 100);
+    if (drawToolSmoothingInput) {
+        drawToolSmoothingInput.value = String(smoothingPercent);
+        drawToolSmoothingInput.disabled = drawToolType === DIRECT_DRAW_TOOL_ERASER;
+    }
+    if (drawToolSmoothingValue) drawToolSmoothingValue.textContent = `${smoothingPercent}%`;
     if (drawToolOpacityInput) {
         drawToolOpacityInput.value = String(Math.round(activeDirectDrawOpacity() * 100));
         drawToolOpacityInput.disabled = drawToolType === DIRECT_DRAW_TOOL_ERASER;
@@ -15757,9 +16229,7 @@ function syncDrawToolPanelUi() {
     setDrawToolStatus(
         drawToolType === DIRECT_DRAW_TOOL_ERASER
             ? 'Eraser mode is active. Drag directly on the page to cover content with white.'
-            : drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                ? 'Smooth curve mode is active. Drag directly on the page to draw a fitted curve.'
-                : 'Pen mode is active. Drag directly on the page to draw.',
+            : 'Pen mode is active. Drag directly on the page to draw.',
     );
 }
 
@@ -15792,7 +16262,7 @@ function clampDirectDrawVectorNumber(value, fallback = 0) {
     return Number.isFinite(number) ? number : fallback;
 }
 
-function directDrawSvgPathFromPoints(points, smoothCurve = false) {
+function directDrawSvgPathFromPoints(points, smoothCurve = false, smoothing = null) {
     const cleanPoints = Array.isArray(points)
         ? points
             .map((point) => ({
@@ -15802,7 +16272,18 @@ function directDrawSvgPathFromPoints(points, smoothCurve = false) {
             .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
         : [];
     if (!cleanPoints.length) return '';
+    // NK_16: an explicit amount fits with that tension; a stroke saved before
+    // NK_16 has none, and keeps the legacy full-tension fit it was drawn with.
+    if (Number.isFinite(Number(smoothing))) {
+        const amount = normalizeDrawSmoothing(smoothing);
+        if (amount <= 0) return polylinePathFromPoints(cleanPoints);
+        return smoothDrawCurveSvgPathD(smoothDrawCurvePoints(cleanPoints, drawSmoothingPasses(amount)), amount);
+    }
     if (smoothCurve) return smoothDrawCurveSvgPathD(cleanPoints);
+    return polylinePathFromPoints(cleanPoints);
+}
+
+function polylinePathFromPoints(cleanPoints) {
     if (cleanPoints.length === 1) {
         const point = cleanPoints[0];
         return `M ${point.x.toFixed(3)} ${point.y.toFixed(3)} L ${(point.x + 0.01).toFixed(3)} ${point.y.toFixed(3)}`;
@@ -15817,7 +16298,7 @@ function directDrawVectorToSvgDataUrl(vector) {
     const height = Math.max(1, clampDirectDrawVectorNumber(vector.height, 0));
     const strokes = Array.isArray(vector.strokes) ? vector.strokes : [];
     const paths = strokes.map((stroke) => {
-        const pathData = directDrawSvgPathFromPoints(stroke?.points, Boolean(stroke?.smoothCurve));
+        const pathData = directDrawSvgPathFromPoints(stroke?.points, Boolean(stroke?.smoothCurve), stroke?.smoothing);
         if (!pathData) return '';
         const color = cssColorToHex(stroke?.color, '#111827');
         const opacity = clamp01(stroke?.opacity ?? 1, 1);
@@ -15844,11 +16325,15 @@ function restyleDirectDrawVector(vector, style = {}) {
                 y: clampDirectDrawVectorNumber(point?.y, 0),
             }))
             : [];
+        const smoothing = Number.isFinite(Number(style.smoothing))
+            ? normalizeDrawSmoothing(style.smoothing)
+            : stroke?.smoothing;
         return points.length ? {
             color,
             opacity,
             brushSize,
             smoothCurve: Boolean(stroke?.smoothCurve),
+            ...(Number.isFinite(Number(smoothing)) ? { smoothing: normalizeDrawSmoothing(smoothing) } : {}),
             points,
         } : null;
     }).filter(Boolean);
@@ -15910,6 +16395,10 @@ function reflectDirectDrawAnnotationToInputs(annotation) {
     }
     if (stroke) {
         drawBrushSize = Math.max(2, Number(stroke.brushSize) || drawBrushSize);
+        // A stroke saved before NK_16 has no amount; show what its fit matches.
+        drawSmoothing = Number.isFinite(Number(stroke.smoothing))
+            ? normalizeDrawSmoothing(stroke.smoothing)
+            : (stroke.smoothCurve ? DEFAULT_DRAW_SMOOTHING : 0);
     }
     syncDrawToolPanelUi();
 }
@@ -15932,6 +16421,7 @@ function applyDrawPanelStateToSelectedDirectDrawAnnotations(options = {}) {
             color: isEraser ? '#ffffff' : drawStrokeColor,
             opacity: isEraser ? 1 : drawOpacity,
             brushSize: drawBrushSize,
+            smoothing: isEraser ? undefined : drawSmoothing,
         });
         if (!styled?.vector) continue;
         updates.push({ box, existing, current, styled, isEraser, directDrawTool });
@@ -16007,8 +16497,8 @@ function directDrawVectorFromSession(session, cropLeft, cropTop, cropWidth, crop
             y: Math.max(0, Math.min(cropHeight, clampDirectDrawVectorNumber(point.y, 0) - cropTop)),
         }));
     if (!points.length) return null;
-    const smoothCurve = normalizeDirectDrawTool(session?.directDrawTool) === DIRECT_DRAW_TOOL_SMOOTH_CURVE;
-    if (smoothCurve) points = smoothDrawCurvePoints(points);
+    const smoothing = normalizeDrawSmoothing(session?.smoothing);
+    if (smoothing > 0) points = smoothDrawCurvePoints(points, drawSmoothingPasses(smoothing));
     return {
         version: 1,
         width: Math.max(1, cropWidth),
@@ -16017,7 +16507,8 @@ function directDrawVectorFromSession(session, cropLeft, cropTop, cropWidth, crop
             color: cssColorToHex(session.color, '#111827'),
             opacity: clamp01(session.opacity ?? 1, 1),
             brushSize: Math.max(0.25, clampDirectDrawVectorNumber(session.width, 1)),
-            smoothCurve,
+            smoothCurve: smoothing > 0,
+            smoothing,
             points,
         }],
     };
@@ -16097,8 +16588,8 @@ function beginDirectPenStroke(event, pageIndex) {
         color: strokeColor,
         width: drawBrushSize,
         opacity: strokeOpacity,
+        smoothing: drawSmoothing,
         points: [{ x: point.canvasX, y: point.canvasY }],
-        lastMidPoint: { x: point.canvasX, y: point.canvasY },
         minX: point.canvasX - (drawBrushSize / 2),
         minY: point.canvasY - (drawBrushSize / 2),
         maxX: point.canvasX + (drawBrushSize / 2),
@@ -16125,14 +16616,11 @@ function moveDirectPenStroke(event) {
     session.minY = Math.min(session.minY, point.y - (session.width / 2));
     session.maxX = Math.max(session.maxX, point.x + (session.width / 2));
     session.maxY = Math.max(session.maxY, point.y + (session.width / 2));
-    if (session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
-        session.ctx.clearRect(0, 0, session.layer.width, session.layer.height);
-        paintSmoothDrawCurve(session.ctx, session, session.color, session.width);
-    } else {
-        const midPoint = { x: (lastPoint.x + point.x) / 2, y: (lastPoint.y + point.y) / 2 };
-        paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, midPoint, session.width, session.color);
-        session.lastMidPoint = midPoint;
-    }
+    // NK_16: refit the whole stroke on every move. The smoothing passes shift
+    // points that are already down, so an incremental segment would leave the
+    // tail disagreeing with the rest of the curve.
+    session.ctx.clearRect(0, 0, session.layer.width, session.layer.height);
+    paintSmoothDrawCurve(session.ctx, session, session.color, session.width, session.smoothing);
     return true;
 }
 
@@ -16142,10 +16630,6 @@ function finishDirectPenStroke(event) {
     event.preventDefault();
     event.stopPropagation();
     try { session.pageDiv?.releasePointerCapture?.(event.pointerId); } catch (_) {}
-    if (session.points.length > 1 && session.directDrawTool !== DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
-        const lastPoint = session.points[session.points.length - 1];
-        paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, lastPoint, session.width, session.color);
-    }
     const padding = Math.max(session.width, 8);
     const cropLeft = Math.max(0, Math.floor(session.minX - padding));
     const cropTop = Math.max(0, Math.floor(session.minY - padding));
@@ -16164,18 +16648,16 @@ function finishDirectPenStroke(event) {
     const outputCtx = outputCanvas.getContext('2d');
     outputCtx.scale(outputScale, outputScale);
     outputCtx.globalAlpha = session.opacity;
-    if (session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
-        paintSmoothDrawCurve(outputCtx, {
-            color: session.color,
-            width: session.width,
-            points: session.points.map((point) => ({
-                x: point.x - cropLeft,
-                y: point.y - cropTop,
-            })),
-        }, session.color, session.width);
-    } else {
-        outputCtx.drawImage(session.layer, -cropLeft, -cropTop);
-    }
+    // Refit from the points rather than upscaling the preview layer, so the
+    // exported drawing gets the full outputScale resolution.
+    paintSmoothDrawCurve(outputCtx, {
+        color: session.color,
+        width: session.width,
+        points: session.points.map((point) => ({
+            x: point.x - cropLeft,
+            y: point.y - cropTop,
+        })),
+    }, session.color, session.width, session.smoothing);
     const pdfWidth = cropWidth / session.scale;
     const pdfHeight = cropHeight / session.scale;
     const annotation = directDrawAnnotationAtPageBox(session.pageIndex, {
@@ -16196,9 +16678,7 @@ function finishDirectPenStroke(event) {
         setDrawToolStatus(
             session.directDrawTool === DIRECT_DRAW_TOOL_ERASER
                 ? 'Eraser stroke added. Keep dragging to cover more content.'
-                : session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                    ? 'Smooth curve added. Keep drawing on the page.'
-                    : 'Drawing added. Keep drawing on the page.',
+                : 'Drawing added. Keep drawing on the page.',
         );
     }
     return true;
@@ -16232,11 +16712,9 @@ function setDrawMode(active) {
     if (drawModeActive) {
         deselectAnnBox();
         setStatus(
-            drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                ? 'Smooth curve mode active. Drag on the PDF to draw a fitted curve.'
-                : drawToolType === DIRECT_DRAW_TOOL_ERASER
-                    ? 'Eraser mode active. Drag on the PDF to cover content.'
-                    : 'Draw mode active. Drag on the PDF to draw.',
+            drawToolType === DIRECT_DRAW_TOOL_ERASER
+                ? 'Eraser mode active. Drag on the PDF to cover content.'
+                : 'Draw mode active. Drag on the PDF to draw.',
         );
     } else if (!document.body.classList.contains('enpv-edit-on')
         && !document.body.classList.contains('enpv-add-text-on')
@@ -16647,6 +17125,11 @@ function startHighlightDrag(ev) {
     if (!highlightModeActive) return;
     if (ev.button !== 0 || dragState || multiDragState || resizeState || shapeRotateState || shapeCutState?.armed || marqueeSelectionState) return;
     if (ev.target?.closest?.('#highlight-tool-panel, .floating-tool-bar, .top-bar, .enpv-ann-menu')) return;
+    // An existing highlight is the one annotation kind that stays clickable
+    // while the tool is open (NK_23). Yield so the box's own pointerdown
+    // handler selects (and can move/resize) it instead of painting over it;
+    // the box's handles are its children, so closest() covers them too.
+    if (ev.target?.closest?.('.enpv-annotation-box.enpv-highlight-box')) return;
     const pageIndex = pageIndexFromEventTarget(ev.target);
     if (!Number.isFinite(pageIndex) || pageIndex < 0) return;
     const point = pdfjsPointFromPageClient(pageIndex, ev.clientX, ev.clientY);
@@ -16876,6 +17359,9 @@ function createImageBoxElement(annotation, pageIndex, viewport, scale, editModeO
     box.dataset.annotationId = String(annotation.id || '');
     box.dataset.pageIndex = String(pageIndex);
     box.dataset.annotationType = 'image';
+    // NK_18: keep the box's angle in sync with the annotation, so a re-render
+    // redraws a rotated drawing at its angle rather than snapping it upright.
+    box.dataset.rotation = String(normalizeAnnotationRotation(annotation?.rotation));
     box.dataset.locked = annotation.locked ? '1' : '0';
     box.dataset.zIndex = String(Number(annotation.zIndex) || (isDirectDrawEraserAnnotation(annotation) ? 1000 : (isDirectDrawAnnotation(annotation) ? 2 : 6)));
     if (isDirectDrawAnnotation(annotation)) {
@@ -16908,7 +17394,12 @@ function createImageBoxElement(annotation, pageIndex, viewport, scale, editModeO
 
     if (hooks) {
         box.addEventListener('pointerdown', hooks.onAnnBoxPointerDown);
-        for (const edge of ['nw', 'ne', 'sw', 'se']) {
+        // Must match addEditableBoxChrome(): a drawing refits to any box, so it
+        // gets edges as well as corners. A raster image keeps corners only.
+        const edges = isDirectDrawAnnotation(annotation)
+            ? ['nw', 'ne', 'sw', 'se', 't', 'b', 'l', 'r']
+            : ['nw', 'ne', 'sw', 'se'];
+        for (const edge of edges) {
             const handle = document.createElement('div');
             handle.className = `enpv-resize-handle ${edge}`;
             handle.dataset.edge = edge;
@@ -17012,14 +17503,68 @@ function createFieldBoxElement(annotation, pageIndex, viewport, scale, hooks) {
     return box;
 }
 
+/**
+ * Nudge a freshly placed text box back inside its page.
+ *
+ * createNewTextAnnotation() clamps against a nominal one-line height, but the
+ * box is laid out at its own line-height plus padding, which is taller. A box
+ * placed hard against an edge therefore rendered outside the page even though
+ * its annotation looked clamped — and a save, which reads geometry back off the
+ * DOM, then persisted the overhang.
+ *
+ * Only the position moves: the rendered size is the renderer's business, and
+ * measuring it here keeps this correct if the line-height or padding changes.
+ *
+ * @returns {boolean} true when the annotation was moved and needs re-rendering
+ */
+function keepNewTextBoxWithinPage(annotation, box, pageIndex) {
+    const viewport = pdfViewer.getPageView(pageIndex)?.viewport;
+    const scale = Number(viewport?.scale) || Number.parseFloat(box?.dataset?.renderScale || '');
+    const pageDiv = box?.closest?.('.page');
+    if (!viewport || !(scale > 0) || !pageDiv) return false;
+
+    const rect = box.getBoundingClientRect();
+    const pageRect = pageDiv.getBoundingClientRect();
+    if (!(rect.height > 0) || !(pageRect.height > 0)) return false;
+
+    const { width: pageWidthPts, height: pageHeightPts } = viewportPdfDimensions(viewport, scale);
+    if (!(pageWidthPts > 0) || !(pageHeightPts > 0)) return false;
+
+    // Laid-out geometry in PDF points, measured from the page's top-left.
+    const left = (rect.left - pageRect.left) / scale;
+    const top = (rect.top - pageRect.top) / scale;
+    const width = rect.width / scale;
+    const height = rect.height / scale;
+
+    const nextLeft = Math.min(Math.max(0, left), Math.max(0, pageWidthPts - width));
+    const nextTop = Math.min(Math.max(0, top), Math.max(0, pageHeightPts - height));
+    if (Math.abs(nextLeft - left) < 0.01 && Math.abs(nextTop - top) < 0.01) return false;
+
+    // PDF space is bottom-up, and pdfY is the box's bottom edge.
+    const pdfX = nextLeft;
+    const pdfY = pageHeightPts - nextTop - (Number(annotation.pdfHeight) || height);
+    annotation.pdfX = pdfX;
+    annotation.pdfY = pdfY;
+    const box0 = { x: pdfX, y: pdfY, w: annotation.pdfWidth, h: annotation.pdfHeight };
+    annotation._originalBox = { ...box0 };
+    annotation._originalPdfBox = { ...box0 };
+    return true;
+}
+
 function createNewTextBoxOnPage(pageIndex, canvasX, canvasY, canvasWidth = null, canvasHeight = null) {
     const annotation = createNewTextAnnotation(pageIndex, canvasX, canvasY, canvasWidth, canvasHeight);
     if (!annotation) return null;
     pushHistorySnapshot('add text');
     upsertPersistedAnnotation(annotation);
     renderAnnotationBoxLayer(pageIndex);
-    const pageDiv = pdfViewer.getPageView(pageIndex)?.div;
-    const box = pageDiv?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(annotation.id)}"]`) || null;
+    const findBox = () => pdfViewer.getPageView(pageIndex)?.div
+        ?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(annotation.id)}"]`) || null;
+    let box = findBox();
+    if (box && keepNewTextBoxWithinPage(annotation, box, pageIndex)) {
+        upsertPersistedAnnotation(annotation);
+        renderAnnotationBoxLayer(pageIndex);
+        box = findBox();
+    }
     if (box) {
         selectAnnBox(box);
         beginEditMode(box);
@@ -21474,7 +22019,12 @@ function renderAnnotationBoxLayer(pageIndex) {
         persistedOverlayRects.push(maskRect);
     }
     for (const annotation of shapeAnnotations) {
-        const allowInteraction = editModeOn || document.body.classList.contains('enpv-shape-on');
+        // NK_23: while the Highlight tool is open, existing highlights are
+        // the one annotation kind that stays clickable, so they render with
+        // interactive chrome instead of the read-only overlay.
+        const allowInteraction = editModeOn
+            || document.body.classList.contains('enpv-shape-on')
+            || (highlightModeActive && isHighlightAnnotation(annotation));
         const rendered = createShapeOverlayBox(annotation, pageIndex, viewport, scale, allowInteraction);
         if (!rendered) continue;
         if (annotation.guidedLeaseUnderline !== true) {
@@ -21487,7 +22037,12 @@ function renderAnnotationBoxLayer(pageIndex) {
             onAnnBoxPointerDown,
             onResizeHandlePointerDown,
         });
-        if (imageBox) layer.appendChild(imageBox);
+        if (imageBox) {
+            // NK_18: redraw a rotated drawing at its angle instead of letting
+            // the re-render snap it upright.
+            applyAnnotationRotationToBox(imageBox, annotation.rotation);
+            layer.appendChild(imageBox);
+        }
     }
     for (const annotation of preRenderedVisibleTextAnnotations) {
         const allowInteraction = editModeOn || (addTextModeOn && isUserCreatedTextAnnotation(annotation));
@@ -21520,7 +22075,10 @@ function renderAnnotationBoxLayer(pageIndex) {
                 onResizeHandlePointerDown,
                 selectAnnBox,
             });
-            if (sigBox) layer.appendChild(sigBox);
+            if (sigBox) {
+                applyAnnotationRotationToBox(sigBox, annotation.rotation);
+                layer.appendChild(sigBox);
+            }
         }
     }
     for (const annotation of regularImageAnnotations) {
@@ -21528,7 +22086,10 @@ function renderAnnotationBoxLayer(pageIndex) {
             onAnnBoxPointerDown,
             onResizeHandlePointerDown,
         });
-        if (imageBox) layer.appendChild(imageBox);
+        if (imageBox) {
+            applyAnnotationRotationToBox(imageBox, annotation.rotation);
+            layer.appendChild(imageBox);
+        }
     }
     for (const annotation of persistedFieldAnnotations) {
         const fieldBox = createFieldBoxElement(annotation, pageIndex, viewport, scale, {
@@ -21542,7 +22103,10 @@ function renderAnnotationBoxLayer(pageIndex) {
             onAnnBoxPointerDown,
             onResizeHandlePointerDown,
         });
-        if (imageBox) layer.appendChild(imageBox);
+        if (imageBox) {
+            applyAnnotationRotationToBox(imageBox, annotation.rotation);
+            layer.appendChild(imageBox);
+        }
     }
 
     if (!editModeOn) {
@@ -22474,6 +23038,33 @@ function selectMultipleAnnBoxes(boxes) {
     setStatus(`${multiSelectedAnnBoxUids.size} annotations selected.`);
 }
 
+/**
+ * Shift-click selection. The marquee builds a multi-selection by area; this
+ * reaches the same selection one box at a time, and shift-clicking a box that
+ * is already in the selection drops it back out.
+ */
+function extendAnnBoxSelection(box) {
+    if (!box || isAnnBoxLocked(box)) return;
+    if (!String(box.dataset.uid || '')) {
+        selectAnnBox(box);
+        return;
+    }
+    const current = hasMultiSelection() ? multiSelectedBoxes() : [];
+    if (!current.length) {
+        const selected = findSelectedBox();
+        if (selected && selected !== box && !isAnnBoxLocked(selected)) current.push(selected);
+    }
+    const next = current.filter((candidate) => candidate !== box);
+    // Filtering removed it => it was already selected => this click is a toggle off.
+    if (next.length === current.length) next.push(box);
+    if (!next.length) {
+        clearMultiSelection();
+        deselectAnnBox();
+        return;
+    }
+    selectMultipleAnnBoxes(next);
+}
+
 function selectCurrentPageDirectDrawAnnotations() {
     const pageIndex = Math.max(0, (Number(pdfViewer?.currentPageNumber) || 1) - 1);
     renderAnnotationBoxLayer(pageIndex);
@@ -22976,6 +23567,43 @@ function setFormatBarOpacityValue(opacity) {
 function setAnnotationBoxVerticalAlign(box, value) {
     if (!box) return;
     box.dataset.verticalAlign = normalizeVerticalAlign(value);
+    applyVerticalAlignPresentationToBox(box);
+}
+
+/**
+ * Put the chosen vertical alignment on the text element itself (NK_11).
+ *
+ * It used to live only in CSS, in selectors that each required a particular
+ * combination of is-editing / is-persisted-overlay / is-rich-editor and the
+ * body's edit-mode class. A box that was being edited matched none of them, so
+ * it kept `display: block` — and `justify-content` on a block container does
+ * nothing. Choosing Middle appeared to do nothing at all, until some later
+ * re-render put the box into a matching state and the text jumped.
+ *
+ * Writing it inline, from the one place that records the value, makes what the
+ * user sees independent of which classes happen to be on the box.
+ *
+ * Only user-authored text boxes: a promoted source run keeps the source-fidelity
+ * fitting that owns its layout.
+ */
+function applyVerticalAlignPresentationToBox(box) {
+    if (!box) return;
+    if (String(box.dataset.annotationType || '')) return;
+    if (!isUserCreatedTextBox(box)) return;
+    const tc = box.querySelector(':scope > .enpv-text-content');
+    if (!tc) return;
+
+    const value = normalizeVerticalAlign(box.dataset.verticalAlign);
+    if (value === 'top') {
+        // Top is the natural flow; hand it back to the stylesheet.
+        tc.style.removeProperty('display');
+        tc.style.removeProperty('flex-direction');
+        tc.style.removeProperty('justify-content');
+        return;
+    }
+    tc.style.display = 'flex';
+    tc.style.flexDirection = 'column';
+    tc.style.justifyContent = value === 'middle' ? 'center' : 'flex-end';
 }
 
 function updateAnnotationFormatBarForBox(box) {
@@ -23053,11 +23681,16 @@ function updateAnnotationFormatBarForBox(box) {
         ? box.dataset.underline === '1'
         : boolish(existing?.underline);
     setToggleControl(afbUnderline, isUnderline);
+    const isStrikeout = box.dataset.strikeout != null
+        ? box.dataset.strikeout === '1'
+        : boolish(existing?.strikeout);
+    setToggleControl(afbStrikeout, isStrikeout);
     const inlineState = inlineSelectionStyleState(box);
     if (inlineState) {
         setToggleControl(afbBold, inlineState.bold);
         setToggleControl(afbItalic, inlineState.italic);
         setToggleControl(afbUnderline, inlineState.underline);
+        setToggleControl(afbStrikeout, inlineState.strikeout);
         if (afbTextColor && inlineState.color) afbTextColor.value = inlineState.color;
         if (inlineState.fontFamily) {
             const inlineFont = ensureFormatBarFontOption(inlineState.fontFamily);
@@ -23074,7 +23707,7 @@ function updateAnnotationFormatBarForBox(box) {
     if (afbAlign) afbAlign.value = normalizeTextAlign(box.dataset.textAlign || box.style.getPropertyValue('--enpv-text-align') || existing?.textAlign || cs?.textAlign);
     if (afbValign) afbValign.value = normalizeVerticalAlign(box.dataset.verticalAlign || existing?.verticalAlign);
     const locked = isAnnBoxLocked(box);
-    [afbFont, afbSize, afbTextColor, afbBgColor, afbOpacity, afbBold, afbItalic, afbUnderline, afbAlign, afbValign, afbCopy, afbDelete].forEach((control) => {
+    [afbFont, afbSize, afbTextColor, afbBgColor, afbOpacity, afbBold, afbItalic, afbUnderline, afbStrikeout, afbAlign, afbValign, afbCopy, afbDelete].forEach((control) => {
         if (control) control.disabled = locked;
     });
     if (afbLinkUrl) afbLinkUrl.disabled = locked || !inlineState;
@@ -23086,6 +23719,22 @@ function updateAnnotationFormatBarForBox(box) {
     closeNotesPanel();
     annFormatBar.classList.add('is-visible');
     requestAnimationFrame(() => positionAnnotationFormatBarUnderMenu(box));
+}
+
+// NK_7: strip one named inline format (and only that one) from every run in the
+// box. Used for the decoration toggles, where removing the whole CSS property
+// would clear the sibling token too.
+function stripInlineFormatsFromBox(box, formats) {
+    const list = Array.isArray(formats) ? formats.filter(Boolean) : [];
+    if (!list.length) return;
+    const tc = selectedBoxTextElement(box);
+    if (!tc) return;
+    list.forEach((format) => {
+        [tc, ...Array.from(tc.querySelectorAll('*'))].forEach((element) => {
+            if (!element?.isConnected && element !== tc) return;
+            removeFormatFromElement(element, format);
+        });
+    });
 }
 
 function stripInlineStylePropertiesFromBox(box, properties) {
@@ -23217,6 +23866,7 @@ function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     }
     mutator(box);
     stripInlineStylePropertiesFromBox(box, options.stripInlineProps);
+    stripInlineFormatsFromBox(box, options.stripInlineFormats);
     fitTextBoxAfterStyleMutation(box, options);
     box.dataset.styleDirty = '1';
     box.dataset.pendingEdit = '1';
@@ -23403,16 +24053,43 @@ function applyItalicToSelectedBox(active) {
     }, { reason: 'font-style', stripInlineProps: ['font-style'] });
 }
 
+function applyDecorationTokenToSelectedBox(kind, active) {
+    const isUnderline = kind === 'underline';
+    const label = isUnderline ? 'underline' : 'strikeout';
+    if (applyInlineStyleToSelectedText(`change selected text ${label}`, (span) => {
+        const tokens = decorationTokensFromValue(
+            `${span.style.textDecorationLine || ''} ${span.style.textDecoration || ''}`,
+        );
+        if (isUnderline) tokens.underline = active;
+        else tokens.strikeout = active;
+        const next = composeTextDecorationLine(tokens.underline, tokens.strikeout);
+        span.style.textDecorationLine = next;
+        span.style.textDecoration = next;
+    }, { reason: label, fit: false, format: isUnderline ? 'underline' : 'strikeout', active })) return;
+    applyStyleToSelectedBox(`change annotation ${label}`, (box) => {
+        const dataset = isUnderline ? 'underline' : 'strikeout';
+        box.dataset[dataset] = active ? '1' : '0';
+        const next = composeTextDecorationLine(
+            box.dataset.underline === '1',
+            box.dataset.strikeout === '1',
+        );
+        box.style.setProperty('--enpv-text-decoration-line', next);
+        box.style.setProperty('--enpv-text-decoration', next);
+    }, {
+        reason: label,
+        fit: false,
+        // Not stripInlineProps: clearing the whole text-decoration property would
+        // take the other token's inline spans with it (NK_7).
+        stripInlineFormats: [isUnderline ? 'underline' : 'strikeout'],
+    });
+}
+
 function applyUnderlineToSelectedBox(active) {
-    if (applyInlineStyleToSelectedText('change selected text underline', (span) => {
-        span.style.textDecorationLine = active ? 'underline' : 'none';
-        span.style.textDecoration = active ? 'underline' : 'none';
-    }, { reason: 'underline', fit: false, format: 'underline', active })) return;
-    applyStyleToSelectedBox('change annotation underline', (box) => {
-        box.dataset.underline = active ? '1' : '0';
-        box.style.setProperty('--enpv-text-decoration-line', active ? 'underline' : 'none');
-        box.style.setProperty('--enpv-text-decoration', active ? 'underline' : 'none');
-    }, { reason: 'underline', fit: false, stripInlineProps: ['text-decoration', 'text-decoration-line'] });
+    applyDecorationTokenToSelectedBox('underline', active);
+}
+
+function applyStrikeoutToSelectedBox(active) {
+    applyDecorationTokenToSelectedBox('strikeout', active);
 }
 
 function applyHyperlinkToSelectedText(value) {
@@ -23511,7 +24188,9 @@ function refreshAnnMenuState(box) {
     const locked = isAnnBoxLocked(box);
     const annotationType = String(box.dataset.annotationType || '').toLowerCase();
     const annotation = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
-    const burnable = canBurnAnnotation(annotation);
+    // A box that has not been persisted yet is absent from the annotation map;
+    // fall back to the box so freshly added text can still be burned.
+    const burnable = canBurnAnnotation(annotation) || (!annotation && isUserCreatedTextBox(box));
     const isImageMenu = annotationType === 'image';
     const isSignatureMenu = annotationType === 'signature';
     const isShapeMenu = annotationType === 'shape';
@@ -23668,6 +24347,32 @@ function isItalicElement(element) {
     return value === 'italic' || value === 'oblique';
 }
 
+// NK_7: underline and strikeout are two tokens of one CSS property, so clearing
+// a decoration works token by token — toggling one must never drop the other.
+function removeDecorationTokenFromElement(element, token) {
+    if (!element?.style) return;
+    const tokens = decorationTokensFromValue(
+        `${element.style.textDecorationLine || ''} ${element.style.textDecoration || ''}`,
+    );
+    if (token === 'underline') tokens.underline = false;
+    if (token === 'line-through') tokens.strikeout = false;
+    const next = composeTextDecorationLine(tokens.underline, tokens.strikeout);
+    element.style.textDecoration = '';
+    element.style.textDecorationLine = '';
+    if (next !== 'none') {
+        element.style.textDecorationLine = next;
+        element.style.textDecoration = next;
+    }
+}
+
+function isStrikeoutElement(element) {
+    if (!element) return false;
+    if (element.tagName === 'S' || element.tagName === 'STRIKE' || element.tagName === 'DEL') return true;
+    const inline = `${element.style?.textDecoration || ''} ${element.style?.textDecorationLine || ''}`.toLowerCase();
+    if (inline.includes('line-through')) return true;
+    return String(window.getComputedStyle(element).textDecorationLine || '').toLowerCase().includes('line-through');
+}
+
 function isUnderlineElement(element) {
     if (!element) return false;
     if (element.tagName === 'U') return true;
@@ -23687,6 +24392,8 @@ function closestFormatElement(node, root, format) {
         ? isBoldElement
         : format === 'italic'
         ? isItalicElement
+        : format === 'strikeout'
+        ? isStrikeoutElement
         : format === 'hyperlink'
         ? isHyperlinkElement
         : isUnderlineElement;
@@ -23719,6 +24426,7 @@ function inlineSelectionStyleState(box) {
         bold: closestFormatElement(probeNode, tc, 'bold') != null || weight === 'bold' || Number.parseInt(weight, 10) >= 600,
         italic: closestFormatElement(probeNode, tc, 'italic') != null || style === 'italic' || style === 'oblique',
         underline: closestFormatElement(probeNode, tc, 'underline') != null || decoration.includes('underline'),
+        strikeout: closestFormatElement(probeNode, tc, 'strikeout') != null || decoration.includes('line-through'),
         linkUrl: normalizeHyperlinkDestination(hyperlink?.getAttribute?.('href') || ''),
         color: cssColorToHex(cs.color || '', ''),
         fontFamily: parseCssFontFamily(cs.fontFamily || element.style?.fontFamily || ''),
@@ -23754,9 +24462,13 @@ function removeFormatFromElement(element, format) {
         element.style.fontStyle = '';
         if (element.tagName === 'I' || element.tagName === 'EM') return unwrapElement(element);
     } else if (format === 'underline') {
-        element.style.textDecoration = '';
-        element.style.textDecorationLine = '';
+        removeDecorationTokenFromElement(element, 'underline');
         if (element.tagName === 'U') return unwrapElement(element);
+    } else if (format === 'strikeout') {
+        removeDecorationTokenFromElement(element, 'line-through');
+        if (element.tagName === 'S' || element.tagName === 'STRIKE' || element.tagName === 'DEL') {
+            return unwrapElement(element);
+        }
     } else if (format === 'hyperlink' && element.tagName === 'A') {
         return unwrapElement(element);
     }
@@ -24051,7 +24763,7 @@ async function burnAnnotationLayer(annotation, box = null) {
         ? (buildAnnotationFromBox(activeBox, persisted) || persisted)
         : persisted;
     if (!canBurnAnnotation(burnAnnotation)) {
-        throw new Error('Only shapes and drawings can be burned into the PDF.');
+        throw new Error('Only shapes, drawings, and text added with the Text tool can be burned into the PDF.');
     }
     if (!window.confirm('Burn this layer into the PDF? This cannot be undone and text behind the layer will be erased.')) {
         return false;
@@ -24386,6 +25098,14 @@ function copyAnnBox(box) {
     copy.dataset.zIndex = String((Number.parseInt(box.style.zIndex || box.dataset.zIndex || '2', 10) || 2) + 1);
     copy.dataset.styleDirty = '1';
     copy.dataset.userForcedRichText = '1';
+    // A duplicate has to behave exactly like what it was copied from. These flags
+    // decide whether a box counts as user-authored, which is what gates rotation --
+    // without them the copy silently loses the rotate handle its original had.
+    if (isUserCreatedTextBox(box, existing)) copy.dataset.userCreated = '1';
+    if (box.dataset.userAuthored === '1') copy.dataset.userAuthored = '1';
+    if (box.dataset.skipPdfjsSourceMask === '1') copy.dataset.skipPdfjsSourceMask = '1';
+    const sourceRotation = boxRotationDegrees(box);
+    if (sourceRotation) copy.dataset.rotation = String(sourceRotation);
     copy.dataset.backgroundColor = box.dataset.backgroundColor || 'transparent';
     copy.dataset.opacity = box.dataset.opacity || box.style.opacity || '1';
     copy.dataset.underline = box.dataset.underline || '0';
@@ -24430,6 +25150,7 @@ function copyAnnBox(box) {
     setBoxEditorMode(copy, 'rich');
     addEditableBoxChrome(copy);
     layer.appendChild(copy);
+    if (sourceRotation) applyAnnotationRotationToBox(copy, sourceRotation);
     selectAnnBox(copy);
     syncMenuMutation(copy);
 }
@@ -24533,6 +25254,7 @@ function selectAnnBox(box) {
     if (box.classList.contains('is-selected')) {
         positionAnnMenuOver(box);
         updateAnnotationFormatBarForBox(box);
+        updateShapeRotateHandleForBox(box);
         routeSidePanelForSelectedBox(box);
         return;
     }
@@ -24543,6 +25265,7 @@ function selectAnnBox(box) {
     box.classList.add('is-selected');
     positionAnnMenuOver(box);
     updateAnnotationFormatBarForBox(box);
+    updateShapeRotateHandleForBox(box);
     routeSidePanelForSelectedBox(box);
     renderLayersPanel();
 }
@@ -25136,6 +25859,10 @@ function onAnnBoxPointerDown(ev) {
         if (isAnnBoxLocked(box)) return;
         if (beginMultiAnnBoxDrag(box, ev)) return;
     }
+    if (ev.shiftKey) {
+        extendAnnBoxSelection(box);
+        return;
+    }
     selectAnnBox(box);
     if (isAnnBoxLocked(box)) return;
     beginAnnBoxDrag(box, ev);
@@ -25447,6 +26174,11 @@ function onResizePointerMove(ev) {
         w = parseFloat(box.style.width) || w;
         h = parseFloat(box.style.height) || h;
     }
+    if (box.dataset.annotationType !== 'shape'
+        && annotationBoxCanRotate(box)
+        && box.classList.contains('is-rotated')) {
+        applyAnnotationRotationToBox(box);
+    }
     resizeState.endLeft = left;
     resizeState.endTop = top;
     resizeState.endWidth = w;
@@ -25522,7 +26254,7 @@ function onShapeRotateHandlePointerDown(ev) {
     ev.preventDefault();
     const handle = ev.currentTarget;
     const box = handle?.parentElement || null;
-    if (!shapeBoxCanRotate(box)) return;
+    if (!annotationBoxCanRotate(box)) return;
     if (isAnnBoxLocked(box)) return;
     if (!box.classList.contains('is-selected')) selectAnnBox(box);
     const center = shapeRotationCenterClient(box);
@@ -25560,6 +26292,13 @@ function onShapeRotatePointerMove(ev) {
     const nextRotation = normalizeRotationDegrees(handleAngle - 90);
     shapeRotateState.currentRotation = nextRotation;
     box.dataset.rotation = String(Math.round(nextRotation * 10) / 10);
+    updateShapeRotateHandleForBox(box);
+    if (box.dataset.annotationType !== 'shape') {
+        // Text and signatures follow the pointer through a CSS transform; only
+        // shapes need their SVG geometry rebuilt mid-gesture.
+        applyAnnotationRotationToBox(box, nextRotation);
+        return;
+    }
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     const liveAnnotation = buildAnnotationFromBox(box, existing) || existing || {};
     updateShapeSvgForBox(box, {
@@ -25582,7 +26321,7 @@ function onShapeRotatePointerUp(ev) {
     if (!box?.isConnected) return;
     positionAnnMenuOver(box);
     if (rotationDeltaDegrees(currentRotation, startRotation) <= 0.5) return;
-    pushHistorySnapshot('rotate shape');
+    pushHistorySnapshot(box.dataset.annotationType === 'shape' ? 'rotate shape' : 'rotate annotation');
     box.dataset.pendingEdit = '1';
     syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
     updateShapeRotateHandleForBox(box);
@@ -26684,14 +27423,24 @@ window.addEventListener('keydown', (ev) => {
     }
     if (ev.key === 'Escape' && selectedAnnBoxUid && !dragState) deselectAnnBox();
     if ((ev.key === 'Delete' || ev.key === 'Backspace') && hasMultiSelection() && !dragState && !multiDragState) {
+        // A focused text field owns Delete/Backspace. Without this, clearing the
+        // hyperlink URL box -- or any other panel input -- deletes the selected
+        // annotation instead of a character. The clipboard shortcuts
+        // already guard this way; this path was simply missed.
+        if (activeElementAcceptsNativeClipboard()) return;
         const active = document.activeElement;
-        if (active?.isContentEditable || active?.closest?.('[contenteditable="true"]')) return;
+        if (active?.closest?.('[contenteditable="true"]')) return;
         if (deleteMultiSelectedAnnBoxes()) ev.preventDefault();
         return;
     }
     if ((ev.key === 'Delete' || ev.key === 'Backspace') && selectedAnnBoxUid && !dragState) {
+        // A focused text field owns Delete/Backspace. Without this, clearing the
+        // hyperlink URL box -- or any other panel input -- deletes the selected
+        // annotation instead of a character. The clipboard shortcuts
+        // already guard this way; this path was simply missed.
+        if (activeElementAcceptsNativeClipboard()) return;
         const active = document.activeElement;
-        if (active?.isContentEditable || active?.closest?.('[contenteditable="true"]')) return;
+        if (active?.closest?.('[contenteditable="true"]')) return;
         const box = findSelectedBox();
         if (box) {
             ev.preventDefault();
@@ -26900,6 +27649,9 @@ afbItalic?.addEventListener('click', () => {
 });
 afbUnderline?.addEventListener('click', () => {
     applyUnderlineToSelectedBox(afbUnderline.getAttribute('aria-pressed') !== 'true');
+});
+afbStrikeout?.addEventListener('click', () => {
+    applyStrikeoutToSelectedBox(afbStrikeout.getAttribute('aria-pressed') !== 'true');
 });
 afbLinkApply?.addEventListener('click', () => {
     applyHyperlinkToSelectedText(afbLinkUrl?.value || '');
@@ -28327,14 +29079,6 @@ function syncShapePanelUi() {
     }
 }
 
-function setMoreShapesExpanded(expanded) {
-    if (!shapeToolPanel || !shapeMoreToggle) return;
-    const active = Boolean(expanded);
-    shapeToolPanel.classList.toggle('sfb-extra-collapsed', !active);
-    shapeMoreToggle.setAttribute('aria-expanded', active ? 'true' : 'false');
-    shapeMoreToggle.classList.toggle('is-active', active);
-}
-
 function setShapeMode(on, options = {}) {
     const active = Boolean(on);
     if (active && document.body.classList.contains('enpv-edit-on')) setEditMode(false);
@@ -28693,6 +29437,16 @@ drawToolSizeInput?.addEventListener('input', () => {
 });
 drawToolSizeInput?.addEventListener('change', () => {
     drawBrushSize = Math.max(2, Number(drawToolSizeInput.value) || 10);
+    syncDrawToolPanelUi();
+    finishLiveDrawPanelStateEdit();
+});
+drawToolSmoothingInput?.addEventListener('input', () => {
+    drawSmoothing = normalizeDrawSmoothing(Number(drawToolSmoothingInput.value) / 100);
+    syncDrawToolPanelUi();
+    applyLiveDrawPanelStateToSelectedDirectDrawAnnotations();
+});
+drawToolSmoothingInput?.addEventListener('change', () => {
+    drawSmoothing = normalizeDrawSmoothing(Number(drawToolSmoothingInput.value) / 100);
     syncDrawToolPanelUi();
     finishLiveDrawPanelStateEdit();
 });
@@ -29118,16 +29872,43 @@ function shapeStateForToolButton(rawShapeType) {
 
 shapeTypeButtons.forEach((button) => {
     button.addEventListener('click', () => {
+        // NK_15: choose the shape for the NEXT draw only. This deliberately does
+        // NOT commit to the selected box. It used to, which meant clicking a
+        // different shape silently converted the shape you had just drawn — and
+        // because the converted box kept the chrome it was born with, a circle
+        // turned into a line still carried eight box handles instead of two
+        // endpoints. It also made drawing several different shapes in a row
+        // impossible without pressing Escape between them.
         reflectShapeStateToInputs(shapeStateForToolButton(button.dataset.shapeTool), shapeInspectorRefs);
-        commitShapeInspectorToSelectedBox({ pushHistory: true });
     });
 });
-shapeToolPanel?.classList.add('sfb-extra-collapsed');
-shapeMoreToggle?.addEventListener('click', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setMoreShapesExpanded(shapeMoreToggle.getAttribute('aria-expanded') !== 'true');
-});
+/**
+ * Which shape a styling gesture is currently open against, or null.
+ *
+ * The panel applies changes on every `input` and only committed history on
+ * `change`. By then the change was already applied, so the snapshot captured the
+ * NEW state and a restyle could not be undone at all. The snapshot now happens
+ * once per gesture, BEFORE the first change lands.
+ */
+let shapeStyleGestureUid = null;
+
+/** Snapshot the pre-change state once, at the start of a styling gesture. */
+function beginShapeStyleGesture() {
+    const box = findSelectedBox();
+    if (!box) return;
+    const uid = String(box.dataset.uid || '');
+    // Already open for this shape; switching shapes starts a fresh gesture.
+    if (shapeStyleGestureUid !== null && shapeStyleGestureUid === uid) return;
+    const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    if (!isShapeBox(box, existing) || isAnnBoxLocked(box)) return;
+    shapeStyleGestureUid = uid;
+    pushHistorySnapshot('change shape style');
+}
+
+function endShapeStyleGesture() {
+    shapeStyleGestureUid = null;
+}
+
 [
     shapeStrokeColorInput,
     shapeStrokeHexInput,
@@ -29140,6 +29921,7 @@ shapeMoreToggle?.addEventListener('click', (event) => {
     shapeFillOpacityInput,
 ].filter(Boolean).forEach((input) => {
     input.addEventListener('input', () => {
+        beginShapeStyleGesture();
         if (input === shapeStrokeColorInput && shapeStrokeHexInput) shapeStrokeHexInput.value = shapeStrokeColorInput.value;
         if (input === shapeStrokeHexInput && shapeStrokeColorInput) shapeStrokeColorInput.value = cssColorToHex(shapeStrokeHexInput.value, shapeStrokeColorInput.value);
         if (input === shapeFillColorInput && shapeFillHexInput) shapeFillHexInput.value = shapeFillColorInput.value;
@@ -29158,7 +29940,14 @@ shapeMoreToggle?.addEventListener('click', (event) => {
         if (shapeFillOpacityValue && shapeFillOpacityInput) shapeFillOpacityValue.textContent = `${shapeFillOpacityInput.value}%`;
         commitShapeInspectorToSelectedBox({ pushHistory: false });
     });
-    input.addEventListener('change', () => commitShapeInspectorToSelectedBox({ pushHistory: true }));
+    input.addEventListener('change', () => {
+        // No pushHistory here: beginShapeStyleGesture already snapshotted the
+        // state from before the gesture. Pushing again would capture the value
+        // the user just set and leave undo with nothing earlier to return to.
+        beginShapeStyleGesture();
+        commitShapeInspectorToSelectedBox({ pushHistory: false });
+        endShapeStyleGesture();
+    });
 });
 
 // Install signature feature (Sign button in floating toolbar, modal,

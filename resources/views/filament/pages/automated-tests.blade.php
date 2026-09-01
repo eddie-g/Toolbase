@@ -108,7 +108,7 @@
                             </div>
                         </template>
 
-                        <button type="button" class="at-run-btn" x-on:click="run()" :disabled="running">
+                        <button type="button" class="at-run-btn" x-on:click="run()" :disabled="busy">
                             <template x-if="!running">
                                 <span class="at-run-btn__inner">
                                     <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
@@ -171,7 +171,7 @@
                                         </span>
 
                                         <span class="at-test__right">
-                                            <template x-if="running && test.automated && !resultFor(test.id)">
+                                            <template x-if="(running && test.automated && !resultFor(test.id)) || isRunningOnly(test)">
                                                 <span class="at-status at-status--running"><span class="at-spinner at-spinner--sm"></span> running</span>
                                             </template>
 
@@ -201,6 +201,35 @@
                                     </button>
 
                                     <div class="at-test__detail" x-show="isExpanded(test)" x-cloak>
+                                        <template x-if="test.automated">
+                                            <div class="at-test__actions">
+                                                <button
+                                                    type="button"
+                                                    class="at-run-one"
+                                                    x-on:click="runOnly(test)"
+                                                    :disabled="busy"
+                                                    :title="busy && !isRunningOnly(test) ? 'A run is already in progress' : 'Run only this test'"
+                                                >
+                                                    <template x-if="!isRunningOnly(test)">
+                                                        <span class="at-run-one__inner">
+                                                            <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+                                                            Run only this test
+                                                        </span>
+                                                    </template>
+                                                    <template x-if="isRunningOnly(test)">
+                                                        <span class="at-run-one__inner">
+                                                            <span class="at-spinner at-spinner--sm" aria-hidden="true"></span>
+                                                            Running…
+                                                        </span>
+                                                    </template>
+                                                </button>
+                                            </div>
+                                        </template>
+
+                                        <template x-if="singleErrors[test.id]">
+                                            <div class="at-alert at-alert--error" x-text="singleErrors[test.id]"></div>
+                                        </template>
+
                                         <div class="at-test__links">
                                             <a :href="asanaSubtaskUrl(test)" target="_blank" rel="noopener">Subtask <span x-text="test.number"></span> in Asana ↗</a>
                                             <template x-if="resultFor(test.id)?.document_id">
@@ -279,10 +308,20 @@
                     results: {},
                     summary: null,
                     expanded: {},
+                    // Which single test is running, and any transport error per
+                    // test. Kept separate from the full-run state so one does not
+                    // disable or overwrite the other.
+                    runningTestId: null,
+                    singleErrors: {},
 
                     /** QA stories feeding this suite, with a short link label. */
                     get stories() {
-                        return this.suite?.stories || [];
+                        return (this.suite?.stories || []).map((story) => ({
+                            ...story,
+                            // Catalogues carry their own label; fall back to the
+                            // story key so a new suite needs no code change here.
+                            short: story.short || story.key,
+                        }));
                     },
 
                     /** Short label for a story key, for badges and links. */
@@ -377,6 +416,63 @@
                             this.suite = data.suite;
                         } catch (error) {
                             this.loadError = error.message || String(error);
+                        }
+                    },
+
+                    /** True while this specific test is being run on its own. */
+                    isRunningOnly(test) {
+                        return this.runningTestId === test.id;
+                    },
+
+                    /** Any control that starts a run is blocked while either kind is in flight. */
+                    get busy() {
+                        return this.running || this.runningTestId !== null;
+                    },
+
+                    /**
+                     * Run one test on its own.
+                     *
+                     * Unlike run(), this merges its result into whatever is already
+                     * on screen rather than clearing everything — the point is to
+                     * re-run one failing case without losing the other results you
+                     * are comparing it against. The run-level summary IS cleared,
+                     * because its totals no longer describe what is displayed.
+                     */
+                    async runOnly(test) {
+                        if (this.busy || !test.automated) return;
+                        this.runningTestId = test.id;
+                        this.runError = null;
+                        delete this.singleErrors[test.id];
+
+                        try {
+                            const token = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+                            const response = await fetch(this.runUrl, {
+                                method: 'POST',
+                                credentials: 'same-origin',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    Accept: 'application/json',
+                                    ...(token ? { 'X-CSRF-TOKEN': token } : {}),
+                                },
+                                body: JSON.stringify({ tests: [test.id] }),
+                            });
+
+                            const data = await response.json();
+                            if (!response.ok || data.success === false) {
+                                throw new Error(data.message || `Run failed (HTTP ${response.status})`);
+                            }
+
+                            for (const result of data.results || []) {
+                                this.results[result.id] = result;
+                            }
+                            // Totals from an earlier full run no longer match what
+                            // is on screen once one row has been re-run.
+                            this.summary = null;
+                            this.expanded[test.id] = true;
+                        } catch (error) {
+                            this.singleErrors[test.id] = error.message || String(error);
+                        } finally {
+                            this.runningTestId = null;
                         }
                     },
 
@@ -593,6 +689,20 @@
 
             /* Detail */
             .at-test__detail { padding: 0.15rem 0.7rem 0.85rem 3rem; display: flex; flex-direction: column; gap: 0.7rem; }
+            /* "Run only this test" — a secondary action inside an expanded row, so
+               it is deliberately quieter than the primary Run tests button. */
+            .at-test__actions { display: flex; margin-bottom: 0.55rem; }
+            .at-run-one {
+                border: 1px solid var(--at-line); border-radius: 0.5rem;
+                padding: 0.34rem 0.7rem; font-size: 0.75rem; font-weight: 650;
+                color: rgb(37 99 235); background: var(--at-bg); cursor: pointer;
+            }
+            .dark .at-run-one { color: rgb(147 197 253); }
+            .at-run-one:hover:not(:disabled) { background: var(--at-soft); border-color: rgb(37 99 235 / 0.55); }
+            .at-run-one:focus-visible { outline: 2px solid rgb(37 99 235); outline-offset: 2px; }
+            .at-run-one:disabled { opacity: 0.55; cursor: not-allowed; }
+            .at-run-one__inner { display: inline-flex; align-items: center; gap: 0.4rem; }
+
             .at-test__links { font-size: 0.75rem; color: var(--at-muted); display: flex; gap: 0.4rem; flex-wrap: wrap; }
             .at-test__links a { color: rgb(37 99 235); text-decoration: none; font-weight: 600; }
             .dark .at-test__links a { color: rgb(147 197 253); }

@@ -163,7 +163,7 @@ class DocumentExportConversionService
                 service: 'document_conversion',
                 modelName: $provider === DocumentConversionSetting::PROVIDER_ADOBE
                     ? 'adobe-pdf-services-export'
-                    : 'toolbase-local-converter',
+                    : 'netkit-local-converter',
                 description: $description,
                 metadata: $metadata,
             );

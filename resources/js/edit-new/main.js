@@ -157,6 +157,7 @@ import { sliderValueToFontPt, fontPtToSliderValue, FONT_SLIDER_MIN_PT, FONT_SLID
 import { generateAnnotationId } from './annotations/id.js';
 import { canvasPointFromEvent } from './util/canvas-point.js';
 import { normalizeTextForDomReflow, normalizeRichHtmlForReflow } from './text/dom-reflow.js';
+import { annotationTextDecorationLine } from './text/decoration.js';
 import { editorIsEditingAnnotation } from './editor/is-editing.js';
 import {
     activeEditorForPage,
@@ -241,7 +242,6 @@ import { paintSmoothStroke } from './draw/smooth-stroke.js';
 import { paintSmoothDrawCurve } from './draw/smooth-curve.js';
 import {
     DIRECT_DRAW_TOOL_ERASER,
-    DIRECT_DRAW_TOOL_SMOOTH_CURVE,
     normalizeDirectDrawTool,
 } from './draw/tool-type.js';
 import {
@@ -407,12 +407,14 @@ import {
     drawStrokeColor,
     drawOpacity,
     drawBrushSize,
+    drawSmoothing,
     activeDrawSession,
     setDrawModeActive,
     setDrawToolType,
     setDrawStrokeColor,
     setDrawOpacity,
     setDrawBrushSize,
+    setDrawSmoothing,
     setActiveDrawSession,
 } from './store/draw-tool-state.js';
 import {
@@ -723,6 +725,8 @@ import {
     const drawToolButtons = Array.from(document.querySelectorAll('[data-draw-direct-tool]'));
     const drawToolSizeInput = document.getElementById('draw-tool-size');
     const drawToolSizeValue = document.getElementById('draw-tool-size-value');
+    const drawToolSmoothingInput = document.getElementById('draw-tool-smoothing');
+    const drawToolSmoothingValue = document.getElementById('draw-tool-smoothing-value');
     const drawToolOpacityInput = document.getElementById('draw-tool-opacity');
     const drawToolOpacityValue = document.getElementById('draw-tool-opacity-value');
     const drawToolColorInput = document.getElementById('draw-tool-color');
@@ -751,6 +755,7 @@ import {
     const afbBold       = document.getElementById('afb-bold');
     const afbItalic     = document.getElementById('afb-italic');
     const afbUnderline  = document.getElementById('afb-underline');
+    const afbStrikeout  = document.getElementById('afb-strikeout');
     const afbAlign      = document.getElementById('afb-align');
     const afbValign     = document.getElementById('afb-valign');
     const afbCopy       = document.getElementById('afb-copy');
@@ -2034,6 +2039,7 @@ import {
             (annBgColor && annBgColor !== '#ffffff' && annBgColor !== 'transparent')
             || annOpacity < 0.999
             || ann.underline
+            || ann.strikeout
             || (String(ann.verticalAlign || 'top').toLowerCase() !== 'top')
             || (String(ann.textAlign || 'left').toLowerCase() !== 'left')
         );
@@ -2244,14 +2250,25 @@ import {
                 || ((ann.type || 'text') === 'text' && (ann.userCreated || isUserAuthoredAnnotation(ann)));
             if (!renderedByDom) {
                 ctx.fillText(line.text, drawX, drawY);
-                if (ann.underline && line.text) {
+                if ((ann.underline || ann.strikeout) && line.text) {
                     const fontSize = line.style.fontSizePt * fontDisplayScale(scale);
                     ctx.strokeStyle = line.style.fillStyle;
                     ctx.lineWidth = Math.max(0.5, fontSize * 0.07);
-                    ctx.beginPath();
-                    ctx.moveTo(drawX, drawY + Math.ceil(fontSize * 0.12));
-                    ctx.lineTo(drawX + lineWidthPx, drawY + Math.ceil(fontSize * 0.12));
-                    ctx.stroke();
+                    if (ann.underline) {
+                        ctx.beginPath();
+                        ctx.moveTo(drawX, drawY + Math.ceil(fontSize * 0.12));
+                        ctx.lineTo(drawX + lineWidthPx, drawY + Math.ceil(fontSize * 0.12));
+                        ctx.stroke();
+                    }
+                    // NK_7: a strikeout crosses the glyph body, roughly a third
+                    // of the cap height above the baseline.
+                    if (ann.strikeout) {
+                        const strikeY = drawY - Math.round(fontSize * 0.3);
+                        ctx.beginPath();
+                        ctx.moveTo(drawX, strikeY);
+                        ctx.lineTo(drawX + lineWidthPx, strikeY);
+                        ctx.stroke();
+                    }
                 }
             }
         });
@@ -2391,7 +2408,7 @@ import {
                 `font-size:${(style0.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px`,
                 `font-weight:${ann._styleDirty ? (ann.fontWeight || style0.fontWeight || '400') : (style0.fontWeight || '400')}`,
                 `font-style:${ann.fontStyle || style0.fontStyle || 'normal'}`,
-                `text-decoration:${ann.underline ? 'underline' : 'none'}`,
+                `text-decoration:${annotationTextDecorationLine(ann)}`,
                 `color:${style0.fillStyle}`,
                 `line-height:${lineHeightPx.toFixed(2)}px`,
                 `background:${bgCss}`,
@@ -3007,7 +3024,7 @@ import {
             `line-height:${lineHeightPx.toFixed(2)}px`,
             `min-height:${lineHeightPx.toFixed(2)}px`,
             `color:${style.fillStyle}`,
-            `text-decoration:${ann.underline ? 'underline' : 'none'}`,
+            `text-decoration:${annotationTextDecorationLine(ann)}`,
             'padding:0',
             'margin:0',
             'white-space:pre',
@@ -3033,7 +3050,7 @@ import {
         if (spans.length) {
             const style = compositeLineStyle(ann, 0);
             const lineHeightPx = blockLineHeightPx(ann, 0, scale, style);
-            return `<div data-line-index="0" style="display:block;width:max-content;min-width:100%;box-sizing:border-box;font-family:${style.fontFamily};font-size:${(style.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};text-decoration:${ann.underline ? 'underline' : 'none'};padding:0;margin:0;white-space:pre;overflow-wrap:normal;word-break:normal;">${buildLineInnerHtml(ann, 0, scale, spans) || '<br>'}</div>`;
+            return `<div data-line-index="0" style="display:block;width:max-content;min-width:100%;box-sizing:border-box;font-family:${style.fontFamily};font-size:${(style.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};text-decoration:${annotationTextDecorationLine(ann)};padding:0;margin:0;white-space:pre;overflow-wrap:normal;word-break:normal;">${buildLineInnerHtml(ann, 0, scale, spans) || '<br>'}</div>`;
         }
 
         return renderPlainEditorHTML(ann, String(ann.text ?? ''), scale);
@@ -3140,7 +3157,7 @@ import {
             'font-style:inherit',
             'letter-spacing:inherit',
             'color:inherit',
-            `text-decoration:${ann.underline ? 'underline' : 'none'}`,
+            `text-decoration:${annotationTextDecorationLine(ann)}`,
             `line-height:${lineHeightPx.toFixed(2)}px`,
             `min-height:${lineHeightPx.toFixed(2)}px`,
             `text-align:${ann.textAlign || 'left'}`,
@@ -3433,7 +3450,7 @@ import {
                 }
                 return transforms.length ? transforms.join(' ') : 'none';
             })();
-            return `<div data-line-index="${lineIndex}" style="position:absolute;left:${(rect?.left || 0).toFixed(2)}px;top:${(rect?.top || 0).toFixed(2)}px;${wrapperWidthPx !== null ? `width:${wrapperWidthPx.toFixed(2)}px;` : 'width:100%;'}height:${wrapperHeightPx.toFixed(2)}px;min-height:${wrapperHeightPx.toFixed(2)}px;font-family:${style.fontFamily};font-size:${(style.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};transform:${wrapperTransform};transform-origin:top left;padding:0;margin:0;white-space:normal;overflow:visible;"><span data-line-content="1" style="display:inline-block;width:max-content;min-width:max-content;transform:scaleX(${scaleX.toFixed(4)});transform-origin:top left;white-space:pre;overflow-wrap:normal;word-break:normal;padding:0;margin:0;">${innerHtml || '<br>'}</span></div>`;
+            return `<div data-line-index="${lineIndex}" style="position:absolute;left:${(rect?.left || 0).toFixed(2)}px;top:${(rect?.top || 0).toFixed(2)}px;${wrapperWidthPx !== null ? `width:${wrapperWidthPx.toFixed(2)}px;` : 'width:100%;'}height:${wrapperHeightPx.toFixed(2)}px;min-height:${wrapperHeightPx.toFixed(2)}px;font-family:${style.fontFamily};font-size:${(style.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px;font-weight:${style.fontWeight};font-style:${style.fontStyle};text-decoration:${annotationTextDecorationLine(ann)};line-height:${lineHeightPx.toFixed(2)}px;color:${style.fillStyle};transform:${wrapperTransform};transform-origin:top left;padding:0;margin:0;white-space:normal;overflow:visible;"><span data-line-content="1" style="display:inline-block;width:max-content;min-width:max-content;transform:scaleX(${scaleX.toFixed(4)});transform-origin:top left;white-space:pre;overflow-wrap:normal;word-break:normal;padding:0;margin:0;">${innerHtml || '<br>'}</span></div>`;
         }).join('');
     }
 
@@ -3475,7 +3492,7 @@ import {
         // properties in here they'd override the outer container and format-bar
         // changes (font family / size / color) wouldn't take effect once this
         // HTML has been persisted into ann._richHtml.
-        return `<div data-line-index="0" style="display:block;width:100%;box-sizing:border-box;font-family:inherit;font-size:inherit;font-weight:inherit;font-style:inherit;letter-spacing:inherit;color:inherit;text-decoration:${ann.underline ? 'underline' : 'none'};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;text-align:${lineAlign};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;">${innerHtml}</div>`;
+        return `<div data-line-index="0" style="display:block;width:100%;box-sizing:border-box;font-family:inherit;font-size:inherit;font-weight:inherit;font-style:inherit;letter-spacing:inherit;color:inherit;text-decoration:${annotationTextDecorationLine(ann)};line-height:${lineHeightPx.toFixed(2)}px;min-height:${lineHeightPx.toFixed(2)}px;text-align:${lineAlign};transform:translateY(-${topShiftPx.toFixed(2)}px);transform-origin:top left;padding:0;margin:0;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;">${innerHtml}</div>`;
     }
 
     // Render reflowed plain text — the caller is responsible for any
@@ -4127,7 +4144,7 @@ import {
             `font-size:${(style0.fontSizePt * fontDisplayScale(scale)).toFixed(2)}px`,
             `font-weight:${ann._styleDirty ? (ann.fontWeight || style0.fontWeight || '400') : (style0.fontWeight || '400')}`,
             `font-style:${ann.fontStyle || style0.fontStyle || 'normal'}`,
-            `text-decoration:${ann.underline ? 'underline' : 'none'}`,
+            `text-decoration:${annotationTextDecorationLine(ann)}`,
             `color:${aeTextColor}`,
             `line-height:${lineHeightPx.toFixed(2)}px`,
             'padding:0', 'margin:0', `background:${aeBgColor}`,
@@ -4573,9 +4590,14 @@ import {
             afbUnderline.setAttribute('aria-pressed', String(isUnderline));
             afbUnderline.classList.toggle('is-active', isUnderline);
         }
+        if (afbStrikeout) {
+            const isStrikeout = Boolean(ann.strikeout);
+            afbStrikeout.setAttribute('aria-pressed', String(isStrikeout));
+            afbStrikeout.classList.toggle('is-active', isStrikeout);
+        }
         if (afbAlign)  afbAlign.value  = ann.textAlign     || 'left';
         if (afbValign) afbValign.value = ann.verticalAlign || 'top';
-        [afbFont, afbSize, afbTextColor, afbBgColor, afbOpacity, afbBold, afbItalic, afbUnderline, afbAlign, afbValign].forEach((control) => {
+        [afbFont, afbSize, afbTextColor, afbBgColor, afbOpacity, afbBold, afbItalic, afbUnderline, afbStrikeout, afbAlign, afbValign].forEach((control) => {
             if (control) control.disabled = locked;
         });
         syncShapePanelUi();
@@ -4655,6 +4677,8 @@ import {
             drawToolColorInput,
             drawToolSizeInput,
             drawToolSizeValue,
+            drawToolSmoothingInput,
+            drawToolSmoothingValue,
             drawToolOpacityInput,
             drawToolOpacityValue,
             drawToolStatus,
@@ -4749,9 +4773,7 @@ import {
                 : (drawModeActive
                     ? (drawToolType === DIRECT_DRAW_TOOL_ERASER
                         ? 'Eraser active — drag over a drawing to remove parts of it'
-                        : drawToolType === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                            ? 'Smooth curve active — drag directly on the page to draw a fitted curve'
-                            : 'Pen active — drag directly on the page to draw')
+                        : 'Pen active — drag directly on the page to draw')
                     : 'Draw & Erase — draw directly on the page or erase parts of an existing drawing');
         }
         if (ftbAddImage) {
@@ -4920,9 +4942,9 @@ import {
             color: drawStrokeColor,
             width: drawBrushSize,
             opacity: drawOpacity,
+            smoothing: drawSmoothing,
             directDrawTool: normalizeDirectDrawTool(drawToolType),
             points: [point],
-            lastMidPoint: { x: point.x, y: point.y },
             minX: point.x - (drawBrushSize / 2),
             minY: point.y - (drawBrushSize / 2),
             maxX: point.x + (drawBrushSize / 2),
@@ -4945,14 +4967,17 @@ import {
         activeDrawSession.minY = Math.min(activeDrawSession.minY, point.y - (activeDrawSession.width / 2));
         activeDrawSession.maxX = Math.max(activeDrawSession.maxX, point.x + (activeDrawSession.width / 2));
         activeDrawSession.maxY = Math.max(activeDrawSession.maxY, point.y + (activeDrawSession.width / 2));
-        if (activeDrawSession.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
-            activeDrawSession.ctx.clearRect(0, 0, activeDrawSession.layer.width, activeDrawSession.layer.height);
-            paintSmoothDrawCurve(activeDrawSession.ctx, activeDrawSession, activeDrawSession.color, activeDrawSession.width);
-        } else {
-            const midPoint = { x: (lastPoint.x + point.x) / 2, y: (lastPoint.y + point.y) / 2 };
-            paintDrawSegment(activeDrawSession.ctx, activeDrawSession.lastMidPoint, lastPoint, midPoint, activeDrawSession.width, activeDrawSession.color);
-            activeDrawSession.lastMidPoint = midPoint;
-        }
+        // NK_16: refit the whole stroke on every move. The smoothing passes
+        // shift points that are already down, so an incremental segment would
+        // leave the tail disagreeing with the rest of the curve.
+        activeDrawSession.ctx.clearRect(0, 0, activeDrawSession.layer.width, activeDrawSession.layer.height);
+        paintSmoothDrawCurve(
+            activeDrawSession.ctx,
+            activeDrawSession,
+            activeDrawSession.color,
+            activeDrawSession.width,
+            activeDrawSession.smoothing,
+        );
         return true;
     }
 
@@ -4961,10 +4986,6 @@ import {
         if (event.pointerId !== activeDrawSession.pointerId) return false;
         const session = activeDrawSession;
         oc.releasePointerCapture?.(event.pointerId);
-        if (session.points.length > 1 && session.directDrawTool !== DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
-            const lastPoint = session.points[session.points.length - 1];
-            paintDrawSegment(session.ctx, session.lastMidPoint, lastPoint, lastPoint, session.width, session.color);
-        }
         const padding = Math.max(session.width, 8);
         const cropLeft = Math.max(0, Math.floor(session.minX - padding));
         const cropTop = Math.max(0, Math.floor(session.minY - padding));
@@ -5033,18 +5054,16 @@ import {
             );
         }
         outputCtx.globalAlpha = session.opacity;
-        if (session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE) {
-            paintSmoothDrawCurve(outputCtx, {
-                color: session.color,
-                width: session.width,
-                points: session.points.map((point) => ({
-                    x: point.x - uLeft,
-                    y: point.y - uTop,
-                })),
-            }, session.color, session.width);
-        } else {
-            outputCtx.drawImage(session.layer, -uLeft, -uTop);
-        }
+        // Refit from the points rather than upscaling the preview layer, so the
+        // exported drawing gets the full outputScale resolution.
+        paintSmoothDrawCurve(outputCtx, {
+            color: session.color,
+            width: session.width,
+            points: session.points.map((point) => ({
+                x: point.x - uLeft,
+                y: point.y - uTop,
+            })),
+        }, session.color, session.width, session.smoothing);
         const pdfWidth = cropWidth / pageScale;
         const pdfHeight = cropHeight / pageScale;
         const pdfX = uLeft / pageScale;
@@ -5088,11 +5107,7 @@ import {
                 redrawOverlay(session.pi);
                 clearActiveAnnotation();
                 markDirty();
-                setDrawToolStatus(
-                    session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                        ? 'Smooth curve added. Keep drawing or switch tools.'
-                        : 'Drawing added. Keep drawing or switch to the eraser.',
-                );
+                setDrawToolStatus('Drawing added. Keep drawing or switch to the eraser.');
                 return true;
             }
         }
@@ -5115,11 +5130,7 @@ import {
         if (created) {
             created._drawCreatedAt = now;
             clearActiveAnnotation();
-            setDrawToolStatus(
-                session.directDrawTool === DIRECT_DRAW_TOOL_SMOOTH_CURVE
-                    ? 'Smooth curve added. Keep drawing or switch tools.'
-                    : 'Drawing added. Keep drawing or switch to the eraser.',
-            );
+            setDrawToolStatus('Drawing added. Keep drawing or switch to the eraser.');
         }
         return true;
     }
@@ -6625,6 +6636,7 @@ import {
             fontWeight:   '400',
             fontStyle:    'normal',
             underline:    false,
+            strikeout:    false,
             textAlign:    'left',
             verticalAlign: 'top',
             backgroundColor: 'transparent',
@@ -8291,6 +8303,12 @@ import {
             syncDrawToolPanelUi();
         });
     }
+    if (drawToolSmoothingInput) {
+        drawToolSmoothingInput.addEventListener('input', () => {
+            setDrawSmoothing(Number(drawToolSmoothingInput.value) / 100);
+            syncDrawToolPanelUi();
+        });
+    }
     if (drawToolOpacityInput) {
         drawToolOpacityInput.addEventListener('input', () => {
             setDrawOpacity(clamp01((Number(drawToolOpacityInput.value) || 100) / 100, 1));
@@ -9460,6 +9478,7 @@ import {
                 case 'bold':      return 'font-weight: bold';
                 case 'italic':    return 'font-style: italic';
                 case 'underline': return 'text-decoration: underline';
+                case 'strikeThrough': return 'text-decoration: line-through';
                 case 'foreColor': return `color: ${valueArg || '#000000'}`;
                 case 'fontName':  return `font-family: ${valueArg || 'Helvetica'}`;
                 case 'fontSize':  return `font-size: ${valueArg || '12pt'}`;
@@ -9515,7 +9534,7 @@ import {
                 const wrappers = tmp.querySelectorAll('[data-line-index]');
                 if (wrappers.length) {
                     const align = ann.textAlign || 'left';
-                    const decoration = ann.underline ? 'underline' : 'none';
+                    const decoration = annotationTextDecorationLine(ann);
                     wrappers.forEach((el) => {
                         el.style.textAlign = align;
                         el.style.textDecoration = decoration;
@@ -9865,6 +9884,23 @@ import {
             markUserAuthored(active.ann);
             afbUnderline.setAttribute('aria-pressed', String(!isUnderline));
             afbUnderline.classList.toggle('is-active', !isUnderline);
+            redrawOverlay(active.pi);
+            syncActiveEditor(true);
+            markDirty();
+        });
+    }
+    if (afbStrikeout) {
+        afbStrikeout.addEventListener('click', () => {
+            if (applySelectionFormat('strikeThrough')) return;
+            const active = getActiveAnnAndPage();
+            if (!active) return;
+            const isStrikeout = Boolean(active.ann.strikeout);
+            pushUndo();
+            active.ann.strikeout = !isStrikeout;
+            active.ann._styleDirty = true;
+            markUserAuthored(active.ann);
+            afbStrikeout.setAttribute('aria-pressed', String(!isStrikeout));
+            afbStrikeout.classList.toggle('is-active', !isStrikeout);
             redrawOverlay(active.pi);
             syncActiveEditor(true);
             markDirty();
