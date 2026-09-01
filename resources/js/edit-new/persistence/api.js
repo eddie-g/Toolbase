@@ -12,13 +12,38 @@
  * and HTTP-status error throwing.
  */
 
-import { CSRF, INFO_URL, SAVE_URL, DOWNLOAD_URL } from '../config.js';
+import { CSRF, refreshCsrf, INFO_URL, SAVE_URL, DOWNLOAD_URL } from '../config.js';
 
-const JSON_HEADERS = {
+// Built per request, not at module load: `CSRF` is a live binding that
+// config.js reassigns when the session token rotates (NK_22).
+const jsonHeaders = (accept = 'application/json') => ({
     'Content-Type': 'application/json',
-    Accept: 'application/json',
+    Accept: accept,
     'X-CSRF-TOKEN': CSRF,
-};
+});
+
+/**
+ * POST with the current CSRF token; on a 419 (session idled out and the
+ * token rotated) refresh the token and replay the request once.
+ */
+async function postWithCsrfRetry(url, accept, body) {
+    const send = () => fetch(url, {
+        method: 'POST',
+        headers: jsonHeaders(accept),
+        credentials: 'same-origin',
+        body,
+    });
+    let resp = await send();
+    if (resp.status === 419) {
+        try {
+            await refreshCsrf();
+        } catch (_e) {
+            return resp;
+        }
+        resp = await send();
+    }
+    return resp;
+}
 
 /**
  * Build the documentInfo URL with the session id query param attached.
@@ -70,12 +95,7 @@ export async function fetchDocumentInfo(sessionId, opts = {}) {
  * response; throws on non-2xx or `success: false`.
  */
 export async function saveAnnotations(payload) {
-    const response = await fetch(SAVE_URL, {
-        method: 'POST',
-        headers: JSON_HEADERS,
-        credentials: 'same-origin',
-        body: JSON.stringify(payload),
-    });
+    const response = await postWithCsrfRetry(SAVE_URL, 'application/json', JSON.stringify(payload));
     const result = await response.json().catch(() => ({}));
     if (!response.ok || !result.success) {
         throw new Error(result.message || 'Save failed');
@@ -90,16 +110,11 @@ export async function saveAnnotations(payload) {
  * otherwise the response text.
  */
 export async function downloadAnnotatedPdf(payload) {
-    const response = await fetch(DOWNLOAD_URL, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/pdf, application/json',
-            'X-CSRF-TOKEN': CSRF,
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify(payload),
-    });
+    const response = await postWithCsrfRetry(
+        DOWNLOAD_URL,
+        'application/pdf, application/json',
+        JSON.stringify(payload),
+    );
 
     if (!response.ok) {
         let message = 'Failed to generate PDF.';
