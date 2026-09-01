@@ -17125,6 +17125,11 @@ function startHighlightDrag(ev) {
     if (!highlightModeActive) return;
     if (ev.button !== 0 || dragState || multiDragState || resizeState || shapeRotateState || shapeCutState?.armed || marqueeSelectionState) return;
     if (ev.target?.closest?.('#highlight-tool-panel, .floating-tool-bar, .top-bar, .enpv-ann-menu')) return;
+    // An existing highlight is the one annotation kind that stays clickable
+    // while the tool is open (NK_23). Yield so the box's own pointerdown
+    // handler selects (and can move/resize) it instead of painting over it;
+    // the box's handles are its children, so closest() covers them too.
+    if (ev.target?.closest?.('.enpv-annotation-box.enpv-highlight-box')) return;
     const pageIndex = pageIndexFromEventTarget(ev.target);
     if (!Number.isFinite(pageIndex) || pageIndex < 0) return;
     const point = pdfjsPointFromPageClient(pageIndex, ev.clientX, ev.clientY);
@@ -22014,7 +22019,12 @@ function renderAnnotationBoxLayer(pageIndex) {
         persistedOverlayRects.push(maskRect);
     }
     for (const annotation of shapeAnnotations) {
-        const allowInteraction = editModeOn || document.body.classList.contains('enpv-shape-on');
+        // NK_23: while the Highlight tool is open, existing highlights are
+        // the one annotation kind that stays clickable, so they render with
+        // interactive chrome instead of the read-only overlay.
+        const allowInteraction = editModeOn
+            || document.body.classList.contains('enpv-shape-on')
+            || (highlightModeActive && isHighlightAnnotation(annotation));
         const rendered = createShapeOverlayBox(annotation, pageIndex, viewport, scale, allowInteraction);
         if (!rendered) continue;
         if (annotation.guidedLeaseUnderline !== true) {

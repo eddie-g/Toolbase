@@ -4697,9 +4697,13 @@ body.enpv-highlight-on .pdfViewer .textLayer span.markedContent {
 /* Highlight mode is a painting mode. Let pointer gestures pass through
  * editable overlay boxes to the PDF.js text layer so dragging over saved or
  * promoted text produces inline, per-line highlight bands. Existing
- * highlights become interactive again as soon as highlight mode is closed. */
+ * highlights stay interactive (NK_23): while the tool is open they are the
+ * one annotation kind that can be clicked, selected, and adjusted. */
 body.enpv-highlight-on .pdfViewer .enpv-annotation-box {
     pointer-events: none !important;
+}
+body.enpv-highlight-on .pdfViewer .enpv-annotation-box.enpv-highlight-box {
+    pointer-events: auto !important;
 }
 body.enpv-highlight-on .enpv-annotation-box.enpv-highlight-box { cursor: grab !important; }
 body.enpv-note-anchor-placing #viewerContainer,
