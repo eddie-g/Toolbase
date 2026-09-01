@@ -244,6 +244,16 @@
                 "summary": "Every reachable control is in the tab order and labelled, the opacity slider takes focus and moves under arrow keys, and the panel's aria-hidden tracks its visibility. The focus ring is checked after real Tab navigation, since :focus-visible does not match programmatic focus. The panel reuses the .draw-tool-panel classes, so it inherits the focus rings added for the Draw tool -- these checks would have failed before that.",
                 "automated": true,
                 "story": "highlight-tool"
+            },
+            {
+                "number": "23",
+                "id": "23-select-in-mode",
+                "gid": null,
+                "area": "Selection",
+                "title": "With the tool open, clicking an existing highlight selects it (highlights only)",
+                "summary": "NK_23. While the Highlight tool is open, an already-placed highlight is the one annotation kind that stays clickable: clicking it selects it, the click paints nothing new, and the tool and its Options panel survive the selection. Computed pointer-events prove the scoping -- a highlight box receives pointer events while every other annotation box still passes the pointer through to the text layer -- and painting a fresh highlight still works afterwards.",
+                "automated": true,
+                "story": "highlight-tool"
             }
         ]
     }

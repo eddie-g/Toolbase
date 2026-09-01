@@ -466,7 +466,7 @@ class AutomatedTestsPageTest extends TestCase
             ->assertJsonPath('suite.key', 'highlight-tool');
 
         $tests = $response->json('suite.tests');
-        $this->assertCount(22, $tests, 'The highlight story specifies 22 cases');
+        $this->assertCount(23, $tests, 'The highlight story specifies 23 cases');
 
         foreach ($tests as $test) {
             $this->assertSame('highlight-tool', $test['story']);
@@ -493,7 +493,7 @@ class AutomatedTestsPageTest extends TestCase
             fn (array $test) => $test['automated'] === true,
         ));
 
-        $this->assertCount(22, $automated, 'Every specified highlight case is automated');
+        $this->assertCount(23, $automated, 'Every specified highlight case is automated');
 
         $runner = (string) file_get_contents(base_path('tests/AutomatedTests/Highlight/run_highlight_tests.cjs'));
 
