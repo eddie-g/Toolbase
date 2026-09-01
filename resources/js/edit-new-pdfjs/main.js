@@ -15017,6 +15017,25 @@ function syncConvertFormatUi() {
     scheduleConvertSizeEstimate();
 }
 
+/**
+ * NK_24: each Convert tab keeps its everyday choices on show and folds the
+ * rest behind its own Advanced checkbox, off by default.
+ *
+ * Purely presentational — a collapsed panel's controls keep their values and
+ * still reach the export, so opening or closing Advanced never changes what
+ * a conversion produces. Each tab remembers its own state for as long as the
+ * editor is open, because the modal is hidden rather than re-rendered.
+ */
+function syncConvertAdvancedUi() {
+    document.querySelectorAll('[data-enpv-convert-advanced]').forEach((toggle) => {
+        const panel = document.getElementById(`enpv-convert-advanced-${toggle.dataset.enpvConvertAdvanced}-panel`);
+        if (!panel) return;
+        const open = toggle.checked === true;
+        panel.hidden = !open;
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+}
+
 function syncConvertImageSizeUi() {
     document.querySelectorAll('[data-enpv-image-dpi]').forEach((button) => {
         const active = Number.parseInt(button.dataset.enpvImageDpi, 10) === convertImageDpi;
@@ -15126,6 +15145,7 @@ function openConvertModal() {
     resetConvertProgress();
     syncConvertFormatUi();
     syncConvertImageSizeUi();
+    syncConvertAdvancedUi();
     syncConvertPageCount();
     convertModal.hidden = false;
     floatingConvertButton?.classList.add('active', 'is-active');
@@ -29280,6 +29300,9 @@ floatingNotesButton?.addEventListener('click', () => {
     toggleNotesPanel();
 });
 floatingConvertButton?.addEventListener('click', openConvertModal);
+document.querySelectorAll('[data-enpv-convert-advanced]').forEach((toggle) => {
+    toggle.addEventListener('change', syncConvertAdvancedUi);
+});
 convertCloseButton?.addEventListener('click', closeConvertModal);
 convertCancelButton?.addEventListener('click', closeConvertModal);
 convertModal?.addEventListener('click', (event) => {

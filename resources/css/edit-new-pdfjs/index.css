@@ -1665,6 +1665,39 @@ body.enpv-body .enpv-convert-antialias {
     white-space: nowrap;
 }
 
+/* NK_24: the disclosure that folds each Convert tab's advanced options away.
+ * Reads as a divider with a control on it, so the shorter default form does
+ * not look truncated. */
+body.enpv-body .enpv-convert-advanced-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 0 14px;
+    padding-top: 12px;
+    border-top: 1px solid #e6ebf3;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 750;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    user-select: none;
+}
+
+body.enpv-body .enpv-convert-advanced-toggle:hover {
+    color: #334155;
+}
+
+body.enpv-body .enpv-convert-advanced-toggle input {
+    cursor: pointer;
+}
+
+body.enpv-body .enpv-convert-advanced-toggle input:disabled,
+body.enpv-body .enpv-convert-advanced-toggle:has(input:disabled) {
+    cursor: default;
+    opacity: 0.55;
+}
+
 body.enpv-body .enpv-convert-config-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));

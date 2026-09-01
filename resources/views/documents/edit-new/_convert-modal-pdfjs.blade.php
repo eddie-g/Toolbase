@@ -68,7 +68,13 @@
                         <span>Enter page numbers or ranges separated by commas.</span>
                     </div>
                 </div>
-                <div class="enpv-convert-config-grid">
+                <label class="enpv-convert-advanced-toggle">
+                    <input id="enpv-convert-advanced-images" type="checkbox"
+                           data-enpv-convert-advanced="images"
+                           aria-expanded="false" aria-controls="enpv-convert-advanced-images-panel">
+                    <span>Advanced</span>
+                </label>
+                <div id="enpv-convert-advanced-images-panel" class="enpv-convert-config-grid" hidden>
                     <div class="enpv-field-group">
                         <label>Color</label>
                         <select id="enpv-convert-color-model">
@@ -93,36 +99,60 @@
 
             <section id="enpv-convert-pdfa" class="enpv-convert-panel" role="tabpanel" hidden>
                 <div class="enpv-info-box is-green"><strong>PDF/A Archival Format</strong><span>PDF/A embeds fonts, removes external dependencies, and stores metadata for long-term preservation.</span></div>
-                <div class="enpv-field-group"><label>Conformance Level</label><select id="enpv-convert-pdfa-level"><option value="1b">PDF/A-1b — Basic (ISO 19005-1)</option><option value="2b" selected>PDF/A-2b — Recommended (ISO 19005-2)</option><option value="3b">PDF/A-3b — With Attachments (ISO 19005-3)</option></select><span class="enpv-help-text">PDF/A-2b is recommended for most archival purposes.</span></div>
-                <div class="enpv-field-group">
-                    <div class="enpv-label">Options</div>
-                    <div class="enpv-option-grid">
-                        <label class="enpv-option-card"><input id="enpv-convert-pdfa-embed-fonts" type="checkbox" checked><span><strong>Embed all fonts</strong><small>Includes the fonts needed to preserve the document.</small></span></label>
-                        <label class="enpv-option-card"><input id="enpv-convert-pdfa-srgb" type="checkbox" checked><span><strong>sRGB color profile</strong><small>Keeps colors consistent across devices.</small></span></label>
+                <label class="enpv-convert-advanced-toggle">
+                    <input id="enpv-convert-advanced-pdfa" type="checkbox"
+                           data-enpv-convert-advanced="pdfa"
+                           aria-expanded="false" aria-controls="enpv-convert-advanced-pdfa-panel">
+                    <span>Advanced</span>
+                </label>
+                <div id="enpv-convert-advanced-pdfa-panel" hidden>
+                    <div class="enpv-field-group"><label>Conformance Level</label><select id="enpv-convert-pdfa-level"><option value="1b">PDF/A-1b — Basic (ISO 19005-1)</option><option value="2b" selected>PDF/A-2b — Recommended (ISO 19005-2)</option><option value="3b">PDF/A-3b — With Attachments (ISO 19005-3)</option></select><span class="enpv-help-text">PDF/A-2b is recommended for most archival purposes.</span></div>
+                    <div class="enpv-field-group">
+                        <div class="enpv-label">Options</div>
+                        <div class="enpv-option-grid">
+                            <label class="enpv-option-card"><input id="enpv-convert-pdfa-embed-fonts" type="checkbox" checked><span><strong>Embed all fonts</strong><small>Includes the fonts needed to preserve the document.</small></span></label>
+                            <label class="enpv-option-card"><input id="enpv-convert-pdfa-srgb" type="checkbox" checked><span><strong>sRGB color profile</strong><small>Keeps colors consistent across devices.</small></span></label>
+                        </div>
                     </div>
                 </div>
             </section>
 
             <section id="enpv-convert-word" class="enpv-convert-panel" role="tabpanel" hidden>
                 <div class="enpv-info-box"><strong>Word Document (.docx)</strong><span>Converts your PDF into an editable Word document with preserved layout where possible.</span></div>
-                <div class="enpv-field-group"><label>Layout Mode</label><select id="enpv-convert-word-layout"><option value="flow">Flowing Text — Best for editing</option><option value="exact" selected>Exact Layout — Preserves positioning</option></select></div>
-                <div class="enpv-field-group">
-                    <div class="enpv-label">Options</div>
-                    <div class="enpv-option-grid">
-                        <label class="enpv-option-card"><input id="enpv-convert-word-images" type="checkbox" checked><span><strong>Include images</strong><small>Embeds images from the PDF in the Word document.</small></span></label>
-                        <label class="enpv-option-card"><input id="enpv-convert-word-ocr" type="checkbox"><span><strong>OCR scanned pages</strong><small>Makes text in scanned pages editable.</small></span></label>
+                <label class="enpv-convert-advanced-toggle">
+                    <input id="enpv-convert-advanced-word" type="checkbox"
+                           data-enpv-convert-advanced="word"
+                           aria-expanded="false" aria-controls="enpv-convert-advanced-word-panel">
+                    <span>Advanced</span>
+                </label>
+                <div id="enpv-convert-advanced-word-panel" hidden>
+                    <div class="enpv-field-group"><label>Layout Mode</label><select id="enpv-convert-word-layout"><option value="flow">Flowing Text — Best for editing</option><option value="exact" selected>Exact Layout — Preserves positioning</option></select></div>
+                    <div class="enpv-field-group">
+                        <div class="enpv-label">Options</div>
+                        <div class="enpv-option-grid">
+                            <label class="enpv-option-card"><input id="enpv-convert-word-images" type="checkbox" checked><span><strong>Include images</strong><small>Embeds images from the PDF in the Word document.</small></span></label>
+                            <label class="enpv-option-card"><input id="enpv-convert-word-ocr" type="checkbox"><span><strong>OCR scanned pages</strong><small>Makes text in scanned pages editable.</small></span></label>
+                        </div>
                     </div>
                 </div>
             </section>
 
             <section id="enpv-convert-excel" class="enpv-convert-panel" role="tabpanel" hidden>
                 <div class="enpv-info-box is-green"><strong>Excel Spreadsheet (.xlsx)</strong><span>Extracts tables and structured data from your PDF into a spreadsheet.</span></div>
-                <div class="enpv-field-group"><label>Extraction Mode</label><select id="enpv-convert-excel-mode"><option value="all" selected>All Content — Preserve layout, text, and images</option><option value="tables">Tables Only — Extract detected tables</option></select><span class="enpv-help-text">All Content preserves document regions and images; Tables Only extracts detected data tables.</span></div>
-                <div class="enpv-field-group">
-                    <div class="enpv-label">Options</div>
-                    <div class="enpv-option-grid">
-                        <label class="enpv-option-card"><input id="enpv-convert-excel-merge-cells" type="checkbox" checked><span><strong>Preserve merged cells</strong><small>Recreates merged regions detected in source tables.</small></span></label>
-                        <label class="enpv-option-card"><input id="enpv-convert-excel-sheet-per-page" type="checkbox" checked><span><strong>Separate sheet per page</strong><small>Keeps each PDF page in its own worksheet.</small></span></label>
+                <label class="enpv-convert-advanced-toggle">
+                    <input id="enpv-convert-advanced-excel" type="checkbox"
+                           data-enpv-convert-advanced="excel"
+                           aria-expanded="false" aria-controls="enpv-convert-advanced-excel-panel">
+                    <span>Advanced</span>
+                </label>
+                <div id="enpv-convert-advanced-excel-panel" hidden>
+                    <div class="enpv-field-group"><label>Extraction Mode</label><select id="enpv-convert-excel-mode"><option value="all" selected>All Content — Preserve layout, text, and images</option><option value="tables">Tables Only — Extract detected tables</option></select><span class="enpv-help-text">All Content preserves document regions and images; Tables Only extracts detected data tables.</span></div>
+                    <div class="enpv-field-group">
+                        <div class="enpv-label">Options</div>
+                        <div class="enpv-option-grid">
+                            <label class="enpv-option-card"><input id="enpv-convert-excel-merge-cells" type="checkbox" checked><span><strong>Preserve merged cells</strong><small>Recreates merged regions detected in source tables.</small></span></label>
+                            <label class="enpv-option-card"><input id="enpv-convert-excel-sheet-per-page" type="checkbox" checked><span><strong>Separate sheet per page</strong><small>Keeps each PDF page in its own worksheet.</small></span></label>
+                        </div>
                     </div>
                 </div>
             </section>
