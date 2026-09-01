@@ -42,17 +42,17 @@ class AutomatedTestsPageTest extends TestCase
 
         $tests = $response->json('suite.tests');
 
-        $this->assertCount(37, $tests, 'Both QA stories\' subtasks should be catalogued');
+        $this->assertCount(38, $tests, 'Both QA stories\' subtasks should be catalogued');
 
         $automated = array_values(array_filter($tests, fn (array $test) => $test['automated'] === true));
         $this->assertCount(
-            37,
+            38,
             $automated,
             'Every catalogued subtask is automated; the runner must implement all of them',
         );
 
         $this->assertCount(
-            37,
+            38,
             array_unique(array_column($tests, 'id')),
             'Each subtask maps to its own runner test',
         );
@@ -61,6 +61,7 @@ class AutomatedTestsPageTest extends TestCase
         $byStory = array_count_values(array_column($tests, 'story'));
         $this->assertSame(24, $byStory['signature-tool'] ?? 0);
         $this->assertSame(13, $byStory['nk-dev-5'] ?? 0);
+        $this->assertSame(1, $byStory['nk-dev-6'] ?? 0);
 
         foreach ($tests as $test) {
             $this->assertNotEmpty($test['gid'], 'Each test links back to its Asana subtask');

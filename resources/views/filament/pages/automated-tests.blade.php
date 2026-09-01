@@ -141,8 +141,8 @@
                         <div class="at-group">
                             <div class="at-group__label">
                                 <span x-text="group.area"></span>
-                                <span class="at-group__story" x-show="group.story === 'nk-dev-5'"
-                                      x-cloak>NK_Dev_5</span>
+                                <span class="at-group__story" x-show="group.story && !isPrimaryStory(group.story)"
+                                      x-cloak x-text="storyShort(group.story)"></span>
                             </div>
 
                             <template x-for="test in group.tests" :key="rowKey(test)">
@@ -322,6 +322,16 @@
                             // story key so a new suite needs no code change here.
                             short: story.short || story.key,
                         }));
+                    },
+
+                    /** Short label for a story key, for badges and links. */
+                    storyShort(key) {
+                        return this.stories.find((story) => story.key === key)?.short || '';
+                    },
+
+                    /** The first story is the suite's own; later ones are additions. */
+                    isPrimaryStory(key) {
+                        return this.stories.length > 0 && this.stories[0].key === key;
                     },
 
                     testsForStory(key) {

@@ -287,6 +287,12 @@ const TESTS = [
         run: nk5StandardAccountLimit,
     },
     {
+        id: 'nk6-stamp-follows-box',
+        number: 'NK6-01',
+        title: 'Resized signature stays inside its bounding box',
+        run: nk6StampFollowsBox,
+    },
+    {
         id: '21-burn-export',
         number: '21',
         title: 'Burn into PDF and downloaded-PDF fidelity',
@@ -4541,6 +4547,113 @@ async function nk5StandardAccountLimit(page, ctx) {
         'The accepted save reached the server', `${freed.posted.length} POST(s)`);
 
     const artifact = await capture(page, 'nk5-13-standard-limit', 'limit-reached');
+    return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
+}
+
+// --- NK_DEV_6 · The stamp stays inside the box while it is resized ---------
+
+async function nk6StampFollowsBox(page, ctx) {
+    const r = ctx.recorder;
+
+    /** Box vs image geometry, and how far the ink spills outside. */
+    const stampGeometry = () => page.evaluate(() => {
+        const box = document.querySelector('.enpv-annotation-box[data-annotation-type="signature"]');
+        const img = box?.querySelector('img');
+        if (!box || !img) return null;
+        const b = box.getBoundingClientRect();
+        const i = img.getBoundingClientRect();
+        return {
+            box: { w: Math.round(b.width), h: Math.round(b.height) },
+            img: { w: Math.round(i.width), h: Math.round(i.height) },
+            overflowW: Math.round(i.width - b.width),
+            overflowH: Math.round(i.height - b.height),
+            spillRight: Math.round(i.right - b.right),
+            spillBottom: Math.round(i.bottom - b.bottom),
+            inlineWidth: img.style.width,
+            inlineHeight: img.style.height,
+        };
+    });
+
+    const fits = (g) => !!g
+        && Math.abs(g.overflowW) <= 1 && Math.abs(g.overflowH) <= 1
+        && Math.abs(g.spillRight) <= 1 && Math.abs(g.spillBottom) <= 1;
+
+    await placeDrawnSignature(page, { pageNumber: 1, fx: 0.45, fy: 0.4, large: true });
+    const placed = await stampGeometry();
+    r.assert('fits-when-placed', fits(placed),
+        'The stamp fills its box exactly when first placed', JSON.stringify(placed));
+
+    // The stylesheet sizes these at 100%; any inline pixel value overrides it
+    // and goes stale the moment the box is resized. That was the bug.
+    r.assert('no-stale-inline-sizing',
+        !!placed && placed.inlineWidth === '' && placed.inlineHeight === '',
+        'An unrotated page leaves the stamp sizing to CSS rather than fixed pixels',
+        placed ? `width="${placed.inlineWidth}" height="${placed.inlineHeight}"` : 'no stamp');
+
+    // --- scale down with the south-east handle ----------------------------
+    await selectSignatureBox(page);
+    const handle = page.locator('.enpv-annotation-box[data-annotation-type="signature"] .enpv-resize-handle.se').first();
+    await handle.scrollIntoViewIfNeeded({ timeout: 8000 });
+    await page.waitForTimeout(250);
+    const grab = await handle.boundingBox();
+
+    await page.mouse.move(grab.x + (grab.width / 2), grab.y + (grab.height / 2));
+    await page.mouse.down();
+    await page.mouse.move(grab.x - 60, grab.y - 25, { steps: 8 });
+    const midDrag = await stampGeometry();
+    r.assert('fits-mid-drag', fits(midDrag),
+        'The stamp keeps up with the box while the handle is being dragged',
+        JSON.stringify(midDrag));
+
+    await page.mouse.move(grab.x - 140, grab.y - 55, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+
+    const afterResize = await stampGeometry();
+    r.assert('fits-after-resize', fits(afterResize),
+        'The stamp fills the box exactly once the drag ends',
+        JSON.stringify(afterResize));
+    r.assert('actually-shrank',
+        !!afterResize && !!placed && afterResize.box.h < placed.box.h * 0.8,
+        'The box really was scaled down, so the check is meaningful',
+        `${placed?.box.h}px -> ${afterResize?.box.h}px tall`);
+
+    // --- and after the layer re-renders -----------------------------------
+    await captureAutosave(page, ctx.saveRecorder);
+    const afterSave = await stampGeometry();
+    r.assert('fits-after-rerender', fits(afterSave),
+        'The stamp still fits after the annotation layer re-renders',
+        JSON.stringify(afterSave));
+
+    // --- growing again must not letterbox or overflow ---------------------
+    await selectSignatureBox(page);
+    const grow = await page.locator('.enpv-annotation-box[data-annotation-type="signature"] .enpv-resize-handle.se')
+        .first().boundingBox();
+    await page.mouse.move(grow.x + (grow.width / 2), grow.y + (grow.height / 2));
+    await page.mouse.down();
+    await page.mouse.move(grow.x + 120, grow.y + 45, { steps: 10 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    const afterGrow = await stampGeometry();
+    r.assert('fits-after-growing', fits(afterGrow),
+        'Scaling back up keeps the stamp inside the box too',
+        JSON.stringify(afterGrow));
+
+    // --- an edge handle changes only one axis -----------------------------
+    await selectSignatureBox(page);
+    const bottom = await page.locator('.enpv-annotation-box[data-annotation-type="signature"] .enpv-resize-handle.b')
+        .first().boundingBox();
+    await page.mouse.move(bottom.x + (bottom.width / 2), bottom.y + (bottom.height / 2));
+    await page.mouse.down();
+    await page.mouse.move(bottom.x + (bottom.width / 2), bottom.y - 30, { steps: 8 });
+    await page.mouse.up();
+    await page.waitForTimeout(700);
+    const afterEdge = await stampGeometry();
+    r.assert('fits-after-edge-handle', fits(afterEdge),
+        'Resizing from an edge handle keeps the stamp inside the box',
+        JSON.stringify(afterEdge));
+
+    const artifact = await capture(page, 'nk6-stamp-follows-box', 'after-scaling');
     return { checks: r.checks, artifacts: [artifact].filter(Boolean) };
 }
 

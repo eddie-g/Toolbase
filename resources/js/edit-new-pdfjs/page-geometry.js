@@ -161,3 +161,47 @@ export function rotationSnapshotTransform(rotation, snapshotWidth, snapshotHeigh
     }
     return `matrix(${scale}, 0, 0, ${scale}, 0, 0)`;
 }
+
+/**
+ * Inline styles for a stamped image (signature / drawing) that must fill its
+ * annotation box exactly.
+ *
+ * On an unrotated page the answer is "no inline sizing at all": the stylesheet
+ * already sizes these images at 100% of the box, and any inline pixel value
+ * overrides it. That was the NK_DEV_6 bug — the pixels were computed once at
+ * render time, so resizing the box left the stamp at its old height and the
+ * ink spilled outside the selection.
+ *
+ * A rotated page genuinely needs explicit dimensions because the axes swap, so
+ * those are returned in pixels and must be recomputed whenever the box resizes.
+ *
+ * `width`/`height` of null mean "clear any inline value and let CSS decide".
+ *
+ * @param {number|string|null|undefined} rotation page rotation in degrees
+ * @param {number} boxWidth  current box width in CSS pixels
+ * @param {number} boxHeight current box height in CSS pixels
+ * @returns {{width: string|null, height: string|null, transform: string, followsBox: boolean}}
+ */
+export function stampFrameStyle(rotation, boxWidth, boxHeight) {
+    const normalized = normalizePageRotationDegrees(rotation);
+
+    if (normalized === 0) {
+        return { width: null, height: null, transform: 'none', followsBox: true };
+    }
+
+    const frame = viewportRotatedContentFrame({ rotation: normalized }, boxWidth, boxHeight);
+    return {
+        width: `${Math.max(1, frame.width)}px`,
+        height: `${Math.max(1, frame.height)}px`,
+        transform: frame.transform,
+        followsBox: false,
+    };
+}
+
+/** Apply a stampFrameStyle() result to an element. */
+export function applyStampFrameStyle(element, style) {
+    if (!element || !style) return;
+    element.style.width = style.width === null ? '' : style.width;
+    element.style.height = style.height === null ? '' : style.height;
+    element.style.transform = style.transform;
+}
