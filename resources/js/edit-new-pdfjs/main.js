@@ -552,8 +552,62 @@ const MERGE_MAX_PAGES = Math.max(1, Number(root.dataset.mergeMaxPages) || 1000);
 const IS_GUIDED_MODE = root.dataset.guided === '1';
 const TEMPLATE_TYPE = String(root.dataset.templateType || '').trim();
 const TEMPLATE_SLUG = String(root.dataset.templateSlug || '').trim();
-const CSRF = root.dataset.csrf;
+let CSRF = root.dataset.csrf;
 const DOC_ID = root.dataset.docId;
+
+// The CSRF token above dies with the session (SESSION_LIFETIME minutes of
+// inactivity), after which every POST from a still-open tab is rejected
+// with 419 "CSRF token mismatch" and nothing short of a reload — losing
+// unsaved work — recovers (NK_22). Three defences: poll the token
+// endpoint so the session never idles out while the editor is open,
+// refresh on tab refocus (timers don't fire while a laptop sleeps), and
+// replay a request that still catches a 419 once with a fresh token.
+const CSRF_URL = root.dataset.csrfUrl || '/csrf-token';
+const CSRF_KEEP_ALIVE_MS = 10 * 60 * 1000;
+
+async function refreshCsrfToken() {
+    const resp = await fetch(CSRF_URL, {
+        headers: { Accept: 'application/json' },
+        credentials: 'same-origin',
+    });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const data = await resp.json().catch(() => ({}));
+    if (data && data.token) {
+        CSRF = data.token;
+        // Modules that re-read the meta tag per request (signature
+        // account library) pick the fresh token up from here.
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        if (meta) meta.content = CSRF;
+        root.dataset.csrf = CSRF;
+    }
+    return CSRF;
+}
+
+setInterval(() => { refreshCsrfToken().catch(() => {}); }, CSRF_KEEP_ALIVE_MS);
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) refreshCsrfToken().catch(() => {});
+});
+
+// Header objects are built at call time from the CSRF variable, so after
+// a refresh new requests are already correct. This wrapper catches the
+// losing race — a request fired with the stale token just before the
+// refresh landed — by answering its 419 with one refresh-and-replay.
+{
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async function csrfRetryingFetch(input, init) {
+        const resp = await nativeFetch(input, init);
+        if (resp.status !== 419 || !init || !init.headers) return resp;
+        const headers = new Headers(init.headers);
+        if (!headers.has('X-CSRF-TOKEN')) return resp;
+        try {
+            await refreshCsrfToken();
+        } catch (_e) {
+            return resp;
+        }
+        headers.set('X-CSRF-TOKEN', CSRF);
+        return nativeFetch(input, { ...init, headers });
+    };
+}
 const IS_UPLOAD_TEST_REVIEW = root.dataset.uploadTestReview === '1';
 const UPLOAD_TEST_SAVE_URL = root.dataset.uploadTestSaveUrl || '';
 const INFO_URL = editNewRoot?.dataset?.infoUrl;

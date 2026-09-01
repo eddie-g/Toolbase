@@ -17,6 +17,12 @@ Route::get('/', function () {
     return view('home');
 })->name('home');
 
+// Fresh CSRF token for long-lived editor tabs. A GET also touches the
+// session, so polling this keeps it from idling out (SESSION_LIFETIME).
+Route::get('/csrf-token', function () {
+    return response()->json(['token' => csrf_token()]);
+})->name('csrf.token');
+
 Route::get('/browse-logos', [BrowseLogosController::class, 'index'])->name('browse-logos');
 
 Route::get('/dashboard', function () {

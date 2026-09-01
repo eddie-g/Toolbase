@@ -159,6 +159,7 @@
      so the absolute child fills the available space). --}}
 <div id="enpv-root"
      data-doc-id="{{ $document->id }}"
+     data-csrf-url="{{ route('csrf.token') }}"
      data-password-protected="{{ !$isUploadTestReview && filled($document->pdf_password_hash) ? '1' : '0' }}"
      data-password-unlock-url="{{ route('documents.unlockPdfPassword', $document) }}"
      data-upload-test-review="{{ $isUploadTestReview ? '1' : '0' }}"

@@ -34,6 +34,7 @@
 <div id="edit-new-root"
      data-doc-id="{{ $document->id }}"
      data-csrf="{{ csrf_token() }}"
+     data-csrf-url="{{ route('csrf.token') }}"
      data-info-url="{{ route('pdfTests.documentInfo', $document) }}"
      data-save-url="{{ route('documents.saveAnnotationState', $document) }}"
      data-download-url="{{ route('documents.downloadAnnotatedPdf', $document) }}"></div>
