@@ -2252,6 +2252,75 @@ async function testKeyboardAndAria(page, { recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
+/** 23 — With the tool open, an existing highlight can be clicked and
+ * selected — and highlights are the only annotation kind exposed that way
+ * (NK_23). Before the fix, highlight mode forced pointer-events: none on
+ * every annotation box and the paint gesture swallowed the pointerdown, so
+ * an already-placed highlight could not be reselected without leaving the
+ * tool. */
+async function testSelectInMode(page, { recorder }) {
+    const artifacts = [];
+
+    await setHighlightMode(page, true);
+    await dragHighlight(page, EMPTY_AREA, { dx: 200, dy: 50 });
+
+    let boxes = await highlightBoxes(page);
+    recorder.equals('one-highlight', boxes.length, 1, 'The setup drag commits one highlight');
+    recorder.assert('starts-deselected', !boxes[0]?.selected,
+        'The committed highlight starts deselected');
+
+    // Click the middle of the existing highlight with the tool still open.
+    const target = boxes[0];
+    await page.mouse.click(target.left + (target.width / 2), target.top + (target.height / 2));
+    await page.waitForTimeout(500);
+
+    boxes = await highlightBoxes(page);
+    recorder.assert('click-selects', !!boxes[0]?.selected,
+        'Clicking an existing highlight while the tool is open selects it');
+    recorder.equals('no-paint-on-click', boxes.length, 1,
+        'The selection click paints nothing new');
+    recorder.assert('mode-stays-on', await highlightModeOn(page),
+        'The Highlight tool stays open across the selection');
+
+    const panel = await highlightPanelState(page);
+    recorder.assert('panel-stays-visible', panel.visible,
+        'The Highlight Options panel stays up for the selected highlight');
+
+    // Only highlights are exposed this way: every other annotation box kind
+    // keeps pointer-events: none while the tool is open. Probe the computed
+    // style with a synthetic non-highlight box so the check does not depend
+    // on building a second annotation type mid-test.
+    const pointerEvents = await page.evaluate((selector) => {
+        const highlightBox = document.querySelector(selector);
+        const layer = highlightBox?.parentElement;
+        if (!highlightBox || !layer) return null;
+        const other = document.createElement('div');
+        other.className = 'enpv-annotation-box';
+        layer.appendChild(other);
+        const result = {
+            highlight: window.getComputedStyle(highlightBox).pointerEvents,
+            other: window.getComputedStyle(other).pointerEvents,
+        };
+        other.remove();
+        return result;
+    }, HIGHLIGHT_BOX_SELECTOR);
+    recorder.equals('highlight-clickable', pointerEvents?.highlight, 'auto',
+        'A highlight box receives pointer events in highlight mode');
+    recorder.equals('others-pass-through', pointerEvents?.other, 'none',
+        'Any other annotation box still passes the pointer through to the page');
+
+    artifacts.push(await capture(page, '23-select-in-mode', 'selected-in-mode'));
+
+    // Painting must still work around the selected highlight: a drag over
+    // empty page area commits a second one.
+    await dragHighlight(page, { fx: 0.55, fy: 0.7 }, { dx: 160, dy: 40 });
+    boxes = await highlightBoxes(page);
+    recorder.equals('painting-still-works', boxes.length, 2,
+        'Dragging over empty area still paints a new highlight');
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
 // ---------------------------------------------------------------------------
 // Registry and runner
 // ---------------------------------------------------------------------------
@@ -2279,6 +2348,7 @@ const TESTS = [
     { id: '20-zoom-accuracy', number: '20', title: 'Highlighting stays accurate across zoom levels', run: testZoomAccuracy, signedIn: true },
     { id: '21-multi-select', number: '21', title: 'Multi-select and group restyle', run: testMultiSelect, signedIn: true },
     { id: '22-keyboard-and-aria', number: '22', title: 'Keyboard access and ARIA on the Highlight Options panel', run: testKeyboardAndAria, signedIn: true },
+    { id: '23-select-in-mode', number: '23', title: 'With the tool open, clicking an existing highlight selects it (highlights only)', run: testSelectInMode, signedIn: true },
 ];
 
 function summarise(test, checks, artifacts, error, startedAt) {
