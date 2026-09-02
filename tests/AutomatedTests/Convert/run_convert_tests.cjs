@@ -507,14 +507,16 @@ async function waitForCapture(page, captured, timeoutMs = 30000) {
 /**
  * Page geometry an export should produce at a given DPI.
  *
- * renderPdfPagesToImages() scales by dpi/72 and ceils, so this is the exact
- * pixel size the encoder is expected to emit rather than an approximation.
+ * Multiplied before dividing, so this is the size the page genuinely works
+ * out to rather than whatever a float scale happens to land on: 792pt at
+ * 150 DPI is 1650px, full stop. The exporter used to ceil a dpi/72 float and
+ * emit 1651; viewportPixelSize() now rounds that dust away, so this states
+ * the intended geometry rather than mirroring the implementation.
  */
 function expectedPixelSize(dpi) {
-    const scale = dpi / 72;
     return {
-        width: Math.ceil(PAGE_WIDTH_PTS * scale),
-        height: Math.ceil(PAGE_HEIGHT_PTS * scale),
+        width: Math.ceil((PAGE_WIDTH_PTS * dpi) / 72),
+        height: Math.ceil((PAGE_HEIGHT_PTS * dpi) / 72),
     };
 }
 

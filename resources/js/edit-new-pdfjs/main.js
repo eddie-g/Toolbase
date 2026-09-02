@@ -116,6 +116,7 @@ import {
     normalizeImageExportBaseName,
     parseImageExportPages,
     renderPdfPagesToImages,
+    viewportPixelSize,
 } from './image-export.js';
 import { elementAcceptsNativeClipboard } from './annotation-clipboard.js';
 import {
@@ -14964,7 +14965,8 @@ async function syncConvertSizeEstimate(generation) {
         const pixelCounts = await Promise.all(samples.map(async (pageNumber) => {
             const page = await currentPdfDoc.getPage(pageNumber);
             const viewport = page.getViewport({ scale: convertImageDpi / 72 });
-            return Math.max(1, Math.ceil(viewport.width)) * Math.max(1, Math.ceil(viewport.height));
+            const { width, height } = viewportPixelSize(viewport);
+            return width * height;
         }));
         if (generation !== convertSizeEstimateGeneration) return;
         const averagePixels = pixelCounts.reduce((sum, pixels) => sum + pixels, 0) / pixelCounts.length;

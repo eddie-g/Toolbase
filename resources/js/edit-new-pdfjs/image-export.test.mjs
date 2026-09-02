@@ -7,7 +7,9 @@ import {
     imageDataToTiff,
     normalizeImageExportBaseName,
     parseImageExportPages,
+    renderPdfPagesToImages,
     transformImageDataColorModel,
+    viewportPixelSize,
 } from './image-export.js';
 
 test('image export size estimates reflect format, quality, transparency, and page overhead', () => {
@@ -70,4 +72,74 @@ test('multi-page image ZIP contains local entries, a central directory, and one 
     assert.match(text, /report_page-1\.png/);
     assert.match(text, /report_page-2\.png/);
     assert.equal(blob.type, 'application/zip');
+});
+
+test('viewportPixelSize does not let floating-point dust add a pixel', () => {
+    // 792pt at 150 DPI is exactly 1650px, but scale is computed as 150/72,
+    // which is not exact in binary: the product lands just above 1650 and a
+    // plain ceil turned that into 1651.
+    const scale = 150 / 72;
+    assert.ok(792 * scale > 1650, 'the float product really does overshoot');
+    assert.equal(viewportPixelSize({ width: 612 * scale, height: 792 * scale }).height, 1650);
+    assert.equal(viewportPixelSize({ width: 612 * scale, height: 792 * scale }).width, 1275);
+});
+
+test('viewportPixelSize still rounds a genuine fraction up, so no page is clipped', () => {
+    assert.equal(viewportPixelSize({ width: 100.5, height: 200.01 }).width, 101);
+    assert.equal(viewportPixelSize({ width: 100.5, height: 200.01 }).height, 201);
+    assert.equal(viewportPixelSize({ width: 100, height: 200 }).width, 100);
+    // A collapsed or missing dimension never produces a zero-sized canvas.
+    assert.equal(viewportPixelSize({ width: 0, height: 0 }).width, 1);
+    assert.equal(viewportPixelSize({}).height, 1);
+});
+
+test('viewportPixelSize holds at every DPI the exporter offers', () => {
+    // Screen, Standard and Print against US Letter, plus the 2400 ceiling.
+    for (const [dpi, width, height] of [[96, 816, 1056], [150, 1275, 1650], [300, 2550, 3300], [2400, 20400, 26400]]) {
+        const scale = dpi / 72;
+        const size = viewportPixelSize({ width: 612 * scale, height: 792 * scale });
+        assert.equal(size.width, width, `${dpi} DPI width`);
+        assert.equal(size.height, height, `${dpi} DPI height`);
+    }
+});
+
+test('a rendered page is exactly as many pixels as its DPI implies', async () => {
+    const canvases = [];
+    const fakeCanvas = () => {
+        const canvas = {
+            width: 0,
+            height: 0,
+            getContext: () => ({
+                imageSmoothingEnabled: true,
+                imageSmoothingQuality: 'low',
+                fillStyle: '',
+                fillRect: () => {},
+                getImageData: () => ({ data: new Uint8ClampedArray(4), width: 1, height: 1 }),
+                putImageData: () => {},
+            }),
+            toBlob: (callback) => callback(new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' })),
+        };
+        canvases.push(canvas);
+        return canvas;
+    };
+
+    const pdfDocument = {
+        getPage: async () => ({
+            getViewport: ({ scale }) => ({ width: 612 * scale, height: 792 * scale, scale }),
+            render: () => ({ promise: Promise.resolve() }),
+            cleanup: () => {},
+        }),
+    };
+
+    await renderPdfPagesToImages({
+        pdfDocument,
+        pages: [1],
+        format: 'png',
+        dpi: 150,
+        createCanvas: fakeCanvas,
+    });
+
+    assert.equal(canvases.length, 1);
+    assert.equal(canvases[0].width, 1275, 'a 612pt page at 150 DPI is 1275px wide');
+    assert.equal(canvases[0].height, 1650, 'a 792pt page at 150 DPI is 1650px tall, not 1651');
 });
