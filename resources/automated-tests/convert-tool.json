@@ -112,7 +112,7 @@
                 "gid": "1218085246850980",
                 "area": "Images",
                 "title": "Images: exporting one page downloads an image, several pages downloads a ZIP",
-                "summary": "A real end-to-end export, since image conversion is entirely client-side and costs nothing. One page comes down as a JPG with real bytes; several come down as an archive whose first two bytes are actually PK. The status bar reports the export rather than staying silent.",
+                "summary": "A real end-to-end export, since image conversion is entirely client-side and costs nothing -- and the downloaded files are opened rather than weighed. The JPG is validated from its own frame header (SOI plus SOF) and asserted to be exactly the pixel size 150 DPI implies, then decoded by the browser and checked to carry the fixture's text rather than being a blank page. The archive is read through its central directory: one entry per page, each named for the page it came from, none empty. A truncated file, a blank render or an archive with the wrong pages in it would all pass a size check and fail here.",
                 "automated": true,
                 "story": "convert-tool"
             },
@@ -122,7 +122,7 @@
                 "gid": "1218085325099787",
                 "area": "Images",
                 "title": "Images: hidden Advanced settings still reach the export (NK_24)",
-                "summary": "NK_24's central promise, and the reason it is safe to hide anything. Colour, quality and anti-aliasing are all moved off their defaults, the panel is collapsed, and the export is run. The assertion is against the telemetry the export posts, which records the settings it actually used -- grayscale, quality 41, anti-aliasing off -- rather than the ones the panel happens to be showing.",
+                "summary": "NK_24's central promise, and the reason it is safe to hide anything. Colour, quality and anti-aliasing are moved off their defaults, the panel is collapsed, and the export is run. Asserted twice over: first against the telemetry the export posts, which records the settings it actually used (grayscale, quality 41, anti-aliasing off); then against the pixels themselves. The second export is a PNG, so it is lossless and a surviving colour channel would be real rather than a JPEG chroma artefact -- and every sampled pixel of the grayscale export has R=G=B. Telemetry is the client's own account of what it did; the pixels are the evidence.",
                 "automated": true,
                 "story": "convert-tool"
             },

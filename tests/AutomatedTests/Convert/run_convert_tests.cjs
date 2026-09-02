@@ -500,6 +500,165 @@ async function waitForCapture(page, captured, timeoutMs = 30000) {
     return captured.count > 0;
 }
 
+// ---------------------------------------------------------------------------
+// Reading an exported file
+// ---------------------------------------------------------------------------
+
+/**
+ * Page geometry an export should produce at a given DPI.
+ *
+ * renderPdfPagesToImages() scales by dpi/72 and ceils, so this is the exact
+ * pixel size the encoder is expected to emit rather than an approximation.
+ */
+function expectedPixelSize(dpi) {
+    const scale = dpi / 72;
+    return {
+        width: Math.ceil(PAGE_WIDTH_PTS * scale),
+        height: Math.ceil(PAGE_HEIGHT_PTS * scale),
+    };
+}
+
+/** Width, height and validity of a JPEG, read from its own markers. */
+function jpegInfo(buffer) {
+    if (buffer.length < 4 || buffer[0] !== 0xff || buffer[1] !== 0xd8) {
+        return { valid: false, reason: 'no JPEG SOI marker' };
+    }
+    let offset = 2;
+    while (offset < buffer.length - 9) {
+        if (buffer[offset] !== 0xff) { offset += 1; continue; }
+        const marker = buffer[offset + 1];
+        // SOF0/1/2/3 and the other non-differential frame headers carry the size.
+        if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+            return {
+                valid: true,
+                height: buffer.readUInt16BE(offset + 5),
+                width: buffer.readUInt16BE(offset + 7),
+                components: buffer[offset + 9],
+            };
+        }
+        if (marker === 0xd8 || marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
+            offset += 2;
+            continue;
+        }
+        offset += 2 + buffer.readUInt16BE(offset + 2);
+    }
+    return { valid: false, reason: 'no frame header found' };
+}
+
+/** Width, height and colour type of a PNG, read from its IHDR. */
+function pngInfo(buffer) {
+    const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    if (buffer.length < 33 || !buffer.subarray(0, 8).equals(signature)) {
+        return { valid: false, reason: 'no PNG signature' };
+    }
+    if (buffer.subarray(12, 16).toString('latin1') !== 'IHDR') {
+        return { valid: false, reason: 'first chunk is not IHDR' };
+    }
+    return {
+        valid: true,
+        width: buffer.readUInt32BE(16),
+        height: buffer.readUInt32BE(20),
+        bitDepth: buffer[24],
+        colourType: buffer[25],
+    };
+}
+
+/**
+ * The file names inside a ZIP, read from its central directory.
+ *
+ * Parsed here rather than shelling out to unzip so the check works wherever
+ * the suite runs, and so a truncated or empty archive is reported as such
+ * instead of silently passing a size check.
+ */
+function zipEntries(buffer) {
+    // The end-of-central-directory record is last, after a variable comment.
+    let eocd = -1;
+    for (let i = buffer.length - 22; i >= 0 && i > buffer.length - 65558; i -= 1) {
+        if (buffer.readUInt32LE(i) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) return { valid: false, entries: [], reason: 'no end-of-central-directory record' };
+
+    const count = buffer.readUInt16LE(eocd + 10);
+    let offset = buffer.readUInt32LE(eocd + 16);
+    const entries = [];
+    for (let i = 0; i < count; i += 1) {
+        if (offset + 46 > buffer.length || buffer.readUInt32LE(offset) !== 0x02014b50) {
+            return { valid: false, entries, reason: `central directory entry ${i} is malformed` };
+        }
+        const nameLength = buffer.readUInt16LE(offset + 28);
+        const extraLength = buffer.readUInt16LE(offset + 30);
+        const commentLength = buffer.readUInt16LE(offset + 32);
+        entries.push({
+            name: buffer.subarray(offset + 46, offset + 46 + nameLength).toString('utf8'),
+            compressedSize: buffer.readUInt32LE(offset + 20),
+            uncompressedSize: buffer.readUInt32LE(offset + 24),
+        });
+        offset += 46 + nameLength + extraLength + commentLength;
+    }
+    return { valid: true, entries, count };
+}
+
+/**
+ * Decode an exported image in the browser and describe its pixels.
+ *
+ * The point is to look at what the encoder actually produced rather than at
+ * what the UI said it would produce: whether anything was drawn at all, and
+ * whether a grayscale export really is grayscale. Decoding is done by the
+ * browser's own image pipeline, so it is the same decoder a user's viewer
+ * would use rather than a hand-rolled one.
+ */
+function inspectImagePixels(page, buffer, mimeType) {
+    return page.evaluate(async ({ base64, type }) => {
+        const dataUrl = `data:${type};base64,${base64}`;
+        const image = await new Promise((resolve, reject) => {
+            const el = new Image();
+            el.onload = () => resolve(el);
+            el.onerror = () => reject(new Error('the browser could not decode the exported image'));
+            el.src = dataUrl;
+        });
+        const canvas = document.createElement('canvas');
+        canvas.width = image.naturalWidth;
+        canvas.height = image.naturalHeight;
+        const context = canvas.getContext('2d');
+        context.drawImage(image, 0, 0);
+        const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+
+        let dark = 0;
+        let coloured = 0;
+        let sampled = 0;
+        let minLuma = 255;
+        // Sample on a stride: a full 1275x1650 scan is millions of pixels and
+        // proves nothing a representative sample does not.
+        for (let i = 0; i < data.length; i += 4 * 37) {
+            const r = data[i];
+            const g = data[i + 1];
+            const b = data[i + 2];
+            sampled += 1;
+            if (r !== g || g !== b) coloured += 1;
+            const luma = (0.299 * r) + (0.587 * g) + (0.114 * b);
+            if (luma < 200) dark += 1;
+            if (luma < minLuma) minLuma = luma;
+        }
+        return {
+            width: canvas.width,
+            height: canvas.height,
+            sampled,
+            darkRatio: sampled ? dark / sampled : 0,
+            colouredRatio: sampled ? coloured / sampled : 0,
+            minLuma: Math.round(minLuma),
+        };
+    }, { base64: buffer.toString('base64'), type: mimeType });
+}
+
+/** Save a Playwright download and hand back its bytes. */
+async function saveDownload(download, filename) {
+    ensureArtifactDir();
+    const target = path.join(ARTIFACT_DIR, filename);
+    await download.saveAs(target);
+    try { fs.chmodSync(target, 0o666); } catch (_) { /* best effort */ }
+    return { path: target, buffer: fs.readFileSync(target) };
+}
+
 /**
  * The status line under the toolbar, where conversions report their outcome.
  *
@@ -864,10 +1023,20 @@ async function testSummaryAndEstimate(page, { recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
-/** 09 — A real image export, end to end. */
+/**
+ * 09 — A real image export, opened and inspected.
+ *
+ * A download event and a plausible file size prove only that something
+ * arrived. These checks open what arrived: the JPEG's own frame header for
+ * its dimensions, the browser's decoder for its pixels, and the ZIP's central
+ * directory for its entries. A blank page, a truncated file or an archive
+ * with the wrong pages in it would all pass a size check and fail here.
+ */
 async function testImageExportDownload(page, { recorder }) {
     const artifacts = [];
     await openConvertModal(page);
+
+    const expected = expectedPixelSize(CONVERT_DEFAULTS.dpi);
 
     // One page exports as a bare image.
     await chooseImageOption(page, 'pages', 'range');
@@ -876,17 +1045,29 @@ async function testImageExportDownload(page, { recorder }) {
     await clickExport(page);
     const single = await singleDownload.catch(() => null);
     recorder.assert('single-page-downloads', !!single, 'Exporting one page downloads a file');
+
     if (single) {
         const name = single.suggestedFilename();
         recorder.assert('single-is-an-image', /\.(jpg|jpeg)$/i.test(name),
             'One page comes down as a JPG rather than an archive', name);
-        const target = path.join(ARTIFACT_DIR, '09-single.jpg');
-        // eslint-disable-next-line no-await-in-loop
-        await single.saveAs(target).catch(() => {});
-        const size = fs.existsSync(target) ? fs.statSync(target).size : 0;
-        recorder.assert('single-has-content', size > 1000,
-            'The downloaded image has real content', `${size} bytes`);
-        try { fs.chmodSync(target, 0o666); } catch (_) { /* best effort */ }
+
+        const saved = await saveDownload(single, '09-single.jpg');
+        const info = jpegInfo(saved.buffer);
+        recorder.assert('single-is-a-real-jpeg', info.valid,
+            'The file really is a JPEG, by its own markers', info.reason || 'SOI + frame header present');
+        recorder.equals('single-width', info.width, expected.width,
+            `At 150 DPI the page is ${expected.width}px wide`);
+        recorder.equals('single-height', info.height, expected.height,
+            `At 150 DPI the page is ${expected.height}px tall`);
+
+        const pixels = await inspectImagePixels(page, saved.buffer, 'image/jpeg');
+        recorder.equals('single-decodes', pixels.width, expected.width,
+            'The browser decodes it back to the same width');
+        // The fixture prints a line of text near the top of every page, so a
+        // correctly rendered export cannot be uniformly white.
+        recorder.assert('single-is-not-blank', pixels.darkRatio > 0,
+            'The exported page has the fixture\'s text on it rather than being blank',
+            `${(pixels.darkRatio * 100).toFixed(2)}% of sampled pixels are dark, darkest luma ${pixels.minLuma}`);
     }
 
     await page.waitForTimeout(1500);
@@ -898,19 +1079,31 @@ async function testImageExportDownload(page, { recorder }) {
     await clickExport(page);
     const zipped = await zipDownload.catch(() => null);
     recorder.assert('multi-page-downloads', !!zipped, 'Exporting several pages downloads a file');
+
     if (zipped) {
         const name = zipped.suggestedFilename();
         recorder.assert('multi-is-a-zip', /\.zip$/i.test(name),
             'Several pages come down as a ZIP archive', name);
-        const target = path.join(ARTIFACT_DIR, '09-pages.zip');
-        await zipped.saveAs(target).catch(() => {});
-        const size = fs.existsSync(target) ? fs.statSync(target).size : 0;
-        recorder.assert('zip-has-content', size > 1000, 'The archive has real content', `${size} bytes`);
-        if (fs.existsSync(target)) {
-            const head = fs.readFileSync(target).subarray(0, 2).toString('latin1');
-            recorder.equals('zip-is-really-a-zip', head, 'PK', 'The archive really is a ZIP');
-            try { fs.chmodSync(target, 0o666); } catch (_) { /* best effort */ }
-        }
+
+        const saved = await saveDownload(zipped, '09-pages.zip');
+        const archive = zipEntries(saved.buffer);
+        recorder.assert('zip-is-readable', archive.valid,
+            'The archive has a readable central directory',
+            archive.reason || `${archive.count} entries`);
+        // The fixture for this case has three pages.
+        recorder.equals('zip-has-one-file-per-page', archive.entries.length, 3,
+            'The archive holds one file per page');
+        recorder.assert('zip-entries-are-images',
+            archive.entries.every((entry) => /\.jpe?g$/i.test(entry.name)),
+            'Every entry is a JPG', archive.entries.map((e) => e.name).join(', '));
+        recorder.assert('zip-entries-are-named-per-page',
+            [1, 2, 3].every((n) => archive.entries.some((entry) => entry.name.includes(`_page-${n}`))),
+            'The entries are named for the pages they came from',
+            archive.entries.map((e) => e.name).join(', '));
+        recorder.assert('zip-entries-have-bytes',
+            archive.entries.every((entry) => entry.uncompressedSize > 1000),
+            'No entry is empty',
+            archive.entries.map((e) => `${e.name}=${e.uncompressedSize}B`).join(' '));
     }
 
     const status = await statusText(page);
@@ -993,6 +1186,44 @@ async function testHiddenAdvancedStillApplies(page, { recorder }) {
     }
 
     artifacts.push(await capture(page, '10-hidden-advanced-applies', 'collapsed'));
+
+    // Telemetry is the client's own account of what it did. The pixels are the
+    // evidence. Export the same collapsed grayscale setting as a PNG -- lossless,
+    // so a colour channel that survives is a real colour channel rather than a
+    // JPEG chroma artefact -- and read the decoded image back.
+    await openConvertModal(page);
+    await chooseImageOption(page, 'format', 'png');
+    await chooseImageOption(page, 'pages', 'range');
+    await setPageRange(page, 1, 1);
+    const collapsedNow = await advancedState(page, 'images');
+    recorder.equals('still-collapsed-for-png', collapsedNow.panelHidden, true,
+        'The Advanced panel is still collapsed for the second export');
+
+    const pngDownload = page.waitForEvent('download', { timeout: 90000 });
+    await clickExport(page);
+    const png = await pngDownload.catch(() => null);
+    recorder.assert('png-downloaded', !!png, 'The PNG export downloads');
+
+    if (png) {
+        const saved = await saveDownload(png, '10-grayscale.png');
+        const info = pngInfo(saved.buffer);
+        recorder.assert('png-is-a-real-png', info.valid,
+            'The file really is a PNG, by its signature and IHDR', info.reason || 'IHDR present');
+
+        const pixels = await inspectImagePixels(page, saved.buffer, 'image/png');
+        recorder.assert('png-is-not-blank', pixels.darkRatio > 0,
+            'The exported page has real content on it rather than being blank',
+            `${(pixels.darkRatio * 100).toFixed(2)}% of sampled pixels are dark`);
+        // The proof: a grayscale export has no pixel where the three channels
+        // disagree. This is what telemetry alone cannot establish.
+        recorder.equals('png-pixels-are-grayscale', pixels.colouredRatio, 0,
+            'Every pixel of the grayscale export really is grey (R=G=B)');
+        recorder.ok('grayscale-evidence',
+            'The collapsed Advanced setting is proved by the pixels, not just the telemetry',
+            `${pixels.sampled} pixels sampled, ${pixels.colouredRatio * 100}% coloured, darkest luma ${pixels.minLuma}`);
+    }
+
+    artifacts.push(await capture(page, '10-hidden-advanced-applies', 'grayscale-png'));
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
@@ -1624,6 +1855,12 @@ module.exports = {
     setPageRange,
     setCustomPages,
     clickExport,
+    expectedPixelSize,
+    jpegInfo,
+    pngInfo,
+    zipEntries,
+    inspectImagePixels,
+    saveDownload,
     multipartFields,
     interceptConversion,
     waitForCapture,
