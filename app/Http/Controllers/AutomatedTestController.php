@@ -48,6 +48,11 @@ class AutomatedTestController extends Controller
             'runner' => 'tests/AutomatedTests/Image/run_image_tests.cjs',
             'artifacts' => 'tests/AutomatedTests/Image/artifacts',
         ],
+        'convert-tool' => [
+            'catalogue' => 'automated-tests/convert-tool.json',
+            'runner' => 'tests/AutomatedTests/Convert/run_convert_tests.cjs',
+            'artifacts' => 'tests/AutomatedTests/Convert/artifacts',
+        ],
     ];
 
     /** Playwright drives a real browser per test — allow generous headroom. */

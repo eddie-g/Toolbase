@@ -181,6 +181,33 @@ function canvasToBlob(canvas, type, quality) {
     });
 }
 
+/**
+ * Slack allowed when rounding a scaled dimension up to whole pixels.
+ *
+ * Large enough to swallow any floating-point error (at the 2400 DPI ceiling
+ * that error is around 4e-12), and small enough that no fraction anyone could
+ * mean to keep falls inside it.
+ */
+const PIXEL_ROUNDING_EPSILON = 1e-6;
+
+/**
+ * The pixel size a viewport should be rasterised at.
+ *
+ * Rounding up is deliberate: a page whose scaled size lands on a genuine
+ * fraction must not be clipped. But the scale is dpi/72, which is not exact
+ * in binary -- at 150 DPI a 792pt page measures 1650.0000000000002, and a
+ * plain ceil turns that into an image one pixel taller than the page. So the
+ * ceil is taken with a hair of slack, which snaps values that are only a
+ * float artefact away from an integer without touching a real fraction.
+ *
+ * Shared by the exporter and the size estimate so the two cannot disagree
+ * about how big a page is.
+ */
+export function viewportPixelSize(viewport) {
+    const ceil = (value) => Math.max(1, Math.ceil((Number(value) || 0) - PIXEL_ROUNDING_EPSILON));
+    return { width: ceil(viewport?.width), height: ceil(viewport?.height) };
+}
+
 export async function renderPdfPagesToImages({
     pdfDocument,
     pages,
@@ -206,8 +233,7 @@ export async function renderPdfPagesToImages({
         const page = await pdfDocument.getPage(pageNumber);
         try {
             const viewport = page.getViewport({ scale });
-            const width = Math.max(1, Math.ceil(viewport.width));
-            const height = Math.max(1, Math.ceil(viewport.height));
+            const { width, height } = viewportPixelSize(viewport);
             if ((width * height) > MAX_IMAGE_EXPORT_PIXELS) {
                 throw new Error(`Page ${pageNumber} would exceed the safe browser canvas size at ${normalizedDpi} DPI. Choose a lower resolution.`);
             }
