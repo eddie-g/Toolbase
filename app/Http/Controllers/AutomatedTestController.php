@@ -58,6 +58,11 @@ class AutomatedTestController extends Controller
             'runner' => 'tests/AutomatedTests/MergeSplit/run_merge_split_tests.cjs',
             'artifacts' => 'tests/AutomatedTests/MergeSplit/artifacts',
         ],
+        'existing-text' => [
+            'catalogue' => 'automated-tests/existing-text.json',
+            'runner' => 'tests/AutomatedTests/SourceText/run_source_text_tests.cjs',
+            'artifacts' => 'tests/AutomatedTests/SourceText/artifacts',
+        ],
     ];
 
     /** Playwright drives a real browser per test — allow generous headroom. */

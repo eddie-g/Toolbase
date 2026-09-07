@@ -67,6 +67,11 @@ class AutomatedTests extends Page
                 'label' => 'Merge / Split tool',
                 'available' => true,
             ],
+            [
+                'key' => 'existing-text',
+                'label' => 'Existing text',
+                'available' => true,
+            ],
         ];
     }
 }

@@ -198,6 +198,7 @@ class AutomatedTestsPageTest extends TestCase
         $this->assertContains('image-tool', $keys, 'The image tool needs its own tab');
         $this->assertContains('convert-tool', $keys, 'The convert tool needs its own tab');
         $this->assertContains('merge-split-tool', $keys, 'The merge / split tool needs its own tab');
+        $this->assertContains('existing-text', $keys, 'Editing existing PDF text needs its own tab');
 
         // The switcher only renders with more than one suite, so the labels
         // have to reach the page for the tabs to be usable.
@@ -851,5 +852,101 @@ class AutomatedTestsPageTest extends TestCase
 
         $numbers = array_column($catalogue['suite']['tests'], 'number');
         $this->assertSame(array_unique($numbers), $numbers, 'Two merge / split cases share a number');
+    }
+
+    // ---- Editing existing PDF text suite ----------------------------------
+
+    public function test_existing_text_suite_endpoint_requires_admin_authentication(): void
+    {
+        $this->getJson('/automated-tests/existing-text/suite')->assertUnauthorized();
+    }
+
+    public function test_existing_text_suite_returns_the_catalogue(): void
+    {
+        $response = $this->actingAs($this->admin(), 'admin')
+            ->getJson('/automated-tests/existing-text/suite')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('suite.key', 'existing-text')
+            ->assertJsonPath('suite.stories.0.task_gid', '1218255634880763');
+
+        $tests = $response->json('suite.tests');
+        $this->assertCount(25, $tests, 'The existing-text story specifies 25 cases');
+
+        foreach ($tests as $test) {
+            $this->assertSame('existing-text', $test['story']);
+        }
+
+        // Mirrored from a real Asana task, so every case carries its subtask
+        // gid and no two cases may point at the same subtask.
+        $gids = array_column($tests, 'gid');
+        $this->assertCount(25, array_filter($gids), 'Every existing-text case carries its Asana subtask gid');
+        $this->assertSame(array_unique($gids), $gids, 'Two existing-text cases point at the same Asana subtask');
+
+        // Every case has an editor half and a download half, each its own
+        // Asana task, and no two halves may share one.
+        $halves = [];
+        foreach ($tests as $test) {
+            $this->assertArrayHasKey('components', $test, "Case {$test['number']} needs its A/B components");
+            $this->assertSame('A:', $test['components']['editor']['item_prefix']);
+            $this->assertSame('B:', $test['components']['download']['item_prefix']);
+            $halves[] = $test['components']['editor']['gid'];
+            $halves[] = $test['components']['download']['gid'];
+        }
+        $this->assertCount(50, array_filter($halves), 'Every A and B half carries its Asana task gid');
+        $this->assertSame(array_unique($halves), $halves, 'Two halves point at the same Asana task');
+
+        // Every kind of change to existing text needs coverage, or the suite
+        // has a blind spot.
+        $areas = array_unique(array_column($tests, 'area'));
+        foreach (['Move', 'Resize', 'Edit', 'Delete', 'Download', 'Undo/Redo', 'Zoom'] as $area) {
+            $this->assertContains($area, $areas, "The existing-text suite must cover {$area}");
+        }
+    }
+
+    public function test_every_automated_existing_text_case_exists_in_the_runner(): void
+    {
+        $catalogue = json_decode(
+            (string) file_get_contents(resource_path('automated-tests/existing-text.json')),
+            true,
+        );
+        $automated = array_values(array_filter(
+            $catalogue['suite']['tests'],
+            fn (array $test) => $test['automated'] === true,
+        ));
+
+        $this->assertCount(25, $automated, 'Every specified existing-text case is automated');
+
+        $runner = (string) file_get_contents(base_path('tests/AutomatedTests/SourceText/run_source_text_tests.cjs'));
+
+        foreach ($automated as $test) {
+            $this->assertStringContainsString(
+                "id: '".$test['id']."'",
+                $runner,
+                "The runner must register {$test['id']}, or the admin page offers a test that cannot run",
+            );
+        }
+
+        // Anchored on the number that follows, so this matches the registry
+        // entries rather than every object literal that happens to have an id.
+        preg_match_all("/\{ id: '([^']+)', number: '/", $runner, $matches);
+        $catalogued = array_column($catalogue['suite']['tests'], 'id');
+        foreach ($matches[1] as $registered) {
+            $this->assertContains(
+                $registered,
+                $catalogued,
+                "The runner registers {$registered}, which the catalogue does not list",
+            );
+        }
+
+        $numbers = array_column($catalogue['suite']['tests'], 'number');
+        $this->assertSame(array_unique($numbers), $numbers, 'Two existing-text cases share a number');
+
+        // The download half reads the PDF back through the inspector, and the
+        // fixtures it acts on must be in the repo.
+        $this->assertFileExists(base_path('tests/AutomatedTests/SourceText/inspect_pdf.py'));
+        foreach ($catalogue['suite']['fixtures'] as $fixture) {
+            $this->assertFileExists(base_path($fixture), "Fixture {$fixture} is missing");
+        }
     }
 }
