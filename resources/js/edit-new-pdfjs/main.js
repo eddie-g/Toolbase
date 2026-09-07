@@ -549,6 +549,7 @@ const SPLIT_PDF_URL = root.dataset.splitPdfUrl;
 const MERGE_MAX_FILES = Math.max(1, Number(root.dataset.mergeMaxFiles) || 10);
 const MERGE_MAX_FILE_BYTES = Math.max(1, Number(root.dataset.mergeMaxFileBytes) || (20 * 1024 * 1024));
 const MERGE_MAX_PAGES = Math.max(1, Number(root.dataset.mergeMaxPages) || 1000);
+const MERGE_MAX_FILE_PAGES = Math.max(1, Number(root.dataset.mergeMaxFilePages) || 100);
 const IS_GUIDED_MODE = root.dataset.guided === '1';
 const TEMPLATE_TYPE = String(root.dataset.templateType || '').trim();
 const TEMPLATE_SLUG = String(root.dataset.templateSlug || '').trim();
@@ -2869,6 +2870,9 @@ async function inspectMergeFile(file) {
     try {
         pdfDocument = await loadingTask.promise;
         if (!pdfDocument.numPages) throw new Error(`${file.name} has no pages.`);
+        if (pdfDocument.numPages > MERGE_MAX_FILE_PAGES) {
+            throw new Error(`${file.name} has ${pdfDocument.numPages} pages. The limit is ${MERGE_MAX_FILE_PAGES} pages per PDF.`);
+        }
         return {
             id: `upload-${generateUuidV4()}`.toLowerCase(),
             kind: 'upload',
@@ -2907,6 +2911,10 @@ async function addMergeFiles(fileList) {
     }
     if (files.length > available) {
         setMergeStatus(`Only the first ${available} files were added. The limit is ${MERGE_MAX_FILES}.`, true);
+    } else if (mergeTotalPages() > MERGE_MAX_PAGES) {
+        // renderMergeItems() has just explained why Merge is disabled; an
+        // "added" confirmation on top of it left a dead button with no
+        // reason (NK_26).
     } else {
         setMergeStatus(`${files.length} PDF${files.length === 1 ? '' : 's'} added.`);
     }

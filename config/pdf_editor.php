@@ -88,6 +88,7 @@ return [
         'max_file_kb' => (int) env('PDF_MERGE_MAX_FILE_KB', 20480),
         'max_total_bytes' => (int) env('PDF_MERGE_MAX_TOTAL_BYTES', 104857600),
         'max_pages' => (int) env('PDF_MERGE_MAX_PAGES', 1000),
+        'max_file_pages' => (int) env('PDF_MERGE_MAX_FILE_PAGES', 100),
         'timeout_seconds' => (int) env('PDF_MERGE_TIMEOUT_SECONDS', 120),
     ],
 ];

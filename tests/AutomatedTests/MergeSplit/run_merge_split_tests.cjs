@@ -55,6 +55,7 @@ const PAGE_HEIGHT_PTS = 792;
 const MERGE_LIMITS = {
     maxFiles: 10,
     maxFileBytes: 20 * 1024 * 1024,
+    maxFilePages: 100,
     maxPages: 1000,
 };
 
@@ -1053,7 +1054,7 @@ async function testInvalidFilesRefused(page, { recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
-/** 09 — File-count and page limits. */
+/** 09 — File-count, per-file page and total-page limits. */
 async function testLimits(page, { recorder }) {
     const artifacts = [];
 
@@ -1073,21 +1074,40 @@ async function testLimits(page, { recorder }) {
 
     artifacts.push(await capture(page, '09-limits', 'file-limit'));
 
+    // A single PDF may not exceed 100 pages.
     await closeModal(page, 'close');
     await openModal(page);
-    cards = await addMergeFiles(page, [pdfFile('huge.pdf', 'huge', MERGE_LIMITS.maxPages)]);
+    cards = await addMergeFiles(page, [pdfFile('long.pdf', 'long', MERGE_LIMITS.maxFilePages + 1)]);
     state = await modalState(page);
-    recorder.equals('huge-added', cards.length, 2, 'A 1000-page PDF itself is accepted');
-    recorder.equals('page-limit-disables-merge', state.submitDisabled, true,
-        'Merge disables when the total would pass 1000 pages');
-    // Left as an assertion on purpose: today addMergeFiles() overwrites the
-    // limit message that renderMergeItems() just set with "1 PDF added.", so
-    // the user is left with a disabled Merge button and no reason (NK_26).
-    // It turns green by itself once the status is not clobbered.
+    recorder.equals('over-page-cap-refused', state.mergeStatus.text, 'long.pdf has 101 pages. The limit is 100 pages per PDF.',
+        'A 101-page PDF is refused, naming the file and the cap');
+    recorder.assert('over-page-cap-is-error', state.mergeStatus.isError, 'It is an error status');
+    recorder.equals('over-page-cap-no-card', cards.length, 1, 'No card is added for it');
+
+    cards = await addMergeFiles(page, [pdfFile('exact.pdf', 'exact', MERGE_LIMITS.maxFilePages)]);
+    state = await modalState(page);
+    recorder.equals('at-page-cap-accepted', cards.length, 2, 'A PDF of exactly 100 pages is accepted');
+    recorder.equals('at-page-cap-status', state.mergeStatus.text, '1 PDF added.', 'It is confirmed like any other');
+
+    // The total across every document is still capped at 1000, and the
+    // reason survives the "added" confirmation (NK_26): nine more 100-page
+    // PDFs plus the current page make 1001.
+    const nine = Array.from({ length: 9 }, (_, i) => pdfFile(`block${i + 1}.pdf`, `block${i + 1}`, MERGE_LIMITS.maxFilePages));
+    cards = await addMergeFiles(page, nine);
+    state = await modalState(page);
+    recorder.equals('total-counted', state.mergeSummary, '11 PDFs · 1001 pages', 'The summary counts every page');
+    recorder.equals('page-limit-disables-merge', state.submitDisabled, true, 'Merge disables when the total passes 1000 pages');
     recorder.equals('page-limit-explained', state.mergeStatus.text, 'The merged PDF would exceed the 1000-page limit.',
         'The page limit is explained rather than leaving a dead button');
-    recorder.equals('summary-counts-it', state.mergeSummary, '2 PDFs · 1001 pages', 'The summary still counts the pages');
+    recorder.assert('page-limit-is-error', state.mergeStatus.isError, 'It is an error status');
 
+    // Taking one out brings the total back under the limit.
+    const last = cards[cards.length - 1];
+    cards = await removeCard(page, last.id);
+    state = await modalState(page);
+    recorder.equals('under-limit-again', state.submitDisabled, false, 'Removing a PDF re-enables Merge once the total is back under 1000');
+
+    artifacts.push(await capture(page, '09-limits', 'page-limits'));
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
@@ -1796,7 +1816,7 @@ const TESTS = [
     { id: '06-reorder', number: '06', title: 'Merge: whole documents reorder with Move up / Move down, and the ends are disabled', run: testReorder },
     { id: '07-remove', number: '07', title: 'Merge: an added PDF can be removed, and the summary and Merge button follow', run: testRemove },
     { id: '08-invalid-files-refused', number: '08', title: 'Merge: a non-PDF, an oversize file and a password-protected file are refused before upload', run: testInvalidFilesRefused },
-    { id: '09-limits', number: '09', title: 'Merge: the file-count and total-page limits are enforced', run: testLimits },
+    { id: '09-limits', number: '09', title: 'Merge: the file-count, per-file page and total-page limits are enforced', run: testLimits },
     { id: '10-merge-request', number: '10', title: 'Merge: the request carries every upload and the displayed order, and declining the confirm sends nothing', run: testMergeRequest },
     { id: '11-real-merge', number: '11', title: 'Merge: a real merge reloads the document with every page in the chosen order, keeping its id and name', run: testRealMerge },
     { id: '12-merge-failure', number: '12', title: "Merge: a failed merge keeps the modal and its order intact and shows the server's message", run: testMergeFailure },

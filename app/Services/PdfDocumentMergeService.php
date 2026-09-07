@@ -83,6 +83,7 @@ class PdfDocumentMergeService
                 'inputs' => $inputs,
                 'output' => $candidatePath,
                 'max_pages' => max(1, (int) config('pdf_editor.merge.max_pages', 1000)),
+                'max_file_pages' => max(1, (int) config('pdf_editor.merge.max_file_pages', 100)),
             ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
 
             $process = new Process([
