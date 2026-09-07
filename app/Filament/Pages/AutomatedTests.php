@@ -57,6 +57,11 @@ class AutomatedTests extends Page
                 'label' => 'Image tool',
                 'available' => true,
             ],
+            [
+                'key' => 'merge-split-tool',
+                'label' => 'Merge / Split tool',
+                'available' => true,
+            ],
         ];
     }
 }

@@ -1,0 +1,260 @@
+{
+    "suite": {
+        "key": "merge-split-tool",
+        "name": "Merge / Split tool",
+        "tool_label": "Merge / Split tool",
+        "target_url": "/documents/{document}/edit-new?pdfjs=1",
+        "runner": "tests/AutomatedTests/MergeSplit/run_merge_split_tests.cjs",
+        "workspace": "My workspace",
+        "project": "Netkit",
+        "section": "Claude QA Agent",
+        "stories": [
+            {
+                "key": "merge-split-tool",
+                "short": "Merge / Split tool",
+                "task_gid": "1218230402898415",
+                "task_name": "[QA] - Merge / Split tool",
+                "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752/task/1218230402898415",
+                "instructions": [
+                    "Start with a blank pdf project for edit-new?pdfjs=1",
+                    "Click the Merge / Split tool in the floating toolbar",
+                    "The tool is not premium-gated and neither endpoint bills the account, so every case runs as a guest",
+                    "Merge and split are exercised for real against the python scripts in the app container; only the busy, failure and contract cases intercept the POST",
+                    "Cases 11, 20 and 21 depend on python with PyMuPDF being available to the app, as it is for uploads"
+                ]
+            }
+        ],
+        "tests": [
+            {
+                "number": "01",
+                "id": "01-blank-project-loads",
+                "gid": "1218230444090788",
+                "area": "Entry",
+                "title": "Setup: blank PDF project loads with the Merge / Split tool available",
+                "summary": "Precondition for the whole story: the page rasterises, the floating toolbar Merge / Split button is present, enabled and not premium-locked, the shared modal is in the DOM but closed with exactly two tabs, the editor exposes its viewer, and the console is clean.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "02",
+                "id": "02-modal-open-close",
+                "gid": "1218230443869669",
+                "area": "Modal",
+                "title": "The modal opens on the Merge tab and closes via X, Cancel, scrim and Escape",
+                "summary": "The toolbar button opens the modal titled Merge / Split PDFs on the Merge tab with only that panel on show. All four dismissals close it, and a click inside the card does not -- the scrim handler keys off the modal element itself.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "03",
+                "id": "03-tab-switching",
+                "gid": "1218230444057574",
+                "area": "Modal",
+                "title": "Switching tabs shows one panel at a time, and the last tab is remembered for the session",
+                "summary": "Split shows the split panel and hides the merge panel; aria-selected and a roving tabindex mark exactly one tab. The chosen tab is written to sessionStorage, so closing and reopening the modal -- and reloading the page -- comes back to it, while a fresh browser context opens on Merge.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "04",
+                "id": "04-current-document-card",
+                "gid": "1218230568061842",
+                "area": "Merge",
+                "title": "The current document is listed first, marked as current, and cannot be removed",
+                "summary": "A fresh Merge tab lists one card: the open document, named as the editor names it, carrying the Current document badge and no remove control. The summary reads 1 PDF and its page count, Merge PDFs is disabled with only one document, and the status asks for at least one PDF.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "05",
+                "id": "05-add-pdfs",
+                "gid": "1218230568236250",
+                "area": "Merge",
+                "title": "Adding PDFs appends cards with filename, size, page count and thumbnail, and enables Merge",
+                "summary": "Choosing files through the hidden input appends one card per PDF after the current document, each with its filename, size, page count and a rendered first-page thumbnail. The summary counts documents and pages across all cards, Merge PDFs enables, the status confirms how many were added, and a second selection appends rather than replaces.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "06",
+                "id": "06-reorder",
+                "gid": "1218230443888273",
+                "area": "Merge",
+                "title": "Whole documents reorder with Move up / Move down, and the ends are disabled",
+                "summary": "Each card has keyboard Move up / Move down controls named for its file, disabled at the top and bottom of the list, so drag-and-drop is never the only way to order documents. Moving a card moves the whole document, the current document moves like any other and keeps its badge, and every card's accessible name states its position.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "07",
+                "id": "07-remove",
+                "gid": "1218230443887921",
+                "area": "Merge",
+                "title": "An added PDF can be removed, and the summary and Merge button follow",
+                "summary": "Only added cards carry a remove control. Removing one drops it from the list and the summary; removing the last added PDF leaves the current document alone and disables Merge PDFs again.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "08",
+                "id": "08-invalid-files-refused",
+                "gid": "1218230798266273",
+                "area": "Merge",
+                "title": "A non-PDF, an oversize file and a password-protected file are refused before upload",
+                "summary": "inspectMergeFile rejects client-side, before any upload: a text file is not a PDF, a file over the 20 MB limit exceeds the file limit, a file that pdf.js cannot open reports it could not be opened, and an encrypted PDF is password protected. Each names the file in an error status and adds no card.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "09",
+                "id": "09-limits",
+                "gid": "1218230443979161",
+                "area": "Merge",
+                "title": "The file-count and total-page limits are enforced",
+                "summary": "Selecting more than 10 files adds only the first 10 and says so; once full, adding more is refused. A selection that would take the merged document past 1000 pages disables Merge PDFs and explains the page limit.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "10",
+                "id": "10-merge-request",
+                "gid": "1218230443888263",
+                "area": "Merge",
+                "title": "The request carries every upload and the displayed order, and declining the confirm sends nothing",
+                "summary": "Merge PDFs asks for confirmation first. Accepting posts one multipart request with each upload under pdfs[<id>], an order list that starts wherever the cards were put (including the current document mid-list), and the session id. Dismissing the confirm posts nothing.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "11",
+                "id": "11-real-merge",
+                "gid": "1218230797475411",
+                "area": "Merge",
+                "title": "A real merge reloads the document with every page in the chosen order, keeping its id and name",
+                "summary": "Exercised end to end against merge_pdf_documents.py: with an upload moved above the current document, the editor reloads with the combined page count, every page's text in the chosen order, the same document id and name, a PDFs merged status, and a Merge tab that now counts the merged pages.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "12",
+                "id": "12-merge-failure",
+                "gid": "1218230443887911",
+                "area": "Merge",
+                "title": "A failed merge keeps the modal and its order intact and shows the server's message",
+                "summary": "A refused merge (422, and a 409 conflict) leaves the modal open with the cards in the order the user chose, shows the server's safe message as an error status, restores the controls, and reports the failure in the editor status line.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "13",
+                "id": "13-merge-busy",
+                "gid": "1218230568095209",
+                "area": "Merge",
+                "title": "A merge in progress disables every control until it settles",
+                "summary": "While the request is held open the modal is busy: close, cancel, the drop zone, both tabs, the submit and every card's move and remove controls are disabled, cards are not draggable, and the status reads Merging PDFs. Everything comes back once the request settles.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "14",
+                "id": "14-split-page-grid",
+                "gid": "1218230454444768",
+                "area": "Split",
+                "title": "The tab lists one card per page with a checkbox and label, and starts with nothing selected",
+                "summary": "The Split tab renders a card per page of the current PDF with a visible checkbox named Include page N, a Page N label and a lazily rendered thumbnail. Nothing starts selected, the summary reads 0 pages selected, Split selected pages is disabled, and Clear selection is disabled while Select all is not.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "15",
+                "id": "15-split-toggles",
+                "gid": "1218230797527649",
+                "area": "Split",
+                "title": "Cards toggle by click, checkbox and keyboard, and the summary and buttons track the count",
+                "summary": "Clicking a card toggles it, clicking its checkbox toggles it exactly once, and Space or Enter toggles a focused card. Each toggle updates is-selected, aria-pressed and the checkbox, the summary switches between singular and plural, and the submit and Clear controls enable with the first selection.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "16",
+                "id": "16-select-all-clear",
+                "gid": "1218230568078250",
+                "area": "Split",
+                "title": "Select all and Clear selection",
+                "summary": "Select all ticks every page, disables itself and enables Clear and the submit; Clear empties the selection and reverses each of those. Selecting every page is a valid split.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "17",
+                "id": "17-selection-lifecycle",
+                "gid": "1218230568028435",
+                "area": "Split",
+                "title": "Selection survives a tab switch but not closing the modal",
+                "summary": "A selection is kept while switching to Merge and back, is cleared when the modal is closed and reopened, and the reopened modal comes back on the Split tab because that was the last tab used.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "18",
+                "id": "18-filename-dialog",
+                "gid": "1218230568047703",
+                "area": "Split",
+                "title": "The filename dialog defaults to <document>_split.pdf and refuses an empty name",
+                "summary": "Split selected pages opens the filename dialog only with a selection, pre-filled and selected with the document name plus _split.pdf. An emptied name is refused with Enter a valid PDF filename and posts nothing; a name with illegal characters is normalised before it is sent. Cancel returns focus to the Split button, Escape closes the dialog before the modal, and clicking the dialog's own scrim closes only the dialog.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "19",
+                "id": "19-split-request",
+                "gid": "1218230568028466",
+                "area": "Split",
+                "title": "The request carries the selected pages in ascending order, the name and the destination",
+                "summary": "Pages ticked out of order are posted as page_indices[] in ascending order, with mode=selected, the normalised output_name, the session id, the edited PDF attached and output_action naming the button that was pressed -- download for Split & download, editor for Open in editor.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "20",
+                "id": "20-real-split-download",
+                "gid": "1218230797420641",
+                "area": "Split",
+                "title": "A real download contains only the selected pages, in document order, and leaves the source untouched",
+                "summary": "Exercised end to end against split_pdf.py: Split & download produces a PDF named as typed whose page count matches the selection and whose pages carry the selected pages' text in document order, while the open document keeps every one of its pages and the editor reports the split.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "21",
+                "id": "21-real-split-open-in-editor",
+                "gid": "1218230797417855",
+                "area": "Split",
+                "title": "Open in editor creates a new document with the selected pages and its own id",
+                "summary": "Open in editor navigates the popup to a second document with a new id, the chosen filename, and only the selected pages, while the source document keeps its own id and page count.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "22",
+                "id": "22-split-busy-and-failure",
+                "gid": "1218230797415390",
+                "area": "Split",
+                "title": "A split in progress disables the dialog, and a failure reports the reason and stays open",
+                "summary": "While the split request is held open the filename dialog, its buttons, the modal close, the tabs and every page card are disabled and the status says what is happening. A refused split shows the server's message in the dialog and the tab, closes the preparing popup, keeps the dialog open for another try, restores the controls, and reports the failure in the editor status line.",
+                "automated": true,
+                "story": "merge-split-tool"
+            },
+            {
+                "number": "23",
+                "id": "23-keyboard-and-aria",
+                "gid": "1218230402959185",
+                "area": "Accessibility",
+                "title": "Keyboard access and ARIA on the modal, tablist, cards and filename dialog",
+                "summary": "The card is a labelled modal dialog; the tablist has a name and its tabs name real panels, which are tabpanels with the inactive one hidden; the close button, both lists and the three status regions have accessible names or polite live regions; each merge card's name states its file and position; each page card is a pressable button whose checkbox is named Include page N; the filename dialog is its own labelled modal dialog; and a focused tab activates from the keyboard.",
+                "automated": true,
+                "story": "merge-split-tool"
+            }
+        ]
+    }
+}
