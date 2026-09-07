@@ -67,6 +67,11 @@ class AutomatedTests extends Page
                 'label' => 'Merge / Split tool',
                 'available' => true,
             ],
+            [
+                'key' => 'password-tool',
+                'label' => 'Password tool',
+                'available' => true,
+            ],
         ];
     }
 }
