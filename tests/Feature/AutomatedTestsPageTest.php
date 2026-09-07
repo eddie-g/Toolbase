@@ -871,7 +871,7 @@ class AutomatedTestsPageTest extends TestCase
             ->assertJsonPath('suite.stories.0.task_gid', '1218251608843903');
 
         $tests = $response->json('suite.tests');
-        $this->assertCount(14, $tests, 'The password story specifies 14 cases');
+        $this->assertCount(15, $tests, 'The password story specifies 15 cases');
 
         foreach ($tests as $test) {
             $this->assertSame('password-tool', $test['story']);
@@ -880,7 +880,7 @@ class AutomatedTestsPageTest extends TestCase
         // Mirrored from a real Asana task, so every case carries its subtask
         // gid and no two cases may point at the same subtask.
         $gids = array_column($tests, 'gid');
-        $this->assertCount(14, array_filter($gids), 'Every password case carries its Asana subtask gid');
+        $this->assertCount(15, array_filter($gids), 'Every password case carries its Asana subtask gid');
         $this->assertSame(array_unique($gids), $gids, 'Two password cases point at the same Asana subtask');
 
         // Setting, unlocking and removing each need coverage, or the suite has a blind spot.
@@ -901,7 +901,7 @@ class AutomatedTestsPageTest extends TestCase
             fn (array $test) => $test['automated'] === true,
         ));
 
-        $this->assertCount(14, $automated, 'Every specified password case is automated');
+        $this->assertCount(15, $automated, 'Every specified password case is automated');
 
         $runner = (string) file_get_contents(base_path('tests/AutomatedTests/Password/run_password_tests.cjs'));
 

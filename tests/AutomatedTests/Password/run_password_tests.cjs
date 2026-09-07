@@ -56,7 +56,9 @@ const MESSAGES = {
     editorSet: 'PDF password set.',
     editorUpdated: 'PDF password updated.',
     editorRemoved: 'PDF password removed.',
-    wrongPassword: 'Password is incorrect.',
+    wrongPassword: 'Password is incorrect. 2 attempts left.',
+    wrongPasswordSecond: 'Password is incorrect. 1 attempt left.',
+    wrongPasswordLast: 'Password is incorrect. No attempts left.',
     wrongCurrent: 'Current password is incorrect.',
     removeHelpUnprotected: 'Set a password first.',
     removeHelpProtected: 'Enter the current password to remove protection from this PDF.',
@@ -1139,6 +1141,44 @@ async function testKeyboardAndAria(page, { recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
+/** 15 — Three wrong guesses on the Unlock prompt send the user back (NK_27). */
+async function testUnlockAttempts(page, { recorder, docId }) {
+    const artifacts = [];
+
+    await setPasswordForReal(page, 'Secret-1');
+    await closeDialog(page, 'close');
+    await openEditorExpectingUnlock(page, docId);
+
+    let state = await unlock(page, 'wrong-1');
+    recorder.equals('first-refusal-counts-down', state.error.text, MESSAGES.wrongPassword, 'The first wrong guess says two are left');
+    recorder.equals('prompt-stays-after-first', state.open, true, 'The prompt stays');
+    state = await unlock(page, 'wrong-2');
+    recorder.equals('second-refusal-counts-down', state.error.text, MESSAGES.wrongPasswordSecond, 'The second says one is left');
+    recorder.equals('prompt-stays-after-second', state.open, true, 'The prompt still stays');
+
+    artifacts.push(await capture(page, '15-unlock-attempts', 'one-left'));
+
+    await fill(page, 'unlock', 'wrong-3');
+    await submit(page);
+    await page.waitForTimeout(600);
+    state = await dialogState(page);
+    recorder.equals('third-refusal', state.error.text, MESSAGES.wrongPasswordLast, 'The third says none are left');
+    recorder.equals('prompt-locked', state.submitDisabled, true, 'The prompt is locked while it says goodbye');
+    await page.waitForURL(/\/pdf-editor(\?|$)/, { timeout: 20000 }).catch(() => null);
+    recorder.assert('sent-back', /\/pdf-editor(\?|$)/.test(page.url()), 'The third wrong guess sends the user back to the editor home', page.url());
+
+    // Coming back starts a fresh three, and the right password still works.
+    await openEditorExpectingUnlock(page, docId);
+    state = await unlock(page, 'wrong-again');
+    recorder.equals('fresh-count-on-return', state.error.text, MESSAGES.wrongPassword, 'Returning to the document starts a fresh count');
+    await unlock(page, 'Secret-1');
+    await waitForRender(page).catch(() => null);
+    recorder.equals('right-password-still-opens', await pageRendered(page), true, 'The right password still opens it');
+
+    artifacts.push(await capture(page, '15-unlock-attempts', 'reopened'));
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
 // ---------------------------------------------------------------------------
 // Registry and runner
 // ---------------------------------------------------------------------------
@@ -1158,6 +1198,7 @@ const TESTS = [
     { id: '12-busy-state', number: '12', title: 'A request in progress disables the dialog until it settles', run: testBusyState },
     { id: '13-failure-handling', number: '13', title: "A failed request shows the server's message and leaves the dialog usable", run: testFailureHandling },
     { id: '14-keyboard-and-aria', number: '14', title: 'Keyboard access and ARIA on the dialog, tabs, fields and messages', run: testKeyboardAndAria },
+    { id: '15-unlock-attempts', number: '15', title: 'Three wrong guesses on the Unlock prompt send the user back (NK_27)', run: testUnlockAttempts },
 ];
 
 function summarise(test, checks, artifacts, error, startedAt) {
