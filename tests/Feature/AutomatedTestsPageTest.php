@@ -197,6 +197,7 @@ class AutomatedTestsPageTest extends TestCase
         $this->assertContains('highlight-tool', $keys, 'The highlight tool needs its own tab');
         $this->assertContains('image-tool', $keys, 'The image tool needs its own tab');
         $this->assertContains('convert-tool', $keys, 'The convert tool needs its own tab');
+        $this->assertContains('merge-split-tool', $keys, 'The merge / split tool needs its own tab');
 
         // The switcher only renders with more than one suite, so the labels
         // have to reach the page for the tabs to be usable.
@@ -205,7 +206,11 @@ class AutomatedTestsPageTest extends TestCase
             ->assertOk();
 
         foreach ($suites as $suite) {
-            $response->assertSee($suite['label'], false);
+            // The suite list reaches the page through @js, which JSON-encodes
+            // the data (a slash becomes \/) and then JSON-encodes that string
+            // again to build the JSON.parse('...') literal (\/ becomes \\\/),
+            // so "Merge / Split tool" is on the page as "Merge \\\/ Split tool".
+            $response->assertSee(str_replace('/', '\\\\\\/', $suite['label']), false);
         }
     }
 
@@ -468,7 +473,7 @@ class AutomatedTestsPageTest extends TestCase
             ->assertJsonPath('suite.key', 'highlight-tool');
 
         $tests = $response->json('suite.tests');
-        $this->assertCount(23, $tests, 'The highlight story specifies 23 cases');
+        $this->assertCount(24, $tests, 'The highlight story specifies 24 cases');
 
         foreach ($tests as $test) {
             $this->assertSame('highlight-tool', $test['story']);
@@ -495,7 +500,7 @@ class AutomatedTestsPageTest extends TestCase
             fn (array $test) => $test['automated'] === true,
         ));
 
-        $this->assertCount(23, $automated, 'Every specified highlight case is automated');
+        $this->assertCount(24, $automated, 'Every specified highlight case is automated');
 
         $runner = (string) file_get_contents(base_path('tests/AutomatedTests/Highlight/run_highlight_tests.cjs'));
 
@@ -771,5 +776,80 @@ class AutomatedTestsPageTest extends TestCase
             $failing,
             'Unexpected failing checks: '.json_encode($failing),
         );
+    }
+
+    // ---- Merge / Split tool suite -----------------------------------------
+
+    public function test_merge_split_tool_suite_endpoint_requires_admin_authentication(): void
+    {
+        $this->getJson('/automated-tests/merge-split-tool/suite')->assertUnauthorized();
+    }
+
+    public function test_merge_split_tool_suite_returns_the_catalogue(): void
+    {
+        $response = $this->actingAs($this->admin(), 'admin')
+            ->getJson('/automated-tests/merge-split-tool/suite')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('suite.key', 'merge-split-tool')
+            ->assertJsonPath('suite.stories.0.task_gid', '1218230402898415');
+
+        $tests = $response->json('suite.tests');
+        $this->assertCount(23, $tests, 'The merge / split story specifies 23 cases');
+
+        foreach ($tests as $test) {
+            $this->assertSame('merge-split-tool', $test['story']);
+        }
+
+        // Mirrored from a real Asana task, so every case carries its subtask
+        // gid and no two cases may point at the same subtask.
+        $gids = array_column($tests, 'gid');
+        $this->assertCount(23, array_filter($gids), 'Every merge / split case carries its Asana subtask gid');
+        $this->assertSame(array_unique($gids), $gids, 'Two merge / split cases point at the same Asana subtask');
+
+        // Both tabs need coverage, or the suite has a blind spot.
+        $areas = array_unique(array_column($tests, 'area'));
+        foreach (['Merge', 'Split'] as $area) {
+            $this->assertContains($area, $areas, "The merge / split suite must cover the {$area} tab");
+        }
+    }
+
+    public function test_every_automated_merge_split_case_exists_in_the_runner(): void
+    {
+        $catalogue = json_decode(
+            (string) file_get_contents(resource_path('automated-tests/merge-split-tool.json')),
+            true,
+        );
+        $automated = array_values(array_filter(
+            $catalogue['suite']['tests'],
+            fn (array $test) => $test['automated'] === true,
+        ));
+
+        $this->assertCount(23, $automated, 'Every specified merge / split case is automated');
+
+        $runner = (string) file_get_contents(base_path('tests/AutomatedTests/MergeSplit/run_merge_split_tests.cjs'));
+
+        foreach ($automated as $test) {
+            $this->assertStringContainsString(
+                "id: '".$test['id']."'",
+                $runner,
+                "The runner must register {$test['id']}, or the admin page offers a test that cannot run",
+            );
+        }
+
+        // Anchored on the number that follows, so this matches the registry
+        // entries rather than every object literal that happens to have an id.
+        preg_match_all("/\{ id: '([^']+)', number: '/", $runner, $matches);
+        $catalogued = array_column($catalogue['suite']['tests'], 'id');
+        foreach ($matches[1] as $registered) {
+            $this->assertContains(
+                $registered,
+                $catalogued,
+                "The runner registers {$registered}, which the catalogue does not list",
+            );
+        }
+
+        $numbers = array_column($catalogue['suite']['tests'], 'number');
+        $this->assertSame(array_unique($numbers), $numbers, 'Two merge / split cases share a number');
     }
 }

@@ -67,6 +67,9 @@ Thumbs.db
 !/tests/AutomatedTests/Convert/
 /tests/AutomatedTests/Convert/*
 !/tests/AutomatedTests/Convert/run_convert_tests.cjs
+!/tests/AutomatedTests/MergeSplit/
+/tests/AutomatedTests/MergeSplit/*
+!/tests/AutomatedTests/MergeSplit/run_merge_split_tests.cjs
 !/tests/Feature/
 /tests/Feature/*
 !/tests/Feature/PdfPasswordProtectionTest.php
