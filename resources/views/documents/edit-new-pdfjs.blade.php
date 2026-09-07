@@ -188,7 +188,8 @@
      data-document-name="{{ $document->original_name }}"
      data-merge-max-files="{{ config('pdf_editor.merge.max_files', 10) }}"
      data-merge-max-file-bytes="{{ (int) config('pdf_editor.merge.max_file_kb', 20480) * 1024 }}"
-     data-merge-max-pages="{{ config('pdf_editor.merge.max_pages', 1000) }}">
+     data-merge-max-pages="{{ config('pdf_editor.merge.max_pages', 1000) }}"
+     data-merge-max-file-pages="{{ config('pdf_editor.merge.max_file_pages', 100) }}">
     <div id="viewerContainer">
         <div id="viewer" class="pdfViewer"></div>
     </div>

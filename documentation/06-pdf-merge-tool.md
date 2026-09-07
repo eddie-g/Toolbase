@@ -215,7 +215,9 @@ After Laravel validation, also require that:
 - No input requires a password.
 - The merged page count and total input/output bytes are within configured
   limits. Suggested v1 limits are 10 added PDFs, 20 MB per upload, 100 MB total,
-  and 1,000 pages.
+  100 pages per added PDF, and 1,000 pages in the merged result. The cap on
+  pages per PDF applies to what is added; the open document is whatever size
+  it already is.
 
 Put these limits in `config/pdf_editor.php` so controller validation and UI help
 text do not drift.
@@ -275,7 +277,8 @@ through a shell command:
         {"id": "upload-4d0195", "path": "/tmp/...pdf"}
     ],
     "output": "/storage/documents/temp_merge_<uuid>.pdf",
-    "max_pages": 1000
+    "max_pages": 1000,
+    "max_file_pages": 100
 }
 ```
 

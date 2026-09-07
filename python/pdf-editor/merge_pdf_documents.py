@@ -29,6 +29,7 @@ def merge_from_manifest(manifest_path: str) -> dict[str, Any]:
         inputs = manifest.get("inputs")
         output_path = str(manifest.get("output") or "")
         max_pages = int(manifest.get("max_pages") or 1000)
+        max_file_pages = int(manifest.get("max_file_pages") or 100)
         if not isinstance(inputs, list) or len(inputs) < 2:
             return fail("At least two PDF documents are required.")
         if not output_path:
@@ -58,6 +59,13 @@ def merge_from_manifest(manifest_path: str) -> dict[str, Any]:
             page_count = source.page_count
             if page_count < 1:
                 return fail(f"PDF input '{input_id}' has no pages.")
+            # The open document is whatever size it already is; the cap is
+            # on what gets added to it.
+            if input_id != "current" and page_count > max_file_pages:
+                return fail(
+                    f"PDF input '{input_id}' has {page_count} pages. "
+                    f"The limit is {max_file_pages} pages per PDF."
+                )
             if total_pages + page_count > max_pages:
                 return fail(f"The merged PDF exceeds the {max_pages}-page limit.")
 

@@ -110,8 +110,8 @@
                 "id": "09-limits",
                 "gid": "1218230443979161",
                 "area": "Merge",
-                "title": "The file-count and total-page limits are enforced",
-                "summary": "Selecting more than 10 files adds only the first 10 and says so; once full, adding more is refused. A selection that would take the merged document past 1000 pages disables Merge PDFs and explains the page limit.",
+                "title": "Merge: the file-count, per-file page and total-page limits are enforced",
+                "summary": "Selecting more than 10 files adds only the first 10 and says so; once full, adding more is refused. A single PDF may not exceed 100 pages: a 101-page file is refused by name and adds no card, while exactly 100 pages is accepted. The merged total is still capped at 1000 pages, and when a selection passes it the limit is explained in the status -- it is not overwritten by the added confirmation (NK_26) -- with Merge PDFs disabled until a document is removed.",
                 "automated": true,
                 "story": "merge-split-tool"
             },
