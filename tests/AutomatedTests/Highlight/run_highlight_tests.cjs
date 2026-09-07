@@ -2321,6 +2321,138 @@ async function testSelectInMode(page, { recorder }) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
 
+/** 24 — Highlighting across the page's own text must not claim that text
+ * (NK_25). A drag over a source row commits a text-snapped highlight whose
+ * box is exactly the row's glyph box. Before the fix, the next edit-mode
+ * render matched that row to a persisted annotation on geometry alone,
+ * found the highlight, and handed its id to the row's source editor: two
+ * boxes with one identity, so moving or editing the text wrote a text
+ * annotation over the highlight, the source glyphs were never masked, and a
+ * grey shadow clone of the text was left behind. */
+async function testHighlightThenEditSource(page, { recorder, saveRecorder }) {
+    const artifacts = [];
+
+    const sourceRow = () => page.evaluate(() => {
+        const pageDiv = document.querySelector('#viewer .page[data-page-number="1"]');
+        const pageRect = pageDiv?.getBoundingClientRect();
+        if (!pageRect) return null;
+        const span = Array.from(pageDiv.querySelectorAll('.textLayer span'))
+            .find((el) => String(el.textContent || '').trim() && el.getBoundingClientRect().width > 0);
+        if (!span) return null;
+        const rect = span.getBoundingClientRect();
+        return {
+            text: String(span.textContent || '').trim(),
+            persistentId: span.dataset.enpvPersistentId || '',
+            movedSourceHidden: span.dataset.enpvMovedSourceHidden === '1',
+            left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+            fx: ((rect.left + 4) - pageRect.left) / pageRect.width,
+            fy: ((rect.top + (rect.height / 2)) - pageRect.top) / pageRect.height,
+        };
+    });
+    // The row's editor is an on-demand source editor once something else
+    // sits on the row, and a plain source handle otherwise; match on the
+    // text rather than on which of the two the editor chose.
+    const sourceBoxes = () => page.evaluate((needle) => Array.from(
+        document.querySelectorAll('.enpv-annotation-box:not(.enpv-shape-box)'),
+    ).filter((box) => String(box.textContent || '').includes(needle)).map((box) => {
+        const rect = box.getBoundingClientRect();
+        return {
+            id: box.dataset.annotationId || '',
+            selected: box.classList.contains('is-selected'),
+            left: rect.left, top: rect.top, width: rect.width, height: rect.height,
+        };
+    }), ROW_NEEDLE);
+
+    let row = await sourceRow();
+    recorder.assert('has-source-row', !!row, 'The page has a row of its own text to highlight',
+        row ? row.text : 'no text-layer span');
+    if (!row) return { checks: recorder.checks, artifacts };
+    const ROW_NEEDLE = row.text.split(/\s+/).slice(0, 3).join(' ');
+
+    // Paint a highlight across the row, which snaps to the row's glyph box.
+    await setHighlightMode(page, true);
+    await dragHighlight(page, { fx: row.fx, fy: row.fy }, { dx: Math.max(40, row.width - 8), dy: 0 });
+    let highlights = await highlightBoxes(page);
+    recorder.equals('one-highlight', highlights.length, 1, 'Dragging across the row commits one highlight');
+    const highlightId = highlights[0]?.annotationId || '';
+    recorder.assert('highlight-has-id', !!highlightId, 'The highlight carries an annotation id');
+    await setHighlightMode(page, false);
+
+    // Edit mode renders the row's source editor. It must be its own annotation.
+    await setEditMode(page, true);
+    await page.waitForTimeout(900);
+    let boxes = await sourceBoxes();
+    recorder.equals('row-has-editor', boxes.length, 1, 'Edit mode renders one source editor for the row',
+        JSON.stringify(boxes.map((box) => box.id)));
+    const editorId = boxes[0]?.id || '';
+    recorder.assert('editor-keeps-own-id', !!editorId && editorId !== highlightId,
+        'The row\'s source editor is not the highlight',
+        `editor=${editorId} highlight=${highlightId}`);
+    row = await sourceRow();
+    recorder.assert('row-not-claimed-by-highlight', row.persistentId !== highlightId,
+        'The text-layer row is not attributed to the highlight',
+        `row persistent id=${row.persistentId}`);
+
+    artifacts.push(await capture(page, '24-highlight-then-edit-source', 'edit-mode'));
+
+    // Move the row. The highlight must be untouched and the source glyphs masked.
+    const target = boxes[0];
+    if (target) {
+        const startX = target.left + (target.width / 2);
+        const startY = target.top + (target.height / 2);
+        await page.mouse.click(startX, startY);
+        await page.waitForTimeout(500);
+        await page.mouse.move(startX, startY);
+        await page.mouse.down();
+        for (let step = 1; step <= 6; step++) {
+            // eslint-disable-next-line no-await-in-loop
+            await page.mouse.move(startX, startY + ((50 * step) / 6));
+            // eslint-disable-next-line no-await-in-loop
+            await page.waitForTimeout(40);
+        }
+        await page.mouse.up();
+        await page.waitForTimeout(900);
+    }
+
+    boxes = await sourceBoxes();
+    recorder.equals('still-one-editor', boxes.length, 1, 'Moving the row leaves one text box for it, not a clone',
+        JSON.stringify(boxes.map((box) => box.id)));
+    recorder.near('row-moved', (boxes[0]?.top ?? 0) - (target?.top ?? 0), 50, 8,
+        'The row moves by the pointer distance');
+    recorder.equals('row-keeps-id', boxes[0]?.id || '', editorId, 'The moved row keeps its own id');
+    highlights = await highlightBoxes(page);
+    recorder.equals('highlight-survives', highlights.length, 1, 'The highlight is still there');
+    recorder.equals('highlight-keeps-id', highlights[0]?.annotationId || '', highlightId,
+        'The highlight keeps its identity');
+    recorder.equals('highlight-still-a-shape', highlights[0]?.annotationType || '', 'shape',
+        'The highlight is still a shape, not a text annotation wearing its id');
+    const sharingHighlightId = await page.evaluate((id) => document
+        .querySelectorAll(`.enpv-annotation-box[data-annotation-id="${CSS.escape(id)}"]`).length, highlightId);
+    recorder.equals('id-not-shared', sharingHighlightId, 1, 'No other box carries the highlight\'s id');
+    row = await sourceRow();
+    recorder.assert('source-glyphs-masked', row.movedSourceHidden,
+        'The original glyphs are hidden under the moved row, so nothing is drawn twice');
+
+    artifacts.push(await capture(page, '24-highlight-then-edit-source', 'moved'));
+
+    // The saved payload keeps them apart as well.
+    await saveDocument(page, saveRecorder);
+    const saved = lastSavedAnnotations(saveRecorder);
+    const savedUnderHighlightId = saved.filter((annotation) => String(annotation.id) === highlightId);
+    recorder.equals('saved-one-under-highlight-id', savedUnderHighlightId.length, 1,
+        'Exactly one saved annotation carries the highlight id');
+    recorder.assert('saved-highlight-is-highlight',
+        savedUnderHighlightId.every((annotation) => String(annotation.shapeType).toLowerCase() === 'highlight'),
+        'The annotation saved under the highlight id is the highlight');
+    recorder.assert('saved-text-separately',
+        saved.some((annotation) => String(annotation.id) === editorId
+            && String(annotation.type || 'text').toLowerCase() === 'text'),
+        'The moved row is saved as its own text annotation',
+        JSON.stringify(saved.map((annotation) => `${annotation.type}:${annotation.id}`)));
+
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
+}
+
 // ---------------------------------------------------------------------------
 // Registry and runner
 // ---------------------------------------------------------------------------
@@ -2349,6 +2481,7 @@ const TESTS = [
     { id: '21-multi-select', number: '21', title: 'Multi-select and group restyle', run: testMultiSelect, signedIn: true },
     { id: '22-keyboard-and-aria', number: '22', title: 'Keyboard access and ARIA on the Highlight Options panel', run: testKeyboardAndAria, signedIn: true },
     { id: '23-select-in-mode', number: '23', title: 'With the tool open, clicking an existing highlight selects it (highlights only)', run: testSelectInMode, signedIn: true },
+    { id: '24-highlight-then-edit-source', number: '24', title: 'Highlighting across source text leaves the text its own annotation when it is moved', run: testHighlightThenEditSource, signedIn: true },
 ];
 
 function summarise(test, checks, artifacts, error, startedAt) {

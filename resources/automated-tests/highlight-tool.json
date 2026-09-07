@@ -254,6 +254,16 @@
                 "summary": "NK_23. While the Highlight tool is open, an already-placed highlight is the one annotation kind that stays clickable: clicking it selects it, the click paints nothing new, and the tool and its Options panel survive the selection. Computed pointer-events prove the scoping -- a highlight box receives pointer events while every other annotation box still passes the pointer through to the text layer -- and painting a fresh highlight still works afterwards.",
                 "automated": true,
                 "story": "highlight-tool"
+            },
+            {
+                "number": "24",
+                "id": "24-highlight-then-edit-source",
+                "gid": null,
+                "area": "Manipulation",
+                "title": "Highlighting across source text leaves the text its own annotation when it is moved",
+                "summary": "NK_25. A drag across a row of the page's own text commits a text-snapped highlight whose box is that row's glyph box. In edit mode the row's source editor must still be its own annotation -- not the highlight -- so moving the row moves one box, the highlight keeps its id and stays a shape, the original glyphs are masked under the moved text, and the save keeps the two apart. Before the fix the row was matched to the highlight on geometry alone and inherited its id, so a move wrote a text annotation over the highlight and left a grey shadow clone behind.",
+                "automated": true,
+                "story": "highlight-tool"
             }
         ]
     }

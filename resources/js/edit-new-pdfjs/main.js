@@ -116,6 +116,7 @@ import {
     normalizeImageExportBaseName,
     parseImageExportPages,
     renderPdfPagesToImages,
+    viewportPixelSize,
 } from './image-export.js';
 import { elementAcceptsNativeClipboard } from './annotation-clipboard.js';
 import {
@@ -6041,6 +6042,12 @@ function findPersistedAnnotationForSpan(pageIndex, currentRect, text, originalTe
         if (!annotation || (consume && annotation._renderMatched)) continue;
         if (isPromotedExtractionAnnotation(annotation)) continue;
         if (annotation.pdfjsDeleted === true) continue;
+        // Only a text overlay can own a source row. Shapes, images, signatures
+        // and fields carry no source text, yet a text-snapped highlight sits
+        // exactly on the row's glyph box and wins on geometry alone, so the
+        // row's source editor was handed the highlight's id and the next move
+        // or edit wrote a text annotation over the highlight (NK_25).
+        if (String(annotation.type || 'text').toLowerCase() !== 'text') continue;
         const anchorUid = String(annotation.pdfjsAnchorUid || '').trim();
         const currentScore = scorePdfRectDistance(currentRect, annotationCurrentPdfBox(annotation) || annotation._originalPdfBox || null);
         const baselineScore = scorePdfRectDistance(currentRect, annotationBaselinePdfBox(annotation) || annotation._originalBox || null);
@@ -14972,7 +14979,8 @@ async function syncConvertSizeEstimate(generation) {
         const pixelCounts = await Promise.all(samples.map(async (pageNumber) => {
             const page = await currentPdfDoc.getPage(pageNumber);
             const viewport = page.getViewport({ scale: convertImageDpi / 72 });
-            return Math.max(1, Math.ceil(viewport.width)) * Math.max(1, Math.ceil(viewport.height));
+            const { width, height } = viewportPixelSize(viewport);
+            return width * height;
         }));
         if (generation !== convertSizeEstimateGeneration) return;
         const averagePixels = pixelCounts.reduce((sum, pixels) => sum + pixels, 0) / pixelCounts.length;

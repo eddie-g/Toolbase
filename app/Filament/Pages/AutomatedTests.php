@@ -58,6 +58,11 @@ class AutomatedTests extends Page
                 'available' => true,
             ],
             [
+                'key' => 'convert-tool',
+                'label' => 'Convert tool',
+                'available' => true,
+            ],
+            [
                 'key' => 'merge-split-tool',
                 'label' => 'Merge / Split tool',
                 'available' => true,
