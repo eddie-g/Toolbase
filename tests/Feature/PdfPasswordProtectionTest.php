@@ -275,4 +275,56 @@ class PdfPasswordProtectionTest extends TestCase
         $this->assertSame($needsPassword, $state['needs_password']);
         $this->assertSame($passwordShouldAuthenticate, $state['authenticated']);
     }
+
+    public function test_three_wrong_unlock_guesses_send_the_user_back_and_the_count_then_resets(): void
+    {
+        $sourcePdf = file_get_contents(base_path('tests/OverlayEditor/invoicesample.pdf'));
+        Storage::put('documents/current.pdf', $sourcePdf);
+        $document = Document::query()->create([
+            'original_name' => 'invoice.pdf',
+            'path' => 'documents/current.pdf',
+            'mime_type' => 'application/pdf',
+            'size_bytes' => strlen($sourcePdf),
+        ]);
+        $session = ['pdf_editor_accessible_document_ids' => [$document->id]];
+
+        $this->withSession($session)
+            ->post(route('documents.encryptPdf', $document), [
+                'action' => 'set',
+                'algorithm' => 'aes-128',
+                'persist_protection' => true,
+                'password' => 'strong-test-password',
+                'password_confirmation' => 'strong-test-password',
+            ], ['Accept' => 'application/json'])
+            ->assertOk();
+
+        $guess = fn (string $password) => $this->withSession($session)
+            ->postJson(route('documents.unlockPdfPassword', $document), ['password' => $password]);
+
+        // Two wrong guesses count down and stay refusable.
+        $guess('wrong-1')->assertStatus(422)->assertJson([
+            'code' => 'incorrect_password',
+            'attempts_remaining' => 2,
+            'message' => 'Password is incorrect. 2 attempts left.',
+        ]);
+        $guess('wrong-2')->assertStatus(422)->assertJson([
+            'code' => 'incorrect_password',
+            'attempts_remaining' => 1,
+            'message' => 'Password is incorrect. 1 attempt left.',
+        ]);
+
+        // The third is the last: refused as exhausted, and the count is spent.
+        $guess('wrong-3')->assertStatus(429)->assertJson([
+            'success' => false,
+            'code' => 'attempts_exhausted',
+            'attempts_remaining' => 0,
+        ]);
+
+        // Coming back starts a fresh three...
+        $guess('wrong-4')->assertStatus(422)->assertJson(['attempts_remaining' => 2]);
+
+        // ...and a right guess clears whatever was counted.
+        $guess('strong-test-password')->assertOk()->assertJson(['success' => true, 'protected' => true]);
+        $guess('wrong-5')->assertStatus(422)->assertJson(['attempts_remaining' => 2]);
+    }
 }
