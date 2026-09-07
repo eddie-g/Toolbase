@@ -10171,7 +10171,12 @@ function applyPromotedOverlayDisplayHorizontalFit(box) {
         // The one-span promoted paragraph inherits the source row pitch set
         // at edit entry. Replacing it with the generic 1.2em natural-flow
         // fallback compacts every row immediately after deselection.
-        if (!isSimplePromotedParagraph && !preservesSourcePitchAfterFamilyChange) {
+        // A rich commit of a text-only edit keeps the source row pitch too:
+        // at 1.2em an eight-row paragraph grows past its own block and the
+        // export then reflows it as if the box had been resized (NK_31).
+        if (!isSimplePromotedParagraph
+            && !preservesSourcePitchAfterFamilyChange
+            && !applySourceRowPitchForUnchangedTypography(box)) {
             ensureNaturalTextLineHeight(box);
         }
         return;
@@ -10444,6 +10449,13 @@ function richTextContentHeightPx(box) {
         }
         range.detach?.();
     } catch (_) { /* noop */ }
+    // A source row pitch is tighter than the face's content area, so the
+    // glyph rects overhang their line boxes; measuring them (and the scroll
+    // extent they inflate) would grow the block by about a row (NK_31). The
+    // row count times the pitch is the block's real height.
+    if (box.dataset.sourceRowPitchActive === '1' && lineBoxHeight > 0) {
+        return Math.ceil(Math.max(lineBoxHeight + paddingY, lineHeight));
+    }
     const clientHeight = tc.clientHeight || 0;
     const scrollHeight = tc.scrollHeight || 0;
     const overflowHeight = scrollHeight > clientHeight + 1 ? scrollHeight : 0;
@@ -23876,9 +23888,41 @@ function refitStyledBoxWhenFontsSettle(box, options = {}) {
         .catch(() => { /* noop */ });
 }
 
+// Keep the captured source row pitch on a promoted block whose font size is
+// still the source size. Returns false when the pitch is unknown or the type
+// was resized, so the caller falls back to the natural-flow 1.2 ratio.
+function applySourceRowPitchForUnchangedTypography(box) {
+    if (!box?.classList?.contains('is-promoted-source-block')) return false;
+    const tc = selectedBoxTextElement(box);
+    if (!tc) return false;
+    const currentFontSizePx = Number.parseFloat(window.getComputedStyle(tc).fontSize || '') || 0;
+    const sourceFontSizePx = Number.parseFloat(box.dataset.sourceFontSizePx || '') || 0;
+    if (!(currentFontSizePx > 0 && sourceFontSizePx > 0)) return false;
+    if (Math.abs(currentFontSizePx - sourceFontSizePx) > sourceFontSizePx * 0.05) return false;
+    const metrics = sourceSpanRunLineMetrics(box);
+    if (!metrics || !(metrics.lineStepPx > 0)) return false;
+    // The runs were captured at their own scale; the box may have been
+    // re-rendered at another zoom since.
+    const currentScale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 0;
+    const runsScale = Number.parseFloat(box.dataset.sourceSpanRunsScale || '') || currentScale || 1;
+    const ratio = currentScale > 0 && runsScale > 0 ? currentScale / runsScale : 1;
+    const lineStepPx = Math.round(metrics.lineStepPx * ratio * 1000) / 1000;
+    if (!(lineStepPx >= currentFontSizePx * 0.8)) return false;
+    tc.style.lineHeight = '';
+    box.style.setProperty('--enpv-line-height', `${lineStepPx}px`);
+    box.dataset.sourceRowPitchActive = '1';
+    return true;
+}
+
 function ensureNaturalTextLineHeight(box) {
     const tc = selectedBoxTextElement(box);
     if (!tc) return 0;
+    // A promoted paragraph whose type is still the source size keeps the
+    // PDF's own row pitch; the 1.2 ratio below is for restyled text and
+    // would grow the block past its source rows (NK_31).
+    if (applySourceRowPitchForUnchangedTypography(box)) {
+        return Number.parseFloat(box.style.getPropertyValue('--enpv-line-height') || '') || 0;
+    }
     const fontSizePx = Number.parseFloat(window.getComputedStyle(tc).fontSize || '') || 0;
     // Measuring an existing Range rect here feeds the old line box back into
     // the new one. Repeated font-size changes therefore inflate line-height
@@ -23888,6 +23932,7 @@ function ensureNaturalTextLineHeight(box) {
     if (lineHeightPx > 0) {
         tc.style.lineHeight = '';
         box.style.setProperty('--enpv-line-height', `${lineHeightPx}px`);
+        delete box.dataset.sourceRowPitchActive;
     }
     return lineHeightPx;
 }
@@ -25355,6 +25400,10 @@ function onTextContentInput(ev) {
                     attachCanonicalGapsToFollowingRun: promoteMixedSourceEdit,
                 });
             });
+            // The released rows keep the PDF's own pitch while the type is
+            // unchanged; the fit below would otherwise grow the box past its
+            // source block at the 1.2em fallback (NK_31).
+            applySourceRowPitchForUnchangedTypography(box);
         }
         if (promoteMixedSourceEdit) {
             // A plain source commit deliberately flattens its temporary span
