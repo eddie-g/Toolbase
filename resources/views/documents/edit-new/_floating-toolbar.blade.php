@@ -114,14 +114,14 @@
                 <span>Convert</span>
             </button>
             @unless($guided ?? false)
-                <button type="button" class="ftb-btn" id="ftb-merge-pdf" title="Merge or split PDF documents" aria-label="Merge or split PDF documents">
+                <button type="button" class="ftb-btn" id="ftb-merge-pdf" title="Organize PDF documents — combine files or extract pages" aria-label="Organize PDF documents">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                        <path d="M8 3H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2"></path>
-                        <path d="M16 5h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-2"></path>
-                        <path d="M12 3v10"></path>
-                        <path d="m8 9 4 4 4-4"></path>
+                        <rect x="3" y="3" width="7.5" height="8" rx="1.3"></rect>
+                        <rect x="13.5" y="3" width="7.5" height="8" rx="1.3"></rect>
+                        <rect x="3" y="13" width="7.5" height="8" rx="1.3"></rect>
+                        <rect x="13.5" y="13" width="7.5" height="8" rx="1.3"></rect>
                     </svg>
-                    <span>Merge / Split</span>
+                    <span>Organize</span>
                 </button>
                 <button type="button"
                         class="ftb-btn"
