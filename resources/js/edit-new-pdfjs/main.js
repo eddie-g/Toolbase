@@ -3690,7 +3690,9 @@ async function submitPasswordAction() {
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok || data?.success === false || !data?.unlock_token) {
-                throw new Error(passwordResponseError(data, 'The PDF could not be unlocked.'));
+                const error = new Error(passwordResponseError(data, 'The PDF could not be unlocked.'));
+                error.code = String(data?.code || '');
+                throw error;
             }
             documentUnlockToken = String(data.unlock_token);
             activeDocumentPassword = enteredPassword;
@@ -3705,6 +3707,14 @@ async function submitPasswordAction() {
         } catch (error) {
             setPasswordError(error?.message || 'The PDF could not be unlocked.');
             setPasswordStatus('');
+            // Three wrong guesses send the user back where cancelling the
+            // prompt goes (NK_27). The server keeps the count; the prompt is
+            // left disabled long enough to read the refusal.
+            if (error?.code === 'attempts_exhausted') {
+                setPasswordStatus('Returning to the editor…');
+                window.setTimeout(() => window.location.assign('/pdf-editor'), 1200);
+                return;
+            }
             setPasswordBusy(false);
         }
         return;

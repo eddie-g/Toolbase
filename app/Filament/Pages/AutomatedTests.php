@@ -67,6 +67,11 @@ class AutomatedTests extends Page
                 'label' => 'Organize tool',
                 'available' => true,
             ],
+            [
+                'key' => 'password-tool',
+                'label' => 'Password tool',
+                'available' => true,
+            ],
         ];
     }
 }

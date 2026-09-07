@@ -183,6 +183,34 @@ class DocumentController extends Controller
         return 'pdf_document_unlock_' . $document->id;
     }
 
+    /** Wrong guesses allowed on the Unlock prompt before the user is sent back (NK_27). */
+    private const PDF_UNLOCK_MAX_ATTEMPTS = 3;
+
+    private function documentPdfUnlockAttemptsKey(Document $document): string
+    {
+        return 'pdf_document_unlock_attempts_' . $document->id;
+    }
+
+    /**
+     * Record a wrong unlock guess and report how many are left. The count is
+     * consecutive failures in this session for this document; it clears on
+     * success and once the last guess is spent, so coming back to the
+     * document starts a fresh three.
+     */
+    private function recordFailedDocumentPdfUnlock(Request $request, Document $document): int
+    {
+        $key = $this->documentPdfUnlockAttemptsKey($document);
+        $attempts = (int) $request->session()->get($key, 0) + 1;
+        $remaining = max(0, self::PDF_UNLOCK_MAX_ATTEMPTS - $attempts);
+        if ($remaining === 0) {
+            $request->session()->forget($key);
+        } else {
+            $request->session()->put($key, $attempts);
+        }
+
+        return $remaining;
+    }
+
     private function issueDocumentPdfUnlockToken(Request $request, Document $document): string
     {
         $token = Str::random(64);
@@ -13871,12 +13899,25 @@ class DocumentController extends Controller
         }
 
         if (!Hash::check((string) $validated['password'], (string) $document->pdf_password_hash)) {
+            $remaining = $this->recordFailedDocumentPdfUnlock($request, $document);
+            if ($remaining === 0) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Password is incorrect. No attempts left.',
+                    'code' => 'attempts_exhausted',
+                    'attempts_remaining' => 0,
+                ], 429);
+            }
+
             return response()->json([
                 'success' => false,
-                'message' => 'Password is incorrect.',
+                'message' => sprintf('Password is incorrect. %d attempt%s left.', $remaining, $remaining === 1 ? '' : 's'),
                 'code' => 'incorrect_password',
+                'attempts_remaining' => $remaining,
             ], 422);
         }
+
+        $request->session()->forget($this->documentPdfUnlockAttemptsKey($document));
 
         return response()->json([
             'success' => true,
