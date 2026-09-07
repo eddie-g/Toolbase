@@ -1,0 +1,241 @@
+{
+    "suite": {
+        "key": "convert-tool",
+        "name": "Convert tool",
+        "tool_label": "Convert tool",
+        "target_url": "/documents/{document}/edit-new?pdfjs=1",
+        "runner": "tests/AutomatedTests/Convert/run_convert_tests.cjs",
+        "workspace": "My workspace",
+        "project": "Netkit",
+        "section": "Claude QA Agent",
+        "stories": [
+            {
+                "key": "convert-tool",
+                "short": "Convert tool",
+                "task_gid": "1218085246547973",
+                "task_name": "[QA] - Convert tool",
+                "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752/task/1218085246547973",
+                "instructions": [
+                    "Start with a blank pdf project for edit-new?pdfjs=1",
+                    "Click the Convert tool in the floating toolbar",
+                    "Convert is premium, so every case but the first opens the editor as a signed-in user",
+                    "Image export is exercised for real; it is entirely client-side and costs nothing",
+                    "PDF/A, Word and Excel are contract-tested -- the POST is intercepted, its fields asserted, and a canned response returned",
+                    "Word and Excel are queued jobs behind auth:web,admin that CHARGE the account per 50-page transaction, which is why no case completes one"
+                ]
+            }
+        ],
+        "tests": [
+            {
+                "number": "01",
+                "id": "01-blank-project-loads",
+                "gid": "1218085275742155",
+                "area": "Entry",
+                "title": "Setup: blank PDF project loads with the Convert tool available",
+                "summary": "Precondition for the whole story: the page rasterises, the floating toolbar Convert button is present and enabled, the modal is in the DOM but closed, it offers exactly the four tabs in order, and the console is clean.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "02",
+                "id": "02-modal-open-close",
+                "gid": "1218085275717465",
+                "area": "Modal",
+                "title": "The Convert modal opens with four tabs and closes via X, Cancel and scrim",
+                "summary": "The Convert button opens the modal on the Images tab with only that panel on show. All three dismissals close it, and a click inside the card does not -- the scrim handler keys off the modal element itself, so it is worth proving the card is not treated as scrim.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "03",
+                "id": "03-tab-switching",
+                "gid": "1218085220884127",
+                "area": "Modal",
+                "title": "Switching tabs updates the title, subtitle, export button label and summary",
+                "summary": "Each tab re-dresses the header, the action button and the footer summary, and aria-selected marks exactly one tab. Word and Excel additionally have to state the per-transaction charge before the user commits, since both bill the account.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "04",
+                "id": "04-advanced-toggle",
+                "gid": "1218085228705028",
+                "area": "Modal",
+                "title": "Advanced is off by default on every tab, is per-tab, and persists (NK_24)",
+                "summary": "The disclosure added by NK_24, checked on all four tabs: off by default with its panel hidden, aria-expanded and aria-controls wired to the panel it governs, opening one tab leaves the other three closed, and the choice survives closing and reopening the modal.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "05",
+                "id": "05-image-formats",
+                "gid": "1218085228923630",
+                "area": "Images",
+                "title": "Images: format choice, and transparent background offered for PNG/TIFF only",
+                "summary": "JPG is the default. Transparency is disabled for JPG and the disabled option says why; PNG and TIFF both offer it. Choosing transparency and then dropping back to JPG reverts the colour model rather than leaving an impossible combination selected.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "06",
+                "id": "06-image-sizes",
+                "gid": "1218085228746726",
+                "area": "Images",
+                "title": "Images: the size presets map to 96/150/300 DPI",
+                "summary": "The three presets are Screen 96, Standard 150 and Print 300, Standard is the default, each can be chosen, and exactly one is ever active.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "07",
+                "id": "07-page-selection",
+                "gid": "1218085229130681",
+                "area": "Images",
+                "title": "Images: All Pages, Page Range and Custom, and a malformed custom range is refused",
+                "summary": "Runs against a five-page fixture. All Pages, a 2-4 range and a \"1, 3-4\" custom list each report the right count, the matching input group is revealed, and both an out-of-range selection and outright garbage are flagged as errors rather than silently exporting the wrong thing.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "08",
+                "id": "08-summary-and-estimate",
+                "gid": "1218085220884136",
+                "area": "Images",
+                "title": "Images: the page-count summary and download size estimate track the settings",
+                "summary": "The estimate resolves from \"Calculating...\" to a real figure, Print DPI never estimates smaller than Screen DPI, and narrowing the page range narrows the summary. The size comparison skips rather than fails if the estimate is not quoted in a parseable unit.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "09",
+                "id": "09-image-export-download",
+                "gid": "1218085246850980",
+                "area": "Images",
+                "title": "Images: exporting one page downloads an image, several pages downloads a ZIP",
+                "summary": "A real end-to-end export, since image conversion is entirely client-side and costs nothing -- and the downloaded files are opened rather than weighed. The JPG is validated from its own frame header (SOI plus SOF) and asserted to be exactly the pixel size 150 DPI implies, then decoded by the browser and checked to carry the fixture's text rather than being a blank page. The archive is read through its central directory: one entry per page, each named for the page it came from, none empty. A truncated file, a blank render or an archive with the wrong pages in it would all pass a size check and fail here.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "10",
+                "id": "10-hidden-advanced-applies",
+                "gid": "1218085325099787",
+                "area": "Images",
+                "title": "Images: hidden Advanced settings still reach the export (NK_24)",
+                "summary": "NK_24's central promise, and the reason it is safe to hide anything. Colour, quality and anti-aliasing are moved off their defaults, the panel is collapsed, and the export is run. Asserted twice over: first against the telemetry the export posts, which records the settings it actually used (grayscale, quality 41, anti-aliasing off); then against the pixels themselves. The second export is a PNG, so it is lossless and a surviving colour channel would be real rather than a JPEG chroma artefact -- and every sampled pixel of the grayscale export has R=G=B. Telemetry is the client's own account of what it did; the pixels are the evidence.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "11",
+                "id": "11-quality-gating",
+                "gid": "1218085220666370",
+                "area": "Images",
+                "title": "Images: JPG Quality is disabled for PNG and TIFF",
+                "summary": "Quality is available and defaults to 92 for JPG, is disabled and dimmed for PNG and TIFF, and comes back on returning to JPG. This is the behaviour NK_24 had to compose with rather than replace: it is expressed with the disabled attribute, not by hiding.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "12",
+                "id": "12-pdfa-panel",
+                "gid": "1218085220734846",
+                "area": "PDF/A",
+                "title": "PDF/A: the panel, and PDF/A-2b as the default conformance level",
+                "summary": "All three conformance levels are offered with 2b selected, both options are on by default, and the panel explains what PDF/A is for.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "13",
+                "id": "13-pdfa-request",
+                "gid": "1218085228923566",
+                "area": "PDF/A",
+                "title": "PDF/A: the request carries the chosen level, embed_fonts and srgb_profile",
+                "summary": "Every advanced control is moved off its default before converting, and the intercepted POST is asserted to carry level=1b, embed_fonts=0 and srgb_profile=0 with the edited PDF attached. Contract-tested because a real conversion depends on server-side tooling this suite should not require.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "14",
+                "id": "14-pdfa-report",
+                "gid": "1218085221204263",
+                "area": "PDF/A",
+                "title": "PDF/A: a successful conversion shows the compliance report",
+                "summary": "With a canned successful response, the compliance report opens with a title, lists its checks, offers the converted file, and the Convert modal steps aside for it.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "15",
+                "id": "15-word-panel",
+                "gid": "1218085229218659",
+                "area": "Word",
+                "title": "Word: the panel, Exact Layout default, and the per-transaction charge",
+                "summary": "Both layout modes are offered with Exact selected, Include images is on and OCR is off by default, the panel says it produces a .docx, and the footer states the charge before the user commits.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "16",
+                "id": "16-word-request",
+                "gid": "1218085246484978",
+                "area": "Word",
+                "title": "Word: the request carries layout, include_images and ocr",
+                "summary": "Every advanced control is moved off its default, and the intercepted POST is asserted to carry layout=flow, include_images=0 and ocr=1 with the PDF attached. It also asserts one click produces exactly one POST, since a double-submit here would double-charge. Contract-tested rather than run: the endpoint is behind auth:web,admin, needs a queue worker, and bills the account.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "17",
+                "id": "17-excel-panel",
+                "gid": "1218085325051391",
+                "area": "Excel",
+                "title": "Excel: the panel, All Content default, and the per-transaction charge",
+                "summary": "Both extraction modes are offered with All Content selected, both options are on by default, the panel says it produces an .xlsx, and the footer states the charge.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "18",
+                "id": "18-excel-request",
+                "gid": "1218085324873756",
+                "area": "Excel",
+                "title": "Excel: the request carries mode, merge_cells and sheet_per_page",
+                "summary": "As for Word: the intercepted POST carries mode=tables, merge_cells=0 and sheet_per_page=0 with the PDF attached, and one click produces exactly one POST.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "19",
+                "id": "19-busy-state",
+                "gid": "1218085247232600",
+                "area": "Modal",
+                "title": "An export in progress disables the modal controls and shows the progress bar",
+                "summary": "The conversion request is held open so the busy state can be observed rather than raced. While it runs the progress bar is shown and labelled, the action button and close button are disabled, every input and select in the modal is disabled -- including the new Advanced toggle -- and all of it comes back once the request settles.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "20",
+                "id": "20-failure-handling",
+                "gid": "1218085325511999",
+                "area": "Modal",
+                "title": "A failed conversion reports the reason and leaves the modal usable",
+                "summary": "A 500 from the conversion endpoint is reported in the status bar and styled as an error (an inline colour, not a class), the modal stays open and usable so the user can retry, and no success report is shown.",
+                "automated": true,
+                "story": "convert-tool"
+            },
+            {
+                "number": "21",
+                "id": "21-keyboard-and-aria",
+                "gid": "1218085220638413",
+                "area": "Accessibility",
+                "title": "Keyboard access and ARIA on the Convert modal and its tablist",
+                "summary": "The card is a labelled modal dialog, the tabs are a named tablist whose every aria-controls target actually resolves, the panels are tabpanels, the close button has an accessible name, progress and the size estimate are polite live regions, and a tab can be focused and activated from the keyboard.",
+                "automated": true,
+                "story": "convert-tool"
+            }
+        ]
+    }
+}

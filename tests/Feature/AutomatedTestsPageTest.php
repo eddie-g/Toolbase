@@ -196,6 +196,7 @@ class AutomatedTestsPageTest extends TestCase
         $this->assertContains('draw-tool', $keys, 'The draw tool needs its own tab');
         $this->assertContains('highlight-tool', $keys, 'The highlight tool needs its own tab');
         $this->assertContains('image-tool', $keys, 'The image tool needs its own tab');
+        $this->assertContains('convert-tool', $keys, 'The convert tool needs its own tab');
 
         // The switcher only renders with more than one suite, so the labels
         // have to reach the page for the tabs to be usable.
@@ -590,6 +591,81 @@ class AutomatedTestsPageTest extends TestCase
 
         $numbers = array_column($catalogue['suite']['tests'], 'number');
         $this->assertSame(array_unique($numbers), $numbers, 'Two image cases share a number');
+    }
+
+    // ---- Convert tool suite -----------------------------------------------
+
+    public function test_convert_tool_suite_endpoint_requires_admin_authentication(): void
+    {
+        $this->getJson('/automated-tests/convert-tool/suite')->assertUnauthorized();
+    }
+
+    public function test_convert_tool_suite_returns_the_catalogue(): void
+    {
+        $response = $this->actingAs($this->admin(), 'admin')
+            ->getJson('/automated-tests/convert-tool/suite')
+            ->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('suite.key', 'convert-tool')
+            ->assertJsonPath('suite.stories.0.task_gid', '1218085246547973');
+
+        $tests = $response->json('suite.tests');
+        $this->assertCount(21, $tests, 'The convert story specifies 21 cases');
+
+        foreach ($tests as $test) {
+            $this->assertSame('convert-tool', $test['story']);
+        }
+
+        // Mirrored from a real Asana task, so every case carries its subtask
+        // gid and no two cases may point at the same subtask.
+        $gids = array_column($tests, 'gid');
+        $this->assertCount(21, array_filter($gids), 'Every convert case carries its Asana subtask gid');
+        $this->assertSame(array_unique($gids), $gids, 'Two convert cases point at the same Asana subtask');
+
+        // Every tab the modal offers needs coverage, or the suite has a blind spot.
+        $areas = array_unique(array_column($tests, 'area'));
+        foreach (['Images', 'PDF/A', 'Word', 'Excel'] as $area) {
+            $this->assertContains($area, $areas, "The convert suite must cover the {$area} tab");
+        }
+    }
+
+    public function test_every_automated_convert_case_exists_in_the_runner(): void
+    {
+        $catalogue = json_decode(
+            (string) file_get_contents(resource_path('automated-tests/convert-tool.json')),
+            true,
+        );
+        $automated = array_values(array_filter(
+            $catalogue['suite']['tests'],
+            fn (array $test) => $test['automated'] === true,
+        ));
+
+        $this->assertCount(21, $automated, 'Every specified convert case is automated');
+
+        $runner = (string) file_get_contents(base_path('tests/AutomatedTests/Convert/run_convert_tests.cjs'));
+
+        foreach ($automated as $test) {
+            $this->assertStringContainsString(
+                "id: '".$test['id']."'",
+                $runner,
+                "The runner must register {$test['id']}, or the admin page offers a test that cannot run",
+            );
+        }
+
+        // Anchored on the number that follows, so this matches the registry
+        // entries rather than every object literal that happens to have an id.
+        preg_match_all("/\{ id: '([^']+)', number: '/", $runner, $matches);
+        $catalogued = array_column($catalogue['suite']['tests'], 'id');
+        foreach ($matches[1] as $registered) {
+            $this->assertContains(
+                $registered,
+                $catalogued,
+                "The runner registers {$registered}, which the catalogue does not list",
+            );
+        }
+
+        $numbers = array_column($catalogue['suite']['tests'], 'number');
+        $this->assertSame(array_unique($numbers), $numbers, 'Two convert cases share a number');
     }
 
     public function test_every_automated_signature_case_exists_in_the_runner(): void

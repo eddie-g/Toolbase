@@ -57,6 +57,11 @@ class AutomatedTests extends Page
                 'label' => 'Image tool',
                 'available' => true,
             ],
+            [
+                'key' => 'convert-tool',
+                'label' => 'Convert tool',
+                'available' => true,
+            ],
         ];
     }
 }
