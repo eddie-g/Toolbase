@@ -4,22 +4,23 @@
             <div class="enpv-convert-heading">
                 <div class="enpv-convert-icon" aria-hidden="true">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M8 3H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2v-2"></path>
-                        <path d="M16 5h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2v-2"></path>
-                        <path d="M12 3v10"></path><path d="m8 9 4 4 4-4"></path>
+                        <rect x="3" y="3" width="7.5" height="8" rx="1.3"></rect>
+                        <rect x="13.5" y="3" width="7.5" height="8" rx="1.3"></rect>
+                        <rect x="3" y="13" width="7.5" height="8" rx="1.3"></rect>
+                        <rect x="13.5" y="13" width="7.5" height="8" rx="1.3"></rect>
                     </svg>
                 </div>
                 <div>
-                    <h2 id="enpv-merge-title">Merge / Split PDFs</h2>
+                    <h2 id="enpv-merge-title">Organize PDFs</h2>
                     <p id="enpv-merge-subtitle">Combine documents or extract selected pages.</p>
                 </div>
             </div>
-            <button id="enpv-merge-close" class="enpv-icon-button" type="button" title="Close" aria-label="Close merge or split tool">
+            <button id="enpv-merge-close" class="enpv-icon-button" type="button" title="Close" aria-label="Close organize tool">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"></path></svg>
             </button>
         </header>
 
-        <div class="enpv-merge-split-tabs" role="tablist" aria-label="Merge or split PDF">
+        <div class="enpv-merge-split-tabs" role="tablist" aria-label="Organize PDF">
             <button id="enpv-merge-tab" type="button" role="tab" aria-selected="true" aria-controls="enpv-merge-panel" class="is-active">Merge</button>
             <button id="enpv-split-tab" type="button" role="tab" aria-selected="false" aria-controls="enpv-split-panel">Split</button>
         </div>

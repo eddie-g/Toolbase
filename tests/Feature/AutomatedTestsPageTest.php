@@ -209,7 +209,9 @@ class AutomatedTestsPageTest extends TestCase
             // The suite list reaches the page through @js, which JSON-encodes
             // the data (a slash becomes \/) and then JSON-encodes that string
             // again to build the JSON.parse('...') literal (\/ becomes \\\/),
-            // so "Merge / Split tool" is on the page as "Merge \\\/ Split tool".
+            // so a label with a slash would land as "\\\/". None has one today,
+            // but the assertion stays encoding-aware so a future one cannot
+            // silently pass by never being looked for.
             $response->assertSee(str_replace('/', '\\\\\\/', $suite['label']), false);
         }
     }

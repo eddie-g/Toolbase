@@ -3,11 +3,11 @@
 ## Goal
 
 Extend the production PDF.js editor's existing merge tool into a shared
-**Merge / Split** tool at `/documents/{document}/edit-new?pdfjs=1`.
+**Organize** tool (Merge / Split) at `/documents/{document}/edit-new?pdfjs=1`.
 
 The split workflow must let a user:
 
-1. Open the combined tool from a **Merge / Split** toolbar button.
+1. Open the combined tool from an **Organize** toolbar button.
 2. Choose the **Split** tab.
 3. Select pages from the current PDF using checkboxes on page thumbnails.
 4. See a live count of selected pages.
@@ -47,7 +47,7 @@ into one shared shell with independent **Merge** and **Split** panels.
 
 ## Product Rules
 
-- Rename the toolbar button from **Merge PDF** to **Merge / Split**.
+- Rename the toolbar button from **Merge PDF** to **Organize** (it was briefly **Merge / Split**).
 - Keep it immediately beside the existing **Convert** button.
 - The shared modal has two tabs: **Merge** and **Split**.
 - Opening the modal defaults to the last tab used during the current browser
@@ -65,7 +65,7 @@ into one shared shell with independent **Merge** and **Split** panels.
 - The output includes the current visible editor state: saved annotations,
   filled form values, source edits, rotations, and other content that the
   normal PDF.js **Download PDF** flow includes.
-- Guided documents do not expose Merge / Split, matching the current merge and
+- Guided documents do not expose Organize, matching the current merge and
   page-manager restrictions.
 
 ### Out of scope for v1
@@ -93,17 +93,17 @@ In `resources/views/documents/edit-new/_floating-toolbar.blade.php`, rename:
 to:
 
 ```html
-<span>Merge / Split</span>
+<span>Organize</span>
 ```
 
-Update its title and accessible name to `Merge or split PDF documents`.
+Update its accessible name to `Organize PDF documents`; the icon is a 2x2 grid of page tiles.
 The element ID can remain `ftb-merge-pdf` to avoid unnecessary JavaScript and
 CSS churn, although `ftb-merge-split` would be clearer if all references are
 changed together.
 
 ### Header and tabs
 
-Rename the modal heading to **Merge / Split PDFs** and place a two-tab control
+Rename the modal heading to **Organize PDFs** and place a two-tab control
 under the header:
 
 - **Merge** — add and reorder complete PDFs.
@@ -112,7 +112,7 @@ under the header:
 Use tab semantics:
 
 ```html
-<div role="tablist" aria-label="Merge or split PDF">
+<div role="tablist" aria-label="Organize PDF">
     <button role="tab" aria-selected="true" aria-controls="enpv-merge-panel">Merge</button>
     <button role="tab" aria-selected="false" aria-controls="enpv-split-panel">Split</button>
 </div>
@@ -442,7 +442,7 @@ selection for retry.
 Update:
 
 - `resources/views/documents/edit-new/_floating-toolbar.blade.php`
-  - Rename the button to **Merge / Split**.
+  - Rename the button to **Organize**.
 - `resources/views/documents/edit-new/_merge-modal-pdfjs.blade.php`
   - Rename the shared heading.
   - Add accessible Merge/Split tabs.

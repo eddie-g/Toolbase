@@ -1,8 +1,8 @@
 {
     "suite": {
         "key": "merge-split-tool",
-        "name": "Merge / Split tool",
-        "tool_label": "Merge / Split tool",
+        "name": "Organize tool",
+        "tool_label": "Organize tool",
         "target_url": "/documents/{document}/edit-new?pdfjs=1",
         "runner": "tests/AutomatedTests/MergeSplit/run_merge_split_tests.cjs",
         "workspace": "My workspace",
@@ -11,13 +11,13 @@
         "stories": [
             {
                 "key": "merge-split-tool",
-                "short": "Merge / Split tool",
+                "short": "Organize tool",
                 "task_gid": "1218230402898415",
-                "task_name": "[QA] - Merge / Split tool",
+                "task_name": "[QA] - Organize tool (Merge / Split)",
                 "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752/task/1218230402898415",
                 "instructions": [
                     "Start with a blank pdf project for edit-new?pdfjs=1",
-                    "Click the Merge / Split tool in the floating toolbar",
+                    "Click the Organize tool in the floating toolbar",
                     "The tool is not premium-gated and neither endpoint bills the account, so every case runs as a guest",
                     "Merge and split are exercised for real against the python scripts in the app container; only the busy, failure and contract cases intercept the POST",
                     "Cases 11, 20 and 21 depend on python with PyMuPDF being available to the app, as it is for uploads"
@@ -30,8 +30,8 @@
                 "id": "01-blank-project-loads",
                 "gid": "1218230444090788",
                 "area": "Entry",
-                "title": "Setup: blank PDF project loads with the Merge / Split tool available",
-                "summary": "Precondition for the whole story: the page rasterises, the floating toolbar Merge / Split button is present, enabled and not premium-locked, the shared modal is in the DOM but closed with exactly two tabs, the editor exposes its viewer, and the console is clean.",
+                "title": "Setup: blank PDF project loads with the Organize tool available",
+                "summary": "Precondition for the whole story: the page rasterises, the floating toolbar Organize button is present, enabled and not premium-locked, the shared modal is in the DOM but closed with exactly two tabs, the editor exposes its viewer, and the console is clean.",
                 "automated": true,
                 "story": "merge-split-tool"
             },
@@ -41,7 +41,7 @@
                 "gid": "1218230443869669",
                 "area": "Modal",
                 "title": "The modal opens on the Merge tab and closes via X, Cancel, scrim and Escape",
-                "summary": "The toolbar button opens the modal titled Merge / Split PDFs on the Merge tab with only that panel on show. All four dismissals close it, and a click inside the card does not -- the scrim handler keys off the modal element itself.",
+                "summary": "The toolbar button opens the modal titled Organize PDFs on the Merge tab with only that panel on show. All four dismissals close it, and a click inside the card does not -- the scrim handler keys off the modal element itself.",
                 "automated": true,
                 "story": "merge-split-tool"
             },

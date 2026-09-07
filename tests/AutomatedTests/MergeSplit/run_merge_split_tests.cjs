@@ -1,11 +1,11 @@
 /**
- * Merge / Split Tool Automated Tests (Playwright)
+ * Organize (Merge / Split) Tool Automated Tests (Playwright)
  *
- * Automates the "[QA] - Merge / Split tool" Asana task (Netkit -> Claude QA
+ * Automates the "[QA] - Organize tool (Merge / Split)" Asana task (Netkit -> Claude QA
  * Agent). Each run creates a fresh blank PDF, uploads it as a new document,
- * opens it in the pdf.js editor, and drives the real Merge / Split modal.
+ * opens it in the pdf.js editor, and drives the real Organize modal.
  *
- * Scope: the floating toolbar's Merge / Split button, the shared modal, the
+ * Scope: the floating toolbar's Organize button, the shared modal, the
  * Merge tab (add whole PDFs, order them, merge them into the current working
  * document) and the Split tab (tick pages, name the result, download it or
  * open it as a new editor document).
@@ -736,7 +736,7 @@ async function saveDownload(download, filename) {
 // Cases
 // ---------------------------------------------------------------------------
 
-/** 01 — Setup: the blank project loads with the Merge / Split tool available. */
+/** 01 — Setup: the blank project loads with the Organize tool available. */
 async function testBlankProjectLoads(page, { consoleErrors, recorder }) {
     const artifacts = [];
 
@@ -766,11 +766,11 @@ async function testBlankProjectLoads(page, { consoleErrors, recorder }) {
     recorder.assert('page-rasterised', setup.canvasPainted, 'Page 1 rasterises');
     recorder.assert('viewer-exposed', setup.viewerExposed, 'The editor publishes its viewer for the suite to read');
     recorder.equals('one-page', setup.pageCount, 1, 'The blank project is one page');
-    recorder.assert('button-present', setup.buttonPresent, 'The floating toolbar has the Merge / Split button');
+    recorder.assert('button-present', setup.buttonPresent, 'The floating toolbar has the Organize button');
     recorder.assert('button-enabled', setup.buttonEnabled, 'The button is enabled');
     recorder.equals('not-premium-locked', setup.premiumLocked, false, 'The tool is not premium-locked');
-    recorder.assert('button-labelled', /merge or split/i.test(setup.buttonLabel), 'The button has an accessible name', setup.buttonLabel);
-    recorder.assert('button-text', /Merge \/ Split/.test(setup.buttonText), 'The button reads Merge / Split', setup.buttonText);
+    recorder.assert('button-labelled', /organize/i.test(setup.buttonLabel), 'The button has an accessible name', setup.buttonLabel);
+    recorder.equals('button-text', setup.buttonText, 'Organize', 'The button reads Organize');
     recorder.assert('modal-present', setup.modalPresent, 'The shared modal is in the DOM');
     recorder.equals('modal-closed', setup.modalHidden, true, 'It starts closed');
     recorder.equals('two-tabs', setup.tabCount, 2, 'It offers exactly two tabs');
@@ -789,7 +789,7 @@ async function testModalOpenClose(page, { recorder }) {
 
     const opened = await openModal(page);
     recorder.assert('opens', opened.open, 'The toolbar button opens the modal');
-    recorder.equals('title', opened.title, 'Merge / Split PDFs', 'The modal is titled Merge / Split PDFs');
+    recorder.equals('title', opened.title, 'Organize PDFs', 'The modal is titled Organize PDFs');
     recorder.equals('opens-on-merge', opened.activeTab, 'merge', 'A fresh session opens on the Merge tab');
     recorder.equals('merge-panel-shown', opened.mergePanelHidden, false, 'The Merge panel is on show');
     recorder.equals('split-panel-hidden', opened.splitPanelHidden, true, 'The Split panel is hidden');
@@ -814,7 +814,7 @@ async function testModalOpenClose(page, { recorder }) {
 
     const focus = await closeModal(page, 'close');
     recorder.equals('focus-returns-to-button', focus.focusedId, 'ftb-merge-pdf',
-        'Closing returns focus to the Merge / Split button');
+        'Closing returns focus to the Organize button');
 
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean) };
 }
@@ -1808,7 +1808,7 @@ async function testKeyboardAndAria(page, { recorder }) {
 // ---------------------------------------------------------------------------
 
 const TESTS = [
-    { id: '01-blank-project-loads', number: '01', title: 'Setup: blank PDF project loads with the Merge / Split tool available', run: testBlankProjectLoads },
+    { id: '01-blank-project-loads', number: '01', title: 'Setup: blank PDF project loads with the Organize tool available', run: testBlankProjectLoads },
     { id: '02-modal-open-close', number: '02', title: 'The modal opens on the Merge tab and closes via X, Cancel, scrim and Escape', run: testModalOpenClose },
     { id: '03-tab-switching', number: '03', title: 'Switching tabs shows one panel at a time, and the last tab is remembered for the session', run: testTabSwitching },
     { id: '04-current-document-card', number: '04', title: 'Merge: the current document is listed first, marked as current, and cannot be removed', run: testCurrentDocumentCard },
