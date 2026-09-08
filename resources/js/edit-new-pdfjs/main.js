@@ -10026,7 +10026,15 @@ function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
         // metrics differ from the canvas font. Lato in drylab.pdf requires
         // 0.9435 on a short final line; rejecting it made selected glyphs
         // visibly wider and lower than the untouched canvas text.
-        if (!(scaleX >= 0.9 && scaleX <= 1.1)) return;
+        // The latitude is taken around the PDF's own horizontal scale: a
+        // condensed face (f4506t.pdf draws its labels at scaleX 0.952)
+        // legitimately needs a correction below 0.9, and refusing it left
+        // the row unscaled and spilling out of its box (NK_32).
+        const capturedScaleX = Number.parseFloat(box.dataset.sourceTransformScaleX || '');
+        const baseScaleX = Number.isFinite(capturedScaleX) && capturedScaleX > 0 ? capturedScaleX : 1;
+        const minScaleX = Math.min(0.9, baseScaleX * 0.9);
+        const maxScaleX = Math.max(1.1, baseScaleX * 1.1);
+        if (!(scaleX >= minScaleX && scaleX <= maxScaleX)) return;
         const lineRect = line.getBoundingClientRect();
         const originLeft = lineRect.left;
         const dx = target.left - (originLeft + (scaleX * (current.left - originLeft)));
@@ -10141,6 +10149,54 @@ function clearPromotedSourceBlockEditHorizontalFit(box) {
     delete box.dataset.sourceSpanGlyphAligned;
 }
 
+// Once the source scaffold is released, the rows of a condensed face lay out
+// at their natural width and no longer fit the box the PDF gave them (the
+// canvas drew them at sourceTransformScaleX). Keep such rows on their rows
+// and scale them into the box instead of letting them wrap and grow the
+// block. Only while the type is still the source size and the box has not
+// been restyled or resized (NK_32).
+function applyCondensedSourceRowFit(box) {
+    const release = () => {
+        delete box.dataset.condensedSourceRowFit;
+        box.style.removeProperty('--enpv-row-fit-scale');
+        box.style.removeProperty('--enpv-row-fit-width');
+    };
+    if (!box?.classList?.contains('is-promoted-source-block')) return false;
+    if (box.dataset.userSizedTextBox === '1'
+        || box.dataset.styleDirty === '1'
+        || box.dataset.userForcedRichText === '1'
+        || box.dataset.promotedParagraphFlow === '1') {
+        release();
+        return false;
+    }
+    const tc = selectedBoxTextElement(box);
+    if (!tc) return false;
+    const currentFontSizePx = Number.parseFloat(window.getComputedStyle(tc).fontSize || '') || 0;
+    const sourceFontSizePx = Number.parseFloat(box.dataset.sourceFontSizePx || '') || 0;
+    if (!(currentFontSizePx > 0 && sourceFontSizePx > 0)
+        || Math.abs(currentFontSizePx - sourceFontSizePx) > sourceFontSizePx * 0.05) {
+        release();
+        return false;
+    }
+    // Measure the unwrapped rows with the fit switched off. The fit itself
+    // lives in CSS keyed on the data attribute, so the inline-style resets
+    // that follow an input event cannot strip it.
+    release();
+    const previousWhiteSpace = tc.style.whiteSpace;
+    tc.style.whiteSpace = 'pre';
+    const boxWidth = tc.clientWidth || box.getBoundingClientRect().width || 0;
+    const rowWidth = tc.scrollWidth || 0;
+    tc.style.whiteSpace = previousWhiteSpace;
+    if (!(boxWidth > 0) || !(rowWidth > boxWidth + 0.5)) return false;
+    const scaleX = boxWidth / rowWidth;
+    // Wider than a condensed face explains is a real overflow, not a fit.
+    if (!(scaleX >= 0.8)) return false;
+    box.style.setProperty('--enpv-row-fit-scale', scaleX.toFixed(6));
+    box.style.setProperty('--enpv-row-fit-width', `${Math.ceil(rowWidth)}px`);
+    box.dataset.condensedSourceRowFit = scaleX.toFixed(6);
+    return true;
+}
+
 // Edited multi-line promoted paragraphs render as plain pre-wrap text. Keep
 // source-derived line pitch where useful, but always use natural-width glyphs
 // and normal wrapping.
@@ -10179,6 +10235,7 @@ function applyPromotedOverlayDisplayHorizontalFit(box) {
             && !applySourceRowPitchForUnchangedTypography(box)) {
             ensureNaturalTextLineHeight(box);
         }
+        applyCondensedSourceRowFit(box);
         return;
     }
     if (tc.childElementCount > 0) return;
@@ -25404,6 +25461,9 @@ function onTextContentInput(ev) {
             // unchanged; the fit below would otherwise grow the box past its
             // source block at the 1.2em fallback (NK_31).
             applySourceRowPitchForUnchangedTypography(box);
+            // Condensed rows must not wrap the moment they are released, or
+            // the box grows under the caret (NK_32).
+            applyCondensedSourceRowFit(box);
         }
         if (promoteMixedSourceEdit) {
             // A plain source commit deliberately flattens its temporary span
@@ -25419,6 +25479,11 @@ function onTextContentInput(ev) {
             }
         } else {
             attachSourceMaskForBox(box);
+            // Every keystroke can push a condensed row past its box again;
+            // re-measure the fit before the height is fitted below (NK_32).
+            if (box.dataset.naturalTextFlow === '1' && box.classList.contains('is-promoted-source-block')) {
+                applyCondensedSourceRowFit(box);
+            }
             // Paragraph editors own a stable rectangle, just like the
             // PDF.js/pdfe model. Typing rewraps inside that rectangle; it does
             // not silently resize the annotation on every input event.
