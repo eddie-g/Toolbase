@@ -5195,8 +5195,10 @@ def _resolve_embedded_weight_sibling(
     except Exception:
         src_weight = 400
     src_style = str(source_fd.get("css_style") or "normal").strip().lower()
-    src_is_bold = src_weight >= 600
-    src_is_italic = src_style == "italic"
+    # The extracted metadata can carry 400 / normal for a face whose name
+    # says otherwise ("-Bd", "-It"); the name is what the PDF meant (NK_33).
+    src_is_bold = src_weight >= 600 or _face_name_is_bold(raw_exact)
+    src_is_italic = src_style == "italic" or _face_name_is_italic(raw_exact)
 
     # Base face already matches the request: let the normal path resolve it.
     if src_is_bold == wants_bold and src_is_italic == wants_italic:
@@ -5222,8 +5224,11 @@ def _resolve_embedded_weight_sibling(
         except Exception:
             weight_value = 400
         style_text = str(font_data.get("css_style") or "normal").strip().lower()
-        is_bold = weight_value >= 600
-        is_italic = style_text == "italic"
+        sibling_name = str(font_data.get("clean_name") or font_key or "").strip()
+        is_bold = weight_value >= 600 or _face_name_is_bold(sibling_name)
+        is_italic = style_text == "italic" or _face_name_is_italic(sibling_name)
+        if is_bold and weight_value < 600:
+            weight_value = 700
         key = (
             1 if is_italic == wants_italic else 0,
             1 if is_bold == wants_bold else 0,
@@ -7128,6 +7133,31 @@ def validate_style_mapped_span_layout(
     return actual_lines == normalized_expected
 
 
+def _face_style_suffix(face_name: str) -> str:
+    """The style part of a PostScript-like face name ("HelveticaNeueLTStd-BdIt"
+    -> "bdit"), or the whole name lower-cased when it carries no hyphen."""
+    name = str(face_name or "").strip()
+    if "+" in name and len(name.split("+", 1)[0]) == 6:
+        name = name.split("+", 1)[1]
+    return (name.rsplit("-", 1)[1] if "-" in name else name).lower()
+
+
+def _face_name_is_bold(face_name: str) -> bool:
+    suffix = _face_style_suffix(face_name)
+    return bool(suffix) and (
+        suffix.startswith("bd")
+        or any(token in suffix for token in ("bold", "black", "heavy", "semibold", "demibold", "extrabold", "ultrabold"))
+    )
+
+
+def _face_name_is_italic(face_name: str) -> bool:
+    suffix = _face_style_suffix(face_name)
+    return bool(suffix) and (
+        suffix.endswith("it")
+        or any(token in suffix for token in ("italic", "oblique"))
+    )
+
+
 def _rich_text_runs_per_line_for_dirty_promoted(
     ann: Dict[str, Any],
 ) -> list[list[Dict[str, Any]]]:
@@ -7171,6 +7201,15 @@ def _rich_text_runs_per_line_for_dirty_promoted(
             if value is None or value == "":
                 continue
             run[key] = value
+        # The browser reports 400 / normal for a run whose face carries the
+        # weight or slant itself (a "-Bd" or "-It" source face). The face is
+        # what the reader sees, so it decides; otherwise the bold lead-in of a
+        # restyled paragraph came back in the regular sibling (NK_33).
+        face_name = str(run.get("font_source_name") or run.get("font_family") or "")
+        if not is_bold_weight(run.get("font_weight")) and _face_name_is_bold(face_name):
+            run["font_weight"] = "700"
+        if not is_italic_style(run.get("font_style")) and _face_name_is_italic(face_name):
+            run["font_style"] = "italic"
         lines[-1].append(run)
     while lines and not lines[-1]:
         lines.pop()
@@ -7336,12 +7375,30 @@ def apply_source_faces_to_rich_span_layout(
     return repaired_layout
 
 
+def _promoted_style_only_edit(ann: Dict[str, Any]) -> bool:
+    """True for a promoted paragraph whose text is unchanged but whose runs
+    were restyled in place (styleDirty / userForcedRichText with rich runs)."""
+    if not (_boolish(ann.get("styleDirty")) or _boolish(ann.get("userForcedRichText"))):
+        return False
+    runs = ann.get("richTextRuns")
+    if isinstance(runs, list) and any(isinstance(run, dict) and run.get("type") == "text" for run in runs):
+        return True
+    return bool(str(ann.get("richTextHtml") or "").strip())
+
+
 def build_dirty_promoted_style_mapped_span_layout(
     ann: Dict[str, Any],
     text: str,
     line_layout: list[Dict[str, Any]],
 ) -> list[Dict[str, Any]]:
-    if not bool(ann.get("promotedFromExtraction")) or not bool(ann.get("promotedDirty")):
+    if not bool(ann.get("promotedFromExtraction")):
+        return []
+    # A style-only edit (bold, italic, underline or colour on part of the
+    # paragraph) leaves the text and promotedDirty untouched but carries the
+    # styled runs; it needs this run-aware layout just as much as an edited
+    # text, or the untouched-source path re-stamps the original typography
+    # and every applied style is lost in the download (NK_33).
+    if not bool(ann.get("promotedDirty")) and not _promoted_style_only_edit(ann):
         return []
     source_spans = ann.get("sourceSpans")
     raw_boxes = ann.get("sourceLineBBoxes")
@@ -7968,11 +8025,12 @@ def draw_text_using_exact_source_spans(
                 if _single_glyph_span and _measured_w > span_target_extent + 0.05:
                     pass
                 elif _measured_w > span_target_extent + 0.05:
-                    _space_w_reserve = (
-                        0.0
-                        if span_rotation or " " not in span_text
-                        else span_font.text_length(" ", fontsize=span_font_size)
-                    )
+                    # The captured rect already holds the span's own spacing,
+                    # so fit the text to the rect as it is. Reserving an extra
+                    # separator width on top left a gap before the next run
+                    # ("your  current address .") whenever a restyled span
+                    # had to be fitted (NK_33).
+                    _space_w_reserve = 0.0
                     _scale_target = max(
                         span_target_extent - _space_w_reserve,
                         span_target_extent * 0.95,

@@ -2226,6 +2226,51 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(boxes, [[0, 12, 10, 22]])
         self.assertEqual(start, 1)
 
+    def test_style_only_promoted_edit_takes_the_run_aware_layout(self):
+        # NK_33: bold / italic / underline / colour on part of an untouched
+        # paragraph sets styleDirty but not promotedDirty; the export must
+        # still lay the runs out from richTextRuns, not from the source spans.
+        annotation = self._nk31_overlay(
+            promotedDirty=False,
+            styleDirty=True,
+            userForcedRichText=True,
+            text="Line 3. Enter your current address.",
+            fontFamily="HelveticaNeueLTStd-Roman",
+            fontSourceName="HelveticaNeueLTStd-Roman",
+            fontSize=6,
+            sourceTextLines=["Line 3. Enter your current address."],
+            sourceLineBBoxes=[[36.0, 538.3, 190.0, 545.5]],
+            sourceBlockLeft=36.0,
+            sourceBlockTop=538.3,
+            sourceBlockWidth=154.0,
+            sourceBlockHeight=7.2,
+            sourceSpans=[
+                {"text": "Line 3. ", "bbox": [36.0, 538.3, 55.0, 545.5], "origin": [36.0, 544.0], "font": "HelveticaNeueLTStd-Bd", "fontSize": 6, "fontWeight": "700"},
+                {"text": "Enter your current address.", "bbox": [55.0, 538.3, 190.0, 545.5], "origin": [55.0, 544.0], "font": "HelveticaNeueLTStd-Roman", "fontSize": 6, "fontWeight": "400"},
+            ],
+            richTextVersion=2,
+            richTextRuns=[
+                {"type": "text", "text": "Line 3. ", "fontFamily": "HelveticaNeueLTStd-Bd", "fontSourceName": "HelveticaNeueLTStd-Bd", "fontSize": 6, "fontWeight": "400", "fontStyle": "normal", "color": "#000000"},
+                {"type": "text", "text": "Enter your ", "fontFamily": "HelveticaNeueLTStd-Roman", "fontSourceName": "HelveticaNeueLTStd-Roman", "fontSize": 6, "fontWeight": "400", "fontStyle": "normal", "color": "#000000"},
+                {"type": "text", "text": "current", "fontFamily": "HelveticaNeueLTStd-Roman", "fontSourceName": "HelveticaNeueLTStd-Roman", "fontSize": 6, "fontWeight": "700", "fontStyle": "normal", "color": "#000000"},
+                {"type": "text", "text": " address", "fontFamily": "HelveticaNeueLTStd-Roman", "fontSourceName": "HelveticaNeueLTStd-Roman", "fontSize": 6, "fontWeight": "400", "fontStyle": "italic", "color": "#d00000", "underline": True},
+                {"type": "text", "text": ".", "fontFamily": "HelveticaNeueLTStd-Roman", "fontSourceName": "HelveticaNeueLTStd-Roman", "fontSize": 6, "fontWeight": "400", "fontStyle": "normal", "color": "#000000"},
+            ],
+        )
+        self.assertTrue(self.module._promoted_style_only_edit(annotation))
+        lines = self.module.normalize_exact_source_line_layout(
+            annotation, annotation["text"], fitz.Font("helv"), 6.0, current_rect=fitz.Rect(36.0, 538.3, 190.0, 545.5)
+        )
+        layout = self.module.build_dirty_promoted_style_mapped_span_layout(annotation, annotation["text"], lines)
+        self.assertEqual(len(layout), 1)
+        by_text = {span["text"]: span for span in layout[0]["spans"]}
+        self.assertEqual(by_text["current"]["font_weight"], "700")
+        self.assertEqual(by_text[" address"]["font_style"], "italic")
+        self.assertTrue(by_text[" address"]["underline"])
+        self.assertEqual(by_text[" address"]["color"].lower(), "#d00000")
+        # The bold lead-in is a bold face at the browser's 400: the face wins.
+        self.assertEqual(by_text["Line 3. "]["font_weight"], "700")
+
     def test_rich_text_ops_keep_typographic_apostrophe_for_pdfjs_overlays(self):
         annotation = self._nk31_overlay(
             text="you didn\u2019t include",
