@@ -3616,8 +3616,13 @@ def _promoted_annotation_was_resized(ann: Dict[str, Any]) -> bool:
     # real user-driven resize.
     if abs(cur_w - src_w) > 2.0:
         return True
+    # The editor sizes a promoted box's height from its rendered content, so
+    # the height drifts by a few points whenever the block is re-rendered
+    # (a text-only edit re-flows it at the browser's line pitch). Only a
+    # height the user actually dragged is a resize; otherwise the source
+    # line geometry still describes the paragraph (NK_31).
     if cur_h > 0 and src_h > 0 and abs(cur_h - src_h) > 2.0:
-        return True
+        return _boolish(ann.get("userSizedTextBox"))
     return False
 
 
@@ -4389,10 +4394,12 @@ def remove_pdf_links_requested_by_annotations(
 
 
 class _RichTextLayoutParser(HTMLParser):
-    def __init__(self, base_style: Dict[str, Any]) -> None:
+    def __init__(self, base_style: Dict[str, Any], keep_typographic: bool = False) -> None:
         super().__init__(convert_charrefs=True)
         self._state_stack: list[Dict[str, Any]] = [dict(base_style)]
         self.ops: list[Dict[str, Any]] = []
+        # pdf.js source overlays keep their typographic punctuation (NK_31).
+        self._sanitize = sanitize_pdfjs_source_text if keep_typographic else sanitize_pdf_text
 
     def _append_break(self) -> None:
         self.ops.append({"type": "break"})
@@ -4432,7 +4439,7 @@ class _RichTextLayoutParser(HTMLParser):
     def handle_data(self, data: str) -> None:
         if not data:
             return
-        normalized_text = sanitize_pdf_text(data).replace("\r\n", "\n").replace("\r", "\n")
+        normalized_text = self._sanitize(data).replace("\r\n", "\n").replace("\r", "\n")
         if not normalized_text:
             return
         self.ops.append({
@@ -4534,6 +4541,7 @@ def _structured_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]
 def _reconcile_rich_text_ops_with_plain_text(
     ops: list[Dict[str, Any]],
     plain_text: Any,
+    keep_typographic: bool = False,
 ) -> list[Dict[str, Any]]:
     """Restore whitespace omitted between otherwise exact styled runs.
 
@@ -4546,8 +4554,12 @@ def _reconcile_rich_text_ops_with_plain_text(
     """
     if not ops:
         return []
-    target = sanitize_pdf_text(plain_text or "").replace("\r\n", "\n").replace("\r", "\n")
-    rendered = _rich_text_layout_ops_to_text(ops)
+    # A pdf.js source overlay's text is drawn verbatim: rebuilding its runs
+    # from an ASCII-folded target swapped the typographic apostrophe the
+    # embedded subset covers for one it does not (NK_31).
+    _sanitize = sanitize_pdfjs_source_text if keep_typographic else sanitize_pdf_text
+    target = _sanitize(plain_text or "").replace("\r\n", "\n").replace("\r", "\n")
+    rendered = _rich_text_layout_ops_to_text(ops, keep_typographic)
     if _normalize_rich_text_compare_text(rendered) == _normalize_rich_text_compare_text(target):
         return ops
 
@@ -4628,7 +4640,7 @@ def _reconcile_rich_text_ops_with_plain_text(
         rebuilt.pop()
     for op in rebuilt:
         op.pop("_source_op_index", None)
-    if _normalize_rich_text_compare_text(_rich_text_layout_ops_to_text(rebuilt)) != _normalize_rich_text_compare_text(target):
+    if _normalize_rich_text_compare_text(_rich_text_layout_ops_to_text(rebuilt, keep_typographic)) != _normalize_rich_text_compare_text(target):
         return ops
     return rebuilt
 
@@ -4641,13 +4653,15 @@ def parse_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
         # copy. Different non-whitespace content leaves the canonical runs
         # untouched, while a dropped boundary space no longer disables every
         # authored run style at render time.
-        return _reconcile_rich_text_ops_with_plain_text(structured_ops, ann.get("text") or "")
+        return _reconcile_rich_text_ops_with_plain_text(
+            structured_ops, ann.get("text") or "", is_pdfjs_visible_overlay_text(ann)
+        )
 
     rich_html = sanitize_rich_text_html(ann.get("richTextHtml") or "").strip()
     if not rich_html:
         return []
 
-    parser = _RichTextLayoutParser(_rich_text_base_style(ann))
+    parser = _RichTextLayoutParser(_rich_text_base_style(ann), is_pdfjs_visible_overlay_text(ann))
     try:
         parser.feed(_normalize_rich_text_html_units_for_pdf(ann, rich_html))
         parser.close()
@@ -4657,16 +4671,20 @@ def parse_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
     ops = list(parser.ops)
     while ops and ops[-1].get("type") == "break":
         ops.pop()
-    return _reconcile_rich_text_ops_with_plain_text(ops, ann.get("text") or "")
+    return _reconcile_rich_text_ops_with_plain_text(ops, ann.get("text") or "", is_pdfjs_visible_overlay_text(ann))
 
 
-def _rich_text_layout_ops_to_text(ops: list[Dict[str, Any]]) -> str:
+def _rich_text_layout_ops_to_text(ops: list[Dict[str, Any]], keep_typographic: bool = False) -> str:
+    # pdf.js source overlays are drawn verbatim, so their typographic
+    # apostrophes must survive here too or the reconciled text never
+    # matches the embedded subset (NK_31).
+    _sanitize = sanitize_pdfjs_source_text if keep_typographic else sanitize_pdf_text
     parts: list[str] = []
     for entry in ops:
         if entry.get("type") == "break":
             parts.append("\n")
         elif entry.get("type") == "text":
-            parts.append(sanitize_pdf_text(entry.get("text") or ""))
+            parts.append(_sanitize(entry.get("text") or ""))
     return "".join(parts)
 
 
@@ -5754,6 +5772,20 @@ def expanded_text_rect(
     )
 
 
+def _pdfjs_overlay_sits_on_source_rect(ann: Dict[str, Any], tolerance: float = 1.0) -> bool:
+    """True when the overlay's left and top edges still equal its immutable
+    pdf.js source rectangle (bottom-origin), i.e. it was never moved even if
+    its height changed."""
+    try:
+        cur_x = float(ann.get("pdfX"))
+        cur_top = float(ann.get("pdfY")) + float(ann.get("pdfHeight") or 0.0)
+        src_x = float(ann.get("pdfjsSourceX"))
+        src_top = float(ann.get("pdfjsSourceY")) + float(ann.get("pdfjsSourceH") or 0.0)
+    except Exception:
+        return False
+    return abs(cur_x - src_x) <= tolerance and abs(cur_top - src_top) <= tolerance
+
+
 def normalize_exact_source_line_layout(
     ann: Dict[str, Any],
     text: str,
@@ -6018,7 +6050,17 @@ def normalize_exact_source_line_layout(
         and source_anchor_y is not None
     ):
         should_translate = True
-        if source_rect is not None and not source_rect.is_empty:
+        # A pdf.js source overlay that was never dragged still sits on its own
+        # source rectangle even when the editor re-measured its height after
+        # an edit; translating it to the box top would lift every line by the
+        # glyph ascent the box includes above the text-layer top (NK_31).
+        if (
+            is_pdfjs_visible_overlay_text(ann)
+            and not _boolish(ann.get("movedTextOverlay"))
+            and _pdfjs_overlay_sits_on_source_rect(ann)
+        ):
+            should_translate = False
+        if should_translate and source_rect is not None and not source_rect.is_empty:
             geometry_tolerance = max(0.75, min(2.0, float(font_size or 0.0) * 0.08))
             if (
                 abs(current_rect.x0 - source_rect.x0) <= geometry_tolerance
@@ -6590,7 +6632,17 @@ def normalize_exact_source_span_layout(
         and source_anchor_y is not None
     ):
         should_translate = True
-        if source_rect is not None and not source_rect.is_empty:
+        # A pdf.js source overlay that was never dragged still sits on its own
+        # source rectangle even when the editor re-measured its height after
+        # an edit; translating it to the box top would lift every line by the
+        # glyph ascent the box includes above the text-layer top (NK_31).
+        if (
+            is_pdfjs_visible_overlay_text(ann)
+            and not _boolish(ann.get("movedTextOverlay"))
+            and _pdfjs_overlay_sits_on_source_rect(ann)
+        ):
+            should_translate = False
+        if should_translate and source_rect is not None and not source_rect.is_empty:
             geometry_tolerance = max(0.75, min(2.0, float(font_size or 0.0) * 0.08))
             if (
                 abs(current_rect.x0 - source_rect.x0) <= geometry_tolerance
@@ -6789,11 +6841,15 @@ def _aligned_dirty_promoted_line_subset(
     raw_boxes: Any,
     raw_source_lines: Any,
 ) -> tuple[list[str], list[Any], int]:
-    normalized_current_lines = [
-        sanitize_pdf_text(line)
+    # Compare on the ASCII-folded form, but hand back the caller's own text:
+    # a pdf.js overlay draws its typographic punctuation verbatim, and the
+    # folded copy used to replace it here (NK_31).
+    kept_lines = [
+        str(line or "")
         for line in current_lines
         if sanitize_pdf_text(line)
     ]
+    normalized_current_lines = [sanitize_pdf_text(line) for line in kept_lines]
     source_boxes = list(raw_boxes or []) if isinstance(raw_boxes, list) else []
     source_lines = (
         [sanitize_pdf_text(line) for line in raw_source_lines]
@@ -6802,22 +6858,22 @@ def _aligned_dirty_promoted_line_subset(
     )
 
     if not normalized_current_lines or not source_boxes:
-        return normalized_current_lines, source_boxes, 0
+        return kept_lines, source_boxes, 0
     if len(normalized_current_lines) == len(source_boxes):
-        return normalized_current_lines, source_boxes, 0
+        return kept_lines, source_boxes, 0
     if not source_lines or len(source_lines) != len(source_boxes):
-        return normalized_current_lines, source_boxes[:len(normalized_current_lines)], 0
+        return kept_lines, source_boxes[:len(normalized_current_lines)], 0
 
     last_possible_start = len(source_lines) - len(normalized_current_lines)
     for start_index in range(max(0, last_possible_start) + 1):
         if source_lines[start_index:start_index + len(normalized_current_lines)] == normalized_current_lines:
             return (
-                normalized_current_lines,
+                kept_lines,
                 source_boxes[start_index:start_index + len(normalized_current_lines)],
                 start_index,
             )
 
-    return normalized_current_lines, source_boxes[:len(normalized_current_lines)], 0
+    return kept_lines, source_boxes[:len(normalized_current_lines)], 0
 
 
 def _style_run_signature(style: Dict[str, Any]) -> tuple[Any, ...]:
@@ -7094,7 +7150,14 @@ def _rich_text_runs_per_line_for_dirty_promoted(
             continue
         if op.get("type") != "text":
             continue
-        text = sanitize_pdf_text(op.get("text") or "")
+        # pdf.js source text is drawn verbatim; folding its typographic
+        # apostrophe to ASCII here made the embedded subset fail coverage and
+        # the line fall to a substitute face (NK_31).
+        text = (
+            sanitize_pdfjs_source_text(op.get("text") or "")
+            if is_pdfjs_visible_overlay_text(ann)
+            else sanitize_pdf_text(op.get("text") or "")
+        )
         if not text:
             continue
         run: Dict[str, Any] = {"text": text}
@@ -7287,14 +7350,19 @@ def build_dirty_promoted_style_mapped_span_layout(
     if not isinstance(raw_boxes, list) or not raw_boxes:
         return []
 
+    # The pdf.js text is drawn verbatim (sanitize_pdfjs_source_text keeps a
+    # typographic apostrophe the embedded subset covers); folding it to ASCII
+    # here made the coverage check fail and the whole line fall to a
+    # substitute face (NK_31).
+    _sanitize = sanitize_pdfjs_source_text if is_pdfjs_visible_overlay_text(ann) else sanitize_pdf_text
     source_text_spans = [
         span for span in source_spans
-        if isinstance(span, dict) and sanitize_pdf_text(span.get("text") or "").strip()
+        if isinstance(span, dict) and _sanitize(span.get("text") or "").strip()
     ]
     if not source_text_spans:
         return []
 
-    expected_lines = [sanitize_pdf_text(line) for line in split_text_preserving_manual_line_breaks(text)]
+    expected_lines = [_sanitize(line) for line in split_text_preserving_manual_line_breaks(text)]
     if not expected_lines or len(expected_lines) != len(line_layout):
         return []
 
@@ -7348,7 +7416,7 @@ def build_dirty_promoted_style_mapped_span_layout(
             baseline_x = None
             baseline_y = None
         normalized_source_spans.append({
-            "text": sanitize_pdf_text(span.get("text") or ""),
+            "text": _sanitize(span.get("text") or ""),
             "rect": rect,
             "baseline_x": baseline_x,
             "baseline_y": baseline_y,
@@ -7514,7 +7582,7 @@ def build_dirty_promoted_style_mapped_span_layout(
 
         rich_non_space_runs = [
             run for run in mapped_runs
-            if sanitize_pdf_text(run.get("text") or "").strip()
+            if _sanitize(run.get("text") or "").strip()
         ]
         use_source_span_positions = (
             bool(rich_runs_for_line)
@@ -7530,7 +7598,7 @@ def build_dirty_promoted_style_mapped_span_layout(
         source_position_index = 0
         previous_positioned_rect: Optional[fitz.Rect] = None
         for run in mapped_runs:
-            run_text = sanitize_pdf_text(run.get("text") or "")
+            run_text = _sanitize(run.get("text") or "")
             if run_text == "":
                 continue
             if use_source_span_positions and not run_text.strip():
@@ -7891,7 +7959,15 @@ def draw_text_using_exact_source_spans(
             _word_extra_spacing = 0.0
             if span_target_extent > 1.0:
                 _measured_w = span_font.text_length(span_text, fontsize=span_font_size)
-                if _measured_w > span_target_extent + 0.05:
+                # A lone glyph such as a bullet or a list marker keeps its
+                # source size: an extracted face can carry a wider advance
+                # than the PDF's own /Widths for that glyph, and fitting the
+                # advance into the captured bbox shrank "•" from 12pt to 7pt
+                # while the visible outline had always fitted (NK_31).
+                _single_glyph_span = len(span_text.strip()) == 1
+                if _single_glyph_span and _measured_w > span_target_extent + 0.05:
+                    pass
+                elif _measured_w > span_target_extent + 0.05:
                     _space_w_reserve = (
                         0.0
                         if span_rotation or " " not in span_text

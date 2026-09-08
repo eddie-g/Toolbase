@@ -2153,6 +2153,90 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(len(page.shape_draw_line_calls), 0)
         self.assertEqual(len(page.shape_finish_calls), 0)
 
+    # ---- NK_31: a text-only edit must not re-lay the paragraph ------------
+
+    def _nk31_overlay(self, **overrides):
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "savedTextOverlay": True,
+            "pdfjsSourceText": "Household employers. When estimating",
+            "pdfX": 314.65,
+            "pdfY": 421.86,
+            "pdfWidth": 256.67,
+            "pdfHeight": 100.26,
+            "pdfjsSourceX": 314.65,
+            "pdfjsSourceY": 428.73,
+            "pdfjsSourceW": 256.67,
+            "pdfjsSourceH": 93.39,
+            "sourceBlockWidth": 255.97,
+            "sourceBlockHeight": 88.40,
+        }
+        annotation.update(overrides)
+        return annotation
+
+    def test_height_only_drift_of_a_promoted_block_is_not_a_resize(self):
+        # The editor re-measures a promoted block's height whenever it
+        # re-renders it; only a dragged handle (userSizedTextBox) is a resize.
+        self.assertFalse(self.module._promoted_annotation_was_resized(self._nk31_overlay()))
+        self.assertTrue(
+            self.module._promoted_annotation_was_resized(self._nk31_overlay(userSizedTextBox=True))
+        )
+        # A width change stays geometry-authoritative.
+        self.assertTrue(
+            self.module._promoted_annotation_was_resized(self._nk31_overlay(pdfWidth=200.0))
+        )
+
+    def test_unmoved_overlay_is_recognised_by_its_left_and_top_edges(self):
+        self.assertTrue(self.module._pdfjs_overlay_sits_on_source_rect(self._nk31_overlay()))
+        self.assertFalse(
+            self.module._pdfjs_overlay_sits_on_source_rect(self._nk31_overlay(pdfX=340.0))
+        )
+        self.assertFalse(
+            self.module._pdfjs_overlay_sits_on_source_rect(self._nk31_overlay(pdfY=380.0))
+        )
+
+    def test_exact_source_line_layout_keeps_an_unmoved_overlay_on_its_source_rows(self):
+        annotation = self._nk31_overlay(
+            text="test employers. When estimating\nthe tax on your return",
+            sourceTextLines=["Household employers. When estimating", "the tax on your return"],
+            sourceLineBBoxes=[[315.0, 273.74, 570.97, 283.74], [315.0, 284.94, 547.27, 294.94]],
+            sourceBlockLeft=315.0,
+            sourceBlockTop=273.74,
+            sourceBlockWidth=255.97,
+            sourceBlockHeight=21.2,
+        )
+        # The editor's box top sits above the text-layer top by the glyph
+        # ascent, so an anchored translation would lift every row.
+        current_rect = fitz.Rect(314.65, 269.88, 571.32, 370.14)
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation, annotation["text"], fitz.Font("helv"), 10.0, current_rect=current_rect
+        )
+        self.assertEqual(len(layout), 2)
+        self.assertAlmostEqual(layout[0]["rect"].y0, 273.74, places=2)
+        self.assertAlmostEqual(layout[1]["rect"].y0, 284.94, places=2)
+
+    def test_dirty_line_subset_returns_the_typographic_text_it_was_given(self):
+        lines, boxes, start = self.module._aligned_dirty_promoted_line_subset(
+            ["to avoid a penalty even if you didn\u2019t include household"],
+            [[0, 0, 10, 10], [0, 12, 10, 22]],
+            ["first row", "to avoid a penalty even if you didn't include household"],
+        )
+        self.assertEqual(lines, ["to avoid a penalty even if you didn\u2019t include household"])
+        self.assertEqual(boxes, [[0, 12, 10, 22]])
+        self.assertEqual(start, 1)
+
+    def test_rich_text_ops_keep_typographic_apostrophe_for_pdfjs_overlays(self):
+        annotation = self._nk31_overlay(
+            text="you didn\u2019t include",
+            richTextVersion=2,
+            richTextRuns=[
+                {"type": "text", "text": "you didn\u2019t include", "fontFamily": "HelveticaWorld-Regular", "fontSize": 10},
+            ],
+        )
+        ops = self.module.parse_rich_text_layout_ops(annotation)
+        self.assertEqual("".join(op.get("text", "") for op in ops), "you didn\u2019t include")
+
     def test_should_preserve_promoted_source_lines_respects_reflow_flag(self):
         annotation = {
             "promotedFromExtraction": True,
