@@ -2316,6 +2316,33 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             round_trip = fitz.open("pdf", doc.tobytes())[0].get_text("text")
             self.assertEqual("\u00a0" not in round_trip and "\u00ad" not in round_trip, expect_clean, round_trip)
 
+    def test_user_sized_moved_overlay_reflows_on_the_editor_rows(self):
+        # NK_37: a moved single-row overlay that the user then resized wraps
+        # in the editor; the export must not fit the captured source run
+        # into the narrower box (one line at a third of the size).
+        annotation = {
+            "id": "pdfjs_7339_0_0:12",
+            "text": "Name(s) shown on Form 1040, 1040-SR, or 1040-NR",
+            "pdfX": 35.4, "pdfY": 718.1, "pdfWidth": 72.16, "pdfHeight": 26.05,
+            "pdfjsSourceX": 35.4, "pdfjsSourceY": 698.3, "pdfjsSourceW": 190.58, "pdfjsSourceH": 10.32,
+            "movedTextOverlay": True, "savedTextOverlay": True, "pdfjsSourceFidelity": True,
+            "userSizedTextBox": True, "promotedReflowEnabled": True,
+            "pdfjsSourceSpanRuns": [{"text": "Name(s) shown on Form 1040, 1040-SR, or 1040-NR", "leftPx": 0, "rightPx": 482, "topPx": 0, "bottomPx": 26, "fontSizePx": 20.27}],
+            "pdfjsVisualLines": ["Name(s) shown on", "Form 1040, 1040-", "SR, or 1040-NR"],
+        }
+        self.assertTrue(self.module._pdfjs_overlay_was_resized(annotation))
+        self.assertFalse(self.module.should_preserve_pdfjs_moved_source_line(annotation, annotation["text"]))
+        untouched = {**annotation, "pdfWidth": 190.58, "pdfHeight": 10.32, "userSizedTextBox": False}
+        self.assertFalse(self.module._pdfjs_overlay_was_resized(untouched))
+        ops = [{"type": "text", "text": annotation["text"], "font_weight": "400"}]
+        rows = self.module._apply_pdfjs_visual_line_breaks(ops, annotation["pdfjsVisualLines"])
+        self.assertEqual(
+            [op.get("text") or op["type"] for op in rows],
+            ["Name(s) shown on", "break", "Form 1040, 1040-", "break", "SR, or 1040-NR"],
+        )
+        # Rows that do not spell the text leave width wrapping in charge.
+        self.assertEqual(self.module._apply_pdfjs_visual_line_breaks(ops, ["Name(s) shown", "something else"]), [])
+
     def test_rich_text_ops_keep_typographic_apostrophe_for_pdfjs_overlays(self):
         annotation = self._nk31_overlay(
             text="you didn\u2019t include",
