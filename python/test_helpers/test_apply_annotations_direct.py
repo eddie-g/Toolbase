@@ -2271,6 +2271,29 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         # The bold lead-in is a bold face at the browser's 400: the face wins.
         self.assertEqual(by_text["Line 3. "]["font_weight"], "700")
 
+    def test_named_picker_family_never_matches_an_extracted_face_by_weight_alone(self):
+        # NK_34: with runtime faces available, a picker family the PDF does
+        # not contain must not resolve to whichever extracted face merely
+        # shares the requested weight; a generic family still may.
+        metadata = {
+            "HelveticaNeueLTStd-Bd": {
+                "clean_name": "HelveticaNeueLTStd-Bd",
+                "family": "HelveticaNeueLTStd",
+                "css_weight": 700,
+                "css_style": "normal",
+                "file_path": "/fonts/runtime-extracted/1/HelveticaNeueLTStd-Bd.otf",
+            },
+        }
+        with patch.object(self.module, "load_embedded_font_metadata", return_value=metadata), \
+                patch.object(self.module, "embedded_font_public_path_to_absolute", side_effect=lambda value: str(value)), \
+                patch.object(self.module, "_embedded_font_covers_text", return_value=True):
+            named = {"fontFamily": "Georgia", "fontSourceName": "Georgia", "fontWeight": "700", "text": "1b First", "__documentId": 1}
+            self.assertIsNone(self.module.resolve_embedded_font_entry(named))
+            generic = {"fontFamily": "sans-serif", "fontWeight": "700", "text": "1b First", "__documentId": 1}
+            entry = self.module.resolve_embedded_font_entry(generic)
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["clean_name"], "HelveticaNeueLTStd-Bd")
+
     def test_rich_text_ops_keep_typographic_apostrophe_for_pdfjs_overlays(self):
         annotation = self._nk31_overlay(
             text="you didn\u2019t include",

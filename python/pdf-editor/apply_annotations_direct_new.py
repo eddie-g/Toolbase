@@ -5258,6 +5258,13 @@ def _resolve_embedded_weight_sibling(
     return best
 
 
+_GENERIC_FONT_FAMILIES = {"", "serif", "sans-serif", "sans serif", "monospace", "system-ui", "cursive", "fantasy", "inherit", "initial"}
+
+
+def _requested_family_is_generic(raw_family: str) -> bool:
+    return str(raw_family or "").strip().strip("'\"").lower() in _GENERIC_FONT_FAMILIES
+
+
 def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if _boolish(ann.get("pdfjsAvoidEmbeddedSourceFont")):
         return None
@@ -5378,6 +5385,14 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
             score += 80
         if normalized_family and normalized_entry_family.lower() == normalized_family.lower():
             score += 60
+        # Only a face the request actually names can match. The weight and
+        # style bonuses below alone used to turn a picker family the PDF does
+        # not contain (Georgia) into whichever extracted face had the same
+        # weight, so a family change came out in the source font (NK_34). A
+        # generic family ("sans-serif") names no face and keeps the old
+        # weight/style match against the document's own faces.
+        if score <= 0 and not _requested_family_is_generic(raw_family):
+            continue
 
         if wants_bold:
             score += 20 if weight_value >= 600 else -10
