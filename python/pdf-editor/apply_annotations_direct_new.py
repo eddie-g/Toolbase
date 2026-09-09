@@ -27,6 +27,7 @@ except Exception:  # pragma: no cover - optional runtime dependency
     Image = None
     ImageDraw = None
 
+from font_cmap_sanitizer import sanitized_font_file
 from pdf_annotation_contract import (
     normalize_annotations_for_pdf_export,
     pdfjs_source_edit_export_metrics,
@@ -8245,7 +8246,10 @@ def resolve_text_fontfile(ann: Dict[str, Any]) -> Optional[str]:
     # (family, weight, italic) triple.
     target_weight = 700 if is_bold else 400
     materialized = _materialize_variable_font_instance(candidate, target_weight, italic=is_italic)
-    return materialized if materialized and os.path.exists(materialized) else candidate
+    resolved = materialized if materialized and os.path.exists(materialized) else candidate
+    # A face that aliases U+00A0 / U+00AD onto its space and hyphen glyphs
+    # extracts as no-break spaces and soft hyphens once written (NK_36).
+    return sanitized_font_file(resolved)
 
 
 def resolve_text_fontfile_with_coverage(ann: Dict[str, Any], text: str) -> Optional[str]:

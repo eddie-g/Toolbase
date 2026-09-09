@@ -15,6 +15,7 @@ import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
+from font_cmap_sanitizer import sanitized_font_file
 import fitz  # PyMuPDF
 
 from apply_pdf_edits_simple import (  # Reuse existing font resolution helpers.
@@ -362,7 +363,10 @@ def build_font(
         font_file = get_font_file(font_name or "", script_dir, font_weight=font_weight)
         if font_file and os.path.exists(font_file):
             try:
-                font_obj = fitz.Font(fontfile=font_file)
+                # Bundled Verdana maps U+00A0 / U+00AD onto its space and
+                # hyphen; TextWriter output then extracts as "Note:\u00a0The"
+                # and "1099\u00adK" and cannot be searched (NK_36).
+                font_obj = fitz.Font(fontfile=sanitized_font_file(font_file))
             except Exception:
                 font_obj = None
 

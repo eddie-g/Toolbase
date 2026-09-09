@@ -2294,6 +2294,28 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             self.assertIsNotNone(entry)
             self.assertEqual(entry["clean_name"], "HelveticaNeueLTStd-Bd")
 
+    def test_bundled_face_that_aliases_nbsp_is_handed_to_mupdf_sanitised(self):
+        # NK_36: Verdana maps U+00A0 / U+00AD onto its space and hyphen, so
+        # MuPDF's generated ToUnicode turned exported spaces into no-break
+        # spaces and hyphens into soft hyphens.
+        import font_cmap_sanitizer as sanitizer
+        raw = str(MODULE_PATH.parent / "fonts" / "Verdana-Regular.ttf")
+        self.assertTrue(sanitizer.font_file_aliases_whitespace_glyphs(raw))
+        clean = sanitizer.sanitized_font_file(raw)
+        self.assertNotEqual(clean, raw)
+        self.assertFalse(sanitizer.font_file_aliases_whitespace_glyphs(clean))
+        # The exporter's own resolution hands out the sanitised copy.
+        resolved = self.module.resolve_text_fontfile({"fontFamily": "Verdana", "fontWeight": "400", "text": "Note: The 1099-K"})
+        self.assertEqual(resolved, clean)
+        for path, expect_clean in ((raw, False), (clean, True)):
+            doc = fitz.open()
+            page = doc.new_page()
+            writer = fitz.TextWriter(page.rect)
+            writer.append((50, 100), "Note: The 1099-K", font=fitz.Font(fontfile=path), fontsize=12)
+            writer.write_text(page)
+            round_trip = fitz.open("pdf", doc.tobytes())[0].get_text("text")
+            self.assertEqual("\u00a0" not in round_trip and "\u00ad" not in round_trip, expect_clean, round_trip)
+
     def test_rich_text_ops_keep_typographic_apostrophe_for_pdfjs_overlays(self):
         annotation = self._nk31_overlay(
             text="you didn\u2019t include",
