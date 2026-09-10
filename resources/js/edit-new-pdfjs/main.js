@@ -267,6 +267,18 @@ function setRemovedPdfLinkRectsForBox(box, rects) {
     return normalized;
 }
 
+// True when the content carries formatting the user authored on part of the
+// text (bold, italic, underline, colour, size or family on a span).
+function textElementHasAuthoredInlineStyles(textElement) {
+    if (!textElement) return false;
+    return Array.from(textElement.querySelectorAll('[style]')).some((element) => {
+        const style = element.style;
+        return Boolean(style.fontWeight || style.fontStyle || style.textDecorationLine
+            || style.textDecoration || style.color || style.fontSize || style.fontFamily
+            || style.backgroundColor);
+    });
+}
+
 function editBaselineForTextElement(textElement) {
     return readElementRuntimeState(textElement, 'preEdit');
 }
@@ -21621,7 +21633,13 @@ function renderSimplePromotedParagraphEditor(root, text) {
 // the PDF's own paragraph gaps, hanging indents or per-run typography.
 function installSimplePromotedParagraphEditor(box, tc, annotation, fallbackText) {
     if (!box || !tc) return false;
-    renderSimplePromotedParagraphEditor(tc, simplePromotedParagraphText(annotation, fallbackText));
+    // Re-rendering from the plain text would discard the bold, italic,
+    // colour... the user already applied to words of this paragraph on an
+    // earlier edit; keep the styled content and only (re)install the flow
+    // editor around it (NK_35).
+    if (!(box.dataset.promotedParagraphFlow === '1' && textElementHasAuthoredInlineStyles(tc))) {
+        renderSimplePromotedParagraphEditor(tc, simplePromotedParagraphText(annotation, fallbackText));
+    }
     clearSourceFidelitySpanState(box);
     delete box.dataset.sourceSpanGlyphAligned;
     delete box.dataset.promotedSourceBlockEditEntryLayout;
@@ -24069,6 +24087,16 @@ function applyFontFamilyToSelectedBox(fontFamily) {
             box.dataset.fontSemanticWeight = embedded.weight || renderWeight;
             box.dataset.fontSemanticStyle = embedded.style || renderStyle;
         } else if (box) {
+            // A bold or italic source face carried its weight/slant itself and
+            // rendered at 400 / normal; a picker family needs it stated, or
+            // the run comes out regular (NK_34).
+            const semanticWeight = Number.parseInt(span.dataset.sourceSemanticFontWeight || '', 10);
+            if (Number.isFinite(semanticWeight) && semanticWeight >= 600 && !isBoldCssWeight(span.style.fontWeight)) {
+                span.style.fontWeight = '700';
+            }
+            if (String(span.dataset.sourceSemanticFontStyle || '').toLowerCase() === 'italic' && span.style.fontStyle !== 'italic') {
+                span.style.fontStyle = 'italic';
+            }
             delete span.dataset.sourcePdfFontName;
             delete box.dataset.fontSourceName;
             delete box.dataset.forceEmbeddedFont;
@@ -24085,10 +24113,45 @@ function applyFontFamilyToSelectedBox(fontFamily) {
             box.style.setProperty('--enpv-font-weight', renderWeight);
             box.style.setProperty('--enpv-font-style', renderStyle);
         } else {
+            // Same for the whole box: the source face's semantic weight and
+            // slant travel to the picker family (NK_34).
+            const semanticWeight = Number.parseInt(box.dataset.sourceSemanticFontWeight || box.dataset.fontSemanticWeight || '', 10);
+            const currentWeight = box.style.getPropertyValue('--enpv-font-weight') || box.dataset.fontWeight || '';
+            if (Number.isFinite(semanticWeight) && semanticWeight >= 600 && !isBoldCssWeight(currentWeight)) {
+                box.dataset.fontWeight = '700';
+                box.dataset.fontSemanticWeight = '700';
+                box.style.setProperty('--enpv-font-weight', '700');
+            }
+            const semanticStyle = String(box.dataset.sourceSemanticFontStyle || box.dataset.fontSemanticStyle || '').toLowerCase();
+            if (semanticStyle === 'italic' && String(box.style.getPropertyValue('--enpv-font-style') || box.dataset.fontStyle || '').toLowerCase() !== 'italic') {
+                box.dataset.fontStyle = 'italic';
+                box.dataset.fontSemanticStyle = 'italic';
+                box.style.setProperty('--enpv-font-style', 'italic');
+            }
+            // The captured runs carry the face's rendered weight inline
+            // (font-weight:400 on a -Bd face); with a picker family that
+            // inline value would override the box and serialise as regular.
+            const content = selectedBoxTextElement(box);
+            content?.querySelectorAll('[data-source-semantic-font-weight], [data-source-semantic-font-style]').forEach((run) => {
+                const runWeight = Number.parseInt(run.dataset.sourceSemanticFontWeight || '', 10);
+                if (Number.isFinite(runWeight) && runWeight >= 600 && !isBoldCssWeight(run.style.fontWeight)) {
+                    run.style.fontWeight = '700';
+                }
+                if (String(run.dataset.sourceSemanticFontStyle || '').toLowerCase() === 'italic' && run.style.fontStyle !== 'italic') {
+                    run.style.fontStyle = 'italic';
+                }
+            });
             delete box.dataset.fontSourceName;
             delete box.dataset.forceEmbeddedFont;
         }
     }, { reason: 'font-family', stripInlineProps: ['font-family'], ...reflowOptions });
+}
+
+function isBoldCssWeight(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'bold' || raw === 'bolder') return true;
+    const numeric = Number.parseInt(raw, 10);
+    return Number.isFinite(numeric) && numeric >= 600;
 }
 
 function applyFontSizeToSelectedBox(fontSizePts) {
@@ -25824,7 +25887,11 @@ function endEditMode(box) {
     if (tc) {
         if (box.dataset.promotedParagraphFlow === '1'
             && box.dataset.pendingEdit !== '1'
-            && hasElementRuntimeState(tc, 'preEdit')) {
+            && hasElementRuntimeState(tc, 'preEdit')
+            // Restoring the baseline makes an untouched edit a strict no-op,
+            // but a style applied to a word does not set pendingEdit; the
+            // reset threw those styled spans away on deselect (NK_35).
+            && !textElementHasAuthoredInlineStyles(tc)) {
             tc.textContent = editBaselineForTextElement(tc);
         }
         if (box.dataset.sourceSpanEditActive === '1'
