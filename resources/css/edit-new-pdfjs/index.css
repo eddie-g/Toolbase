@@ -4200,6 +4200,16 @@ body.enpv-body .pdfViewer .page > .annotationLayer .enpv-removed-pdf-link {
     transform: none !important;
     transform-origin: initial !important;
 }
+.enpv-annotation-box[data-condensed-source-row-fit]:not(.is-user-sized-text):not(.is-rotated) .enpv-text-content {
+    /* A condensed face's rows lay out wider than the box the PDF gave them
+       once the source scaffold is released; keep them on their rows and
+       scale them into the box the way the canvas drew them (NK_32). */
+    white-space: pre !important;
+    overflow-wrap: normal !important;
+    width: var(--enpv-row-fit-width) !important;
+    transform: scaleX(var(--enpv-row-fit-scale, 1)) !important;
+    transform-origin: 0 0 !important;
+}
 .enpv-annotation-box[data-preserve-distributed-leader-spacing="1"] .enpv-text-content {
     /* PDF dot leaders are fixed single rows. Keep their captured gaps intact
        even when rich-mode setup resets the element's inline flow styles. */

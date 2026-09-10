@@ -74,6 +74,9 @@ Thumbs.db
 /tests/AutomatedTests/SourceText/*
 !/tests/AutomatedTests/SourceText/run_source_text_tests.cjs
 !/tests/AutomatedTests/SourceText/inspect_pdf.py
+!/tests/AutomatedTests/Password/
+/tests/AutomatedTests/Password/*
+!/tests/AutomatedTests/Password/run_password_tests.cjs
 !/tests/Feature/
 /tests/Feature/*
 !/tests/Feature/PdfPasswordProtectionTest.php

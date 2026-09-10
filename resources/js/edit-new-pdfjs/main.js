@@ -267,6 +267,18 @@ function setRemovedPdfLinkRectsForBox(box, rects) {
     return normalized;
 }
 
+// True when the content carries formatting the user authored on part of the
+// text (bold, italic, underline, colour, size or family on a span).
+function textElementHasAuthoredInlineStyles(textElement) {
+    if (!textElement) return false;
+    return Array.from(textElement.querySelectorAll('[style]')).some((element) => {
+        const style = element.style;
+        return Boolean(style.fontWeight || style.fontStyle || style.textDecorationLine
+            || style.textDecoration || style.color || style.fontSize || style.fontFamily
+            || style.backgroundColor);
+    });
+}
+
 function editBaselineForTextElement(textElement) {
     return readElementRuntimeState(textElement, 'preEdit');
 }
@@ -3690,7 +3702,9 @@ async function submitPasswordAction() {
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok || data?.success === false || !data?.unlock_token) {
-                throw new Error(passwordResponseError(data, 'The PDF could not be unlocked.'));
+                const error = new Error(passwordResponseError(data, 'The PDF could not be unlocked.'));
+                error.code = String(data?.code || '');
+                throw error;
             }
             documentUnlockToken = String(data.unlock_token);
             activeDocumentPassword = enteredPassword;
@@ -3705,6 +3719,14 @@ async function submitPasswordAction() {
         } catch (error) {
             setPasswordError(error?.message || 'The PDF could not be unlocked.');
             setPasswordStatus('');
+            // Three wrong guesses send the user back where cancelling the
+            // prompt goes (NK_27). The server keeps the count; the prompt is
+            // left disabled long enough to read the refusal.
+            if (error?.code === 'attempts_exhausted') {
+                setPasswordStatus('Returning to the editor…');
+                window.setTimeout(() => window.location.assign('/pdf-editor'), 1200);
+                return;
+            }
             setPasswordBusy(false);
         }
         return;
@@ -10016,7 +10038,15 @@ function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
         // metrics differ from the canvas font. Lato in drylab.pdf requires
         // 0.9435 on a short final line; rejecting it made selected glyphs
         // visibly wider and lower than the untouched canvas text.
-        if (!(scaleX >= 0.9 && scaleX <= 1.1)) return;
+        // The latitude is taken around the PDF's own horizontal scale: a
+        // condensed face (f4506t.pdf draws its labels at scaleX 0.952)
+        // legitimately needs a correction below 0.9, and refusing it left
+        // the row unscaled and spilling out of its box (NK_32).
+        const capturedScaleX = Number.parseFloat(box.dataset.sourceTransformScaleX || '');
+        const baseScaleX = Number.isFinite(capturedScaleX) && capturedScaleX > 0 ? capturedScaleX : 1;
+        const minScaleX = Math.min(0.9, baseScaleX * 0.9);
+        const maxScaleX = Math.max(1.1, baseScaleX * 1.1);
+        if (!(scaleX >= minScaleX && scaleX <= maxScaleX)) return;
         const lineRect = line.getBoundingClientRect();
         const originLeft = lineRect.left;
         const dx = target.left - (originLeft + (scaleX * (current.left - originLeft)));
@@ -10131,6 +10161,54 @@ function clearPromotedSourceBlockEditHorizontalFit(box) {
     delete box.dataset.sourceSpanGlyphAligned;
 }
 
+// Once the source scaffold is released, the rows of a condensed face lay out
+// at their natural width and no longer fit the box the PDF gave them (the
+// canvas drew them at sourceTransformScaleX). Keep such rows on their rows
+// and scale them into the box instead of letting them wrap and grow the
+// block. Only while the type is still the source size and the box has not
+// been restyled or resized (NK_32).
+function applyCondensedSourceRowFit(box) {
+    const release = () => {
+        delete box.dataset.condensedSourceRowFit;
+        box.style.removeProperty('--enpv-row-fit-scale');
+        box.style.removeProperty('--enpv-row-fit-width');
+    };
+    if (!box?.classList?.contains('is-promoted-source-block')) return false;
+    if (box.dataset.userSizedTextBox === '1'
+        || box.dataset.styleDirty === '1'
+        || box.dataset.userForcedRichText === '1'
+        || box.dataset.promotedParagraphFlow === '1') {
+        release();
+        return false;
+    }
+    const tc = selectedBoxTextElement(box);
+    if (!tc) return false;
+    const currentFontSizePx = Number.parseFloat(window.getComputedStyle(tc).fontSize || '') || 0;
+    const sourceFontSizePx = Number.parseFloat(box.dataset.sourceFontSizePx || '') || 0;
+    if (!(currentFontSizePx > 0 && sourceFontSizePx > 0)
+        || Math.abs(currentFontSizePx - sourceFontSizePx) > sourceFontSizePx * 0.05) {
+        release();
+        return false;
+    }
+    // Measure the unwrapped rows with the fit switched off. The fit itself
+    // lives in CSS keyed on the data attribute, so the inline-style resets
+    // that follow an input event cannot strip it.
+    release();
+    const previousWhiteSpace = tc.style.whiteSpace;
+    tc.style.whiteSpace = 'pre';
+    const boxWidth = tc.clientWidth || box.getBoundingClientRect().width || 0;
+    const rowWidth = tc.scrollWidth || 0;
+    tc.style.whiteSpace = previousWhiteSpace;
+    if (!(boxWidth > 0) || !(rowWidth > boxWidth + 0.5)) return false;
+    const scaleX = boxWidth / rowWidth;
+    // Wider than a condensed face explains is a real overflow, not a fit.
+    if (!(scaleX >= 0.8)) return false;
+    box.style.setProperty('--enpv-row-fit-scale', scaleX.toFixed(6));
+    box.style.setProperty('--enpv-row-fit-width', `${Math.ceil(rowWidth)}px`);
+    box.dataset.condensedSourceRowFit = scaleX.toFixed(6);
+    return true;
+}
+
 // Edited multi-line promoted paragraphs render as plain pre-wrap text. Keep
 // source-derived line pitch where useful, but always use natural-width glyphs
 // and normal wrapping.
@@ -10161,9 +10239,15 @@ function applyPromotedOverlayDisplayHorizontalFit(box) {
         // The one-span promoted paragraph inherits the source row pitch set
         // at edit entry. Replacing it with the generic 1.2em natural-flow
         // fallback compacts every row immediately after deselection.
-        if (!isSimplePromotedParagraph && !preservesSourcePitchAfterFamilyChange) {
+        // A rich commit of a text-only edit keeps the source row pitch too:
+        // at 1.2em an eight-row paragraph grows past its own block and the
+        // export then reflows it as if the box had been resized (NK_31).
+        if (!isSimplePromotedParagraph
+            && !preservesSourcePitchAfterFamilyChange
+            && !applySourceRowPitchForUnchangedTypography(box)) {
             ensureNaturalTextLineHeight(box);
         }
+        applyCondensedSourceRowFit(box);
         return;
     }
     if (tc.childElementCount > 0) return;
@@ -10434,6 +10518,13 @@ function richTextContentHeightPx(box) {
         }
         range.detach?.();
     } catch (_) { /* noop */ }
+    // A source row pitch is tighter than the face's content area, so the
+    // glyph rects overhang their line boxes; measuring them (and the scroll
+    // extent they inflate) would grow the block by about a row (NK_31). The
+    // row count times the pitch is the block's real height.
+    if (box.dataset.sourceRowPitchActive === '1' && lineBoxHeight > 0) {
+        return Math.ceil(Math.max(lineBoxHeight + paddingY, lineHeight));
+    }
     const clientHeight = tc.clientHeight || 0;
     const scrollHeight = tc.scrollHeight || 0;
     const overflowHeight = scrollHeight > clientHeight + 1 ? scrollHeight : 0;
@@ -21542,7 +21633,13 @@ function renderSimplePromotedParagraphEditor(root, text) {
 // the PDF's own paragraph gaps, hanging indents or per-run typography.
 function installSimplePromotedParagraphEditor(box, tc, annotation, fallbackText) {
     if (!box || !tc) return false;
-    renderSimplePromotedParagraphEditor(tc, simplePromotedParagraphText(annotation, fallbackText));
+    // Re-rendering from the plain text would discard the bold, italic,
+    // colour... the user already applied to words of this paragraph on an
+    // earlier edit; keep the styled content and only (re)install the flow
+    // editor around it (NK_35).
+    if (!(box.dataset.promotedParagraphFlow === '1' && textElementHasAuthoredInlineStyles(tc))) {
+        renderSimplePromotedParagraphEditor(tc, simplePromotedParagraphText(annotation, fallbackText));
+    }
     clearSourceFidelitySpanState(box);
     delete box.dataset.sourceSpanGlyphAligned;
     delete box.dataset.promotedSourceBlockEditEntryLayout;
@@ -23866,9 +23963,41 @@ function refitStyledBoxWhenFontsSettle(box, options = {}) {
         .catch(() => { /* noop */ });
 }
 
+// Keep the captured source row pitch on a promoted block whose font size is
+// still the source size. Returns false when the pitch is unknown or the type
+// was resized, so the caller falls back to the natural-flow 1.2 ratio.
+function applySourceRowPitchForUnchangedTypography(box) {
+    if (!box?.classList?.contains('is-promoted-source-block')) return false;
+    const tc = selectedBoxTextElement(box);
+    if (!tc) return false;
+    const currentFontSizePx = Number.parseFloat(window.getComputedStyle(tc).fontSize || '') || 0;
+    const sourceFontSizePx = Number.parseFloat(box.dataset.sourceFontSizePx || '') || 0;
+    if (!(currentFontSizePx > 0 && sourceFontSizePx > 0)) return false;
+    if (Math.abs(currentFontSizePx - sourceFontSizePx) > sourceFontSizePx * 0.05) return false;
+    const metrics = sourceSpanRunLineMetrics(box);
+    if (!metrics || !(metrics.lineStepPx > 0)) return false;
+    // The runs were captured at their own scale; the box may have been
+    // re-rendered at another zoom since.
+    const currentScale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 0;
+    const runsScale = Number.parseFloat(box.dataset.sourceSpanRunsScale || '') || currentScale || 1;
+    const ratio = currentScale > 0 && runsScale > 0 ? currentScale / runsScale : 1;
+    const lineStepPx = Math.round(metrics.lineStepPx * ratio * 1000) / 1000;
+    if (!(lineStepPx >= currentFontSizePx * 0.8)) return false;
+    tc.style.lineHeight = '';
+    box.style.setProperty('--enpv-line-height', `${lineStepPx}px`);
+    box.dataset.sourceRowPitchActive = '1';
+    return true;
+}
+
 function ensureNaturalTextLineHeight(box) {
     const tc = selectedBoxTextElement(box);
     if (!tc) return 0;
+    // A promoted paragraph whose type is still the source size keeps the
+    // PDF's own row pitch; the 1.2 ratio below is for restyled text and
+    // would grow the block past its source rows (NK_31).
+    if (applySourceRowPitchForUnchangedTypography(box)) {
+        return Number.parseFloat(box.style.getPropertyValue('--enpv-line-height') || '') || 0;
+    }
     const fontSizePx = Number.parseFloat(window.getComputedStyle(tc).fontSize || '') || 0;
     // Measuring an existing Range rect here feeds the old line box back into
     // the new one. Repeated font-size changes therefore inflate line-height
@@ -23878,6 +24007,7 @@ function ensureNaturalTextLineHeight(box) {
     if (lineHeightPx > 0) {
         tc.style.lineHeight = '';
         box.style.setProperty('--enpv-line-height', `${lineHeightPx}px`);
+        delete box.dataset.sourceRowPitchActive;
     }
     return lineHeightPx;
 }
@@ -23957,6 +24087,16 @@ function applyFontFamilyToSelectedBox(fontFamily) {
             box.dataset.fontSemanticWeight = embedded.weight || renderWeight;
             box.dataset.fontSemanticStyle = embedded.style || renderStyle;
         } else if (box) {
+            // A bold or italic source face carried its weight/slant itself and
+            // rendered at 400 / normal; a picker family needs it stated, or
+            // the run comes out regular (NK_34).
+            const semanticWeight = Number.parseInt(span.dataset.sourceSemanticFontWeight || '', 10);
+            if (Number.isFinite(semanticWeight) && semanticWeight >= 600 && !isBoldCssWeight(span.style.fontWeight)) {
+                span.style.fontWeight = '700';
+            }
+            if (String(span.dataset.sourceSemanticFontStyle || '').toLowerCase() === 'italic' && span.style.fontStyle !== 'italic') {
+                span.style.fontStyle = 'italic';
+            }
             delete span.dataset.sourcePdfFontName;
             delete box.dataset.fontSourceName;
             delete box.dataset.forceEmbeddedFont;
@@ -23973,10 +24113,45 @@ function applyFontFamilyToSelectedBox(fontFamily) {
             box.style.setProperty('--enpv-font-weight', renderWeight);
             box.style.setProperty('--enpv-font-style', renderStyle);
         } else {
+            // Same for the whole box: the source face's semantic weight and
+            // slant travel to the picker family (NK_34).
+            const semanticWeight = Number.parseInt(box.dataset.sourceSemanticFontWeight || box.dataset.fontSemanticWeight || '', 10);
+            const currentWeight = box.style.getPropertyValue('--enpv-font-weight') || box.dataset.fontWeight || '';
+            if (Number.isFinite(semanticWeight) && semanticWeight >= 600 && !isBoldCssWeight(currentWeight)) {
+                box.dataset.fontWeight = '700';
+                box.dataset.fontSemanticWeight = '700';
+                box.style.setProperty('--enpv-font-weight', '700');
+            }
+            const semanticStyle = String(box.dataset.sourceSemanticFontStyle || box.dataset.fontSemanticStyle || '').toLowerCase();
+            if (semanticStyle === 'italic' && String(box.style.getPropertyValue('--enpv-font-style') || box.dataset.fontStyle || '').toLowerCase() !== 'italic') {
+                box.dataset.fontStyle = 'italic';
+                box.dataset.fontSemanticStyle = 'italic';
+                box.style.setProperty('--enpv-font-style', 'italic');
+            }
+            // The captured runs carry the face's rendered weight inline
+            // (font-weight:400 on a -Bd face); with a picker family that
+            // inline value would override the box and serialise as regular.
+            const content = selectedBoxTextElement(box);
+            content?.querySelectorAll('[data-source-semantic-font-weight], [data-source-semantic-font-style]').forEach((run) => {
+                const runWeight = Number.parseInt(run.dataset.sourceSemanticFontWeight || '', 10);
+                if (Number.isFinite(runWeight) && runWeight >= 600 && !isBoldCssWeight(run.style.fontWeight)) {
+                    run.style.fontWeight = '700';
+                }
+                if (String(run.dataset.sourceSemanticFontStyle || '').toLowerCase() === 'italic' && run.style.fontStyle !== 'italic') {
+                    run.style.fontStyle = 'italic';
+                }
+            });
             delete box.dataset.fontSourceName;
             delete box.dataset.forceEmbeddedFont;
         }
     }, { reason: 'font-family', stripInlineProps: ['font-family'], ...reflowOptions });
+}
+
+function isBoldCssWeight(value) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'bold' || raw === 'bolder') return true;
+    const numeric = Number.parseInt(raw, 10);
+    return Number.isFinite(numeric) && numeric >= 600;
 }
 
 function applyFontSizeToSelectedBox(fontSizePts) {
@@ -25345,6 +25520,13 @@ function onTextContentInput(ev) {
                     attachCanonicalGapsToFollowingRun: promoteMixedSourceEdit,
                 });
             });
+            // The released rows keep the PDF's own pitch while the type is
+            // unchanged; the fit below would otherwise grow the box past its
+            // source block at the 1.2em fallback (NK_31).
+            applySourceRowPitchForUnchangedTypography(box);
+            // Condensed rows must not wrap the moment they are released, or
+            // the box grows under the caret (NK_32).
+            applyCondensedSourceRowFit(box);
         }
         if (promoteMixedSourceEdit) {
             // A plain source commit deliberately flattens its temporary span
@@ -25360,6 +25542,11 @@ function onTextContentInput(ev) {
             }
         } else {
             attachSourceMaskForBox(box);
+            // Every keystroke can push a condensed row past its box again;
+            // re-measure the fit before the height is fitted below (NK_32).
+            if (box.dataset.naturalTextFlow === '1' && box.classList.contains('is-promoted-source-block')) {
+                applyCondensedSourceRowFit(box);
+            }
             // Paragraph editors own a stable rectangle, just like the
             // PDF.js/pdfe model. Typing rewraps inside that rectangle; it does
             // not silently resize the annotation on every input event.
@@ -25700,7 +25887,11 @@ function endEditMode(box) {
     if (tc) {
         if (box.dataset.promotedParagraphFlow === '1'
             && box.dataset.pendingEdit !== '1'
-            && hasElementRuntimeState(tc, 'preEdit')) {
+            && hasElementRuntimeState(tc, 'preEdit')
+            // Restoring the baseline makes an untouched edit a strict no-op,
+            // but a style applied to a word does not set pendingEdit; the
+            // reset threw those styled spans away on deselect (NK_35).
+            && !textElementHasAuthoredInlineStyles(tc)) {
             tc.textContent = editBaselineForTextElement(tc);
         }
         if (box.dataset.sourceSpanEditActive === '1'

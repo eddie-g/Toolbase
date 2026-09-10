@@ -2153,6 +2153,207 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(len(page.shape_draw_line_calls), 0)
         self.assertEqual(len(page.shape_finish_calls), 0)
 
+    # ---- NK_31: a text-only edit must not re-lay the paragraph ------------
+
+    def _nk31_overlay(self, **overrides):
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "savedTextOverlay": True,
+            "pdfjsSourceText": "Household employers. When estimating",
+            "pdfX": 314.65,
+            "pdfY": 421.86,
+            "pdfWidth": 256.67,
+            "pdfHeight": 100.26,
+            "pdfjsSourceX": 314.65,
+            "pdfjsSourceY": 428.73,
+            "pdfjsSourceW": 256.67,
+            "pdfjsSourceH": 93.39,
+            "sourceBlockWidth": 255.97,
+            "sourceBlockHeight": 88.40,
+        }
+        annotation.update(overrides)
+        return annotation
+
+    def test_height_only_drift_of_a_promoted_block_is_not_a_resize(self):
+        # The editor re-measures a promoted block's height whenever it
+        # re-renders it; only a dragged handle (userSizedTextBox) is a resize.
+        self.assertFalse(self.module._promoted_annotation_was_resized(self._nk31_overlay()))
+        self.assertTrue(
+            self.module._promoted_annotation_was_resized(self._nk31_overlay(userSizedTextBox=True))
+        )
+        # A width change stays geometry-authoritative.
+        self.assertTrue(
+            self.module._promoted_annotation_was_resized(self._nk31_overlay(pdfWidth=200.0))
+        )
+
+    def test_unmoved_overlay_is_recognised_by_its_left_and_top_edges(self):
+        self.assertTrue(self.module._pdfjs_overlay_sits_on_source_rect(self._nk31_overlay()))
+        self.assertFalse(
+            self.module._pdfjs_overlay_sits_on_source_rect(self._nk31_overlay(pdfX=340.0))
+        )
+        self.assertFalse(
+            self.module._pdfjs_overlay_sits_on_source_rect(self._nk31_overlay(pdfY=380.0))
+        )
+
+    def test_exact_source_line_layout_keeps_an_unmoved_overlay_on_its_source_rows(self):
+        annotation = self._nk31_overlay(
+            text="test employers. When estimating\nthe tax on your return",
+            sourceTextLines=["Household employers. When estimating", "the tax on your return"],
+            sourceLineBBoxes=[[315.0, 273.74, 570.97, 283.74], [315.0, 284.94, 547.27, 294.94]],
+            sourceBlockLeft=315.0,
+            sourceBlockTop=273.74,
+            sourceBlockWidth=255.97,
+            sourceBlockHeight=21.2,
+        )
+        # The editor's box top sits above the text-layer top by the glyph
+        # ascent, so an anchored translation would lift every row.
+        current_rect = fitz.Rect(314.65, 269.88, 571.32, 370.14)
+        layout = self.module.normalize_exact_source_line_layout(
+            annotation, annotation["text"], fitz.Font("helv"), 10.0, current_rect=current_rect
+        )
+        self.assertEqual(len(layout), 2)
+        self.assertAlmostEqual(layout[0]["rect"].y0, 273.74, places=2)
+        self.assertAlmostEqual(layout[1]["rect"].y0, 284.94, places=2)
+
+    def test_dirty_line_subset_returns_the_typographic_text_it_was_given(self):
+        lines, boxes, start = self.module._aligned_dirty_promoted_line_subset(
+            ["to avoid a penalty even if you didn\u2019t include household"],
+            [[0, 0, 10, 10], [0, 12, 10, 22]],
+            ["first row", "to avoid a penalty even if you didn't include household"],
+        )
+        self.assertEqual(lines, ["to avoid a penalty even if you didn\u2019t include household"])
+        self.assertEqual(boxes, [[0, 12, 10, 22]])
+        self.assertEqual(start, 1)
+
+    def test_style_only_promoted_edit_takes_the_run_aware_layout(self):
+        # NK_33: bold / italic / underline / colour on part of an untouched
+        # paragraph sets styleDirty but not promotedDirty; the export must
+        # still lay the runs out from richTextRuns, not from the source spans.
+        annotation = self._nk31_overlay(
+            promotedDirty=False,
+            styleDirty=True,
+            userForcedRichText=True,
+            text="Line 3. Enter your current address.",
+            fontFamily="HelveticaNeueLTStd-Roman",
+            fontSourceName="HelveticaNeueLTStd-Roman",
+            fontSize=6,
+            sourceTextLines=["Line 3. Enter your current address."],
+            sourceLineBBoxes=[[36.0, 538.3, 190.0, 545.5]],
+            sourceBlockLeft=36.0,
+            sourceBlockTop=538.3,
+            sourceBlockWidth=154.0,
+            sourceBlockHeight=7.2,
+            sourceSpans=[
+                {"text": "Line 3. ", "bbox": [36.0, 538.3, 55.0, 545.5], "origin": [36.0, 544.0], "font": "HelveticaNeueLTStd-Bd", "fontSize": 6, "fontWeight": "700"},
+                {"text": "Enter your current address.", "bbox": [55.0, 538.3, 190.0, 545.5], "origin": [55.0, 544.0], "font": "HelveticaNeueLTStd-Roman", "fontSize": 6, "fontWeight": "400"},
+            ],
+            richTextVersion=2,
+            richTextRuns=[
+                {"type": "text", "text": "Line 3. ", "fontFamily": "HelveticaNeueLTStd-Bd", "fontSourceName": "HelveticaNeueLTStd-Bd", "fontSize": 6, "fontWeight": "400", "fontStyle": "normal", "color": "#000000"},
+                {"type": "text", "text": "Enter your ", "fontFamily": "HelveticaNeueLTStd-Roman", "fontSourceName": "HelveticaNeueLTStd-Roman", "fontSize": 6, "fontWeight": "400", "fontStyle": "normal", "color": "#000000"},
+                {"type": "text", "text": "current", "fontFamily": "HelveticaNeueLTStd-Roman", "fontSourceName": "HelveticaNeueLTStd-Roman", "fontSize": 6, "fontWeight": "700", "fontStyle": "normal", "color": "#000000"},
+                {"type": "text", "text": " address", "fontFamily": "HelveticaNeueLTStd-Roman", "fontSourceName": "HelveticaNeueLTStd-Roman", "fontSize": 6, "fontWeight": "400", "fontStyle": "italic", "color": "#d00000", "underline": True},
+                {"type": "text", "text": ".", "fontFamily": "HelveticaNeueLTStd-Roman", "fontSourceName": "HelveticaNeueLTStd-Roman", "fontSize": 6, "fontWeight": "400", "fontStyle": "normal", "color": "#000000"},
+            ],
+        )
+        self.assertTrue(self.module._promoted_style_only_edit(annotation))
+        lines = self.module.normalize_exact_source_line_layout(
+            annotation, annotation["text"], fitz.Font("helv"), 6.0, current_rect=fitz.Rect(36.0, 538.3, 190.0, 545.5)
+        )
+        layout = self.module.build_dirty_promoted_style_mapped_span_layout(annotation, annotation["text"], lines)
+        self.assertEqual(len(layout), 1)
+        by_text = {span["text"]: span for span in layout[0]["spans"]}
+        self.assertEqual(by_text["current"]["font_weight"], "700")
+        self.assertEqual(by_text[" address"]["font_style"], "italic")
+        self.assertTrue(by_text[" address"]["underline"])
+        self.assertEqual(by_text[" address"]["color"].lower(), "#d00000")
+        # The bold lead-in is a bold face at the browser's 400: the face wins.
+        self.assertEqual(by_text["Line 3. "]["font_weight"], "700")
+
+    def test_named_picker_family_never_matches_an_extracted_face_by_weight_alone(self):
+        # NK_34: with runtime faces available, a picker family the PDF does
+        # not contain must not resolve to whichever extracted face merely
+        # shares the requested weight; a generic family still may.
+        metadata = {
+            "HelveticaNeueLTStd-Bd": {
+                "clean_name": "HelveticaNeueLTStd-Bd",
+                "family": "HelveticaNeueLTStd",
+                "css_weight": 700,
+                "css_style": "normal",
+                "file_path": "/fonts/runtime-extracted/1/HelveticaNeueLTStd-Bd.otf",
+            },
+        }
+        with patch.object(self.module, "load_embedded_font_metadata", return_value=metadata), \
+                patch.object(self.module, "embedded_font_public_path_to_absolute", side_effect=lambda value: str(value)), \
+                patch.object(self.module, "_embedded_font_covers_text", return_value=True):
+            named = {"fontFamily": "Georgia", "fontSourceName": "Georgia", "fontWeight": "700", "text": "1b First", "__documentId": 1}
+            self.assertIsNone(self.module.resolve_embedded_font_entry(named))
+            generic = {"fontFamily": "sans-serif", "fontWeight": "700", "text": "1b First", "__documentId": 1}
+            entry = self.module.resolve_embedded_font_entry(generic)
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["clean_name"], "HelveticaNeueLTStd-Bd")
+
+    def test_bundled_face_that_aliases_nbsp_is_handed_to_mupdf_sanitised(self):
+        # NK_36: Verdana maps U+00A0 / U+00AD onto its space and hyphen, so
+        # MuPDF's generated ToUnicode turned exported spaces into no-break
+        # spaces and hyphens into soft hyphens.
+        import font_cmap_sanitizer as sanitizer
+        raw = str(MODULE_PATH.parent / "fonts" / "Verdana-Regular.ttf")
+        self.assertTrue(sanitizer.font_file_aliases_whitespace_glyphs(raw))
+        clean = sanitizer.sanitized_font_file(raw)
+        self.assertNotEqual(clean, raw)
+        self.assertFalse(sanitizer.font_file_aliases_whitespace_glyphs(clean))
+        # The exporter's own resolution hands out the sanitised copy.
+        resolved = self.module.resolve_text_fontfile({"fontFamily": "Verdana", "fontWeight": "400", "text": "Note: The 1099-K"})
+        self.assertEqual(resolved, clean)
+        for path, expect_clean in ((raw, False), (clean, True)):
+            doc = fitz.open()
+            page = doc.new_page()
+            writer = fitz.TextWriter(page.rect)
+            writer.append((50, 100), "Note: The 1099-K", font=fitz.Font(fontfile=path), fontsize=12)
+            writer.write_text(page)
+            round_trip = fitz.open("pdf", doc.tobytes())[0].get_text("text")
+            self.assertEqual("\u00a0" not in round_trip and "\u00ad" not in round_trip, expect_clean, round_trip)
+
+    def test_user_sized_moved_overlay_reflows_on_the_editor_rows(self):
+        # NK_37: a moved single-row overlay that the user then resized wraps
+        # in the editor; the export must not fit the captured source run
+        # into the narrower box (one line at a third of the size).
+        annotation = {
+            "id": "pdfjs_7339_0_0:12",
+            "text": "Name(s) shown on Form 1040, 1040-SR, or 1040-NR",
+            "pdfX": 35.4, "pdfY": 718.1, "pdfWidth": 72.16, "pdfHeight": 26.05,
+            "pdfjsSourceX": 35.4, "pdfjsSourceY": 698.3, "pdfjsSourceW": 190.58, "pdfjsSourceH": 10.32,
+            "movedTextOverlay": True, "savedTextOverlay": True, "pdfjsSourceFidelity": True,
+            "userSizedTextBox": True, "promotedReflowEnabled": True,
+            "pdfjsSourceSpanRuns": [{"text": "Name(s) shown on Form 1040, 1040-SR, or 1040-NR", "leftPx": 0, "rightPx": 482, "topPx": 0, "bottomPx": 26, "fontSizePx": 20.27}],
+            "pdfjsVisualLines": ["Name(s) shown on", "Form 1040, 1040-", "SR, or 1040-NR"],
+        }
+        self.assertTrue(self.module._pdfjs_overlay_was_resized(annotation))
+        self.assertFalse(self.module.should_preserve_pdfjs_moved_source_line(annotation, annotation["text"]))
+        untouched = {**annotation, "pdfWidth": 190.58, "pdfHeight": 10.32, "userSizedTextBox": False}
+        self.assertFalse(self.module._pdfjs_overlay_was_resized(untouched))
+        ops = [{"type": "text", "text": annotation["text"], "font_weight": "400"}]
+        rows = self.module._apply_pdfjs_visual_line_breaks(ops, annotation["pdfjsVisualLines"])
+        self.assertEqual(
+            [op.get("text") or op["type"] for op in rows],
+            ["Name(s) shown on", "break", "Form 1040, 1040-", "break", "SR, or 1040-NR"],
+        )
+        # Rows that do not spell the text leave width wrapping in charge.
+        self.assertEqual(self.module._apply_pdfjs_visual_line_breaks(ops, ["Name(s) shown", "something else"]), [])
+
+    def test_rich_text_ops_keep_typographic_apostrophe_for_pdfjs_overlays(self):
+        annotation = self._nk31_overlay(
+            text="you didn\u2019t include",
+            richTextVersion=2,
+            richTextRuns=[
+                {"type": "text", "text": "you didn\u2019t include", "fontFamily": "HelveticaWorld-Regular", "fontSize": 10},
+            ],
+        )
+        ops = self.module.parse_rich_text_layout_ops(annotation)
+        self.assertEqual("".join(op.get("text", "") for op in ops), "you didn\u2019t include")
+
     def test_should_preserve_promoted_source_lines_respects_reflow_flag(self):
         annotation = {
             "promotedFromExtraction": True,
