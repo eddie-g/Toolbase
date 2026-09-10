@@ -27,6 +27,7 @@ except Exception:  # pragma: no cover - optional runtime dependency
     Image = None
     ImageDraw = None
 
+from font_cmap_sanitizer import sanitized_font_file
 from pdf_annotation_contract import (
     normalize_annotations_for_pdf_export,
     pdfjs_source_edit_export_metrics,
@@ -4728,6 +4729,77 @@ def _merge_rich_text_line_chars(chars: list[tuple[str, Dict[str, Any]]]) -> list
     return spans
 
 
+def _apply_pdfjs_visual_line_breaks(
+    ops: list[Dict[str, Any]],
+    visual_lines: list[str],
+) -> list[Dict[str, Any]]:
+    """Re-cut rich-text ops at the row boundaries the browser rendered
+    (pdfjsVisualLines), keeping every run's style. Returns [] when the rows
+    do not spell the ops' text, so the caller keeps width wrapping."""
+    if not ops or len(visual_lines) < 2:
+        return []
+    chars: list[tuple[str, int]] = []
+    for index, op in enumerate(ops):
+        kind = op.get("type")
+        if kind == "break":
+            chars.append(("\n", index))
+        elif kind == "text":
+            chars.extend((ch, index) for ch in str(op.get("text") or ""))
+
+    def skip_ws(position: int) -> int:
+        while position < len(chars) and chars[position][0].isspace():
+            position += 1
+        return position
+
+    cuts: list[int] = []
+    pos = 0
+    for line_index, line in enumerate(visual_lines):
+        pos = skip_ws(pos)
+        for ch in str(line):
+            if ch.isspace():
+                pos = skip_ws(pos)
+                continue
+            if pos >= len(chars) or chars[pos][0] != ch:
+                return []
+            pos += 1
+        if line_index < len(visual_lines) - 1:
+            cuts.append(pos)
+    if skip_ws(pos) != len(chars):
+        return []
+
+    out: list[Dict[str, Any]] = []
+    cut_set = set(cuts)
+    buffer = ""
+    buffer_op: Optional[int] = None
+    drop_ws = False
+
+    def flush() -> None:
+        nonlocal buffer, buffer_op
+        if buffer and buffer_op is not None:
+            out.append({**ops[buffer_op], "text": buffer})
+        buffer = ""
+
+    for index, (ch, op_index) in enumerate(chars):
+        if index in cut_set:
+            flush()
+            out.append({"type": "break"})
+            drop_ws = True
+        if ops[op_index].get("type") == "break":
+            flush()
+            out.append({"type": "break"})
+            drop_ws = True
+            continue
+        if drop_ws and ch.isspace():
+            continue
+        drop_ws = False
+        if buffer_op is not None and op_index != buffer_op:
+            flush()
+        buffer_op = op_index
+        buffer += ch
+    flush()
+    return out
+
+
 def wrap_rich_text_layout_ops(
     ops: list[Dict[str, Any]],
     max_width: float,
@@ -4815,8 +4887,10 @@ def build_wrapped_rich_text_span_layout(
     font_ascender: float,
     vertical_align: str = "top",
     fit_width: Optional[float] = None,
+    ops: Optional[list[Dict[str, Any]]] = None,
+    wrap_width: Optional[float] = None,
 ) -> list[Dict[str, Any]]:
-    ops = parse_rich_text_layout_ops(ann)
+    ops = ops if ops else parse_rich_text_layout_ops(ann)
     if not ops:
         return []
 
@@ -4824,7 +4898,7 @@ def build_wrapped_rich_text_span_layout(
     if _normalize_rich_text_compare_text(rendered_text) != _normalize_rich_text_compare_text(ann.get("text") or ""):
         return []
 
-    wrapped_lines = wrap_rich_text_layout_ops(ops, available_width)
+    wrapped_lines = wrap_rich_text_layout_ops(ops, wrap_width if wrap_width else available_width)
     if not wrapped_lines:
         return []
 
@@ -8245,7 +8319,10 @@ def resolve_text_fontfile(ann: Dict[str, Any]) -> Optional[str]:
     # (family, weight, italic) triple.
     target_weight = 700 if is_bold else 400
     materialized = _materialize_variable_font_instance(candidate, target_weight, italic=is_italic)
-    return materialized if materialized and os.path.exists(materialized) else candidate
+    resolved = materialized if materialized and os.path.exists(materialized) else candidate
+    # A face that aliases U+00A0 / U+00AD onto its space and hyphen glyphs
+    # extracts as no-break spaces and soft hyphens once written (NK_36).
+    return sanitized_font_file(resolved)
 
 
 def resolve_text_fontfile_with_coverage(ann: Dict[str, Any], text: str) -> Optional[str]:
@@ -8599,6 +8676,23 @@ def should_preserve_pdfjs_source_visual_spacing(ann: Dict[str, Any], text: str) 
     return bool(re.search(r" {2,}", normalized))
 
 
+def _pdfjs_overlay_was_resized(ann: Dict[str, Any], tolerance: float = 2.0) -> bool:
+    """True when a pdf.js overlay's box is no longer its captured source box
+    (width or height changed by more than the tolerance)."""
+    try:
+        cur_w = float(ann.get("pdfWidth") or 0.0)
+        cur_h = float(ann.get("pdfHeight") or 0.0)
+        src_w = float(ann.get("pdfjsSourceW") or 0.0)
+        src_h = float(ann.get("pdfjsSourceH") or 0.0)
+    except Exception:
+        return False
+    if cur_w <= 0 or src_w <= 0:
+        return False
+    if abs(cur_w - src_w) > tolerance:
+        return True
+    return cur_h > 0 and src_h > 0 and abs(cur_h - src_h) > tolerance and _boolish(ann.get("userSizedTextBox"))
+
+
 def should_preserve_pdfjs_moved_source_line(ann: Dict[str, Any], text: str) -> bool:
     if not _boolish(ann.get("movedTextOverlay")):
         return False
@@ -8610,6 +8704,11 @@ def should_preserve_pdfjs_moved_source_line(ann: Dict[str, Any], text: str) -> b
     # paragraph must reflow in its current box at the current font size; scaling
     # the old rows down is the exact mismatch seen in doc 4397 promoted_1_5.
     if _promoted_annotation_was_resized(ann):
+        return False
+    # The same holds for a single-row overlay the user resized after moving
+    # it: it wraps in the editor, and fitting the captured run into the
+    # narrower box drew it on one line at a third of its size (NK_37).
+    if _boolish(ann.get("userSizedTextBox")) or _pdfjs_overlay_was_resized(ann):
         return False
     # Captured span rectangles describe the original glyph metrics. Once the
     # user changes typography, fitting the new face back into those rectangles
@@ -10340,8 +10439,22 @@ def draw_text(
                 preview_available_width,
                 unwrapped_rich_width,
             )
+        # A user-sized pdf.js overlay shows the browser's own row breaks
+        # (pdfjsVisualLines); wrapping the runs again with MuPDF's metrics put
+        # "Form 1040, 1040-SR," on two rows the editor showed on one (NK_37).
+        rich_layout_wrap_width = rich_layout_available_width
+        if (
+            pdfjs_visual_lines
+            and rich_layout_text_matches
+            and not preserve_extracted_lines
+            and (_boolish(render_ann.get("userSizedTextBox")) or _pdfjs_overlay_was_resized(render_ann))
+        ):
+            forced_row_ops = _apply_pdfjs_visual_line_breaks(rich_layout_ops, pdfjs_visual_lines)
+            if forced_row_ops:
+                rich_layout_ops = forced_row_ops
+                rich_layout_wrap_width = 1_000_000_000.0
         rich_wrapped_lines = (
-            wrap_rich_text_layout_ops(rich_layout_ops, rich_layout_available_width)
+            wrap_rich_text_layout_ops(rich_layout_ops, rich_layout_wrap_width)
             if (
                 rich_layout_text_matches
                 and not preserve_extracted_lines
@@ -10401,6 +10514,8 @@ def draw_text(
                     if keep_rich_layout_unwrapped
                     else None
                 ),
+                ops=rich_layout_ops,
+                wrap_width=rich_layout_wrap_width,
             )
             rich_span_layout = apply_source_faces_to_rich_span_layout(render_ann, rich_span_layout)
             if rich_span_layout and draw_text_using_exact_source_spans(
