@@ -1,0 +1,562 @@
+{
+    "suite": {
+        "key": "existing-text",
+        "name": "Editing existing PDF text",
+        "tool_label": "Existing text",
+        "target_url": "/documents/{document}/edit-new?pdfjs=1",
+        "runner": "tests/AutomatedTests/SourceText/run_source_text_tests.cjs",
+        "inspector": "tests/AutomatedTests/SourceText/inspect_pdf.py",
+        "workspace": "My workspace",
+        "project": "Netkit",
+        "section": "Claude QA Agent",
+        "fixtures": [
+            "tests/OverlayEditor/invoicesample.pdf",
+            "tests/OverlayEditor/drylab.pdf",
+            "tests/OverlayEditor/f1040s1.pdf",
+            "tests/OverlayEditor/Isartor-Test-Suite4.pdf"
+        ],
+        "stories": [
+            {
+                "key": "existing-text",
+                "short": "Editing existing PDF text",
+                "task_gid": "1218255634880763",
+                "task_name": "[QA] - Editing existing PDF text (move, resize, edit, delete)",
+                "permalink": "https://app.asana.com/1/1212308168281465/project/1213292543986752/task/1218255634880763",
+                "instructions": [
+                    "Every case uploads one of the fixtures in tests/OverlayEditor as a fresh disposable document and opens it at edit-new?pdfjs=1 with Edit PDF on (the premium gate is bypassed by rewriting data-editor-authenticated in the page response)",
+                    "Only the document's own text is acted on with the annotation menu (move grip, Edit, Delete) and the right resize handle -- no Add Text, Shapes, Highlight, Draw, Sign or Image",
+                    "EVERY CASE HAS TWO COMPONENTS AND BOTH MUST PASS: A (items prefixed A:) checks the editor and records what it showed; B (items prefixed B:) downloads through the editor's own Download PDF path, reads the PDF back with PyMuPDF (inspect_pdf.py) and compares it against what A recorded and against the untouched baseline download of the same document",
+                    "Fonts are judged by family root: the embedded face, a bundled face of the same family, or the substitute config/font_substitutes.json maps it to; a single-span title may be fitted down by at most 10% to its source line (contract rule 7)",
+                    "Needs node with playwright and a python with PyMuPDF (PYTHON_BIN, the repo .venv, or python3); extraction runs through Horizon, so a case waits for its boxes to be promoted before acting"
+                ]
+            }
+        ],
+        "tests": [
+            {
+                "number": "01",
+                "id": "01-setup-and-baseline",
+                "gid": "1218255613000252",
+                "area": "Setup",
+                "title": "Setup: each fixture uploads, extracts and opens with its text promoted; the untouched download is the baseline",
+                "summary": "Precondition for the whole story: each fixture in tests/OverlayEditor uploads as a disposable document, extraction promotes its text into source boxes, Edit PDF turns on and the console stays clean. B downloads each untouched document and proves it equals the fixture page for page -- the baseline every later case compares against.",
+                "fixture": "all four",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255711058451",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255797402280",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "02",
+                "id": "02-select-and-enter-edit",
+                "gid": "1218255683922164",
+                "area": "Select",
+                "title": "Selecting existing text makes a source box on the glyph bounds; entering Edit changes nothing",
+                "summary": "Clicking existing text selects a source box (not a user text box) sitting on the glyph bounds with the fixture span's family and size captured. Entering Edit changes no size, moves nothing and creates no moved-source mask; Escape leaves the text alone. B: the download is identical to the baseline.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255797589706",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255729240499",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "03",
+                "id": "03-untouched",
+                "gid": "1218255683809457",
+                "area": "Select",
+                "title": "Untouched text is untouched: Edit on and off, save, download equals the baseline",
+                "summary": "Edit PDF on, off, Save: the save payload carries no changed, moved, deleted or user rows and no box is marked as an overlay. B: every page is byte-identical to the baseline and no promoted row was exported.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255711302646",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255797478525",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "04",
+                "id": "04-move-single-line",
+                "gid": "1218255635392298",
+                "area": "Move",
+                "title": "Move a single-line row: one solid mask equal to the source bbox, text keeps font, size and colour",
+                "summary": "Drag the invoice number row down with the annotation menu grip. A: the box becomes a moved overlay by the pointer distance in PDF points, keeps family, size and words, and one solid mask sits on the immutable source bbox within 0.25px. B: the string is found once where A put it, in A's family and size, the old bbox returns zero hits and reads as background, the rest of the page extracts unchanged.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255646412856",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255646580568",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "05",
+                "id": "05-move-paragraph",
+                "gid": "1218255626987387",
+                "area": "Move",
+                "title": "Move a multi-line paragraph: lines and runs travel with it, neighbours untouched",
+                "summary": "Drag the drylab welcome paragraph down. A: every line and run travels with it, one mask covers every source line, the title and strapline are untouched. B: the paragraph's lines extract at the new place with A's line breaks in Lato at 12pt, the old area is scrubbed, everything outside is identical.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255733447449",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255797622754",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "06",
+                "id": "06-move-out-of-cell",
+                "gid": "1218255626514468",
+                "area": "Move",
+                "title": "Move text out of a filled form cell: the mask repaints the cell dark, the text stays white",
+                "summary": "Drag the white 'Part I' out of its black cell along the band. A: the mask repaints the cell in its own dark colour with no white hole and the moved text keeps its white colour. B: the cell is still dark with the light glyphs gone, 'Part I' is found white at A's position in the source family or its configured substitute.",
+                "fixture": "f1040s1.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255729286014",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255711368820",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "07",
+                "id": "07-move-on-rules",
+                "gid": "1218255528240818",
+                "area": "Move",
+                "title": "Move text between tight rows: the mask stays inside its bbox, rules and neighbours intact",
+                "summary": "Drag line 1 of Schedule 1 right between tight rows. A: the mask stays inside the row's bbox and the old place shows no glyph ink; the neighbours are not moved, restyled or masked. B: the row is at A's position, adjacent rows are at their own bboxes, the ruling lines through the band are all still drawn.",
+                "fixture": "f1040s1.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255646436086",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255646561851",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "08",
+                "id": "08-moved-text-contract",
+                "gid": "1218255612937379",
+                "area": "Move",
+                "title": "Moved text in the download: old place scrubbed, found at the new place, rest unchanged",
+                "summary": "The moved-text contract on the invoice 'Subtotal': A records the moved text, its new box in PDF points and the mask rectangle. B: the old bbox has zero search hits and reads as background, the string sits at A's new bbox in the same face and size, every other span extracts unchanged.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255711366251",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255733189219",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "09",
+                "id": "09-resize-paragraph",
+                "gid": "1218255528107663",
+                "area": "Resize",
+                "title": "Resize a paragraph: reflow at the same size, the download reflows the same way",
+                "summary": "Drag the paragraph's right edge in. A: the text reflows into more lines at the same font size with every word kept; dragging back restores the original breaks. B: the download reflows exactly as the editor did at the narrow width, and after resizing back it breaks its lines where the editor does.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255797723305",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255797723315",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "10",
+                "id": "10-resize-title",
+                "gid": "1218255612926901",
+                "area": "Resize",
+                "title": "Resize a single-line title narrower: the type is not scaled, the export matches",
+                "summary": "Resize the invoice's 'Organic Items' header narrower than its text. A: the font size is not scaled and the overflow wraps rather than shrinking the type. B: the download lays the title out exactly as A showed, in the same bold face and size, with the rest of the page identical.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255797668880",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255711402694",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "11",
+                "id": "11-edit-title",
+                "gid": "1218255683577361",
+                "area": "Edit",
+                "title": "Edit a single-span title: exact source-line fitting in the original weight",
+                "summary": "Change 'DrylabNews' to 'DrylabNotes'. A: only that run changes, the box does not move, the size and family are kept. B: the replacement is found in the original bbox in Montserrat 700 (or its substitute), fitted down by at most 10% to the source line, 'DrylabNews' is gone, no missing-glyph boxes.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255711368833",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255733550423",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "12",
+                "id": "12-edit-word",
+                "gid": "1218255528240808",
+                "area": "Edit",
+                "title": "Edit a word inside a paragraph: runs and breaks kept, export matches",
+                "summary": "Change 'promise' to 'pledge' mid-paragraph. A: only that word changes, the line breaks and box geometry are kept. B: the paragraph extracts with exactly A's lines, 'promise' returns zero hits at the box, and the paragraph is in Lato at 12pt.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255646540401",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255733477626",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "13",
+                "id": "13-saved-text-is-truth",
+                "gid": "1218255626951382",
+                "area": "Edit",
+                "title": "Replacement text comes only from the saved annotation",
+                "summary": "Edit the invoice number then Save. A: the saved annotation text in the save payload equals what the box displays. B: the download extracts the saved text character for character and the original string has zero hits anywhere on the page.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255733540820",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255733578633",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "14",
+                "id": "14-font-close-no-boxes",
+                "gid": "1218255528218779",
+                "area": "Edit",
+                "title": "No boxes, close font: original family or its substitute at the original size and weight",
+                "summary": "Edit a HelveticaNeue row on f1040s1 and the Montserrat title on drylab. A: the browser draws each replacement in a real face at the source size with no missing-glyph box. B: each replacement uses the source family or its configured substitute (config/font_substitutes.json) at the source size and weight, no U+FFFD, ink coverage in the text range rather than a solid block.",
+                "fixture": "f1040s1.pdf + drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255797715793",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255711394330",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "15",
+                "id": "15-edit-on-form",
+                "gid": "1218255683770257",
+                "area": "Edit",
+                "title": "Edit on a form: substitution keeps size and weight, white-on-black renders, widgets untouched",
+                "summary": "Edit the FranklinGothic heading and the white 'Part I' on f1040s1. A: boxes keep position and size, 'Part I' stays white, the form widgets are still rendered. B: the replacements are found at their boxes in the family or substitute at the same size and weight, 'Part X' is white on the still-black cell, all widgets and their values are unchanged.",
+                "fixture": "f1040s1.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255733457140",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255797622768",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "16",
+                "id": "16-special-glyphs",
+                "gid": "1218255635214845",
+                "area": "Edit",
+                "title": "Special glyphs survive an edit of the neighbouring text (Isartor)",
+                "summary": "Edit the Verdana 'Version 1.0' line on Isartor. A: every other page-1 box keeps its place and face. B: 'Version 1.1' is at A's box in Verdana bold, the Symbol font is still on the page, every Symbol-font span outside the edited line keeps its characters and bbox, pages 2-20 are byte-identical.",
+                "fixture": "Isartor-Test-Suite4.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255711253277",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255733313939",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "17",
+                "id": "17-delete-scrubbed",
+                "gid": "1218255635214836",
+                "area": "Delete",
+                "title": "Delete is scrubbed: zero hits, absent from extraction, gone after reload",
+                "summary": "Delete the 'Watermelon' row, save, reload. A: the row disappears with no white box painted and does not re-spawn after reload. B: the deleted text has zero search hits and is absent from get_text(), the region reads as background, the neighbouring rows are still at their bboxes.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255733677273",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255797909236",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "18",
+                "id": "18-delete-on-form",
+                "gid": "1218255635206009",
+                "area": "Delete",
+                "title": "Delete on a form leaves the artwork and the widgets",
+                "summary": "Delete line 3 inside the f1040s1 grid. A: no white rectangle, the neighbours keep their text and place. B: the row's text has zero hits, the ruling lines through the band all still draw (fill-less redaction), no white-box artifact where the row's rule runs, the widgets are unchanged.",
+                "fixture": "f1040s1.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255711569809",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255797987353",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "19",
+                "id": "19-delete-tight-row",
+                "gid": "1218255683810472",
+                "area": "Delete",
+                "title": "Delete one row of a tight stack; the rows above and below stay",
+                "summary": "Delete line 2a, the middle of three tight rows. A: only it goes, the rows above and below keep text and position. B: the middle row has zero hits, the rows above and below extract at their own bboxes with the band's rules intact.",
+                "fixture": "f1040s1.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255711609057",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255729629851",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "20",
+                "id": "20-delete-sentence",
+                "gid": "1218255683734666",
+                "area": "Delete",
+                "title": "Delete a sentence inside a paragraph; the rest keeps its layout",
+                "summary": "Delete one sentence from the middle of the drylab paragraph. A: the sentence is gone, the rest is kept, the font size and box are unchanged. B: the deleted sentence returns zero hits, the paragraph extracts with exactly A's lines in Lato at 12pt.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255733704866",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255797998725",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "21",
+                "id": "21-background-untouched",
+                "gid": "1218255591723610",
+                "area": "Download",
+                "title": "The background is untouched on a download",
+                "summary": "Move the invoice total and record the touched bbox. B: every span outside it extracts identically to the baseline, images, widgets and embedded faces are all still there, and strips away from the box have the baseline's dark-pixel ratio within 0.01.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255729239188",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218261443989515",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "22",
+                "id": "22-only-affected-pages",
+                "gid": "1218255635205999",
+                "area": "Download",
+                "title": "Only affected pages are redrawn (drylab, Isartor)",
+                "summary": "One edit on page 1 of drylab and of Isartor. B: every other page is byte-identical to the baseline (content and text hashes), page 1 did change, and it changed only inside the edited bbox.",
+                "fixture": "drylab.pdf + Isartor-Test-Suite4.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218261443960826",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255797998737",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "23",
+                "id": "23-persistence",
+                "gid": "1218255683422340",
+                "area": "Persistence",
+                "title": "Move, resize, edit and delete survive save and reload, and download the same",
+                "summary": "A move, a resize, an edit and a delete, then Save and reload. A: each box comes back with the same geometry and text, the deleted row stays gone, the moved row's mask is still at the source bbox. B: the download after the reload matches the one before it.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255746599757",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255746524321",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "24",
+                "id": "24-undo-redo",
+                "gid": "1218255635232610",
+                "area": "Undo/Redo",
+                "title": "Undo and redo restore each state; the download after undo equals the baseline",
+                "summary": "Move, resize, edit, delete, then Undo until the stack empties and Redo until it refills. A: each original state is restored with no mask left behind, then every operation is re-applied. B: after the undos the download equals the baseline; after the redos it equals the download taken before the undos.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255729658628",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255798029762",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "25",
+                "id": "25-zoom",
+                "gid": "1218255635041911",
+                "area": "Zoom",
+                "title": "Zoom: geometry and masks hold at 50%, 100% and 190%; downloads are identical",
+                "summary": "After a move and an edit, step to the lowest zoom, about 100% and back to the highest. A: PDF-point geometry is unchanged at every level, the moved mask still equals the source bbox at that scale, the replacement stays in its box. B: the downloads at the lowest and highest zoom are identical and match A's geometry.",
+                "fixture": "invoicesample.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218255711677850",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218255729629728",
+                        "item_prefix": "B:"
+                    }
+                }
+            }
+        ]
+    }
+}
