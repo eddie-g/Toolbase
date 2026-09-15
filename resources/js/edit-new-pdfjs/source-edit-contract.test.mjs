@@ -4,6 +4,7 @@ import {
     annotationSelectionType,
     clampSourceMaskRectToCell,
     dominantSourceRunFontSize,
+    flattenedSourceGapText,
     insertPdfInlineSymbolsIntoText,
     isPdfInlineSymbolText,
     isPdfjsPromotedExtractionAnnotation,
@@ -793,4 +794,21 @@ test('keeps moved promoted source text as a visible persisted overlay', () => {
         pdfX: 13.88,
         pdfY: 266.93,
     }), true);
+});
+
+test('flattenedSourceGapText keeps text the user typed into a synthetic gap (NK_38)', () => {
+    // An untouched gap flattens to the canonical single space.
+    assert.equal(flattenedSourceGapText({ currentText: ' ', originalSpaceCount: 1 }), ' ');
+    assert.equal(flattenedSourceGapText({ currentText: '       ', originalSpaceCount: 7 }), ' ');
+    // A gap that only reproduced a line's indent contributes nothing.
+    assert.equal(flattenedSourceGapText({ atLineStart: true, currentText: '   ', originalSpaceCount: 3 }), null);
+    // Typing into the gap between "in" and "Łódź" must reach the flattened
+    // text, or the edit is judged a no-op and the fixed-width gap overflows.
+    assert.equal(flattenedSourceGapText({ currentText: ' 1838844', originalSpaceCount: 1 }), ' 1838844');
+    assert.equal(flattenedSourceGapText({ atLineStart: true, currentText: 'x', originalSpaceCount: 1 }), 'x');
+    // A gap emptied by the user is also a real change, not a separator.
+    assert.equal(flattenedSourceGapText({ currentText: '', originalSpaceCount: 1 }), '');
+    // A gap with no recorded count is untouched only while it holds no text.
+    assert.equal(flattenedSourceGapText({ currentText: '', originalSpaceCount: 0 }), ' ');
+    assert.equal(flattenedSourceGapText({ currentText: ' ', originalSpaceCount: 0 }), ' ');
 });

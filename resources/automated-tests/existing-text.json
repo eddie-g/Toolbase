@@ -556,6 +556,27 @@
                         "item_prefix": "B:"
                     }
                 }
+            },
+            {
+                "number": "26",
+                "id": "26-subset-font-word",
+                "gid": "1218522731008214",
+                "area": "Edit",
+                "title": "A word set from two subset fonts stays whole: \"Łódź\" reads as one word, text typed beside it flows, the export keeps one searchable word (drylab page 2)",
+                "summary": "drylab sets 'Łódź' as three touching runs from two Lato subsets. A: the row reads 'based in Łódź, the film capital' whole; the caret is placed inside the gap before the word and 'Lodz ' typed: the typed text sits before the word, the word's runs still touch, the rest of the row moves right instead of being painted over; the committed paragraph contains 'based in Lodz Łódź, the film capital of Poland. Two'. B: 'Łódź' is one searchable string inside the paragraph on page 2, no spaced fragments, 'Lodz' is found there, no missing glyphs, the rest of page 2 is untouched and pages 1 and 3 are byte-identical.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218522920153531",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218522867504551",
+                        "item_prefix": "B:"
+                    }
+                }
             }
         ]
     }

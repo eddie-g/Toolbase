@@ -82,6 +82,7 @@ import {
     annotationSelectionType,
     clampSourceMaskRectToCell,
     dominantSourceRunFontSize,
+    flattenedSourceGapText,
     insertPdfInlineSymbolsIntoText,
     isPdfInlineSymbolText,
     naturalSourceLineSeparator,
@@ -9647,8 +9648,17 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
             // the contenteditable root. If this input landed inside the synthetic
             // gap itself, its text now differs from the captured scaffold; retain
             // it verbatim so the user's first character is never overwritten.
+            // The caret can also sit INSIDE the gap: deleting a word that
+            // follows one ("Łódź" after "in ") leaves Chromium's caret after
+            // the gap's space, and preserveCollapsedCaretThroughMutation
+            // anchors it there with a marker element. Rewriting textContent
+            // or moving the gap would destroy that marker; the caret then
+            // falls back to the gap's start and the next character lands on
+            // the previous word ("based inL") (NK_38).
+            const caretMarker = gap.querySelector('[data-enpv-caret-marker="1"]');
             if (!userMutatedGap
                 && !atLineStart
+                && !caretMarker
                 && options.attachCanonicalGapsToFollowingRun === true
                 && next?.nodeType === Node.ELEMENT_NODE
                 && next.getAttribute?.('data-source-span-run') === '1') {
@@ -9661,7 +9671,18 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
                 gap.remove();
                 return;
             }
-            if (!userMutatedGap) gap.textContent = naturalizedGapText;
+            if (!userMutatedGap && currentGapText !== naturalizedGapText) {
+                if (caretMarker) {
+                    Array.from(gap.childNodes).forEach((child) => {
+                        if (child !== caretMarker) child.remove();
+                    });
+                    if (naturalizedGapText) {
+                        gap.insertBefore(document.createTextNode(naturalizedGapText), caretMarker);
+                    }
+                } else {
+                    gap.textContent = naturalizedGapText;
+                }
+            }
             gap.removeAttribute('data-source-span-gap');
             gap.removeAttribute('data-source-span-gap-spaces');
             gap.classList.remove('enpv-edit-gap');
@@ -9737,10 +9758,15 @@ function flattenedTextFromSourceSpanMarkup(box) {
         const prev = gap.previousSibling;
         const atLineStart = !prev
             || (prev.nodeType === Node.TEXT_NODE && /\n\s*$/.test(prev.nodeValue || ''));
-        if (atLineStart) {
+        const flattened = flattenedSourceGapText({
+            atLineStart,
+            currentText: gap.textContent || '',
+            originalSpaceCount: gap.dataset.sourceSpanGapSpaces || '0',
+        });
+        if (flattened === null) {
             gap.remove();
         } else {
-            gap.textContent = ' ';
+            gap.textContent = flattened;
         }
     });
     return String(clone.textContent || '');

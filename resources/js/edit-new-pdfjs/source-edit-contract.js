@@ -956,6 +956,24 @@ export function sourceNaturalizedGapText({
     return ' '.repeat(preserveCapturedSpacing ? capturedCount : 1);
 }
 
+// What a synthetic gap span contributes when the edit scaffold is flattened
+// back to plain text. An untouched gap is the canonical separator: one space,
+// or nothing at the start of a line where it only reproduced an indent. A gap
+// the user has typed into is real text and must survive verbatim: dropping it
+// made the edit look like a no-op, so the scaffold was never released and the
+// typed characters overflowed the gap's fixed width over the next run (NK_38).
+// Returns null when the gap contributes nothing.
+export function flattenedSourceGapText({
+    atLineStart = false,
+    currentText = '',
+    originalSpaceCount = 0,
+} = {}) {
+    const current = String(currentText || '');
+    const capturedCount = Math.max(0, Number.parseInt(String(originalSpaceCount || 0), 10) || 0);
+    if (current !== ' '.repeat(capturedCount)) return current;
+    return atLineStart ? null : ' ';
+}
+
 export function sourceRunTextsUseDistributedLeaderSpacing(runTexts, minimumRunCount = 3) {
     const minimum = Math.max(2, Number.parseInt(String(minimumRunCount || 3), 10) || 3);
     let consecutive = 0;

@@ -1592,6 +1592,134 @@ async function testZoom(ctx) {
 // Registry and runner
 // ---------------------------------------------------------------------------
 
+/**
+ * 26 — A word set from two subset fonts stays whole (drylab page 2, NK_38).
+ *
+ * drylab sets "Łódź" as "Ł" + "ód" + "ź": the accented letters come from a
+ * second Lato subset. PyMuPDF and pdf.js both start a new run at the font
+ * change, so the word reaches the editor as three touching runs. The
+ * extractor once joined every run with a space ("Ł ód ź ,"), the editor
+ * forced those spaces into its scaffold, text typed into the gap before the
+ * word overflowed a fixed-width gap over ", the film", and the download drew
+ * the word as fragments no search could find.
+ *
+ * The row is read from the box's text (its rows are separated by newlines),
+ * not through lineTexts(): that helper lists words per text node, so three
+ * touching runs would read as three words even when they render as one.
+ */
+async function testSubsetFontWordStaysWhole(ctx) {
+    const { page, recorder, testId } = ctx;
+    const { A, B } = recorder;
+    const PAGE = 1;
+    const rowOf = (id) => page.evaluate((wanted) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        const text = String(box?.querySelector('.enpv-text-content')?.textContent || '');
+        return (text.split('\n').find((row) => /film capital/.test(row)) || '').replace(/\s+/g, ' ').trim();
+    }, id);
+    const base = await baseline(page, testId);
+    // Page 2's boxes only render once the page has been scrolled into view.
+    await page.locator('.pdfViewer .page[data-page-number="2"]').scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('.enpv-annotation-box'))
+        .some((box) => /New team members/.test(box.textContent || '')), { timeout: 60000 });
+    await sleep(800);
+    const before = await findBox(page, (b) => b.promotedBlock && b.pageIndex === PAGE && b.text.startsWith('New team members'), 'drylab "New team members" paragraph');
+    const linesBefore = await lineTexts(page, before.id);
+    A.equals('row-reads-whole-word', await rowOf(before.id), 'based in Łódź, the film capital of Poland. Two', 'The row shows the word whole before any edit');
+    A.assert('no-phantom-spaces', !/Ł ód|ód ź|ź ,/.test(before.text), 'The block text carries no space inside the word or before the comma', before.text.split('\n')[2]);
+
+    // Type into the gap between "in" and the word, the way the report did:
+    // the caret sits inside the synthetic gap span, not inside a run.
+    await enterEdit(page, before.id);
+    const placed = await page.evaluate((wanted) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        const root = box?.querySelector('.enpv-text-content');
+        if (!root) return false;
+        const gap = Array.from(root.querySelectorAll('[data-source-span-gap="1"]'))
+            .find((el) => /^Ł/.test(String(el.nextSibling?.textContent || '')));
+        const target = gap?.lastChild;
+        if (!target || target.nodeType !== Node.TEXT_NODE) return false;
+        const range = document.createRange();
+        range.setStart(target, target.nodeValue.length);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        root.focus();
+        return true;
+    }, before.id);
+    A.assert('caret-in-gap', placed, 'The caret was placed inside the gap before the word');
+    await page.keyboard.type('Lodz ');
+    await sleep(300);
+    // The word spans three text nodes; measure its first and last letters.
+    const rects = await page.evaluate((wanted) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        const root = box.querySelector('.enpv-text-content');
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const found = {};
+        const probe = (node, needle, key) => {
+            const index = node.nodeValue.indexOf(needle);
+            if (index < 0 || found[key]) return;
+            const range = document.createRange();
+            range.setStart(node, index);
+            range.setEnd(node, index + needle.length);
+            const rect = range.getBoundingClientRect();
+            if (rect.width > 0) found[key] = { left: rect.left, right: rect.right, top: rect.top };
+        };
+        let node = walker.nextNode();
+        while (node) {
+            probe(node, 'Lodz', 'typed');
+            probe(node, 'Ł', 'wordStart');
+            probe(node, 'ód', 'wordMiddle');
+            probe(node, 'ź', 'wordEnd');
+            probe(node, ', the film', 'tail');
+            node = walker.nextNode();
+        }
+        return found;
+    }, before.id);
+    const { typed, wordStart, wordMiddle, wordEnd, tail } = rects;
+    A.assert('typed-text-measured', typed && wordStart && wordMiddle && wordEnd && tail, 'The typed text, the word and the rest of the row can all be measured', JSON.stringify(rects));
+    if (typed && wordStart && wordMiddle && wordEnd && tail) {
+        const sameRow = [wordStart, wordEnd, tail].every((r) => Math.abs(r.top - typed.top) <= 2);
+        A.assert('typed-text-does-not-overlap', sameRow && typed.right <= wordStart.left + 0.5 && wordEnd.right <= tail.left + 0.5,
+            'The typed text sits before the word and the rest of the row moved right instead of being painted over',
+            `typed ${typed.left.toFixed(1)}-${typed.right.toFixed(1)}, word ${wordStart.left.toFixed(1)}-${wordEnd.right.toFixed(1)}, tail from ${tail.left.toFixed(1)}`);
+        const seams = [wordMiddle.left - wordStart.right, wordEnd.left - wordMiddle.right];
+        A.assert('word-still-tight', seams.every((seam) => Math.abs(seam) <= 1.5),
+            'The three runs of the word still touch: no space opened between Ł, ód and ź', `seams ${seams.map((v) => v.toFixed(1)).join(', ')}px`);
+    }
+    await commitEdit(page);
+    const after = await boxById(page, before.id);
+    const rowAfter = await page.evaluate((wanted) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        return String(box?.querySelector('.enpv-text-content')?.textContent || '').replace(/\s+/g, ' ').trim();
+    }, after.id);
+    const linesAfter = await lineTexts(page, after.id);
+    // A committed paragraph flows as one text; the row is found inside it.
+    const EXPECTED_ROW = 'based in Lodz Łódź, the film capital of Poland. Two';
+    A.assert('row-after-typing', rowAfter.includes(EXPECTED_ROW), 'The committed paragraph holds the typed text and the whole word', `expected to contain ${JSON.stringify(EXPECTED_ROW)}, got ${JSON.stringify(rowAfter.slice(Math.max(0, rowAfter.indexOf('based in')), rowAfter.indexOf('based in') + 60))}`);
+    // "Lodz " makes the row longer, so its last word may wrap onto one new line.
+    A.assert('line-count-kept', linesAfter.length >= linesBefore.length && linesAfter.length <= linesBefore.length + 1, 'The paragraph keeps its lines (at most one wrap from the longer row)', `${linesBefore.length} -> ${linesAfter.length} lines`);
+    A.near('box-left-kept', after.pt.x, before.pt.x, 0.5, 'The box does not move');
+    A.near('box-top-kept', after.pt.y, before.pt.y, 0.5, 'The box does not move');
+    const artifacts = [await capture(page, testId, 'edited')];
+
+    const download = await downloadPdf(page, testId, 'edited');
+    const report = summarize(download.path);
+    const rect = expandRect(rectUnion(boxRect(before), boxRect(after)), 2);
+    const whole = searchCount(download.path, 'Łódź', PAGE);
+    B.assert('word-searchable', hitsInside(whole, rect, 1).length >= 1, '"Łódź" is found as one string inside the paragraph', `${whole.count} hits on the page`);
+    B.equals('no-split-word', searchCount(download.path, 'Ł ód', PAGE).count + searchCount(download.path, 'ód ź', PAGE).count, 0, 'The word is not drawn as spaced fragments');
+    const typedHits = searchCount(download.path, 'Lodz', PAGE);
+    B.assert('typed-text-found', hitsInside(typedHits, rect, 1).length >= 1, 'The typed text is found at the paragraph', `${typedHits.count} hits`);
+    const pdfText = lineTextsTouching(report.pages[PAGE], rect).join(' ');
+    B.assert('row-matches-editor', pdfText.includes(EXPECTED_ROW), 'The download reads the editor\'s row, wraps aside', `expected ${JSON.stringify(EXPECTED_ROW)} / download ${JSON.stringify(pdfText.slice(pdfText.indexOf('based in'), pdfText.indexOf('based in') + 70))}`);
+    const notdef = charsFiltered(charsAt(download.path, rect, PAGE), before.fontPts).notdef;
+    B.equals('no-missing-glyphs', notdef, 0, 'No glyph in the paragraph renders as a missing-glyph box');
+    checkBackgroundUntouched(B, base, report, rect, PAGE);
+    checkOtherPagesIdentical(B, base, report, PAGE);
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean), before, after, download, report, base };
+}
+
 const TESTS = [
     { id: '01-setup-and-baseline', number: '01', title: 'Setup: each fixture uploads, extracts and opens with its text promoted; the untouched download is the baseline', run: testSetup, fixture: null },
     { id: '02-select-and-enter-edit', number: '02', title: 'Selecting existing text makes a source box on the glyph bounds; entering Edit changes nothing', run: testSelectAndEnterEdit, fixture: 'invoice' },
@@ -1618,6 +1746,7 @@ const TESTS = [
     { id: '23-persistence', number: '23', title: 'Move, resize, edit and delete survive save and reload, and download the same', run: testPersistence, fixture: 'invoice' },
     { id: '24-undo-redo', number: '24', title: 'Undo and redo restore each state; the download after undo equals the baseline', run: testUndoRedo, fixture: 'invoice' },
     { id: '25-zoom', number: '25', title: 'Zoom: geometry and masks hold at 50%, 100% and 190%; downloads are identical', run: testZoom, fixture: 'invoice' },
+    { id: '26-subset-font-word', number: '26', title: 'A word set from two subset fonts stays whole: "Łódź" reads as one word, text typed beside it flows, the export keeps one searchable word (drylab page 2)', run: testSubsetFontWordStaysWhole, fixture: 'drylab' },
 ];
 
 function summarise(test, checks, artifacts, error, startedAt) {

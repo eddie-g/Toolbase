@@ -82,6 +82,39 @@ class ExtractPdfPyMuPdfTests(unittest.TestCase):
             font_size=9,
         ))
 
+    def test_span_text_separator_joins_adjacent_subset_font_spans(self):
+        # drylab page 2: "Łódź" is set as "Ł" (F5) + "ód" (F4) + "ź" (F5),
+        # three spans whose glyph boxes touch. No space belongs between them.
+        sep = self.module._span_text_separator
+        self.assertEqual(sep('Ł', (102.065, 549.4, 108.581, 563.8), 'ód', (108.581, 549.4, 121.961, 563.8), 12.0, (1.0, 0.0)), '')
+        self.assertEqual(sep('ód', (108.581, 549.4, 121.961, 563.8), 'ź', (121.961, 549.4, 127.505, 563.8), 12.0, (1.0, 0.0)), '')
+        # Hinting jitter on either side of zero is still one word.
+        self.assertEqual(sep('Ł', (100.0, 0.0, 108.5, 14.0), 'ód', (109.0, 0.0, 121.0, 14.0), 12.0, (1.0, 0.0)), '')
+        self.assertEqual(sep('Ł', (100.0, 0.0, 108.5, 14.0), 'ód', (108.0, 0.0, 121.0, 14.0), 12.0, (1.0, 0.0)), '')
+
+    def test_span_text_separator_keeps_real_word_gaps(self):
+        sep = self.module._span_text_separator
+        # A positioning gap the size of a space separates two words.
+        self.assertEqual(sep('based in', (56.7, 549.4, 99.0, 563.8), 'Ł', (102.065, 549.4, 108.581, 563.8), 12.0, (1.0, 0.0)), ' ')
+        # An explicit space in either span always separates them, even when
+        # the glyph boxes touch (the space advance is inside the first bbox).
+        self.assertEqual(sep('based in ', (56.7, 549.4, 102.1, 563.8), 'Ł', (102.065, 549.4, 108.581, 563.8), 12.0, (1.0, 0.0)), ' ')
+        self.assertEqual(sep('based in', (56.7, 549.4, 102.1, 563.8), ' Ł', (102.065, 549.4, 108.581, 563.8), 12.0, (1.0, 0.0)), ' ')
+        # Overlapping boxes are not consecutive glyph runs.
+        self.assertEqual(sep('abc', (100.0, 0.0, 130.0, 14.0), 'def', (110.0, 0.0, 140.0, 14.0), 12.0, (1.0, 0.0)), ' ')
+        # The first span of a line has nothing before it.
+        self.assertEqual(sep(None, None, 'Ł', (102.065, 549.4, 108.581, 563.8), 12.0, (1.0, 0.0)), '')
+        self.assertEqual(sep('', None, 'Ł', (102.065, 549.4, 108.581, 563.8), 12.0, (1.0, 0.0)), '')
+
+    def test_span_text_separator_falls_back_to_a_space_without_horizontal_geometry(self):
+        sep = self.module._span_text_separator
+        # Rotated lines: the x-gap is not the along-line gap, keep the old join.
+        self.assertEqual(sep('Ł', (102.0, 549.4, 108.5, 563.8), 'ód', (108.5, 549.4, 121.9, 563.8), 12.0, (0.0, -1.0)), ' ')
+        # Missing or malformed boxes keep the old join too.
+        self.assertEqual(sep('Ł', None, 'ód', (108.5, 549.4, 121.9, 563.8), 12.0, (1.0, 0.0)), ' ')
+        self.assertEqual(sep('Ł', (102.0, 549.4), 'ód', (108.5, 549.4, 121.9, 563.8), 12.0, (1.0, 0.0)), ' ')
+        self.assertEqual(sep('Ł', (102.0, 549.4, 'x', 563.8), 'ód', (108.5, 549.4, 121.9, 563.8), 12.0, (1.0, 0.0)), ' ')
+
     def test_x_gap_split_keeps_stacked_same_column_lines_in_one_group(self):
         candidate = [
             {
