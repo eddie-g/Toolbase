@@ -598,6 +598,27 @@
                         "item_prefix": "B:"
                     }
                 }
+            },
+            {
+                "number": "28",
+                "id": "28-selection-font-download",
+                "gid": "1218532775730362",
+                "area": "Edit",
+                "title": "A font chosen for a selection reaches the download: the sentence is drawn in Georgia, the rest stays in Lato, the bold lead-in keeps its face (drylab page 2)",
+                "summary": "Select 'Return customer rate is now 80%,' in the 'Sales:' paragraph and pick Georgia. A: the selection renders in Georgia, the rest keeps Lato, the run survives the commit and is saved with fontFamily Georgia. B: on page 2 the sentence's glyphs are in Georgia or its serif substitute at 12pt, 'proving value and willingness' stays in the source Lato face, 'Sales:' is in a bold Montserrat face, no missing glyphs, the rest of page 2 is untouched and pages 1 and 3 are byte-identical.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218532773801462",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218532867337070",
+                        "item_prefix": "B:"
+                    }
+                }
             }
         ]
     }

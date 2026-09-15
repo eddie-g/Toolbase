@@ -1808,6 +1808,91 @@ async function testEnterInReflowedParagraph(ctx) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean), before, after, download, report, base };
 }
 
+/**
+ * 28 — A font chosen for a selection reaches the download (drylab page 2, NK_40).
+ *
+ * The editor wrapped the selection in a Georgia span and saved it as a rich
+ * run, but the exporter's wrapped layout dropped the run's "explicit family"
+ * flag, so the source-face pass put the paragraph's Lato back on every run
+ * and the download showed no change at all. The bold "Sales:" lead-in, a
+ * variable-font instance named "MontserratThin_700wght", also came back in a
+ * regular Montserrat because its weight axis was not read as bold.
+ */
+async function testSelectionFontReachesDownload(ctx) {
+    const { page, recorder, testId } = ctx;
+    const { A, B } = recorder;
+    const PAGE = 1;
+    const NEEDLE = 'Return customer rate is now 80%,';
+    const base = await baseline(page, testId);
+    await page.locator('.pdfViewer .page[data-page-number="2"]').scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('.enpv-annotation-box'))
+        .some((box) => /Return customer rate/.test(box.textContent || '')), { timeout: 60000 });
+    await sleep(800);
+    const before = await findBox(page, (b) => b.promotedBlock && b.pageIndex === PAGE && b.text.startsWith('Sales:'), 'drylab "Sales:" paragraph');
+    await enterEdit(page, before.id);
+    A.equals('selection', await selectTextRange(page, before.id, NEEDLE), NEEDLE, 'The sentence is selected inside the paragraph');
+    await page.selectOption('#afb-font', 'Georgia');
+    await sleep(500);
+    const runFont = (needle) => page.evaluate(({ wanted, needle }) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        const walker = document.createTreeWalker(box.querySelector('.enpv-text-content'), NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (node.nodeValue.includes(needle)) return window.getComputedStyle(node.parentElement).fontFamily;
+        }
+        return null;
+    }, { wanted: before.id, needle });
+    A.assert('selection-in-georgia', /georgia/i.test(String(await runFont(NEEDLE))), 'The selected sentence renders in Georgia', await runFont(NEEDLE));
+    A.assert('rest-keeps-source-face', /lato/i.test(String(await runFont('proving value'))), 'The rest of the paragraph keeps its Lato face', await runFont('proving value'));
+    await commitEdit(page);
+    const after = await boxById(page, before.id);
+    A.assert('selection-kept-after-commit', /georgia/i.test(String(await runFont(NEEDLE))), 'The Georgia run survives the commit');
+    A.near('box-left-kept', after.pt.x, before.pt.x, 0.5, 'The box does not move');
+    A.near('box-top-kept', after.pt.y, before.pt.y, 0.5, 'The box does not move');
+    const artifacts = [await capture(page, testId, 'edited')];
+
+    const download = await downloadPdf(page, testId, 'edited');
+    const savedRun = ((download.payload.annotations || []).find((a) => a.id === before.id)?.richTextRuns || [])
+        .find((run) => run.type === 'text' && String(run.text || '').includes('Return customer'));
+    A.equals('saved-run-family', savedRun?.fontFamily || null, 'Georgia', 'The saved rich run names Georgia');
+    const report = summarize(download.path);
+    const rect = expandRect(rectUnion(boxRect(before), boxRect(after)), 2);
+    const hits = searchCount(download.path, NEEDLE, PAGE);
+    const hit = hitsInside(hits, rect, 1)[0] || null;
+    B.assert('sentence-found', !!hit, 'The sentence is found inside the paragraph', `${hits.count} hits`);
+    // Fonts of the visible glyphs of one search hit: the hit rect is inset so a
+    // neighbouring run's space glyph is not sampled with it.
+    const glyphFonts = (hitRect, sizePt) => {
+        const chars = charsFiltered(charsAt(download.path, [hitRect[0] + 1, hitRect[1] + 1, hitRect[2] - 1, hitRect[3] - 1], PAGE), sizePt);
+        const visible = (chars.chars || []).filter((ch) => String(ch.c || '').trim());
+        return { fonts: Array.from(new Set(visible.map((ch) => ch.font))).sort(), sizes: Array.from(new Set(visible.map((ch) => ch.size))) };
+    };
+    if (hit) {
+        const glyphs = glyphFonts(hit, before.fontPts);
+        // Georgia is not bundled; the exporter draws it with Liberation Serif.
+        B.assert('sentence-in-georgia', glyphs.fonts.length > 0 && glyphs.fonts.every((font) => fontMatches(font, 'Georgia') || /georgia|liberationserif/i.test(font)),
+            'The sentence is drawn in Georgia or its serif substitute', JSON.stringify(glyphs.fonts));
+        B.assert('sentence-at-size', glyphs.sizes.every((size) => Math.abs(size - before.fontPts) <= SIZE_TOL), 'The sentence keeps the source size', JSON.stringify(glyphs.sizes));
+    }
+    const restHits = searchCount(download.path, 'proving value and willingness', PAGE);
+    const restHit = hitsInside(restHits, rect, 1)[0] || null;
+    if (restHit) {
+        const glyphs = glyphFonts(restHit, before.fontPts);
+        B.assert('rest-in-source-face', glyphs.fonts.length > 0 && glyphs.fonts.every((font) => fontMatches(font, before.sourceFont)), 'The rest of the paragraph stays in the source face', JSON.stringify(glyphs.fonts));
+    }
+    const leadHits = searchCount(download.path, 'Sales:', PAGE);
+    const leadHit = hitsInside(leadHits, rect, 1)[0] || null;
+    if (leadHit) {
+        const glyphs = glyphFonts(leadHit, 11.5);
+        B.assert('lead-in-bold-montserrat', glyphs.fonts.length > 0 && glyphs.fonts.every((font) => /montserrat/i.test(font) && isBold(font)),
+            'The "Sales:" lead-in keeps its bold Montserrat face', JSON.stringify(glyphs.fonts));
+    }
+    B.equals('no-missing-glyphs', charsFiltered(charsAt(download.path, rect, PAGE), before.fontPts).notdef, 0, 'No glyph in the paragraph renders as a missing-glyph box');
+    checkBackgroundUntouched(B, base, report, rect, PAGE);
+    checkOtherPagesIdentical(B, base, report, PAGE);
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean), before, after, download, report, base };
+}
+
 const TESTS = [
     { id: '01-setup-and-baseline', number: '01', title: 'Setup: each fixture uploads, extracts and opens with its text promoted; the untouched download is the baseline', run: testSetup, fixture: null },
     { id: '02-select-and-enter-edit', number: '02', title: 'Selecting existing text makes a source box on the glyph bounds; entering Edit changes nothing', run: testSelectAndEnterEdit, fixture: 'invoice' },
@@ -1836,6 +1921,7 @@ const TESTS = [
     { id: '25-zoom', number: '25', title: 'Zoom: geometry and masks hold at 50%, 100% and 190%; downloads are identical', run: testZoom, fixture: 'invoice' },
     { id: '26-subset-font-word', number: '26', title: 'A word set from two subset fonts stays whole: "Łódź" reads as one word, text typed beside it flows, the export keeps one searchable word (drylab page 2)', run: testSubsetFontWordStaysWhole, fixture: 'drylab' },
     { id: '27-enter-in-reflowed-paragraph', number: '27', title: 'Enter inside a re-flowed paragraph: the breaks survive the commit and the download reflows with them instead of squeezing each paragraph onto one row (drylab page 2)', run: testEnterInReflowedParagraph, fixture: 'drylab' },
+    { id: '28-selection-font-download', number: '28', title: 'A font chosen for a selection reaches the download: the sentence is drawn in Georgia, the rest stays in Lato, the bold lead-in keeps its face (drylab page 2)', run: testSelectionFontReachesDownload, fixture: 'drylab' },
 ];
 
 function summarise(test, checks, artifacts, error, startedAt) {
