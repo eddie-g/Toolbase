@@ -1407,6 +1407,41 @@ def _apply_line_direction_text_order(text, line_dir):
     return text
 
 
+def _span_text_separator(previous_text, previous_bbox, text, bbox, font_size, line_dir=None):
+    """
+    The separator to write between two consecutive spans of one line.
+
+    PyMuPDF starts a new span whenever the font changes, so one word set from
+    two subset faces arrives as adjacent spans with no gap between their glyph
+    boxes: drylab's "Łódź" is "Ł" + "ód" + "ź" (NK_38). Joining every span
+    with a space turned that word into "Ł ód ź" in the block text, and the
+    editor then forced those spaces into its edit scaffold. Only a real
+    inter-word gap separates two spans: a space character in either text, or
+    a horizontal gap wide enough to be a space. Rotated lines and spans
+    without geometry keep the space, as before.
+    """
+    if not previous_text:
+        return ''
+    if previous_text[-1:].isspace() or text[:1].isspace():
+        return ' '
+    if line_dir and len(line_dir) >= 2 and abs(float(line_dir[1] or 0.0)) > 1e-3:
+        return ' '
+    if not previous_bbox or not bbox or len(previous_bbox) < 4 or len(bbox) < 4:
+        return ' '
+    try:
+        gap = float(bbox[0]) - float(previous_bbox[2])
+        size = float(font_size or 0.0)
+    except (TypeError, ValueError):
+        return ' '
+    # Half of a typical space advance (about 0.25em). A mid-word split sits
+    # at zero, plus or minus hinting; spans that overlap by more than this
+    # are not consecutive glyph runs and keep the space.
+    threshold = max(0.35, size * 0.12)
+    if -threshold <= gap <= threshold:
+        return ''
+    return ' '
+
+
 def _split_gap_separated_span_words(text, bbox, word_data, page_pymupdf_words, has_drawn_underline):
     """
     Split a single extracted span into sub-word entries when the PDF encoded
@@ -5642,6 +5677,8 @@ def extract_text_with_pymupdf(pdf_path):
                             line_rotation = _line_rotation_degrees(line_dir)
                             line_text = ""
                             line_bbox = item['bbox']
+                            previous_span_text = None
+                            previous_span_bbox = None
 
                             line_spans = []
                             line_style = None
@@ -5973,6 +6010,13 @@ def extract_text_with_pymupdf(pdf_path):
                                         has_drawn_underline,
                                     )
 
+                                # Every span leaves one trailing space for the next one;
+                                # drop it when this span continues the previous glyph run
+                                # (a font change inside a word, see _span_text_separator).
+                                if line_text and not _span_text_separator(
+                                    previous_span_text, previous_span_bbox, text, bbox, size, line_dir,
+                                ):
+                                    line_text = line_text[:-1] if line_text.endswith(' ') else line_text
                                 if split_entries:
                                     for se in split_entries:
                                         if se.get('is_link'):
@@ -5989,6 +6033,8 @@ def extract_text_with_pymupdf(pdf_path):
                                     page_words.append(word_data)
                                     block_word_bboxes.append(bbox)
                                     line_text += text + " "
+                                previous_span_text = text
+                                previous_span_bbox = bbox
                                 total_words += len(text.split())
 
                             synthetic_link_span = None
