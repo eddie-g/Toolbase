@@ -2377,6 +2377,69 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             )
         )
 
+    def test_face_name_weight_axis_counts_as_bold(self):
+        # drylab's bold lead-in is a variable-font instance named by its
+        # weight axis; the editor reports its run weight as 400 (NK_40).
+        self.assertTrue(self.module._face_name_is_bold("MontserratThin_700wght"))
+        self.assertTrue(self.module._face_name_is_bold("PXAAAB+MontserratThin_700wght"))
+        self.assertFalse(self.module._face_name_is_bold("MontserratThin_300wght"))
+        self.assertFalse(self.module._face_name_is_bold("Montserrat-Thin"))
+        self.assertFalse(self.module._face_name_is_bold("PdbpbbLato-Regular"))
+        self.assertTrue(self.module._face_name_is_bold("HelveticaNeueLTStd-Bd"))
+        ops = self.module.parse_rich_text_layout_ops({
+            "text": "Sales: x", "richTextVersion": 2,
+            "richTextRuns": [
+                {"type": "text", "text": "Sales:", "fontFamily": "MontserratThin_700wght", "fontSourceName": "MontserratThin_700wght", "fontSize": 11.5, "fontWeight": "400"},
+                {"type": "text", "text": " x", "fontFamily": "PdbpbbLato-Regular", "fontSize": 12},
+            ],
+        })
+        self.assertEqual(ops[0].get("font_weight"), "700")
+
+    def test_font_chosen_for_a_selection_survives_the_wrapped_promoted_layout(self):
+        # NK_40: drylab promoted_2_1, "Return customer rate is now 80%,"
+        # selected and set to Georgia. The wrapped rich layout dropped the
+        # run's font_family_explicit flag, so apply_source_faces_to_rich_span_layout
+        # put the source face (PdbpbbLato-Regular) back on every run and the
+        # download showed no font change at all.
+        annotation = {
+            "promotedFromExtraction": True, "promotedDirty": True, "styleDirty": True,
+            "preserveSourceTypography": True, "userForcedRichText": True,
+            "fontFamily": "Lato", "fontSourceName": "PdbpbbLato-Regular", "fontSize": 12, "fontWeight": "400",
+            "text": "Sales: Return customer rate is now 80%, proving value",
+            "richTextVersion": 2,
+            "richTextRuns": [
+                {"type": "text", "text": "Sales:", "fontFamily": "MontserratThin_700wght", "fontSourceName": "MontserratThin_700wght", "fontSize": 11.5, "fontWeight": "700"},
+                {"type": "text", "text": " ", "fontFamily": "PdbpbbLato-Regular", "fontSourceName": "PdbpbbLato-Regular", "fontSize": 12},
+                {"type": "text", "text": "Return customer rate is now 80%,", "fontFamily": "Georgia", "fontSourceName": "Georgia", "fontSize": 12},
+                # A run that names no family of its own (older payloads).
+                {"type": "text", "text": " proving value", "fontSize": 12},
+            ],
+            "sourceSpans": [
+                {"text": "Sales:", "font": "MontserratThin_700wght", "embedded_font_name": "MontserratThin_700wght", "embedded_font_family": "MontserratThin", "fontSize": 11.5, "fontWeight": "700", "bbox": [56.7, 119.4, 90.6, 130.9]},
+                {"text": "Return customer rate is now 80%,", "font": "PdbpbbLato-Regular", "embedded_font_name": "PdbpbbLato-Regular", "embedded_font_family": "PdbpbbLato", "fontSize": 12, "fontWeight": "400", "bbox": [90.6, 119.4, 269.3, 130.9]},
+            ],
+        }
+        ops = self.module.parse_rich_text_layout_ops(annotation)
+        georgia_ops = [op for op in ops if op.get("font_family") == "Georgia"]
+        self.assertTrue(georgia_ops and all(op.get("font_family_explicit") for op in georgia_ops))
+
+        wrapped = self.module.wrap_rich_text_layout_ops(ops, 1_000_000.0)
+        wrapped_runs = [run for line in wrapped for run in line]
+        georgia_runs = [run for run in wrapped_runs if run.get("font_family") == "Georgia"]
+        self.assertTrue(georgia_runs, [run.get("font_family") for run in wrapped_runs])
+        self.assertTrue(all(run.get("font_family_explicit") for run in georgia_runs))
+
+        layout = [{
+            "rect": fitz.Rect(56, 119, 300, 131),
+            "spans": [{**run, "rect": fitz.Rect(56, 119, 100, 131)} for run in wrapped_runs],
+        }]
+        repaired = self.module.apply_source_faces_to_rich_span_layout(annotation, layout)
+        faces = [(span.get("text"), span.get("font_family")) for span in repaired[0]["spans"]]
+        self.assertIn(("Return customer rate is now 80%,", "Georgia"), faces)
+        self.assertIn(("Sales:", "MontserratThin_700wght"), faces)
+        # A run that named no family of its own still adopts the source face.
+        self.assertIn((" proving value", "PdbpbbLato"), faces)
+
     def test_should_preserve_promoted_source_lines_reflowed_paragraph_with_enter_reflows(self):
         # NK_39: drylab promoted_2_1 had been re-flowed into prose
         # (promotedReflowEnabled, promotedDirty). Pressing Enter after "new"
