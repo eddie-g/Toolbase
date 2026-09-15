@@ -2377,6 +2377,57 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
             )
         )
 
+    def test_should_preserve_promoted_source_lines_reflowed_paragraph_with_enter_reflows(self):
+        # NK_39: drylab promoted_2_1 had been re-flowed into prose
+        # (promotedReflowEnabled, promotedDirty). Pressing Enter after "new"
+        # and after "customers" left three user paragraphs in the text. The
+        # dirty-rows rule fitted each paragraph into one captured 12pt row:
+        # 10pt across the whole page. User paragraphs are not source rows.
+        source_lines = [
+            "Sales:  Return customer rate is now 80%,",
+            "proving value and willingness to pay. Film",
+            "Factory Montreal is our first customer in",
+            "Canada. Lumiere Numeriques have started",
+            "using us in France. We also have new",
+            "customers in Norway, and high-profile users",
+            "such as Gareth Unwin, producer of Oscar-",
+            "winning The King's Speech. Revenue for the",
+            "first four months is 200 kNOK, compared to",
+            "339 kNOK for all of 2016. We are working",
+            "on a partnership to safeguard sales in",
+            "Norway while beginning to focus more on",
+            "the US.",
+        ]
+        annotation = {
+            "promotedFromExtraction": True,
+            "promotedDirty": True,
+            "promotedReflowEnabled": True,
+            "pdfWidth": 229.11, "pdfHeight": 204.47,
+            "sourceBlockWidth": 228.42, "sourceBlockHeight": 213.03,
+            "sourceLineBBoxes": [[56.7, 119.4 + 16.75 * index, 285.0, 130.9 + 16.75 * index] for index in range(13)],
+            "sourceTextLines": source_lines,
+        }
+        paragraphs = (
+            "Sales: Return customer rate is now 80%, proving value and willingness to pay. Film Factory Montreal "
+            "is our first customer in using us in France. We also have new\n\ncustomers\nin Norway, and high-profile "
+            "users such as Gareth Unwin, producer of Oscar-winning The King's Speech. Revenue for the first four "
+            "months is 200 kNOK, compared to 339 kNOK for all of 2016."
+        )
+        self.assertFalse(self.module._promoted_annotation_was_resized(annotation))
+        self.assertFalse(self.module._text_lines_follow_source_rows(paragraphs.split("\n"), source_lines))
+        self.assertFalse(self.module.should_preserve_promoted_source_lines(annotation, paragraphs))
+
+        # A re-flowed block whose text still reads row by row (one edited
+        # word, NK_31) keeps the exact-row export.
+        rows_kept = "\n".join(
+            line.replace("high-profile", "well-known") if index == 5 else line
+            for index, line in enumerate(source_lines)
+        )
+        self.assertTrue(self.module._text_lines_follow_source_rows(rows_kept.split("\n"), source_lines))
+        self.assertTrue(self.module.should_preserve_promoted_source_lines(annotation, rows_kept))
+        # Without the reflow flag the dirty-rows rule is unchanged.
+        self.assertTrue(self.module.should_preserve_promoted_source_lines({**annotation, "promotedReflowEnabled": False}, paragraphs))
+
     def test_should_preserve_promoted_source_lines_rejects_multiline_text_against_single_source_line(self):
         annotation = {
             "promotedFromExtraction": True,

@@ -577,6 +577,27 @@
                         "item_prefix": "B:"
                     }
                 }
+            },
+            {
+                "number": "27",
+                "id": "27-enter-in-reflowed-paragraph",
+                "gid": "1218532048457936",
+                "area": "Edit",
+                "title": "Enter inside a re-flowed paragraph: the breaks survive the commit and the download reflows with them instead of squeezing each paragraph onto one row (drylab page 2)",
+                "summary": "Resize the 'Sales:' paragraph narrower and back so it re-flows into prose, then press Enter after 'new' and after 'customers'. A: the committed and saved text carry the two breaks with no zero-width anchors, the box does not move. B: on page 2 the row ending 'We also have new' is followed by a row reading exactly 'customers' then one starting 'in Norway'; every character is 12pt and no row runs past the box; the rest of page 2 is untouched and pages 1 and 3 are byte-identical.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218532153751518",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218532185004316",
+                        "item_prefix": "B:"
+                    }
+                }
             }
         ]
     }

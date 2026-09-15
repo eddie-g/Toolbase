@@ -974,6 +974,24 @@ export function flattenedSourceGapText({
     return atLineStart ? null : ' ';
 }
 
+// Plain text of a re-flowed promoted paragraph (the pdfe-style paragraph
+// surface, `promotedParagraphFlow`). Its DOM newlines are soft: the browser
+// wraps the prose itself, so they collapse to spaces. The one exception is
+// the editor's own Enter, which inserts "\n" followed by a zero-width caret
+// anchor: that is a hard break the user typed, and it must survive as a
+// newline. Collapsing it to a space put "customers" back into the running
+// text on export and leaked the anchor into the saved text (NK_39).
+export function collapsePromotedParagraphPlainText(value) {
+    const HARD_BREAK = '\u0000';
+    return String(value || '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/\n\u200b/g, HARD_BREAK)
+        .replace(/[ \t]*\n[ \t]*/g, ' ')
+        .replace(/[\u200b\u200c\u200d\u2060\ufeff]/g, '')
+        .replace(/[ \t]*\u0000[ \t]*/g, '\n')
+        .replace(/\n{3,}/g, '\n\n');
+}
+
 export function sourceRunTextsUseDistributedLeaderSpacing(runTexts, minimumRunCount = 3) {
     const minimum = Math.max(2, Number.parseInt(String(minimumRunCount || 3), 10) || 3);
     let consecutive = 0;

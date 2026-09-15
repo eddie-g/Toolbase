@@ -81,6 +81,7 @@ import { installSignatureFeature, isSignatureAnnotation } from './signature.js';
 import {
     annotationSelectionType,
     clampSourceMaskRectToCell,
+    collapsePromotedParagraphPlainText,
     dominantSourceRunFontSize,
     flattenedSourceGapText,
     insertPdfInlineSymbolsIntoText,
@@ -4069,7 +4070,7 @@ function textContentForBox(box) {
     const text = preserveLineBreaks ? plainTextFromRichTextElement(tc) : String(tc?.textContent ?? '');
     return preserveLineBreaks
         ? normalizeRichPlainText(text)
-        : String(text).replace(/[ \t]*\r?\n[ \t]*/g, ' ');
+        : collapsePromotedParagraphPlainText(text);
 }
 
 function plainTextFromRichTextElement(root) {

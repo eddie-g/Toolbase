@@ -17,7 +17,7 @@ import re
 import sys
 import unicodedata
 from html.parser import HTMLParser
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import fitz
@@ -3627,6 +3627,25 @@ def _promoted_annotation_was_resized(ann: Dict[str, Any]) -> bool:
     return False
 
 
+def _text_lines_follow_source_rows(text_lines: List[str], raw_source_lines: Any) -> bool:
+    """True when the annotation's text still reads row by row like the
+    captured source block: all but one of its non-blank lines equal a source
+    row (an edited word changes at most one row). A single line, or lines
+    that are the user's own paragraphs, do not follow the rows."""
+    if not isinstance(raw_source_lines, list) or not raw_source_lines:
+        return False
+    source_rows = {
+        " ".join(str(line or "").split())
+        for line in raw_source_lines
+        if str(line or "").strip()
+    }
+    candidate_lines = [" ".join(str(line or "").split()) for line in text_lines if str(line or "").strip()]
+    if len(candidate_lines) < 2:
+        return False
+    matched = sum(1 for line in candidate_lines if line in source_rows)
+    return matched >= len(candidate_lines) - 1
+
+
 def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> bool:
     if not bool(ann.get("promotedFromExtraction")):
         return False
@@ -3650,6 +3669,18 @@ def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> boo
 
     if source_line_count <= 0:
         return True
+
+    # A paragraph the editor has re-flowed into prose no longer carries the
+    # PDF's rows in its text: its newlines are the user's own paragraph
+    # breaks (Enter). Mapping those chunks onto the captured rows fitted
+    # "Sales: ... We also have new" into the first 12pt row at 10pt across the
+    # whole page (drylab promoted_2_1, NK_39). Only text whose lines still
+    # spell the source rows may take the exact-row path.
+    if (
+        bool(ann.get("promotedReflowEnabled"))
+        and not _text_lines_follow_source_rows(normalized_text_lines, raw_source_lines)
+    ):
+        return False
 
     if (
         bool(ann.get("promotedDirty"))

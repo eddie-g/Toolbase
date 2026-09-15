@@ -1720,6 +1720,94 @@ async function testSubsetFontWordStaysWhole(ctx) {
     return { checks: recorder.checks, artifacts: artifacts.filter(Boolean), before, after, download, report, base };
 }
 
+/**
+ * 27 — Enter inside a re-flowed paragraph (drylab page 2, NK_39).
+ *
+ * Once a promoted paragraph has been re-flowed into prose (here by resizing
+ * it narrower and back), its newlines are the user's own paragraph breaks.
+ * The exporter used to map each of those paragraphs onto one captured source
+ * row and fit it there: "Sales: ... We also have new" at 10pt across the
+ * whole page. The editor also dropped the breaks from a user-sized
+ * paragraph's saved text and leaked the Enter marker's zero-width anchor.
+ */
+async function testEnterInReflowedParagraph(ctx) {
+    const { page, recorder, testId } = ctx;
+    const { A, B } = recorder;
+    const PAGE = 1;
+    const base = await baseline(page, testId);
+    await page.locator('.pdfViewer .page[data-page-number="2"]').scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('.enpv-annotation-box'))
+        .some((box) => /Return customer rate/.test(box.textContent || '')), { timeout: 60000 });
+    await sleep(800);
+    const before = await findBox(page, (b) => b.promotedBlock && b.pageIndex === PAGE && b.text.startsWith('Sales:'), 'drylab "Sales:" paragraph');
+    // Narrower and back: the rows re-flow into prose at the original width.
+    const narrowed = await resizeBoxRight(page, before.id, -80);
+    const restored = await resizeBoxRight(page, before.id, 80);
+    A.near('width-restored', restored.pt.w, before.pt.w, 1.5, 'The box is back at its original width after the two drags', `${narrowed.pt.w.toFixed(1)} -> ${restored.pt.w.toFixed(1)} pt`);
+    const reflowed = await page.evaluate((wanted) => document.querySelector(`.enpv-annotation-box[data-annotation-id="${wanted}"]`)?.dataset?.promotedReflowEnabled === '1', before.id);
+    A.assert('paragraph-reflowed', reflowed, 'The paragraph is in re-flowed prose (promotedReflowEnabled)');
+
+    await enterEdit(page, before.id);
+    const caretAfter = (needle) => page.evaluate(({ wanted, needle }) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        const root = box?.querySelector('.enpv-text-content');
+        if (!root) return false;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            const index = node.nodeValue.indexOf(needle);
+            if (index < 0) continue;
+            const range = document.createRange();
+            range.setStart(node, index + needle.length);
+            range.collapse(true);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            root.focus();
+            return true;
+        }
+        return false;
+    }, { wanted: before.id, needle });
+    A.assert('caret-after-new', await caretAfter('We also have new'), 'The caret was placed after "new"');
+    await page.keyboard.press('Enter');
+    await sleep(250);
+    A.assert('caret-after-customers', await caretAfter('customers'), 'The caret was placed after "customers"');
+    await page.keyboard.press('Enter');
+    await sleep(250);
+    await commitEdit(page);
+    const after = await boxById(page, before.id);
+    const saved = await page.evaluate((wanted) => {
+        const box = document.querySelector(`.enpv-annotation-box[data-annotation-id="${wanted}"]`);
+        return String(box?.querySelector('.enpv-text-content')?.textContent || '');
+    }, before.id);
+    A.assert('breaks-in-editor', /We also have new\n​?\s*customers\n​?\s*in Norway/.test(saved), 'The editor holds a break after "new" and after "customers"', JSON.stringify(saved.slice(saved.indexOf('We also'), saved.indexOf('We also') + 60)));
+    A.near('box-left-kept', after.pt.x, before.pt.x, 0.5, 'The box does not move');
+    A.near('box-top-kept', after.pt.y, before.pt.y, 0.5, 'The box does not move');
+    const artifacts = [await capture(page, testId, 'edited')];
+
+    const download = await downloadPdf(page, testId, 'edited');
+    const savedAnnotation = (download.payload.annotations || []).find((a) => a.id === before.id) || null;
+    const savedText = String(savedAnnotation?.text || '');
+    A.assert('breaks-in-saved-text', /We also have new\n+customers\n+in Norway/.test(savedText), 'The saved text keeps the two breaks', JSON.stringify(savedText.slice(Math.max(0, savedText.indexOf('We also')), savedText.indexOf('We also') + 60)));
+    A.assert('no-zero-width-in-saved-text', !/[​‌‍⁠﻿]/.test(savedText), 'No zero-width anchor leaks into the saved text');
+    const report = summarize(download.path);
+    const rect = expandRect(rectUnion(boxRect(before), boxRect(after)), 2);
+    const rows = lineTextsTouching(report.pages[PAGE], rect);
+    const newIndex = rows.findIndex((row) => /We also have new$/.test(row));
+    B.assert('row-ends-with-new', newIndex >= 0, 'A row ends with "We also have new"', JSON.stringify(rows.slice(0, 8)));
+    B.equals('customers-alone', newIndex >= 0 ? rows[newIndex + 1] : null, 'customers', '"customers" is drawn alone on the next row');
+    B.assert('next-row-starts-in-norway', newIndex >= 0 && /^in Norway/.test(rows[newIndex + 2] || ''), 'The row after it starts "in Norway"', JSON.stringify(rows[newIndex + 2] || null));
+    const lines = (report.pages[PAGE].blocks || []).flatMap((block) => block.lines).filter((line) => rectsIntersect(line.bbox, rect, 1));
+    const widest = Math.max(...lines.map((line) => line.bbox[2]));
+    B.assert('rows-inside-box', widest <= rect[2] + 3, 'No row of the paragraph runs past the box', `widest right edge ${widest.toFixed(1)} vs box ${rect[2].toFixed(1)}`);
+    const chars = charsFiltered(charsAt(download.path, rect, PAGE), before.fontPts);
+    B.assert('rows-at-size', chars.sizes.every((size) => Math.abs(size - before.fontPts) <= SIZE_TOL), 'Every character of the paragraph is at the source size (nothing squeezed)', JSON.stringify(chars.sizes));
+    B.equals('no-missing-glyphs', chars.notdef, 0, 'No glyph in the paragraph renders as a missing-glyph box');
+    checkBackgroundUntouched(B, base, report, rect, PAGE);
+    checkOtherPagesIdentical(B, base, report, PAGE);
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean), before, after, download, report, base };
+}
+
 const TESTS = [
     { id: '01-setup-and-baseline', number: '01', title: 'Setup: each fixture uploads, extracts and opens with its text promoted; the untouched download is the baseline', run: testSetup, fixture: null },
     { id: '02-select-and-enter-edit', number: '02', title: 'Selecting existing text makes a source box on the glyph bounds; entering Edit changes nothing', run: testSelectAndEnterEdit, fixture: 'invoice' },
@@ -1747,6 +1835,7 @@ const TESTS = [
     { id: '24-undo-redo', number: '24', title: 'Undo and redo restore each state; the download after undo equals the baseline', run: testUndoRedo, fixture: 'invoice' },
     { id: '25-zoom', number: '25', title: 'Zoom: geometry and masks hold at 50%, 100% and 190%; downloads are identical', run: testZoom, fixture: 'invoice' },
     { id: '26-subset-font-word', number: '26', title: 'A word set from two subset fonts stays whole: "Łódź" reads as one word, text typed beside it flows, the export keeps one searchable word (drylab page 2)', run: testSubsetFontWordStaysWhole, fixture: 'drylab' },
+    { id: '27-enter-in-reflowed-paragraph', number: '27', title: 'Enter inside a re-flowed paragraph: the breaks survive the commit and the download reflows with them instead of squeezing each paragraph onto one row (drylab page 2)', run: testEnterInReflowedParagraph, fixture: 'drylab' },
 ];
 
 function summarise(test, checks, artifacts, error, startedAt) {
