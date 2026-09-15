@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
     annotationSelectionType,
     clampSourceMaskRectToCell,
+    collapsePromotedParagraphPlainText,
     dominantSourceRunFontSize,
     flattenedSourceGapText,
     insertPdfInlineSymbolsIntoText,
@@ -811,4 +812,20 @@ test('flattenedSourceGapText keeps text the user typed into a synthetic gap (NK_
     // A gap with no recorded count is untouched only while it holds no text.
     assert.equal(flattenedSourceGapText({ currentText: '', originalSpaceCount: 0 }), ' ');
     assert.equal(flattenedSourceGapText({ currentText: ' ', originalSpaceCount: 0 }), ' ');
+});
+
+
+test('collapsePromotedParagraphPlainText keeps Enter as a hard break and drops soft wraps (NK_39)', () => {
+    // Soft DOM newlines of re-flowed prose collapse to one space.
+    assert.equal(collapsePromotedParagraphPlainText('We also have\nnew customers'), 'We also have new customers');
+    // The editor's Enter marker ("\n" + zero-width anchor) is a hard break;
+    // the anchor never reaches the saved text.
+    assert.equal(
+        collapsePromotedParagraphPlainText('We also have new\n\u200b customers\n\u200b in Norway'),
+        'We also have new\ncustomers\nin Norway',
+    );
+    // Two Enters make an empty paragraph; more collapse to one blank line.
+    assert.equal(collapsePromotedParagraphPlainText('new\n\u200b\n\u200bcustomers'), 'new\n\ncustomers');
+    assert.equal(collapsePromotedParagraphPlainText('new\n\u200b\n\u200b\n\u200bcustomers'), 'new\n\ncustomers');
+    assert.equal(collapsePromotedParagraphPlainText(''), '');
 });
