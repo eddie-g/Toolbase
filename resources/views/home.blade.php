@@ -1,921 +1,345 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Netkit - Edit the PDF you already have</title>
+    <meta name="description" content="Netkit is an open-source PDF editor and admin dashboard. Edit the text that is already in a PDF, keep its fonts and layout, and download exactly what you saw." />
     <link rel="icon" type="image/svg+xml" href="{{ asset('images/netkit_logo_cube.svg') }}">
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Netkit - Open-Source PDF Editor & Admin Dashboard</title>
-        @vite(['resources/css/app.css', 'resources/js/app.js'])
-        <style>
-            .nkheader{
-                font-size:30px;
-            }
-            @keyframes netkit-planet-float {
-                0%, 100% {
-                    transform: translateY(0);
-                }
-                50% {
-                    transform: translateY(-16px);
-                }
-            }
-
-            @keyframes netkit-ring-spin {
-                from {
-                    transform: rotate(0deg);
-                }
-                to {
-                    transform: rotate(360deg);
-                }
-            }
-
-            @keyframes netkit-planet-glow {
-                0%, 100% {
-                    opacity: 0.45;
-                    transform: scale(1);
-                }
-                50% {
-                    opacity: 0.75;
-                    transform: scale(1.08);
-                }
-            }
-
-            @keyframes netkit-star-twinkle {
-                0%, 100% {
-                    opacity: 0.18;
-                    transform: scale(0.8);
-                }
-                50% {
-                    opacity: 0.95;
-                    transform: scale(1.15);
-                }
-            }
-
-            @keyframes netkit-logo-orbit {
-                0% {
-                    opacity: 0;
-                    transform: translate(-50%, -50%) rotate(var(--particle-start)) translateX(var(--particle-radius)) scale(0.78);
-                }
-                6%, 86% {
-                    opacity: var(--particle-opacity, 0.62);
-                }
-                56% {
-                    opacity: calc(var(--particle-opacity, 0.62) + 0.12);
-                }
-                100% {
-                    opacity: 0;
-                    transform: translate(-50%, -50%) rotate(calc(var(--particle-start) + var(--particle-turn))) translateX(var(--particle-radius)) scale(1.04);
-                }
-            }
-
-            .netkit-hero-planet {
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                width: clamp(260px, 42vw, 540px);
-                height: auto;
-                transform: translate(-50%, -50%);
-                opacity: 0.48;
-                filter: drop-shadow(0 22px 48px rgba(15, 23, 42, 0.28));
-            }
-
-            .netkit-hero-starfield {
-                position: absolute;
-                inset: 0;
-                width: 100%;
-                height: 100%;
-                opacity: 0.78;
-                filter: drop-shadow(0 0 0.6px rgba(226, 232, 255, 0.9));
-            }
-
-            .netkit-hero-night-sky {
-                opacity: 0;
-                transition: opacity 260ms ease;
-            }
-
-            .netkit-wordmark {
-                display: block;
-                width: clamp(180px, 22vw, 320px);
-                height: auto;
-                margin: 0 auto 0.5rem;
-                position: relative;
-                z-index: 1;
-            }
-
-            .netkit-flow {
-                position: absolute;
-                top: 0;
-                left: 50%;
-                width: clamp(680px, 98vw, 1480px);
-                height: auto;
-                transform: translateX(-50%);
-                pointer-events: none;
-                z-index: 0;
-            }
-
-            .netkit-logo-hover-wrap {
-                display: block;
-                width: 60.75%;
-                max-width: 802px;
-                margin: 0 auto 0.25rem;
-                position: relative;
-                z-index: 1;
-            }
-
-            .netkit-fill-logo {
-                display: block;
-                width: 100%;
-                height: auto;
-                margin: 0;
-                position: relative;
-                z-index: 1;
-            }
-
-            .netkit-fill-logo-dark {
-                display: none;
-            }
-
-            .dark .netkit-fill-logo-light {
-                display: none;
-            }
-
-            .dark .netkit-fill-logo-dark {
-                display: block;
-            }
-
-            .netkit-logo-hover-particles {
-                position: absolute;
-                inset: -46% -28%;
-                pointer-events: none;
-                opacity: 1;
-                transform: rotate(-8deg) scaleY(0.34);
-                transform-origin: 50% 50%;
-                transition: opacity 420ms ease;
-                z-index: 2;
-            }
-
-            .netkit-logo-hover-wrap.is-dimmed .netkit-logo-hover-particles {
-                opacity: 0;
-            }
-
-            .netkit-logo-hover-particle {
-                position: absolute;
-                left: 50%;
-                top: 50%;
-                width: var(--particle-size);
-                height: var(--particle-size);
-                border-radius: 9999px;
-                opacity: 0;
-                transform-origin: 50% 50%;
-                animation: netkit-logo-orbit var(--particle-duration) linear infinite;
-                animation-delay: var(--particle-delay);
-            }
-
-            .netkit-logo-hover-particle::before {
-                content: '';
-                display: block;
-                width: 100%;
-                height: 100%;
-                border-radius: inherit;
-                background: var(--particle-color);
-                box-shadow: 0 0 14px color-mix(in srgb, var(--particle-color) 58%, transparent);
-                transform: scaleY(2.94);
-            }
-
-            @media (max-width: 640px) {
-                .netkit-logo-hover-particles {
-                    inset: -34% -42%;
-                    transform: rotate(-8deg) scaleY(0.18);
-                }
-
-                .netkit-logo-hover-particle::before {
-                    transform: scaleY(5.56);
-                }
-            }
-
-            .netkit-home-hero.netkit-hero-circuits,
-            .netkit-home-hero.netkit-hero-fill_logo {
-                background-color: #f8fbff;
-                background-image: linear-gradient(135deg, #ffffff 0%, #eef5ff 48%, #e8eef9 100%);
-            }
-
-            .dark .netkit-home-hero.netkit-hero-circuits,
-            .dark .netkit-home-hero.netkit-hero-fill_logo {
-                background-color: #050816;
-                background-image:
-                    linear-gradient(180deg, rgba(5, 8, 22, 0.08) 0%, rgba(5, 8, 22, 0.22) 58%, rgba(17, 24, 39, 0.72) 100%),
-                    url('/images/sky_bg_dark_mode.png');
-                background-position: center;
-                background-size: cover;
-                background-repeat: no-repeat;
-            }
-
-            .dark .netkit-home-hero.netkit-hero-circuits .netkit-hero-night-sky,
-            .dark .netkit-home-hero.netkit-hero-fill_logo .netkit-hero-night-sky {
-                opacity: 0.72;
-                mix-blend-mode: screen;
-            }
-
-            .dark .netkit-home-hero.netkit-hero-circuits .netkit-hero-starfield,
-            .dark .netkit-home-hero.netkit-hero-fill_logo .netkit-hero-starfield {
-                opacity: 0.9;
-                filter:
-                    drop-shadow(0 0 1px rgba(255, 255, 255, 0.95))
-                    drop-shadow(0 0 6px rgba(147, 197, 253, 0.45));
-            }
-
-            .netkit-home-hero.netkit-hero-space .netkit-hero-night-sky {
-                opacity: 1;
-            }
-
-            .netkit-hero-circuits .netkit-hero-heading,
-            .netkit-hero-fill_logo .netkit-hero-heading {
-                color: #0f1115;
-            }
-
-            .netkit-hero-circuits .netkit-hero-subtitle,
-            .netkit-hero-fill_logo .netkit-hero-subtitle {
-                color: #3f4651;
-            }
-
-            .dark .netkit-hero-circuits .netkit-hero-heading,
-            .dark .netkit-hero-fill_logo .netkit-hero-heading {
-                color: #ffffff;
-                text-shadow: 0 2px 18px rgba(15, 23, 42, 0.55);
-            }
-
-            .dark .netkit-hero-circuits .netkit-hero-subtitle,
-            .dark .netkit-hero-fill_logo .netkit-hero-subtitle {
-                color: #e5edff;
-                text-shadow: 0 1px 14px rgba(15, 23, 42, 0.5);
-            }
-
-            @media (max-width: 1024px) {
-                .netkit-hero-planet {
-                    width: clamp(230px, 66vw, 420px);
-                    opacity: 0.34;
-                }
-            }
-
-            .netkit-planet-system {
-                animation: netkit-planet-float 7s ease-in-out infinite;
-                transform-origin: center;
-            }
-
-            .netkit-planet-glow {
-                animation: netkit-planet-glow 6s ease-in-out infinite;
-                transform-box: view-box;
-                transform-origin: 220px 220px;
-            }
-
-            .netkit-ring-tilt {
-                transform: rotate(-22deg) scaleY(0.4);
-                transform-box: view-box;
-                transform-origin: 220px 220px;
-            }
-
-            .netkit-ring-spin {
-                transform-box: view-box;
-                transform-origin: 220px 220px;
-            }
-
-            .netkit-ring-spin-fast {
-                animation: netkit-ring-spin 22s linear infinite;
-            }
-
-            .netkit-ring-spin-slow {
-                animation: netkit-ring-spin 34s linear infinite;
-            }
-
-            .netkit-star {
-                animation: netkit-star-twinkle var(--star-duration, 3s) ease-in-out infinite;
-                animation-delay: var(--star-delay, 0s);
-                transform-box: fill-box;
-                transform-origin: center;
-            }
-
-            .netkit-star-spark line {
-                stroke-linecap: round;
-            }
-
-            .netkit-home-hero {
-                background-color: #1b2230;
-                padding-top: 5.5rem;
-            }
-
-            .dark .netkit-home-hero {
-                background-color: #0b0f17;
-            }
-
-            @media (prefers-reduced-motion: reduce) {
-                .netkit-planet-system,
-                .netkit-planet-glow,
-                .netkit-ring-spin-fast,
-                .netkit-ring-spin-slow,
-                .netkit-star,
-                .netkit-hero-night-sky,
-                .netkit-logo-hover-particle {
-                    animation: none;
-                    transition: none;
-                }
-
-                .netkit-logo-hover-particles {
-                    display: none;
-                }
-            }
-        </style>
-    </head>
-    <body class="bg-white dark:bg-gray-900 antialiased">
-        <!-- Header -->
-        <x-site-header />
-
-
-        <!-- Hero Section -->
-        @php
-            $netkitLogoLight = asset('images/netkit-fill-logo-static.svg');
-            $netkitLogoDark = asset('images/netkit-fill-logo-dark-static.svg');
-            $heroBackground = config('home.hero_background', 'fill_logo');
-            $netkitLogoParticles = [];
-            $particleBands = [
-                ['count' => 34, 'radius' => 'clamp(142px, 30vw, 350px)', 'duration' => 17.5, 'turn' => '360deg', 'offset' => -22, 'opacity' => 0.62],
-                ['count' => 38, 'radius' => 'clamp(174px, 36vw, 420px)', 'duration' => 23.5, 'turn' => '360deg', 'offset' => 8, 'opacity' => 0.54],
-                ['count' => 32, 'radius' => 'clamp(206px, 42vw, 485px)', 'duration' => 29.0, 'turn' => '-360deg', 'offset' => 29, 'opacity' => 0.44],
-                ['count' => 24, 'radius' => 'clamp(234px, 48vw, 545px)', 'duration' => 34.0, 'turn' => '-360deg', 'offset' => -6, 'opacity' => 0.3],
-            ];
-            $particleColors = ['#174ea6', '#f97316', '#38bdf8', '#fb923c'];
-
-            foreach ($particleBands as $bandIndex => $band) {
-                for ($i = 0; $i < $band['count']; $i++) {
-                    $angle = ($i / $band['count']) * 360 + $band['offset'] + (($i % 3) - 1) * 2.5;
-                    $duration = $band['duration'] + (($i % 5) - 2) * 0.9;
-                    $size = 3 + (($i + $bandIndex) % 6);
-                    $opacity = max(0.22, min(0.72, $band['opacity'] + (($i % 4) - 1.5) * 0.035));
-
-                    $netkitLogoParticles[] = [
-                        'size' => $size . 'px',
-                        'color' => $particleColors[($i + $bandIndex) % count($particleColors)],
-                        'radius' => $band['radius'],
-                        'start' => round($angle, 2) . 'deg',
-                        'turn' => $band['turn'],
-                        'duration' => round($duration, 2) . 's',
-                        'delay' => '-' . round(($duration / $band['count']) * $i + $bandIndex * 0.85, 2) . 's',
-                        'opacity' => round($opacity, 2),
-                    ];
-                }
-            }
-            $stars = [];
-            mt_srand(20260531);
-            for ($i = 0; $i < 130; $i++) {
-                $stars[] = [
-                    'x' => mt_rand(0, 1000) / 10,
-                    'y' => mt_rand(0, 1000) / 10,
-                    'r' => mt_rand(5, 18) / 100,
-                    'o' => mt_rand(35, 92) / 100,
-                    'd' => mt_rand(35, 85) / 10,
-                    'delay' => mt_rand(0, 50) / 10,
-                    'spark' => $i % 12 === 0,
-                    'len' => mt_rand(35, 95) / 100,
-                ];
-            }
-        @endphp
-        <section class="netkit-home-hero netkit-hero-{{ $heroBackground }} relative overflow-hidden pb-4 px-4 sm:px-6 lg:px-8">
-            <div class="netkit-hero-night-sky absolute inset-0 pointer-events-none" aria-hidden="true">
-                <svg class="netkit-hero-starfield" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" role="img" focusable="false">
-                    @foreach ($stars as $s)
-                        @if ($s['spark'])
-                            <g class="netkit-star netkit-star-spark" style="--star-duration: {{ $s['d'] }}s; --star-delay: -{{ $s['delay'] }}s;" transform="translate({{ $s['x'] }} {{ $s['y'] }})" opacity="{{ $s['o'] }}">
-                                <line x1="-{{ $s['len'] }}" y1="0" x2="{{ $s['len'] }}" y2="0" stroke="#ffffff" stroke-width="0.12" />
-                                <line x1="0" y1="-{{ $s['len'] }}" x2="0" y2="{{ $s['len'] }}" stroke="#ffffff" stroke-width="0.12" />
-                                <circle cx="0" cy="0" r="{{ $s['r'] * 1.25 }}" fill="#ffffff" />
-                            </g>
-                        @else
-                            <circle class="netkit-star" style="--star-duration: {{ $s['d'] }}s; --star-delay: -{{ $s['delay'] }}s;" cx="{{ $s['x'] }}" cy="{{ $s['y'] }}" r="{{ $s['r'] }}" fill="#f8fbff" opacity="{{ $s['o'] }}" />
-                        @endif
-                    @endforeach
-                </svg>
-                @if ($heroBackground === 'space')
-                <svg class="netkit-hero-planet" viewBox="0 0 440 440" role="img" focusable="false">
-                    <defs>
-                        <radialGradient id="planetBody" cx="0.38" cy="0.34" r="0.9">
-                            <stop offset="0" stop-color="#f5e6c5" />
-                            <stop offset="0.4" stop-color="#e3c08a" />
-                            <stop offset="0.72" stop-color="#c89b5f" />
-                            <stop offset="1" stop-color="#8a6638" />
-                        </radialGradient>
-                        <radialGradient id="planetHalo" cx="0.5" cy="0.5" r="0.5">
-                            <stop offset="0" stop-color="#f5d9a8" stop-opacity="0.5" />
-                            <stop offset="0.7" stop-color="#d8b173" stop-opacity="0.18" />
-                            <stop offset="1" stop-color="#d8b173" stop-opacity="0" />
-                        </radialGradient>
-                        <linearGradient id="planetRim" x1="0" y1="0" x2="1" y2="1">
-                            <stop offset="0" stop-color="#fff4dc" stop-opacity="0.9" />
-                            <stop offset="1" stop-color="#c89b5f" stop-opacity="0" />
-                        </linearGradient>
-                        <clipPath id="planetClip">
-                            <circle cx="220" cy="220" r="120" />
-                        </clipPath>
-                    </defs>
-
-                    <g class="netkit-planet-system">
-                        @php
-                            $cx = 220; $cy = 220;
-                            $palette = ['#f5e6c5', '#e3c08a', '#c89b5f', '#e9cd97', '#d8b173', '#fff4dc', '#b78b50'];
-                            $buildRing = function (array $bands, float $seed) use ($cx, $cy, $palette) {
-                                $out = '';
-                                foreach ($bands as $bi => $band) {
-                                    [$radius, $count] = $band;
-                                    for ($i = 0; $i < $count; $i++) {
-                                        $ang = ($i / $count) * 2 * M_PI + $bi * 0.4 + $seed;
-                                        $x = round($cx + $radius * cos($ang), 1);
-                                        $y = round($cy + $radius * sin($ang), 1);
-                                        $sr = round(1.8 + (($i * 7 + $bi * 3) % 5) * 0.55, 1);
-                                        $col = $palette[($i + $bi * 2) % count($palette)];
-                                        $op = round(0.5 + (($i * 3 + $bi) % 5) * 0.1, 2);
-                                        $out .= "<circle cx=\"{$x}\" cy=\"{$y}\" r=\"{$sr}\" fill=\"{$col}\" opacity=\"{$op}\" />";
-                                    }
-                                }
-                                return $out;
-                            };
-                        @endphp
-
-                        <!-- atmospheric halo -->
-                        <circle class="netkit-planet-glow" cx="220" cy="220" r="180" fill="url(#planetHalo)" />
-
-                        <!-- back half of the particle ring (behind planet) -->
-                        <g class="netkit-ring-tilt">
-                            <g class="netkit-ring-spin netkit-ring-spin-slow">
-                                {!! $buildRing([[152, 32], [172, 36], [192, 28]], 0.0) !!}
-                            </g>
-                        </g>
-
-                        <!-- planet -->
-                        <circle cx="220" cy="220" r="120" fill="url(#planetBody)" />
-                        <g clip-path="url(#planetClip)">
-                            <ellipse cx="186" cy="178" rx="54" ry="34" fill="#ffffff" opacity="0.16" />
-                        </g>
-
-                        <!-- front half of the particle ring (in front of planet) -->
-                        <g class="netkit-ring-tilt">
-                            <g class="netkit-ring-spin netkit-ring-spin-fast">
-                                {!! $buildRing([[160, 34], [180, 38], [200, 30]], 0.35) !!}
-                            </g>
-                        </g>
-                    </g>
-                </svg>
-                @endif
-            </div>
-            <div class="relative container mx-auto">
-                <div class="text-center max-w-4xl mx-auto mb-4">
-                    @if (in_array($heroBackground, ['circuits', 'fill_logo'], true))
-                    <span class="netkit-logo-hover-wrap" data-netkit-hover-logo>
-                        <img class="netkit-fill-logo netkit-fill-logo-light" src="{{ $netkitLogoLight }}" alt="Netkit" />
-                        <img class="netkit-fill-logo netkit-fill-logo-dark" src="{{ $netkitLogoDark }}" alt="Netkit" />
-                        <span class="netkit-logo-hover-particles" aria-hidden="true">
-                            @foreach ($netkitLogoParticles as $particle)
-                                <span
-                                    class="netkit-logo-hover-particle"
-                                    style="--particle-size: {{ $particle['size'] }}; --particle-color: {{ $particle['color'] }}; --particle-radius: {{ $particle['radius'] }}; --particle-start: {{ $particle['start'] }}; --particle-turn: {{ $particle['turn'] }}; --particle-duration: {{ $particle['duration'] }}; --particle-delay: {{ $particle['delay'] }}; --particle-opacity: {{ $particle['opacity'] }};"
-                                ></span>
-                            @endforeach
-                        </span>
-                    </span>
-                    @endif
-                    <h1 class="netkit-hero-heading leading-tight font-bold text-white py-4 mb-3 nkheader">
-                        Expertly crafted tools, one place to manage them all
-                    </h1>
-                </div>
-
-                
-            </div>
-        </section>
-
-        <script>
-            (() => {
-                const logoWraps = document.querySelectorAll('[data-netkit-hover-logo]');
-
-                if (!logoWraps.length) {
-                    return;
-                }
-
-                const syncParticleVisibility = () => {
-                    const shouldDim = document.hidden || !document.hasFocus();
-
-                    logoWraps.forEach((logoWrap) => {
-                        logoWrap.classList.toggle('is-dimmed', shouldDim);
-                    });
-                };
-
-                document.addEventListener('visibilitychange', syncParticleVisibility);
-                window.addEventListener('blur', syncParticleVisibility);
-                window.addEventListener('focus', syncParticleVisibility);
-                syncParticleVisibility();
-            })();
-        </script>
-
-        <!-- Logo Generator Showcase Section -->
-        <section id="pdf-features" class="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-b from-white via-slate-50 to-white dark:from-gray-900 dark:via-gray-900 dark:to-gray-900">
-            <div class="container mx-auto">
-                <div class="max-w-7xl mx-auto rounded-3xl border border-slate-200/80 dark:border-gray-700 bg-white/80 dark:bg-gray-800/70 backdrop-blur-xl shadow-[0_25px_60px_-30px_rgba(15,23,42,0.35)] p-5 sm:p-7 lg:p-8">
-                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-10 items-start">
-                        <div class="lg:col-span-2 space-y-5">
-                            <div class="flex flex-wrap items-center justify-between gap-3">
-                                <div>
-                                    <h2 class="text-2xl sm:text-3xl font-bold text-gray-900 dark:text-white">Logo Generator Showcase</h2>
-                                </div>
-                                <div class="inline-flex rounded-xl border border-slate-200 dark:border-gray-700 bg-slate-100/80 dark:bg-gray-900/70 p-1" id="logo-mode-switch">
-                                    <button type="button" class="logo-mode-btn px-4 py-2 text-sm font-semibold rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm" data-mode="vector">Vector</button>
-                                    <button type="button" class="logo-mode-btn px-4 py-2 text-sm font-semibold rounded-lg text-gray-600 dark:text-gray-300" data-mode="image">Raster</button>
-                                </div>
-                            </div>
-
-                            <div class="rounded-2xl border border-slate-200 dark:border-gray-700 bg-gradient-to-br from-slate-100 to-white dark:from-gray-800 dark:to-gray-900 p-4 shadow-inner">
-                                <img
-                                    id="logo-preview-main"
-                                    src="{{ asset('images/home_page_images/vector/vector_lion.svg') }}"
-                                    alt="Selected vector logo preview"
-                                    class="w-full h-[260px] sm:h-[340px] lg:h-[420px] object-cover rounded-xl"
-                                >
-                            </div>
-
-                            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3" id="logo-preview-thumbs">
-                                <button type="button" class="logo-thumb group rounded-xl border-2 border-blue-500 p-1 bg-white dark:bg-gray-800 transition" data-mode="vector" data-preview-src="{{ asset('images/home_page_images/vector/vector_lion.svg') }}" data-preview-alt="Vector lion logo preview">
-                                    <img src="{{ asset('images/home_page_images/vector/vector_lion.svg') }}" alt="Vector lion logo option" class="w-full h-20 object-cover rounded-lg">
-                                </button>
-                                <button type="button" class="logo-thumb group rounded-xl border-2 border-transparent hover:border-blue-400 p-1 bg-white dark:bg-gray-800 transition" data-mode="vector" data-preview-src="{{ asset('images/home_page_images/vector/vector_sun_abstract.svg') }}" data-preview-alt="Vector sun abstract logo preview">
-                                    <img src="{{ asset('images/home_page_images/vector/vector_sun_abstract.svg') }}" alt="Vector sun abstract logo option" class="w-full h-20 object-cover rounded-lg">
-                                </button>
-                                <button type="button" class="logo-thumb group rounded-xl border-2 border-transparent hover:border-blue-400 p-1 bg-white dark:bg-gray-800 transition hidden" data-mode="image" data-preview-src="{{ asset('images/home_page_images/image/raster_dragon_photorealistic.webp') }}" data-preview-alt="Raster dragon logo preview">
-                                    <img src="{{ asset('images/home_page_images/image/raster_dragon_photorealistic.webp') }}" alt="Raster dragon logo option" class="w-full h-20 object-cover rounded-lg">
-                                </button>
-                                <button type="button" class="logo-thumb group rounded-xl border-2 border-transparent hover:border-blue-400 p-1 bg-white dark:bg-gray-800 transition hidden" data-mode="image" data-preview-src="{{ asset('images/home_page_images/image/raster_icegiant_fantasy.png') }}" data-preview-alt="Raster ice giant logo preview">
-                                    <img src="{{ asset('images/home_page_images/image/raster_icegiant_fantasy.png') }}" alt="Raster ice giant logo option" class="w-full h-20 object-cover rounded-lg">
-                                </button>
-                            </div>
-
-                            <div class="rounded-2xl border border-blue-200 dark:border-blue-800/60 bg-blue-50/80 dark:bg-blue-900/20 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                                <div>
-                                    <p class="text-sm font-semibold text-blue-900 dark:text-blue-200">Want more logo ideas?</p>
-                                    <p class="text-sm text-blue-700 dark:text-blue-300">Explore the full gallery of generated logos and open any design in the editor.</p>
-                                </div>
-                                <a href="{{ route('browse-logos') }}" class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition whitespace-nowrap">
-                                    Browse Logos
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
-                                    </svg>
-                                </a>
-                            </div>
-                        </div>
-
-                        <div class="rounded-2xl border border-slate-200 dark:border-gray-700 bg-white/80 dark:bg-gray-900/70 p-6 shadow-sm">
-                            <p class="inline-flex items-center rounded-full bg-blue-100 dark:bg-blue-900/30 px-3 py-1 text-xs font-semibold text-blue-700 dark:text-blue-300 mb-4" id="logo-mode-badge">
-                                Viewing: Vector
-                            </p>
-                            <h3 class="text-2xl md:text-3xl font-bold text-gray-900 dark:text-white mb-4">
-                                AI Logo Generator
-                            </h3>
-                            <p class="text-gray-600 dark:text-gray-300 mb-5">
-                                Explore logo concepts with quick switching between clean vector styles and realistic image-based directions.
-                            </p>
-                            <ul class="list-disc pl-5 space-y-3 text-gray-700 dark:text-gray-200">
-                                <li>Instantly toggle between vector and image logo modes</li>
-                                <li>Click any icon variation to update the main preview</li>
-                                <li>Compare design direction in a polished side-by-side workspace</li>
-                                <li>Use this gallery as a fast concept validation step</li>
-                            </ul>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- PDF Features Section -->
-        <section class="py-20 px-4 sm:px-6 lg:px-8 bg-gray-50 dark:bg-gray-800">
-            <div class="container mx-auto">
-                <div class="text-center max-w-3xl mx-auto mb-16">
-                    <h2 class="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4">
-                        Powerful PDF Editing Features
-                    </h2>
-                    <p class="text-lg text-gray-600 dark:text-gray-300">
-                        Everything you need to edit, annotate, and manage your PDF documents
-                    </p>
-                </div>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 max-w-7xl mx-auto">
-                    <!-- Edit Feature -->
-                    <div class="bg-white dark:bg-gray-900 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group">
-                        <div class="w-14 h-14 bg-blue-100 dark:bg-blue-900/30 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                            <svg class="w-8 h-8 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path>
-                            </svg>
-                        </div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">Edit</h3>
-                        <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                            Directly edit text, images, and content within your PDF documents with precision and ease.
-                        </p>
-                    </div>
-
-                    <!-- AI Generate Feature -->
-                    <div class="bg-white dark:bg-gray-900 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group">
-                        <div class="w-14 h-14 bg-purple-100 dark:bg-purple-900/30 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                            <svg class="w-8 h-8 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
-                            </svg>
-                        </div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">AI Generate</h3>
-                        <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                            Leverage AI to automatically generate content, summaries, and intelligent document enhancements.
-                        </p>
-                    </div>
-
-                    <!-- Merge Feature -->
-                    <div class="bg-white dark:bg-gray-900 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group">
-                        <div class="w-14 h-14 bg-green-100 dark:bg-green-900/30 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                            <svg class="w-8 h-8 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                            </svg>
-                        </div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">Merge</h3>
-                        <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                            Combine multiple PDF documents into a single file seamlessly with drag-and-drop simplicity.
-                        </p>
-                    </div>
-
-                    <!-- Protect Feature -->
-                    <div class="bg-white dark:bg-gray-900 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group">
-                        <div class="w-14 h-14 bg-red-100 dark:bg-red-900/30 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                            <svg class="w-8 h-8 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
-                            </svg>
-                        </div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">Protect</h3>
-                        <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                            Secure your documents with password protection and encryption to keep sensitive data safe.
-                        </p>
-                    </div>
-
-                    <!-- Draw Feature -->
-                    <div class="bg-white dark:bg-gray-900 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group">
-                        <div class="w-14 h-14 bg-yellow-100 dark:bg-yellow-900/30 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                            <svg class="w-8 h-8 text-yellow-600 dark:text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
-                            </svg>
-                        </div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">Draw</h3>
-                        <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                            Freehand drawing tools to sketch, highlight, and add custom visual elements to your PDFs.
-                        </p>
-                    </div>
-
-                    <!-- Annotate Feature -->
-                    <div class="bg-white dark:bg-gray-900 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group">
-                        <div class="w-14 h-14 bg-indigo-100 dark:bg-indigo-900/30 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                            <svg class="w-8 h-8 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path>
-                            </svg>
-                        </div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">Annotate</h3>
-                        <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                            Add comments, notes, and markup to collaborate and provide feedback on PDF documents.
-                        </p>
-                    </div>
-
-                    <!-- Sign Feature -->
-                    <div class="bg-white dark:bg-gray-900 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group">
-                        <div class="w-14 h-14 bg-pink-100 dark:bg-pink-900/30 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                            <svg class="w-8 h-8 text-pink-600 dark:text-pink-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path>
-                            </svg>
-                        </div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">Sign</h3>
-                        <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                            Add legally binding electronic signatures to documents with full compliance and security.
-                        </p>
-                    </div>
-
-                    <!-- Domain Search Feature -->
-                    <a href="{{ route('domainSearch.index') }}" class="bg-white dark:bg-gray-900 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group block">
-                        <div class="w-14 h-14 bg-cyan-100 dark:bg-cyan-900/30 rounded-xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
-                            <svg class="w-8 h-8 text-cyan-600 dark:text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path>
-                            </svg>
-                        </div>
-                        <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-3">Domain Search</h3>
-                        <p class="text-gray-600 dark:text-gray-300 text-sm leading-relaxed">
-                            Search for available domain names and generate creative suggestions for your next project.
-                        </p>
-                    </a>
-
-                    <!-- Get Started CTA Card -->
-                    <div class="bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl p-8 shadow-lg hover:shadow-xl transition group flex flex-col justify-center items-center text-center">
-                        <h3 class="text-2xl font-bold text-white mb-3">Ready to Start?</h3>
-                        <p class="text-blue-100 text-sm mb-6">
-                            Access all features now
-                        </p>
-                        <a href="{{ route('documents.index') }}" class="inline-flex items-center gap-2 px-6 py-3 bg-white text-blue-600 rounded-lg font-semibold hover:bg-gray-100 transition">
-                            Open Editor
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path>
-                            </svg>
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- CTA Section -->
-        <section class="py-20 px-4 sm:px-6 lg:px-8 bg-gradient-to-br from-blue-600 via-blue-700 to-purple-700 text-white">
-            <div class="container mx-auto text-center">
-                <h2 class="text-4xl md:text-5xl font-bold mb-6">
-                    Join thousands using the #1<br>PDF Editor & Admin Dashboard!
-                </h2>
-                <p class="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
-                    Start building amazing PDF editing experiences and admin panels today
+    <link rel="preconnect" href="https://fonts.bunny.net">
+    <link href="https://fonts.bunny.net/css?family=inter:400,500,600,700&display=swap" rel="stylesheet" />
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
+    <style>
+        .nk-home {
+            font-family: 'Inter', 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+            font-feature-settings: 'cv11', 'ss01';
+            -webkit-font-smoothing: antialiased;
+        }
+        .nk-grid {
+            background-image: radial-gradient(circle at 1px 1px, rgba(24, 24, 27, 0.10) 1px, transparent 0);
+            background-size: 22px 22px;
+            mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
+            -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
+        }
+        .dark .nk-grid {
+            background-image: radial-gradient(circle at 1px 1px, rgba(244, 244, 245, 0.10) 1px, transparent 0);
+        }
+        .nk-glow {
+            background: radial-gradient(60% 55% at 50% 0%, rgba(37, 99, 235, 0.14), transparent 70%);
+        }
+        .dark .nk-glow {
+            background: radial-gradient(60% 55% at 50% 0%, rgba(59, 130, 246, 0.18), transparent 70%);
+        }
+        .nk-window {
+            box-shadow:
+                0 1px 2px rgba(24, 24, 27, 0.06),
+                0 24px 60px -24px rgba(24, 24, 27, 0.35);
+        }
+        .dark .nk-window {
+            box-shadow:
+                0 1px 2px rgba(0, 0, 0, 0.5),
+                0 24px 70px -20px rgba(0, 0, 0, 0.8);
+        }
+        @keyframes nk-rise {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .nk-rise { animation: nk-rise 640ms cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+        .nk-rise-2 { animation-delay: 90ms; }
+        .nk-rise-3 { animation-delay: 180ms; }
+        .nk-rise-4 { animation-delay: 300ms; }
+        @media (prefers-reduced-motion: reduce) {
+            .nk-rise { animation: none; }
+        }
+        .nk-balance { text-wrap: balance; }
+    </style>
+</head>
+<body class="nk-home bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
+    <x-site-header />
+
+    {{-- Hero --}}
+    <section class="relative overflow-hidden pt-36 pb-16 sm:pt-40 lg:pt-44">
+        <div class="nk-grid absolute inset-0 pointer-events-none" aria-hidden="true"></div>
+        <div class="nk-glow absolute inset-x-0 top-0 h-[42rem] pointer-events-none" aria-hidden="true"></div>
+
+        <div class="relative mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+            <div class="mx-auto max-w-3xl text-center">
+                <a href="#editor" class="nk-rise inline-flex items-center gap-2 rounded-full border border-zinc-200 bg-white/70 px-3 py-1 text-xs font-medium text-zinc-600 backdrop-blur hover:border-zinc-300 hover:text-zinc-900 dark:border-zinc-800 dark:bg-zinc-900/60 dark:text-zinc-400 dark:hover:border-zinc-700 dark:hover:text-zinc-100 transition">
+                    <span class="inline-block h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400"></span>
+                    Open source · Laravel, Filament and pdf.js
+                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                </a>
+
+                <h1 class="nk-rise nk-rise-2 nk-balance mt-6 text-4xl font-semibold tracking-tight text-zinc-900 sm:text-5xl lg:text-6xl dark:text-white">
+                    Edit the PDF you already have.
+                </h1>
+
+                <p class="nk-rise nk-rise-3 nk-balance mx-auto mt-5 max-w-2xl text-base leading-7 text-zinc-500 sm:text-lg dark:text-zinc-400">
+                    Netkit opens the text that is already in a document and lets you change it in place. Fonts, rows and spacing stay where they were, and the file you download is the one you saw on screen.
                 </p>
-                <div class="flex flex-col sm:flex-row items-center justify-center gap-4">
-                    <a href="/admin/login" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 bg-white hover:bg-gray-100 text-blue-600 rounded-lg font-semibold text-lg transition shadow-xl">
-                        Login
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"></path>
-                        </svg>
+
+                <div class="nk-rise nk-rise-4 mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                    <a href="{{ route('documents.index') }}" class="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-zinc-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 sm:w-auto dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200 dark:focus-visible:outline-white transition">
+                        Open the editor
+                        <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5-5 5M6 12h12" /></svg>
                     </a>
-                    <a href="{{ route('documents.index') }}" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-4 border-2 border-white hover:bg-white/10 text-white rounded-lg font-semibold text-lg transition">
-                        Live Preview
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
-                        </svg>
+                    <a href="#story" class="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-5 py-2.5 text-sm font-medium text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-zinc-900 sm:w-auto dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200 dark:hover:border-zinc-700 dark:hover:bg-zinc-800 transition">
+                        How it works
                     </a>
                 </div>
             </div>
-        </section>
 
-        <!-- FAQ Section -->
-        <section id="faq" class="py-20 px-4 sm:px-6 lg:px-8 bg-white dark:bg-gray-900">
-            <div class="container mx-auto">
-                <div class="text-center max-w-3xl mx-auto mb-16">
-                    <h2 class="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white mb-4">
-                        Frequently Asked Questions
-                    </h2>
-                    <p class="text-lg text-gray-600 dark:text-gray-300">
-                        Find answers to common questions about our AI-enabled tools and services
-                    </p>
+            {{-- Product window --}}
+            <div class="nk-rise nk-rise-4 relative mx-auto mt-14 max-w-5xl sm:mt-16">
+                <div class="nk-window overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+                    <div class="flex items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-4 py-2.5 dark:border-zinc-800 dark:bg-zinc-900">
+                        <span class="h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>
+                        <span class="h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>
+                        <span class="h-2.5 w-2.5 rounded-full bg-zinc-300 dark:bg-zinc-700"></span>
+                        <span class="ml-3 hidden rounded-md border border-zinc-200 bg-white px-2.5 py-0.5 text-[11px] font-medium text-zinc-500 sm:inline-block dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-400">netkit / documents / newsletter.pdf</span>
+                    </div>
+                    <img
+                        src="{{ asset('images/home_page_images/editor/editor-light-1x.webp') }}"
+                        srcset="{{ asset('images/home_page_images/editor/editor-light-1x.webp') }} 1440w, {{ asset('images/home_page_images/editor/editor-light.webp') }} 2880w"
+                        sizes="(min-width: 1024px) 1024px, 100vw"
+                        width="1440" height="900"
+                        alt="The Netkit editor with a newsletter open: a paragraph of the PDF's own text is selected in Edit mode, with the Text Options panel showing its font, size and style."
+                        class="block w-full"
+                        fetchpriority="high"
+                    >
                 </div>
-                
-                <div class="max-w-4xl mx-auto">
-                    <div class="space-y-6">
-                        <div class="py-6 border-b border-gray-200 dark:border-gray-700">
-                            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-                                What tools are included in Netkit?
-                            </h3>
-                            <p class="text-gray-600 dark:text-gray-300">
-                                Netkit includes a comprehensive PDF editor, domain search capabilities, and various AI-enabled tools for document management and business operations.
-                            </p>
+                <p class="mt-4 text-center text-xs text-zinc-500 dark:text-zinc-500">A real capture: the document's own paragraph, selected and editable, with its embedded Lato face already picked in the panel.</p>
+            </div>
+        </div>
+    </section>
+
+    {{-- Story --}}
+    <section id="story" class="border-t border-zinc-200 py-20 sm:py-24 dark:border-zinc-800">
+        <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-1 gap-12 lg:grid-cols-12 lg:gap-16">
+                <div class="lg:col-span-5">
+                    <p class="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600 dark:text-blue-400">The story</p>
+                    <h2 class="nk-balance mt-3 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl dark:text-white">Most editors make you rebuild the page. Netkit edits it.</h2>
+                    <div class="mt-6 space-y-4 text-base leading-7 text-zinc-600 dark:text-zinc-400">
+                        <p>A PDF is a drawing of text, not a text document. Every tool that promises to "edit" one has to decide what to do with that: most cover the old words with a white box and type new ones on top, in whatever font happens to be installed.</p>
+                        <p>Netkit started as the PDF editor inside an open-source Laravel admin dashboard, and it took the harder road. When a document opens, its text is promoted into editable boxes that keep the original rows, the embedded fonts and the exact position on the page. Change a word and only that word changes.</p>
+                        <p>The download is held to the same standard. Every edit path is checked by an automated suite that reads the exported PDF back with PyMuPDF and compares it, character by character and point by point, with what the editor showed.</p>
+                    </div>
+                </div>
+
+                <div class="lg:col-span-7">
+                    <div class="overflow-hidden rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900">
+                        <img
+                            src="{{ asset('images/home_page_images/editor/detail-light.webp') }}"
+                            width="1110" height="760"
+                            alt="Close-up of a paragraph in Edit mode: two words selected inside the PDF's own text, with the floating move, lock and edit controls above the box."
+                            class="block w-full"
+                            loading="lazy"
+                        >
+                    </div>
+                    <dl class="mt-6 grid grid-cols-1 gap-x-8 gap-y-6 sm:grid-cols-2">
+                        <div>
+                            <dt class="text-sm font-semibold text-zinc-900 dark:text-white">Text becomes boxes</dt>
+                            <dd class="mt-1 text-sm leading-6 text-zinc-500 dark:text-zinc-400">Each paragraph, title and row of the source is promoted into an editable block on its glyph bounds.</dd>
                         </div>
-                        
-                        <div class="py-6 border-b border-gray-200 dark:border-gray-700">
-                            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-                                Is Netkit secure and reliable?
-                            </h3>
-                            <p class="text-gray-600 dark:text-gray-300">
-                                Yes, Netkit is built with security as a priority. We implement industry-standard encryption and security practices to protect your data.
-                            </p>
+                        <div>
+                            <dt class="text-sm font-semibold text-zinc-900 dark:text-white">Fonts are the document's own</dt>
+                            <dd class="mt-1 text-sm leading-6 text-zinc-500 dark:text-zinc-400">Embedded faces are extracted and reused; a bundled substitute steps in only when a glyph is missing.</dd>
                         </div>
-                        
-                        <div class="py-6 border-b border-gray-200 dark:border-gray-700">
-                            <h3 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">
-                                How affordable are your tools?
-                            </h3>
-                            <p class="text-gray-600 dark:text-gray-300">
-                                Our tools are designed to be as affordable as they are powerful, with flexible pricing options to suit different needs and budgets.
-                            </p>
+                        <div>
+                            <dt class="text-sm font-semibold text-zinc-900 dark:text-white">Rows stay rows</dt>
+                            <dd class="mt-1 text-sm leading-6 text-zinc-500 dark:text-zinc-400">A one-word edit keeps every other line where it was. Resize the box and the paragraph reflows the way the editor shows.</dd>
                         </div>
+                        <div>
+                            <dt class="text-sm font-semibold text-zinc-900 dark:text-white">The download is checked</dt>
+                            <dd class="mt-1 text-sm leading-6 text-zinc-500 dark:text-zinc-400">Moved text is scrubbed from where it was, untouched pages stay byte-identical, and the export matches the screen.</dd>
+                        </div>
+                    </dl>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    {{-- Editor showcase --}}
+    <section id="editor" class="border-t border-zinc-200 bg-zinc-50 py-20 sm:py-24 dark:border-zinc-800 dark:bg-zinc-900/40">
+        <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+            <div class="max-w-2xl">
+                <p class="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600 dark:text-blue-400">The editor</p>
+                <h2 class="nk-balance mt-3 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl dark:text-white">Every tool on the toolbar, in one page.</h2>
+                <p class="mt-4 text-base leading-7 text-zinc-600 dark:text-zinc-400">The same tools you see across the top of the editor. Pick one, work on the page, download.</p>
+            </div>
+
+            @php
+                $editorTools = [
+                    ['name' => 'Edit PDF', 'text' => 'Select any existing text and change it in place. Bold, italic, colour and font apply to a whole block or a selection.', 'icon' => 'M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10'],
+                    ['name' => 'Text', 'text' => 'Add new text boxes anywhere on the page with your own font, size and alignment.', 'icon' => 'M3.75 5.25h16.5M12 5.25v13.5M8.25 18.75h7.5'],
+                    ['name' => 'Sign', 'text' => 'Draw, type or upload a signature and place it on the document.', 'icon' => 'M3 17.25c2-3 4-4.5 6-4.5s3 3 5 3 3.5-6 6-6M3 20.25h18'],
+                    ['name' => 'Shapes', 'text' => 'Rectangles, ellipses, lines and arrows with fill, stroke and rotation.', 'icon' => 'M4.5 4.5h7.5v7.5H4.5zM15 15a4.5 4.5 0 109 0 4.5 4.5 0 00-9 0z'],
+                    ['name' => 'Draw', 'text' => 'Freehand ink with adjustable smoothing, width and colour.', 'icon' => 'M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42'],
+                    ['name' => 'Highlight', 'text' => 'Mark up passages of the document\'s own text; the highlight follows the words.', 'icon' => 'M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z'],
+                    ['name' => 'Image', 'text' => 'Place, resize and rotate images; a locked image sits under your annotations.', 'icon' => 'M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A1.5 1.5 0 0021.75 19.5V4.5A1.5 1.5 0 0020.25 3H3.75A1.5 1.5 0 002.25 4.5v15A1.5 1.5 0 003.75 21z'],
+                    ['name' => 'Fields', 'text' => 'Fill form fields, and keep every widget intact when text around them is edited.', 'icon' => 'M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm-.375 5.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z'],
+                    ['name' => 'Convert', 'text' => 'Export to Word, Excel, images or PDF/A, with the advanced options behind one toggle.', 'icon' => 'M7.5 21L3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5'],
+                    ['name' => 'Organize', 'text' => 'Merge files, split pages, reorder and rotate, up to the page limit the tool shows you.', 'icon' => 'M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z'],
+                    ['name' => 'Password', 'text' => 'Protect a document, or unlock one you have the password for, without leaving the editor.', 'icon' => 'M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z'],
+                ];
+            @endphp
+
+            <div class="mt-12 grid grid-cols-1 gap-8 lg:grid-cols-12">
+                <div class="grid grid-cols-1 gap-px overflow-hidden rounded-xl border border-zinc-200 bg-zinc-200 sm:grid-cols-2 lg:col-span-8 lg:grid-cols-3 dark:border-zinc-800 dark:bg-zinc-800">
+                    @foreach ($editorTools as $tool)
+                        <div class="bg-white p-5 dark:bg-zinc-950">
+                            <div class="flex items-center gap-2.5">
+                                <span class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="{{ $tool['icon'] }}" /></svg>
+                                </span>
+                                <h3 class="text-sm font-semibold text-zinc-900 dark:text-white">{{ $tool['name'] }}</h3>
+                            </div>
+                            <p class="mt-3 text-sm leading-6 text-zinc-500 dark:text-zinc-400">{{ $tool['text'] }}</p>
+                        </div>
+                    @endforeach
+                    <a href="{{ route('documents.index') }}" class="group flex flex-col justify-between bg-zinc-900 p-5 text-white hover:bg-zinc-800 dark:bg-white dark:text-zinc-900 dark:hover:bg-zinc-200 transition">
+                        <h3 class="text-sm font-semibold">Try it on your own file</h3>
+                        <p class="mt-3 text-sm leading-6 text-zinc-300 dark:text-zinc-600">Upload a PDF and open it in the editor. Editing existing text is a premium feature; everything else is free to try.</p>
+                        <span class="mt-4 inline-flex items-center gap-1.5 text-sm font-medium">
+                            Open the editor
+                            <svg class="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5-5 5M6 12h12" /></svg>
+                        </span>
+                    </a>
+                </div>
+
+                <figure class="lg:col-span-4">
+                    <div class="overflow-hidden rounded-xl border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-950">
+                        <img
+                            src="{{ asset('images/home_page_images/editor/panel-light.webp') }}"
+                            width="790" height="1570"
+                            alt="The Text Options panel of the editor: font picker set to the document's embedded Lato, a size slider at 12pt, text and background colours, opacity, bold, italic, underline and strikethrough, alignment, text tools and a hyperlink field."
+                            class="block w-full"
+                            loading="lazy"
+                        >
+                    </div>
+                    <figcaption class="mt-3 text-xs leading-5 text-zinc-500 dark:text-zinc-500">The Text Options panel reads the selected text's real font. Document faces are listed first, then the bundled families.</figcaption>
+                </figure>
+            </div>
+        </div>
+    </section>
+
+    {{-- Beyond the editor --}}
+    <section id="tools" class="border-t border-zinc-200 py-20 sm:py-24 dark:border-zinc-800">
+        <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+            <div class="max-w-2xl">
+                <p class="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600 dark:text-blue-400">Also in the kit</p>
+                <h2 class="nk-balance mt-3 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl dark:text-white">Two more tools and the dashboard that runs them.</h2>
+            </div>
+
+            <div class="mt-12 grid grid-cols-1 gap-6 md:grid-cols-3">
+                <a href="{{ route('domainSearch.index') }}" class="group rounded-xl border border-zinc-200 bg-white p-6 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700 transition">
+                    <span class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                        <svg class="h-4.5 w-4.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 100-18 9 9 0 000 18zm0 0c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3 7.5 7.03 7.5 12s2.015 9 4.5 9zM3.6 9h16.8M3.6 15h16.8" /></svg>
+                    </span>
+                    <h3 class="mt-4 text-base font-semibold text-zinc-900 dark:text-white">Domain Search</h3>
+                    <p class="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">Check whether a name is taken and get alternatives generated around it, with the answers to the usual questions on one page.</p>
+                    <span class="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-zinc-900 dark:text-white">Search a domain <svg class="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5-5 5M6 12h12" /></svg></span>
+                </a>
+
+                <div class="rounded-xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-950">
+                    <span class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                        <svg class="h-4.5 w-4.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456z" /></svg>
+                    </span>
+                    <h3 class="mt-4 text-base font-semibold text-zinc-900 dark:text-white">Logo Generator</h3>
+                    <p class="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">Vector and raster directions from a short brief. Open any result in the editor.</p>
+                    <div class="mt-4 grid grid-cols-4 gap-2">
+                        <img src="{{ asset('images/home_page_images/vector/vector_lion.svg') }}" alt="Vector lion logo" class="aspect-square w-full rounded-md border border-zinc-200 object-cover dark:border-zinc-800" loading="lazy">
+                        <img src="{{ asset('images/home_page_images/vector/vector_sun_abstract.svg') }}" alt="Vector abstract sun logo" class="aspect-square w-full rounded-md border border-zinc-200 object-cover dark:border-zinc-800" loading="lazy">
+                        <img src="{{ asset('images/home_page_images/image/raster_dragon_photorealistic.webp') }}" alt="Raster dragon logo" class="aspect-square w-full rounded-md border border-zinc-200 object-cover dark:border-zinc-800" loading="lazy">
+                        <img src="{{ asset('images/home_page_images/image/raster_icegiant_fantasy.png') }}" alt="Raster ice giant logo" class="aspect-square w-full rounded-md border border-zinc-200 object-cover dark:border-zinc-800" loading="lazy">
+                    </div>
+                    <div class="mt-4 flex flex-wrap gap-x-4 gap-y-2 text-sm font-medium">
+                        <a href="/logo-generator" class="text-zinc-900 hover:text-blue-600 dark:text-white dark:hover:text-blue-400 transition">Generate a logo</a>
+                        <a href="{{ route('browse-logos') }}" class="text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition">Browse the gallery</a>
+                    </div>
+                </div>
+
+                <a href="/admin/login" class="group rounded-xl border border-zinc-200 bg-white p-6 hover:border-zinc-300 dark:border-zinc-800 dark:bg-zinc-950 dark:hover:border-zinc-700 transition">
+                    <span class="inline-flex h-9 w-9 items-center justify-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+                        <svg class="h-4.5 w-4.5" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h12A2.25 2.25 0 0120.25 6v12A2.25 2.25 0 0118 20.25H6A2.25 2.25 0 013.75 18V6zM3.75 9.75h16.5M9.75 9.75v10.5" /></svg>
+                    </span>
+                    <h3 class="mt-4 text-base font-semibold text-zinc-900 dark:text-white">Admin dashboard</h3>
+                    <p class="mt-2 text-sm leading-6 text-zinc-500 dark:text-zinc-400">Documents, users, credits, security settings and the automated test catalogue, on a Filament panel you can extend.</p>
+                    <span class="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-zinc-900 dark:text-white">Sign in to the dashboard <svg class="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7l5 5-5 5M6 12h12" /></svg></span>
+                </a>
+            </div>
+        </div>
+    </section>
+
+    {{-- FAQ --}}
+    <section id="faq" class="border-t border-zinc-200 bg-zinc-50 py-20 sm:py-24 dark:border-zinc-800 dark:bg-zinc-900/40">
+        <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-1 gap-10 lg:grid-cols-12">
+                <div class="lg:col-span-4">
+                    <p class="text-xs font-semibold uppercase tracking-[0.18em] text-blue-600 dark:text-blue-400">Questions</p>
+                    <h2 class="nk-balance mt-3 text-3xl font-semibold tracking-tight text-zinc-900 dark:text-white">Before you upload</h2>
+                </div>
+                @php
+                    $faqs = [
+                        ['q' => 'Does editing existing text really keep the original font?', 'a' => 'Yes, when the font is embedded in the PDF, which is nearly always. Netkit extracts the embedded faces and draws your edit with them. If a glyph you type is not in the embedded subset, a bundled family that matches the original as closely as possible steps in for that glyph.'],
+                        ['q' => 'What happens to the rest of the page when I change a word?', 'a' => 'Nothing. The block you edited is redrawn in place; every other block, image and form field on the page is left untouched, and pages you did not edit are byte-identical to the original.'],
+                        ['q' => 'Which parts are free?', 'a' => 'Uploading, viewing, adding text, shapes, drawings, highlights, images and signatures, converting, organizing and password tools are free to use. Editing the text that is already in a document is a premium feature.'],
+                        ['q' => 'Can I run Netkit myself?', 'a' => 'Netkit is an open-source Laravel application with a Filament admin panel. The editor is built on pdf.js in the browser and PyMuPDF on the server, so it runs anywhere PHP and Python do.'],
+                    ];
+                @endphp
+                <div class="lg:col-span-8">
+                    <div class="divide-y divide-zinc-200 rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-950">
+                        @foreach ($faqs as $index => $faq)
+                            <details class="group px-5 py-4" @if ($index === 0) open @endif>
+                                <summary class="flex cursor-pointer list-none items-center justify-between gap-4 text-sm font-semibold text-zinc-900 marker:content-none dark:text-white">
+                                    {{ $faq['q'] }}
+                                    <svg class="h-4 w-4 shrink-0 text-zinc-400 transition-transform group-open:rotate-45" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14" /></svg>
+                                </summary>
+                                <p class="mt-3 max-w-2xl text-sm leading-6 text-zinc-500 dark:text-zinc-400">{{ $faq['a'] }}</p>
+                            </details>
+                        @endforeach
                     </div>
                 </div>
             </div>
-        </section>
+        </div>
+    </section>
 
-        <!-- Footer -->
-        <footer class="py-12 px-4 sm:px-6 lg:px-8 bg-gray-900 text-gray-300">
-            <div class="container mx-auto">
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-8 mb-8">
-                    <div>
-                        <div class="flex items-center gap-2 mb-4">
-                            <svg class="h-8 w-8 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                            </svg>
-                            <span class="text-xl font-bold text-white">Netkit</span>
-                        </div>
-                        <p class="text-sm">Free and Open-Source PDF Editor & Admin Dashboard Template</p>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-white mb-4">Useful Links</h3>
-                        <ul class="space-y-2 text-sm">
-                            <li><a href="#" class="hover:text-white transition">Documentation</a></li>
-                            <li><a href="#" class="hover:text-white transition">Blog</a></li>
-                            <li><a href="#" class="hover:text-white transition">Update Logs</a></li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-white mb-4">About</h3>
-                        <ul class="space-y-2 text-sm">
-                            <li><a href="#" class="hover:text-white transition">Privacy Policy</a></li>
-                            <li><a href="#" class="hover:text-white transition">License</a></li>
-                            <li><a href="#" class="hover:text-white transition">Support</a></li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h3 class="font-semibold text-white mb-4">Newsletter</h3>
-                        <p class="text-sm mb-4">Subscribe for the latest updates</p>
-                        <input type="email" placeholder="Enter your email" class="w-full px-4 py-2 rounded-lg bg-gray-800 border border-gray-700 focus:border-blue-500 focus:outline-none text-sm">
-                    </div>
-                </div>
-                <div class="border-t border-gray-800 pt-8 text-center text-sm">
-                    <p>&copy; 2026 Netkit - All Rights Reserved.</p>
+    {{-- Closing call to action --}}
+    <section class="border-t border-zinc-200 py-20 sm:py-24 dark:border-zinc-800">
+        <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+            <div class="relative overflow-hidden rounded-2xl border border-zinc-200 bg-zinc-900 px-6 py-14 text-center sm:px-12 dark:border-zinc-800 dark:bg-white">
+                <div class="pointer-events-none absolute inset-0" style="background: radial-gradient(50% 80% at 50% 100%, rgba(37, 99, 235, 0.35), transparent 70%);" aria-hidden="true"></div>
+                <h2 class="nk-balance relative text-3xl font-semibold tracking-tight text-white sm:text-4xl dark:text-zinc-900">Open a PDF. Change what needs changing. Download.</h2>
+                <p class="relative mx-auto mt-4 max-w-xl text-base leading-7 text-zinc-300 dark:text-zinc-600">No account is needed to try the editor. Sign in to keep your documents and to unlock editing of existing text.</p>
+                <div class="relative mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+                    <a href="{{ route('documents.index') }}" class="inline-flex w-full items-center justify-center rounded-lg bg-white px-5 py-2.5 text-sm font-medium text-zinc-900 hover:bg-zinc-200 sm:w-auto dark:bg-zinc-900 dark:text-white dark:hover:bg-zinc-800 transition">Open the editor</a>
+                    <a href="{{ route('login') }}" class="inline-flex w-full items-center justify-center rounded-lg border border-white/20 px-5 py-2.5 text-sm font-medium text-white hover:bg-white/10 sm:w-auto dark:border-zinc-300 dark:text-zinc-900 dark:hover:bg-zinc-100 transition">Sign in</a>
                 </div>
             </div>
-        </footer>
+        </div>
+    </section>
 
-        <script>
-            document.addEventListener('DOMContentLoaded', function () {
-                const preview = document.getElementById('logo-preview-main');
-                const thumbs = document.querySelectorAll('.logo-thumb');
-                const modeButtons = document.querySelectorAll('.logo-mode-btn');
-                const modeBadge = document.getElementById('logo-mode-badge');
-
-                if (!preview || !thumbs.length) {
-                    return;
-                }
-
-                function setActiveThumb(activeThumb) {
-                    thumbs.forEach(function (item) {
-                        item.classList.remove('border-blue-500');
-                        item.classList.add('border-transparent');
-                    });
-
-                    activeThumb.classList.remove('border-transparent');
-                    activeThumb.classList.add('border-blue-500');
-                }
-
-                function setPreviewFromThumb(thumb) {
-                    const nextSrc = thumb.getAttribute('data-preview-src');
-                    const nextAlt = thumb.getAttribute('data-preview-alt');
-
-                    if (nextSrc) {
-                        preview.src = nextSrc;
-                    }
-
-                    if (nextAlt) {
-                        preview.alt = nextAlt;
-                    }
-                }
-
-                function setMode(mode) {
-                    modeButtons.forEach(function (btn) {
-                        const selected = btn.getAttribute('data-mode') === mode;
-                        btn.classList.toggle('bg-white', selected);
-                        btn.classList.toggle('dark:bg-gray-700', selected);
-                        btn.classList.toggle('shadow-sm', selected);
-                        btn.classList.toggle('text-gray-900', selected);
-                        btn.classList.toggle('dark:text-white', selected);
-                        btn.classList.toggle('text-gray-600', !selected);
-                        btn.classList.toggle('dark:text-gray-300', !selected);
-                    });
-
-                    thumbs.forEach(function (thumb) {
-                        const thumbMode = thumb.getAttribute('data-mode');
-                        thumb.classList.toggle('hidden', thumbMode !== mode);
-                    });
-
-                    const visibleThumb = document.querySelector('.logo-thumb[data-mode="' + mode + '"]');
-                    if (visibleThumb) {
-                        setPreviewFromThumb(visibleThumb);
-                        setActiveThumb(visibleThumb);
-                    }
-
-                    if (modeBadge) {
-                        const modeLabel = mode === 'image' ? 'Raster' : 'Vector';
-                        modeBadge.textContent = 'Viewing: ' + modeLabel;
-                    }
-                }
-
-                thumbs.forEach(function (thumb) {
-                    thumb.addEventListener('click', function () {
-                        if (thumb.classList.contains('hidden')) {
-                            return;
-                        }
-
-                        setPreviewFromThumb(thumb);
-                        setActiveThumb(thumb);
-                    });
-                });
-
-                modeButtons.forEach(function (btn) {
-                    btn.addEventListener('click', function () {
-                        const selectedMode = btn.getAttribute('data-mode') || 'vector';
-                        setMode(selectedMode);
-                    });
-                });
-
-                setMode('vector');
-            });
-        </script>
-    </body>
+    {{-- Footer --}}
+    <footer class="border-t border-zinc-200 py-10 dark:border-zinc-800">
+        <div class="mx-auto flex max-w-6xl flex-col gap-8 px-4 sm:px-6 md:flex-row md:items-start md:justify-between lg:px-8">
+            <div class="max-w-xs">
+                <a href="{{ route('home') }}" class="inline-flex items-center gap-2.5">
+                    <img src="{{ asset('images/netkit_logo_cube.svg') }}" alt="" class="h-7 w-7">
+                    <span class="text-base font-semibold text-zinc-900 dark:text-white">Netkit</span>
+                </a>
+                <p class="mt-3 text-sm leading-6 text-zinc-500 dark:text-zinc-400">An open-source PDF editor and admin dashboard, built on Laravel, Filament, pdf.js and PyMuPDF.</p>
+            </div>
+            <nav class="grid grid-cols-2 gap-x-12 gap-y-2 text-sm sm:grid-cols-3" aria-label="Footer">
+                <a href="{{ route('documents.index') }}" class="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition">PDF Editor</a>
+                <a href="{{ route('domainSearch.index') }}" class="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition">Domain Search</a>
+                <a href="/logo-generator" class="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition">Logo Generator</a>
+                <a href="{{ route('browse-logos') }}" class="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition">Browse Logos</a>
+                <a href="#faq" class="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition">Questions</a>
+                <a href="{{ route('login') }}" class="text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-white transition">Sign in</a>
+            </nav>
+        </div>
+        <div class="mx-auto mt-8 max-w-6xl px-4 text-xs text-zinc-500 sm:px-6 lg:px-8 dark:text-zinc-500">&copy; {{ date('Y') }} Netkit. All rights reserved.</div>
+    </footer>
+</body>
 </html>
