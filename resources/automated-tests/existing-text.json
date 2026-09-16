@@ -556,6 +556,69 @@
                         "item_prefix": "B:"
                     }
                 }
+            },
+            {
+                "number": "26",
+                "id": "26-subset-font-word",
+                "gid": "1218522731008214",
+                "area": "Edit",
+                "title": "A word set from two subset fonts stays whole: \"Łódź\" reads as one word, text typed beside it flows, the export keeps one searchable word (drylab page 2)",
+                "summary": "drylab sets 'Łódź' as three touching runs from two Lato subsets. A: the row reads 'based in Łódź, the film capital' whole; the caret is placed inside the gap before the word and 'Lodz ' typed: the typed text sits before the word, the word's runs still touch, the rest of the row moves right instead of being painted over; the committed paragraph contains 'based in Lodz Łódź, the film capital of Poland. Two'. B: 'Łódź' is one searchable string inside the paragraph on page 2, no spaced fragments, 'Lodz' is found there, no missing glyphs, the rest of page 2 is untouched and pages 1 and 3 are byte-identical.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218522920153531",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218522867504551",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "27",
+                "id": "27-enter-in-reflowed-paragraph",
+                "gid": "1218532048457936",
+                "area": "Edit",
+                "title": "Enter inside a re-flowed paragraph: the breaks survive the commit and the download reflows with them instead of squeezing each paragraph onto one row (drylab page 2)",
+                "summary": "Resize the 'Sales:' paragraph narrower and back so it re-flows into prose, then press Enter after 'new' and after 'customers'. A: the committed and saved text carry the two breaks with no zero-width anchors, the box does not move. B: on page 2 the row ending 'We also have new' is followed by a row reading exactly 'customers' then one starting 'in Norway'; every character is 12pt and no row runs past the box; the rest of page 2 is untouched and pages 1 and 3 are byte-identical.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218532153751518",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218532185004316",
+                        "item_prefix": "B:"
+                    }
+                }
+            },
+            {
+                "number": "28",
+                "id": "28-selection-font-download",
+                "gid": "1218532775730362",
+                "area": "Edit",
+                "title": "A font chosen for a selection reaches the download: the sentence is drawn in Georgia, the rest stays in Lato, the bold lead-in keeps its face (drylab page 2)",
+                "summary": "Select 'Return customer rate is now 80%,' in the 'Sales:' paragraph and pick Georgia. A: the selection renders in Georgia, the rest keeps Lato, the run survives the commit and is saved with fontFamily Georgia. B: on page 2 the sentence's glyphs are in Georgia or its serif substitute at 12pt, 'proving value and willingness' stays in the source Lato face, 'Sales:' is in a bold Montserrat face, no missing glyphs, the rest of page 2 is untouched and pages 1 and 3 are byte-identical.",
+                "fixture": "drylab.pdf",
+                "automated": true,
+                "story": "existing-text",
+                "components": {
+                    "editor": {
+                        "gid": "1218532773801462",
+                        "item_prefix": "A:"
+                    },
+                    "download": {
+                        "gid": "1218532867337070",
+                        "item_prefix": "B:"
+                    }
+                }
             }
         ]
     }

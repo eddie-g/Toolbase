@@ -956,6 +956,42 @@ export function sourceNaturalizedGapText({
     return ' '.repeat(preserveCapturedSpacing ? capturedCount : 1);
 }
 
+// What a synthetic gap span contributes when the edit scaffold is flattened
+// back to plain text. An untouched gap is the canonical separator: one space,
+// or nothing at the start of a line where it only reproduced an indent. A gap
+// the user has typed into is real text and must survive verbatim: dropping it
+// made the edit look like a no-op, so the scaffold was never released and the
+// typed characters overflowed the gap's fixed width over the next run (NK_38).
+// Returns null when the gap contributes nothing.
+export function flattenedSourceGapText({
+    atLineStart = false,
+    currentText = '',
+    originalSpaceCount = 0,
+} = {}) {
+    const current = String(currentText || '');
+    const capturedCount = Math.max(0, Number.parseInt(String(originalSpaceCount || 0), 10) || 0);
+    if (current !== ' '.repeat(capturedCount)) return current;
+    return atLineStart ? null : ' ';
+}
+
+// Plain text of a re-flowed promoted paragraph (the pdfe-style paragraph
+// surface, `promotedParagraphFlow`). Its DOM newlines are soft: the browser
+// wraps the prose itself, so they collapse to spaces. The one exception is
+// the editor's own Enter, which inserts "\n" followed by a zero-width caret
+// anchor: that is a hard break the user typed, and it must survive as a
+// newline. Collapsing it to a space put "customers" back into the running
+// text on export and leaked the anchor into the saved text (NK_39).
+export function collapsePromotedParagraphPlainText(value) {
+    const HARD_BREAK = '\u0000';
+    return String(value || '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/\n\u200b/g, HARD_BREAK)
+        .replace(/[ \t]*\n[ \t]*/g, ' ')
+        .replace(/[\u200b\u200c\u200d\u2060\ufeff]/g, '')
+        .replace(/[ \t]*\u0000[ \t]*/g, '\n')
+        .replace(/\n{3,}/g, '\n\n');
+}
+
 export function sourceRunTextsUseDistributedLeaderSpacing(runTexts, minimumRunCount = 3) {
     const minimum = Math.max(2, Number.parseInt(String(minimumRunCount || 3), 10) || 3);
     let consecutive = 0;

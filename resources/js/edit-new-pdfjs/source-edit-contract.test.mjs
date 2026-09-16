@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {
     annotationSelectionType,
     clampSourceMaskRectToCell,
+    collapsePromotedParagraphPlainText,
     dominantSourceRunFontSize,
+    flattenedSourceGapText,
     insertPdfInlineSymbolsIntoText,
     isPdfInlineSymbolText,
     isPdfjsPromotedExtractionAnnotation,
@@ -793,4 +795,37 @@ test('keeps moved promoted source text as a visible persisted overlay', () => {
         pdfX: 13.88,
         pdfY: 266.93,
     }), true);
+});
+
+test('flattenedSourceGapText keeps text the user typed into a synthetic gap (NK_38)', () => {
+    // An untouched gap flattens to the canonical single space.
+    assert.equal(flattenedSourceGapText({ currentText: ' ', originalSpaceCount: 1 }), ' ');
+    assert.equal(flattenedSourceGapText({ currentText: '       ', originalSpaceCount: 7 }), ' ');
+    // A gap that only reproduced a line's indent contributes nothing.
+    assert.equal(flattenedSourceGapText({ atLineStart: true, currentText: '   ', originalSpaceCount: 3 }), null);
+    // Typing into the gap between "in" and "Łódź" must reach the flattened
+    // text, or the edit is judged a no-op and the fixed-width gap overflows.
+    assert.equal(flattenedSourceGapText({ currentText: ' 1838844', originalSpaceCount: 1 }), ' 1838844');
+    assert.equal(flattenedSourceGapText({ atLineStart: true, currentText: 'x', originalSpaceCount: 1 }), 'x');
+    // A gap emptied by the user is also a real change, not a separator.
+    assert.equal(flattenedSourceGapText({ currentText: '', originalSpaceCount: 1 }), '');
+    // A gap with no recorded count is untouched only while it holds no text.
+    assert.equal(flattenedSourceGapText({ currentText: '', originalSpaceCount: 0 }), ' ');
+    assert.equal(flattenedSourceGapText({ currentText: ' ', originalSpaceCount: 0 }), ' ');
+});
+
+
+test('collapsePromotedParagraphPlainText keeps Enter as a hard break and drops soft wraps (NK_39)', () => {
+    // Soft DOM newlines of re-flowed prose collapse to one space.
+    assert.equal(collapsePromotedParagraphPlainText('We also have\nnew customers'), 'We also have new customers');
+    // The editor's Enter marker ("\n" + zero-width anchor) is a hard break;
+    // the anchor never reaches the saved text.
+    assert.equal(
+        collapsePromotedParagraphPlainText('We also have new\n\u200b customers\n\u200b in Norway'),
+        'We also have new\ncustomers\nin Norway',
+    );
+    // Two Enters make an empty paragraph; more collapse to one blank line.
+    assert.equal(collapsePromotedParagraphPlainText('new\n\u200b\n\u200bcustomers'), 'new\n\ncustomers');
+    assert.equal(collapsePromotedParagraphPlainText('new\n\u200b\n\u200b\n\u200bcustomers'), 'new\n\ncustomers');
+    assert.equal(collapsePromotedParagraphPlainText(''), '');
 });

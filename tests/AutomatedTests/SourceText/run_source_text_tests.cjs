@@ -1592,6 +1592,307 @@ async function testZoom(ctx) {
 // Registry and runner
 // ---------------------------------------------------------------------------
 
+/**
+ * 26 — A word set from two subset fonts stays whole (drylab page 2, NK_38).
+ *
+ * drylab sets "Łódź" as "Ł" + "ód" + "ź": the accented letters come from a
+ * second Lato subset. PyMuPDF and pdf.js both start a new run at the font
+ * change, so the word reaches the editor as three touching runs. The
+ * extractor once joined every run with a space ("Ł ód ź ,"), the editor
+ * forced those spaces into its scaffold, text typed into the gap before the
+ * word overflowed a fixed-width gap over ", the film", and the download drew
+ * the word as fragments no search could find.
+ *
+ * The row is read from the box's text (its rows are separated by newlines),
+ * not through lineTexts(): that helper lists words per text node, so three
+ * touching runs would read as three words even when they render as one.
+ */
+async function testSubsetFontWordStaysWhole(ctx) {
+    const { page, recorder, testId } = ctx;
+    const { A, B } = recorder;
+    const PAGE = 1;
+    const rowOf = (id) => page.evaluate((wanted) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        const text = String(box?.querySelector('.enpv-text-content')?.textContent || '');
+        return (text.split('\n').find((row) => /film capital/.test(row)) || '').replace(/\s+/g, ' ').trim();
+    }, id);
+    const base = await baseline(page, testId);
+    // Page 2's boxes only render once the page has been scrolled into view.
+    await page.locator('.pdfViewer .page[data-page-number="2"]').scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('.enpv-annotation-box'))
+        .some((box) => /New team members/.test(box.textContent || '')), { timeout: 60000 });
+    await sleep(800);
+    const before = await findBox(page, (b) => b.promotedBlock && b.pageIndex === PAGE && b.text.startsWith('New team members'), 'drylab "New team members" paragraph');
+    const linesBefore = await lineTexts(page, before.id);
+    A.equals('row-reads-whole-word', await rowOf(before.id), 'based in Łódź, the film capital of Poland. Two', 'The row shows the word whole before any edit');
+    A.assert('no-phantom-spaces', !/Ł ód|ód ź|ź ,/.test(before.text), 'The block text carries no space inside the word or before the comma', before.text.split('\n')[2]);
+
+    // Type into the gap between "in" and the word, the way the report did:
+    // the caret sits inside the synthetic gap span, not inside a run.
+    await enterEdit(page, before.id);
+    const placed = await page.evaluate((wanted) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        const root = box?.querySelector('.enpv-text-content');
+        if (!root) return false;
+        const gap = Array.from(root.querySelectorAll('[data-source-span-gap="1"]'))
+            .find((el) => /^Ł/.test(String(el.nextSibling?.textContent || '')));
+        const target = gap?.lastChild;
+        if (!target || target.nodeType !== Node.TEXT_NODE) return false;
+        const range = document.createRange();
+        range.setStart(target, target.nodeValue.length);
+        range.collapse(true);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        root.focus();
+        return true;
+    }, before.id);
+    A.assert('caret-in-gap', placed, 'The caret was placed inside the gap before the word');
+    await page.keyboard.type('Lodz ');
+    await sleep(300);
+    // The word spans three text nodes; measure its first and last letters.
+    const rects = await page.evaluate((wanted) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        const root = box.querySelector('.enpv-text-content');
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const found = {};
+        const probe = (node, needle, key) => {
+            const index = node.nodeValue.indexOf(needle);
+            if (index < 0 || found[key]) return;
+            const range = document.createRange();
+            range.setStart(node, index);
+            range.setEnd(node, index + needle.length);
+            const rect = range.getBoundingClientRect();
+            if (rect.width > 0) found[key] = { left: rect.left, right: rect.right, top: rect.top };
+        };
+        let node = walker.nextNode();
+        while (node) {
+            probe(node, 'Lodz', 'typed');
+            probe(node, 'Ł', 'wordStart');
+            probe(node, 'ód', 'wordMiddle');
+            probe(node, 'ź', 'wordEnd');
+            probe(node, ', the film', 'tail');
+            node = walker.nextNode();
+        }
+        return found;
+    }, before.id);
+    const { typed, wordStart, wordMiddle, wordEnd, tail } = rects;
+    A.assert('typed-text-measured', typed && wordStart && wordMiddle && wordEnd && tail, 'The typed text, the word and the rest of the row can all be measured', JSON.stringify(rects));
+    if (typed && wordStart && wordMiddle && wordEnd && tail) {
+        const sameRow = [wordStart, wordEnd, tail].every((r) => Math.abs(r.top - typed.top) <= 2);
+        A.assert('typed-text-does-not-overlap', sameRow && typed.right <= wordStart.left + 0.5 && wordEnd.right <= tail.left + 0.5,
+            'The typed text sits before the word and the rest of the row moved right instead of being painted over',
+            `typed ${typed.left.toFixed(1)}-${typed.right.toFixed(1)}, word ${wordStart.left.toFixed(1)}-${wordEnd.right.toFixed(1)}, tail from ${tail.left.toFixed(1)}`);
+        const seams = [wordMiddle.left - wordStart.right, wordEnd.left - wordMiddle.right];
+        A.assert('word-still-tight', seams.every((seam) => Math.abs(seam) <= 1.5),
+            'The three runs of the word still touch: no space opened between Ł, ód and ź', `seams ${seams.map((v) => v.toFixed(1)).join(', ')}px`);
+    }
+    await commitEdit(page);
+    const after = await boxById(page, before.id);
+    const rowAfter = await page.evaluate((wanted) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        return String(box?.querySelector('.enpv-text-content')?.textContent || '').replace(/\s+/g, ' ').trim();
+    }, after.id);
+    const linesAfter = await lineTexts(page, after.id);
+    // A committed paragraph flows as one text; the row is found inside it.
+    const EXPECTED_ROW = 'based in Lodz Łódź, the film capital of Poland. Two';
+    A.assert('row-after-typing', rowAfter.includes(EXPECTED_ROW), 'The committed paragraph holds the typed text and the whole word', `expected to contain ${JSON.stringify(EXPECTED_ROW)}, got ${JSON.stringify(rowAfter.slice(Math.max(0, rowAfter.indexOf('based in')), rowAfter.indexOf('based in') + 60))}`);
+    // "Lodz " makes the row longer, so its last word may wrap onto one new line.
+    A.assert('line-count-kept', linesAfter.length >= linesBefore.length && linesAfter.length <= linesBefore.length + 1, 'The paragraph keeps its lines (at most one wrap from the longer row)', `${linesBefore.length} -> ${linesAfter.length} lines`);
+    A.near('box-left-kept', after.pt.x, before.pt.x, 0.5, 'The box does not move');
+    A.near('box-top-kept', after.pt.y, before.pt.y, 0.5, 'The box does not move');
+    const artifacts = [await capture(page, testId, 'edited')];
+
+    const download = await downloadPdf(page, testId, 'edited');
+    const report = summarize(download.path);
+    const rect = expandRect(rectUnion(boxRect(before), boxRect(after)), 2);
+    const whole = searchCount(download.path, 'Łódź', PAGE);
+    B.assert('word-searchable', hitsInside(whole, rect, 1).length >= 1, '"Łódź" is found as one string inside the paragraph', `${whole.count} hits on the page`);
+    B.equals('no-split-word', searchCount(download.path, 'Ł ód', PAGE).count + searchCount(download.path, 'ód ź', PAGE).count, 0, 'The word is not drawn as spaced fragments');
+    const typedHits = searchCount(download.path, 'Lodz', PAGE);
+    B.assert('typed-text-found', hitsInside(typedHits, rect, 1).length >= 1, 'The typed text is found at the paragraph', `${typedHits.count} hits`);
+    const pdfText = lineTextsTouching(report.pages[PAGE], rect).join(' ');
+    B.assert('row-matches-editor', pdfText.includes(EXPECTED_ROW), 'The download reads the editor\'s row, wraps aside', `expected ${JSON.stringify(EXPECTED_ROW)} / download ${JSON.stringify(pdfText.slice(pdfText.indexOf('based in'), pdfText.indexOf('based in') + 70))}`);
+    const notdef = charsFiltered(charsAt(download.path, rect, PAGE), before.fontPts).notdef;
+    B.equals('no-missing-glyphs', notdef, 0, 'No glyph in the paragraph renders as a missing-glyph box');
+    checkBackgroundUntouched(B, base, report, rect, PAGE);
+    checkOtherPagesIdentical(B, base, report, PAGE);
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean), before, after, download, report, base };
+}
+
+/**
+ * 27 — Enter inside a re-flowed paragraph (drylab page 2, NK_39).
+ *
+ * Once a promoted paragraph has been re-flowed into prose (here by resizing
+ * it narrower and back), its newlines are the user's own paragraph breaks.
+ * The exporter used to map each of those paragraphs onto one captured source
+ * row and fit it there: "Sales: ... We also have new" at 10pt across the
+ * whole page. The editor also dropped the breaks from a user-sized
+ * paragraph's saved text and leaked the Enter marker's zero-width anchor.
+ */
+async function testEnterInReflowedParagraph(ctx) {
+    const { page, recorder, testId } = ctx;
+    const { A, B } = recorder;
+    const PAGE = 1;
+    const base = await baseline(page, testId);
+    await page.locator('.pdfViewer .page[data-page-number="2"]').scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('.enpv-annotation-box'))
+        .some((box) => /Return customer rate/.test(box.textContent || '')), { timeout: 60000 });
+    await sleep(800);
+    const before = await findBox(page, (b) => b.promotedBlock && b.pageIndex === PAGE && b.text.startsWith('Sales:'), 'drylab "Sales:" paragraph');
+    // Narrower and back: the rows re-flow into prose at the original width.
+    const narrowed = await resizeBoxRight(page, before.id, -80);
+    const restored = await resizeBoxRight(page, before.id, 80);
+    A.near('width-restored', restored.pt.w, before.pt.w, 1.5, 'The box is back at its original width after the two drags', `${narrowed.pt.w.toFixed(1)} -> ${restored.pt.w.toFixed(1)} pt`);
+    const reflowed = await page.evaluate((wanted) => document.querySelector(`.enpv-annotation-box[data-annotation-id="${wanted}"]`)?.dataset?.promotedReflowEnabled === '1', before.id);
+    A.assert('paragraph-reflowed', reflowed, 'The paragraph is in re-flowed prose (promotedReflowEnabled)');
+
+    await enterEdit(page, before.id);
+    const caretAfter = (needle) => page.evaluate(({ wanted, needle }) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        const root = box?.querySelector('.enpv-text-content');
+        if (!root) return false;
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            const index = node.nodeValue.indexOf(needle);
+            if (index < 0) continue;
+            const range = document.createRange();
+            range.setStart(node, index + needle.length);
+            range.collapse(true);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            root.focus();
+            return true;
+        }
+        return false;
+    }, { wanted: before.id, needle });
+    A.assert('caret-after-new', await caretAfter('We also have new'), 'The caret was placed after "new"');
+    await page.keyboard.press('Enter');
+    await sleep(250);
+    A.assert('caret-after-customers', await caretAfter('customers'), 'The caret was placed after "customers"');
+    await page.keyboard.press('Enter');
+    await sleep(250);
+    await commitEdit(page);
+    const after = await boxById(page, before.id);
+    const saved = await page.evaluate((wanted) => {
+        const box = document.querySelector(`.enpv-annotation-box[data-annotation-id="${wanted}"]`);
+        return String(box?.querySelector('.enpv-text-content')?.textContent || '');
+    }, before.id);
+    A.assert('breaks-in-editor', /We also have new\n​?\s*customers\n​?\s*in Norway/.test(saved), 'The editor holds a break after "new" and after "customers"', JSON.stringify(saved.slice(saved.indexOf('We also'), saved.indexOf('We also') + 60)));
+    A.near('box-left-kept', after.pt.x, before.pt.x, 0.5, 'The box does not move');
+    A.near('box-top-kept', after.pt.y, before.pt.y, 0.5, 'The box does not move');
+    const artifacts = [await capture(page, testId, 'edited')];
+
+    const download = await downloadPdf(page, testId, 'edited');
+    const savedAnnotation = (download.payload.annotations || []).find((a) => a.id === before.id) || null;
+    const savedText = String(savedAnnotation?.text || '');
+    A.assert('breaks-in-saved-text', /We also have new\n+customers\n+in Norway/.test(savedText), 'The saved text keeps the two breaks', JSON.stringify(savedText.slice(Math.max(0, savedText.indexOf('We also')), savedText.indexOf('We also') + 60)));
+    A.assert('no-zero-width-in-saved-text', !/[​‌‍⁠﻿]/.test(savedText), 'No zero-width anchor leaks into the saved text');
+    const report = summarize(download.path);
+    const rect = expandRect(rectUnion(boxRect(before), boxRect(after)), 2);
+    const rows = lineTextsTouching(report.pages[PAGE], rect);
+    const newIndex = rows.findIndex((row) => /We also have new$/.test(row));
+    B.assert('row-ends-with-new', newIndex >= 0, 'A row ends with "We also have new"', JSON.stringify(rows.slice(0, 8)));
+    B.equals('customers-alone', newIndex >= 0 ? rows[newIndex + 1] : null, 'customers', '"customers" is drawn alone on the next row');
+    B.assert('next-row-starts-in-norway', newIndex >= 0 && /^in Norway/.test(rows[newIndex + 2] || ''), 'The row after it starts "in Norway"', JSON.stringify(rows[newIndex + 2] || null));
+    const lines = (report.pages[PAGE].blocks || []).flatMap((block) => block.lines).filter((line) => rectsIntersect(line.bbox, rect, 1));
+    const widest = Math.max(...lines.map((line) => line.bbox[2]));
+    B.assert('rows-inside-box', widest <= rect[2] + 3, 'No row of the paragraph runs past the box', `widest right edge ${widest.toFixed(1)} vs box ${rect[2].toFixed(1)}`);
+    const chars = charsFiltered(charsAt(download.path, rect, PAGE), before.fontPts);
+    B.assert('rows-at-size', chars.sizes.every((size) => Math.abs(size - before.fontPts) <= SIZE_TOL), 'Every character of the paragraph is at the source size (nothing squeezed)', JSON.stringify(chars.sizes));
+    B.equals('no-missing-glyphs', chars.notdef, 0, 'No glyph in the paragraph renders as a missing-glyph box');
+    checkBackgroundUntouched(B, base, report, rect, PAGE);
+    checkOtherPagesIdentical(B, base, report, PAGE);
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean), before, after, download, report, base };
+}
+
+/**
+ * 28 — A font chosen for a selection reaches the download (drylab page 2, NK_40).
+ *
+ * The editor wrapped the selection in a Georgia span and saved it as a rich
+ * run, but the exporter's wrapped layout dropped the run's "explicit family"
+ * flag, so the source-face pass put the paragraph's Lato back on every run
+ * and the download showed no change at all. The bold "Sales:" lead-in, a
+ * variable-font instance named "MontserratThin_700wght", also came back in a
+ * regular Montserrat because its weight axis was not read as bold.
+ */
+async function testSelectionFontReachesDownload(ctx) {
+    const { page, recorder, testId } = ctx;
+    const { A, B } = recorder;
+    const PAGE = 1;
+    const NEEDLE = 'Return customer rate is now 80%,';
+    const base = await baseline(page, testId);
+    await page.locator('.pdfViewer .page[data-page-number="2"]').scrollIntoViewIfNeeded();
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('.enpv-annotation-box'))
+        .some((box) => /Return customer rate/.test(box.textContent || '')), { timeout: 60000 });
+    await sleep(800);
+    const before = await findBox(page, (b) => b.promotedBlock && b.pageIndex === PAGE && b.text.startsWith('Sales:'), 'drylab "Sales:" paragraph');
+    await enterEdit(page, before.id);
+    A.equals('selection', await selectTextRange(page, before.id, NEEDLE), NEEDLE, 'The sentence is selected inside the paragraph');
+    await page.selectOption('#afb-font', 'Georgia');
+    await sleep(500);
+    const runFont = (needle) => page.evaluate(({ wanted, needle }) => {
+        const box = Array.from(document.querySelectorAll('.enpv-annotation-box')).find((el) => el.dataset.annotationId === wanted);
+        const walker = document.createTreeWalker(box.querySelector('.enpv-text-content'), NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+            const node = walker.currentNode;
+            if (node.nodeValue.includes(needle)) return window.getComputedStyle(node.parentElement).fontFamily;
+        }
+        return null;
+    }, { wanted: before.id, needle });
+    A.assert('selection-in-georgia', /georgia/i.test(String(await runFont(NEEDLE))), 'The selected sentence renders in Georgia', await runFont(NEEDLE));
+    A.assert('rest-keeps-source-face', /lato/i.test(String(await runFont('proving value'))), 'The rest of the paragraph keeps its Lato face', await runFont('proving value'));
+    await commitEdit(page);
+    const after = await boxById(page, before.id);
+    A.assert('selection-kept-after-commit', /georgia/i.test(String(await runFont(NEEDLE))), 'The Georgia run survives the commit');
+    A.near('box-left-kept', after.pt.x, before.pt.x, 0.5, 'The box does not move');
+    A.near('box-top-kept', after.pt.y, before.pt.y, 0.5, 'The box does not move');
+    const artifacts = [await capture(page, testId, 'edited')];
+
+    const download = await downloadPdf(page, testId, 'edited');
+    const savedRun = ((download.payload.annotations || []).find((a) => a.id === before.id)?.richTextRuns || [])
+        .find((run) => run.type === 'text' && String(run.text || '').includes('Return customer'));
+    A.equals('saved-run-family', savedRun?.fontFamily || null, 'Georgia', 'The saved rich run names Georgia');
+    const report = summarize(download.path);
+    const rect = expandRect(rectUnion(boxRect(before), boxRect(after)), 2);
+    const hits = searchCount(download.path, NEEDLE, PAGE);
+    const hit = hitsInside(hits, rect, 1)[0] || null;
+    B.assert('sentence-found', !!hit, 'The sentence is found inside the paragraph', `${hits.count} hits`);
+    // Fonts of the visible glyphs of one search hit: the hit rect is inset so a
+    // neighbouring run's space glyph is not sampled with it.
+    const glyphFonts = (hitRect, sizePt) => {
+        const chars = charsFiltered(charsAt(download.path, [hitRect[0] + 1, hitRect[1] + 1, hitRect[2] - 1, hitRect[3] - 1], PAGE), sizePt);
+        const visible = (chars.chars || []).filter((ch) => String(ch.c || '').trim());
+        return { fonts: Array.from(new Set(visible.map((ch) => ch.font))).sort(), sizes: Array.from(new Set(visible.map((ch) => ch.size))) };
+    };
+    if (hit) {
+        const glyphs = glyphFonts(hit, before.fontPts);
+        // Georgia is not bundled; the exporter draws it with Liberation Serif.
+        B.assert('sentence-in-georgia', glyphs.fonts.length > 0 && glyphs.fonts.every((font) => fontMatches(font, 'Georgia') || /georgia|liberationserif/i.test(font)),
+            'The sentence is drawn in Georgia or its serif substitute', JSON.stringify(glyphs.fonts));
+        B.assert('sentence-at-size', glyphs.sizes.every((size) => Math.abs(size - before.fontPts) <= SIZE_TOL), 'The sentence keeps the source size', JSON.stringify(glyphs.sizes));
+    }
+    const restHits = searchCount(download.path, 'proving value and willingness', PAGE);
+    const restHit = hitsInside(restHits, rect, 1)[0] || null;
+    if (restHit) {
+        const glyphs = glyphFonts(restHit, before.fontPts);
+        B.assert('rest-in-source-face', glyphs.fonts.length > 0 && glyphs.fonts.every((font) => fontMatches(font, before.sourceFont)), 'The rest of the paragraph stays in the source face', JSON.stringify(glyphs.fonts));
+    }
+    const leadHits = searchCount(download.path, 'Sales:', PAGE);
+    const leadHit = hitsInside(leadHits, rect, 1)[0] || null;
+    if (leadHit) {
+        const glyphs = glyphFonts(leadHit, 11.5);
+        B.assert('lead-in-bold-montserrat', glyphs.fonts.length > 0 && glyphs.fonts.every((font) => /montserrat/i.test(font) && isBold(font)),
+            'The "Sales:" lead-in keeps its bold Montserrat face', JSON.stringify(glyphs.fonts));
+    }
+    B.equals('no-missing-glyphs', charsFiltered(charsAt(download.path, rect, PAGE), before.fontPts).notdef, 0, 'No glyph in the paragraph renders as a missing-glyph box');
+    checkBackgroundUntouched(B, base, report, rect, PAGE);
+    checkOtherPagesIdentical(B, base, report, PAGE);
+    return { checks: recorder.checks, artifacts: artifacts.filter(Boolean), before, after, download, report, base };
+}
+
 const TESTS = [
     { id: '01-setup-and-baseline', number: '01', title: 'Setup: each fixture uploads, extracts and opens with its text promoted; the untouched download is the baseline', run: testSetup, fixture: null },
     { id: '02-select-and-enter-edit', number: '02', title: 'Selecting existing text makes a source box on the glyph bounds; entering Edit changes nothing', run: testSelectAndEnterEdit, fixture: 'invoice' },
@@ -1618,6 +1919,9 @@ const TESTS = [
     { id: '23-persistence', number: '23', title: 'Move, resize, edit and delete survive save and reload, and download the same', run: testPersistence, fixture: 'invoice' },
     { id: '24-undo-redo', number: '24', title: 'Undo and redo restore each state; the download after undo equals the baseline', run: testUndoRedo, fixture: 'invoice' },
     { id: '25-zoom', number: '25', title: 'Zoom: geometry and masks hold at 50%, 100% and 190%; downloads are identical', run: testZoom, fixture: 'invoice' },
+    { id: '26-subset-font-word', number: '26', title: 'A word set from two subset fonts stays whole: "Łódź" reads as one word, text typed beside it flows, the export keeps one searchable word (drylab page 2)', run: testSubsetFontWordStaysWhole, fixture: 'drylab' },
+    { id: '27-enter-in-reflowed-paragraph', number: '27', title: 'Enter inside a re-flowed paragraph: the breaks survive the commit and the download reflows with them instead of squeezing each paragraph onto one row (drylab page 2)', run: testEnterInReflowedParagraph, fixture: 'drylab' },
+    { id: '28-selection-font-download', number: '28', title: 'A font chosen for a selection reaches the download: the sentence is drawn in Georgia, the rest stays in Lato, the bold lead-in keeps its face (drylab page 2)', run: testSelectionFontReachesDownload, fixture: 'drylab' },
 ];
 
 function summarise(test, checks, artifacts, error, startedAt) {

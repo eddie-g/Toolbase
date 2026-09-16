@@ -17,7 +17,7 @@ import re
 import sys
 import unicodedata
 from html.parser import HTMLParser
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import fitz
@@ -3627,6 +3627,25 @@ def _promoted_annotation_was_resized(ann: Dict[str, Any]) -> bool:
     return False
 
 
+def _text_lines_follow_source_rows(text_lines: List[str], raw_source_lines: Any) -> bool:
+    """True when the annotation's text still reads row by row like the
+    captured source block: all but one of its non-blank lines equal a source
+    row (an edited word changes at most one row). A single line, or lines
+    that are the user's own paragraphs, do not follow the rows."""
+    if not isinstance(raw_source_lines, list) or not raw_source_lines:
+        return False
+    source_rows = {
+        " ".join(str(line or "").split())
+        for line in raw_source_lines
+        if str(line or "").strip()
+    }
+    candidate_lines = [" ".join(str(line or "").split()) for line in text_lines if str(line or "").strip()]
+    if len(candidate_lines) < 2:
+        return False
+    matched = sum(1 for line in candidate_lines if line in source_rows)
+    return matched >= len(candidate_lines) - 1
+
+
 def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> bool:
     if not bool(ann.get("promotedFromExtraction")):
         return False
@@ -3650,6 +3669,18 @@ def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> boo
 
     if source_line_count <= 0:
         return True
+
+    # A paragraph the editor has re-flowed into prose no longer carries the
+    # PDF's rows in its text: its newlines are the user's own paragraph
+    # breaks (Enter). Mapping those chunks onto the captured rows fitted
+    # "Sales: ... We also have new" into the first 12pt row at 10pt across the
+    # whole page (drylab promoted_2_1, NK_39). Only text whose lines still
+    # spell the source rows may take the exact-row path.
+    if (
+        bool(ann.get("promotedReflowEnabled"))
+        and not _text_lines_follow_source_rows(normalized_text_lines, raw_source_lines)
+    ):
+        return False
 
     if (
         bool(ann.get("promotedDirty"))
@@ -4523,6 +4554,11 @@ def _structured_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]
         style["line_height_explicit"] = raw_run.get("lineHeight") is not None or raw_run.get("line_height") is not None
         weight = str(raw_run.get("fontWeight") or raw_run.get("font_weight") or style["font_weight"]).strip().lower()
         style["font_weight"] = "700" if weight == "bold" else (weight if re.fullmatch(r"[1-9]00", weight) else "400")
+        # The editor reports 400 for a run whose face carries the weight
+        # itself (drylab's "MontserratThin_700wght" lead-in). The face is
+        # what the reader sees, so it decides (NK_33, NK_40).
+        if not is_bold_weight(style["font_weight"]) and _face_name_is_bold(font_source_name or font_family):
+            style["font_weight"] = "700"
         font_style = str(raw_run.get("fontStyle") or raw_run.get("font_style") or style["font_style"]).strip().lower()
         style["font_style"] = font_style if font_style in {"normal", "italic", "oblique"} else "normal"
         color = normalize_css_color(raw_run.get("color") or raw_run.get("textColor"))
@@ -4863,6 +4899,14 @@ def wrap_rich_text_layout_ops(
             "userAuthored": entry.get("userAuthored"),
             "styleDirty": entry.get("styleDirty"),
             "richTextHtml": entry.get("richTextHtml"),
+            # A family, size or line height the run names itself must survive
+            # the wrap: apply_source_faces_to_rich_span_layout only spares
+            # runs that carry these flags, and without them every run of a
+            # promoted paragraph went back to the source face, so a font
+            # chosen for a selection never reached the download (NK_40).
+            "font_family_explicit": bool(entry.get("font_family_explicit")),
+            "font_size_explicit": bool(entry.get("font_size_explicit")),
+            "line_height_explicit": bool(entry.get("line_height_explicit")),
         }
         for character in sanitize_pdf_text(entry.get("text") or ""):
             if character == "\n":
@@ -7236,6 +7280,10 @@ def _face_name_is_bold(face_name: str) -> bool:
     return bool(suffix) and (
         suffix.startswith("bd")
         or any(token in suffix for token in ("bold", "black", "heavy", "semibold", "demibold", "extrabold", "ultrabold"))
+        # Variable-font instances are extracted as "<Family>_<wght>wght"
+        # (drylab's "MontserratThin_700wght"); the weight axis is the only
+        # bold marker such a face carries (NK_40).
+        or bool(re.search(r"(?<![0-9])[6-9]00wght", suffix))
     )
 
 
