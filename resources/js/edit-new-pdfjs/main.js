@@ -3949,12 +3949,15 @@ function promotedOverlayKeepsSourceBlockGeometry(annotation) {
     const source = normalizeComparableText(rawSource);
     const isCleanSourceText = Boolean(source && normalizeComparableText(text) === source);
     const isCompatibleSubstitution = promotedSourceLayoutCompatibleTextEdit(text, rawSource);
+    const hasMatchingCapturedRows = annotation.pdfjsPreserveSourceRows === true
+        && !boolish(annotation.promotedReflowEnabled)
+        && text.split('\n').length === rawSource.split('\n').length;
     // Rich markup normally owns layout. A compatible substitution is the one
     // exception: older builds generated uniform rich spans merely by releasing
     // the source scaffold, so restoring source geometry also repairs those
     // already-saved annotations without discarding a genuine format change.
-    if (String(annotation.richTextHtml || '').trim() !== '' && !isCompatibleSubstitution) return false;
-    return isCleanSourceText || isCompatibleSubstitution;
+    if (String(annotation.richTextHtml || '').trim() !== '' && !isCompatibleSubstitution && !hasMatchingCapturedRows) return false;
+    return isCleanSourceText || isCompatibleSubstitution || hasMatchingCapturedRows;
 }
 
 function isUserCreatedTextAnnotation(annotation) {
@@ -4337,8 +4340,9 @@ function normalizedRichTextRunStyle(node, renderScale) {
         || '',
     ).trim();
     const styleDirty = box?.dataset?.styleDirty === '1';
+    const sourceFontStillSelected = Boolean(sourceRun);
     const embedded = embeddedFontOptionForValue(
-        styleDirty
+        styleDirty && !sourceFontStillSelected
             ? computedFontFamily
             : (sourcePdfFontName || computedFontFamily),
     );
@@ -4346,7 +4350,7 @@ function normalizedRichTextRunStyle(node, renderScale) {
         computedFontFamily,
         sourcePdfFontName,
         computedDocumentFont: embedded,
-        styleDirty,
+        styleDirty: styleDirty && !sourceFontStillSelected,
     });
     const preserveDocumentFaceSemantics = !styleDirty && Boolean(
         sourcePdfFontName
@@ -5935,6 +5939,11 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         richTextRuns: richTextRuns.length ? richTextRuns : undefined,
         richTextVersion: richTextRuns.length ? 2 : undefined,
         pdfjsRichTextHtmlScale: richTextHtml && !richTextRuns.length ? String(scale) : undefined,
+        pdfjsParagraphLayout: isPromotedSourceBox && box.dataset.sourceSpanNaturalized === '1'
+            ? Object.fromEntries(['paddingLeft', 'paddingTop', 'textIndent', 'lineHeight'].map((property) => [
+                property, (Number.parseFloat(cs[property]) || 0) / scale,
+            ]))
+            : undefined,
         pdfjsVisualLines: shouldPersistVisualLines ? visualLines : undefined,
         originalText: String(existingAnnotation?.originalText || originalTextForBox(box) || sourceText),
         pdfX: pdfRect.x,
@@ -6000,6 +6009,12 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         textAlign,
         verticalAlign,
         userSizedTextBox: box.dataset.userSizedTextBox === '1' || boolish(existingAnnotation?.userSizedTextBox),
+        pdfjsPreserveSourceRows: isPromotedSourceBox
+            && boxHasCapturedSourceSpanScaffold(box)
+            && box.dataset.naturalTextFlow !== '1'
+            && box.dataset.userSizedTextBox !== '1'
+            && box.dataset.styleDirty !== '1'
+            && box.dataset.userForcedRichText !== '1',
         userCreated: isStandaloneUserTextBox,
         userAuthored: (isPromotedSourceBox && box.dataset.pendingEdit === '1')
             || isUserBox
@@ -6463,6 +6478,10 @@ function samplePageMovedSourceMaskColor(pageDiv, rect, fallback = '#ffffff') {
         // writer's rule: a strongly dark local fill wins over a much lighter
         // surrounding sample.
         if (localLuminance < 100 && surroundingLuminance > localLuminance + 80) {
+            return local;
+        }
+        if (localLuminance >= 155 && localLuminance < 245
+            && surroundingLuminance > localLuminance + 12) {
             return local;
         }
     }
@@ -8507,6 +8526,16 @@ function remapSourceRunItemsForCurrentText(items, currentText) {
         return nextItems;
     };
 
+    if (items.length === 1) return applyChangedText(cloneItems(), 0, normalizedCurrent);
+    for (let index = 1; index < items.length - 1; index += 1) {
+        const prefix = sourceRunTextWithSyntheticGaps(items, 0, index);
+        const suffix = sourceRunTextWithSyntheticGaps(items, index + 1);
+        if (!normalizedCurrent.startsWith(prefix) || !normalizedCurrent.endsWith(suffix)) continue;
+        const changedText = normalizedCurrent.slice(prefix.length, normalizedCurrent.length - suffix.length);
+        const nextItems = applyChangedText(cloneItems(), index, changedText);
+        if (nextItems) return nextItems;
+    }
+
     if (items.length >= 2) {
         const suffix = sourceRunTextWithSyntheticGaps(items, 1);
         if (suffix && normalizedCurrent.endsWith(suffix)) {
@@ -9414,8 +9443,15 @@ function promotedSourceBlockEditKeepsExactLayout(box) {
     const currentText = flattenedTextFromSourceSpanMarkup(box).replace(/\r\n?/g, '\n');
     const immutableText = String(existing?.pdfjsSourceText || existing?.originalText || '')
         .replace(/\r\n?/g, '\n');
+    const tc = selectedBoxTextElement(box);
+    const lines = Array.from(tc?.querySelectorAll('[data-source-span-line="1"]') || []);
+    const baselineText = String(flattenedEditBaselineForTextElement(tc) ?? immutableText).replace(/\r\n?/g, '\n');
+    const keepsCapturedRows = lines.length > 0 && currentText.split('\n').length === baselineText.split('\n').length
+        && lines.every((line) => !/[\r\n]/.test(line.textContent || '')
+            && !line.querySelector('br, div, p'));
     return currentText === immutableText
-        || promotedSourceLayoutCompatibleTextEdit(currentText, immutableText);
+        || promotedSourceLayoutCompatibleTextEdit(currentText, immutableText)
+        || keepsCapturedRows;
 }
 
 function clearSourceFidelitySpanEditMarkup(box) {
@@ -9605,7 +9641,8 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
         : String(tc.textContent || '').trim().split(/\s+/u);
     const preservesDistributedLeaderSpacing = options.preserveCapturedGapSpacing === true
         && sourceRunTextsUseDistributedLeaderSpacing(distributedLeaderRunTexts);
-    const preservesAllCapturedGapSpacing = options.preserveAllCapturedGapSpacing === true;
+    const preservesAllCapturedGapSpacing = options.preserveAllCapturedGapSpacing === true
+        || box.classList.contains('is-promoted-source-block');
     const preservesPreformattedLineBreaks = box.dataset.promotedPreformattedBlock === '1';
     if (preservesDistributedLeaderSpacing) {
         box.dataset.preserveDistributedLeaderSpacing = '1';
@@ -9619,6 +9656,12 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
         // between paragraphs, otherwise a one-character edit reflows the block.
         const rejoinsVisualRows = !preservesPreformattedLineBreaks
             && collapsePromotedExtractionVisualBreaks(box);
+        const preservesHangingIndent = !preservesPreformattedLineBreaks
+            && box.dataset.promotedSourceBlockExactEditLayout === '1'
+            && sourceSpanRunLineMetrics(box)?.bodyIndentIsUniform === true;
+        if ((rejoinsVisualRows || preservesHangingIndent) && box.dataset.promotedSourceBlockExactEditLayout === '1') {
+            applyPromotedSourceBlockEditLayout(box);
+        }
         const keepsCapturedRows = !rejoinsVisualRows;
         tc.querySelectorAll('[data-source-span-gap="1"]').forEach((gap) => {
             const prev = gap.previousSibling;
@@ -9639,7 +9682,7 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
                 preserveCapturedSpacing: preservesAllCapturedGapSpacing
                     || (preservesDistributedLeaderSpacing
                         && /^[.…·•]+$/u.test(String(next?.textContent || '').trim())),
-                preserveLineStartIndent: keepsCapturedRows,
+                preserveLineStartIndent: keepsCapturedRows && !preservesHangingIndent,
                 userMutated: userMutatedGap,
             });
             // Keep the node in place while an input event is completing. Replacing
@@ -9803,6 +9846,7 @@ function sourceSpanRunLineMetrics(box) {
     // single-padding edit layout would otherwise collapse it to flush-left.
     let bodyInsetPx = null;
     let hangingTextIndentPx = 0;
+    let bodyIndentIsUniform = false;
     if (Number.isFinite(boxLeft) && tops.length >= 2) {
         // Group runs into visual lines by their top position.
         const sorted = runs.slice().sort((a, b) => a.top - b.top);
@@ -9826,6 +9870,7 @@ function sourceSpanRunLineMetrics(box) {
             if (Number.isFinite(bodyLeft) && bodyLeft - markerLeft >= 6) {
                 bodyInsetPx = Math.max(0, bodyLeft - boxLeft);
                 hangingTextIndentPx = markerLeft - bodyLeft;
+                bodyIndentIsUniform = lines.slice(1).every((line) => Math.abs(line.minLeft - bodyLeft) < 1);
             }
         }
     }
@@ -9862,6 +9907,7 @@ function sourceSpanRunLineMetrics(box) {
         lineStepPx: deltas.length ? medianNumber(deltas, 0) : 0,
         bodyInsetPx,
         hangingTextIndentPx,
+        bodyIndentIsUniform,
     };
 }
 
@@ -9916,7 +9962,7 @@ function clearPromotedSourceBlockEditLayout(box) {
     if (!box) return;
     if (box.dataset.promotedSourceBlockExactEditLayout === '1') {
         const tc = selectedBoxTextElement(box);
-        if (tc) {
+        if (tc && box.dataset.sourceSpanNaturalized !== '1') {
             tc.style.paddingLeft = '';
             tc.style.paddingTop = '';
             tc.style.textIndent = '';
@@ -10300,7 +10346,7 @@ function resetSourceFidelityInlineStyles(box) {
     tc.style.overflowWrap = '';
     tc.style.display = '';
     tc.style.alignItems = '';
-    tc.style.lineHeight = '';
+    if (box.dataset.sourceSpanNaturalized !== '1') tc.style.lineHeight = '';
     tc.style.transformOrigin = '';
     tc.style.transform = '';
     tc.style.width = '';
@@ -12406,6 +12452,20 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
         }
     }
 
+    if (annotation.pdfjsParagraphLayout && isPromotedExtractionAnnotation(annotation)) {
+        for (const property of ['paddingLeft', 'paddingTop', 'textIndent', 'lineHeight']) {
+            const value = Number(annotation.pdfjsParagraphLayout[property]);
+            if (Number.isFinite(value) && (property === 'textIndent' || value >= 0)) {
+                tc.style[property] = `${value * scale}px`;
+            }
+        }
+        box.dataset.sourceSpanNaturalized = '1';
+        box.dataset.naturalTextFlow = '1';
+        if (Number(annotation.pdfjsParagraphLayout.lineHeight) > 0) {
+            box.style.setProperty('--enpv-line-height', `${Number(annotation.pdfjsParagraphLayout.lineHeight) * scale}px`);
+        }
+    }
+
     if (editModeOn) {
         box.addEventListener('pointerdown', onAnnBoxPointerDown);
         box.addEventListener('dblclick', onAnnBoxDblClick);
@@ -13318,10 +13378,19 @@ function applyDeletedEraseMaskSegments(mask, rect, pageDiv = null, options = {})
 
 function scheduleRuleAwareMaskRefresh(mask, rect, pageDiv = null, options = {}) {
     if (!mask || !pageDiv) return;
-    applyDeletedEraseMaskSegments(mask, rect, pageDiv, options);
-    window.requestAnimationFrame(() => applyDeletedEraseMaskSegments(mask, rect, pageDiv, options));
-    window.setTimeout(() => applyDeletedEraseMaskSegments(mask, rect, pageDiv, options), 250);
-    window.setTimeout(() => applyDeletedEraseMaskSegments(mask, rect, pageDiv, options), 1000);
+    const ruleOptions = {
+        minDarkRatio: 0.55,
+        minContiguousDarkRatio: 0.65,
+        horizontalProbePaddingPx: 8,
+        minHorizontalProbeDarkRatio: 0.55,
+        minAbsoluteContiguousDarkPx: 32,
+        verticalProbePaddingPx: 2.5,
+        ...options,
+    };
+    applyDeletedEraseMaskSegments(mask, rect, pageDiv, ruleOptions);
+    window.requestAnimationFrame(() => applyDeletedEraseMaskSegments(mask, rect, pageDiv, ruleOptions));
+    window.setTimeout(() => applyDeletedEraseMaskSegments(mask, rect, pageDiv, ruleOptions), 250);
+    window.setTimeout(() => applyDeletedEraseMaskSegments(mask, rect, pageDiv, ruleOptions), 1000);
 }
 
 function createDeletedEraseElement(rect, pageDiv = null) {
@@ -13920,7 +13989,7 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
         }));
         return true;
     };
-    if (!items.length) {
+    if (!items.length || box.dataset.promotedPreformattedBlock === '1') {
         return applyFallbackPieces();
     }
     const padX = MOVED_SOURCE_MASK_VISUAL_PADDING_PX;
@@ -21637,8 +21706,10 @@ function installSimplePromotedParagraphEditor(box, tc, annotation, fallbackText)
     // colour... the user already applied to words of this paragraph on an
     // earlier edit; keep the styled content and only (re)install the flow
     // editor around it (NK_35).
-    if (!(box.dataset.promotedParagraphFlow === '1' && textElementHasAuthoredInlineStyles(tc))) {
+    if (!textElementHasAuthoredInlineStyles(tc)) {
         renderSimplePromotedParagraphEditor(tc, simplePromotedParagraphText(annotation, fallbackText));
+    } else {
+        box.dataset.inlineStyleAuthored = '1';
     }
     clearSourceFidelitySpanState(box);
     delete box.dataset.sourceSpanGlyphAligned;
@@ -21658,7 +21729,11 @@ function installSimplePromotedParagraphEditor(box, tc, annotation, fallbackText)
 function installPreformattedPromotedSourceEditor(box, tc, annotation, fallbackText) {
     if (!box || !tc) return false;
     const text = String(annotation?.text ?? fallbackText ?? '');
-    tc.textContent = text;
+    if (!textElementHasAuthoredInlineStyles(tc)) {
+        tc.textContent = text;
+    } else {
+        box.dataset.inlineStyleAuthored = '1';
+    }
     clearSourceFidelitySpanState(box);
     delete box.dataset.sourceSpanGlyphAligned;
     delete box.dataset.promotedParagraphFlow;
@@ -25503,6 +25578,10 @@ function onTextContentInput(ev) {
         else delete box.dataset.preserveExactSourceLayoutEdit;
         const promoteMixedSourceEdit = box.dataset.sourceSpanEditActive === '1'
             && editorModeForBox(box) === 'source'
+            && tc.textContent !== editBaselineForTextElement(tc)
+            && !promotedSourceLayoutCompatibleTextEdit(tc.textContent, editBaselineForTextElement(tc))
+            && (boxTextHasNewline(box)
+                || !remapSourceRunItemsForCurrentText(sourceSpanRunsForBox(box), tc.textContent))
             && sourceSpanRunsHaveMixedTypography(box);
         const isSimplePromotedParagraph = box.dataset.promotedParagraphFlow === '1';
         if (!preserveExactSourceLayout
@@ -25864,6 +25943,7 @@ function beginEditMode(box, options = {}) {
             // otherwise the last word of an originally single-line source row
             // can spill into an edit-only second row.
             refreshAttachedSourceFidelityTextFit(box);
+            setEditBaselineForTextElement(tc, tc.textContent || '');
         }
         if (isSimplePromotedParagraph) {
             fitSimplePromotedParagraphWrap(box, existing);

@@ -4771,7 +4771,6 @@ def _apply_pdfjs_visual_line_breaks(
     cut_set = set(cuts)
     buffer = ""
     buffer_op: Optional[int] = None
-    drop_ws = False
 
     def flush() -> None:
         nonlocal buffer, buffer_op
@@ -4779,23 +4778,32 @@ def _apply_pdfjs_visual_line_breaks(
             out.append({**ops[buffer_op], "text": buffer})
         buffer = ""
 
-    for index, (ch, op_index) in enumerate(chars):
+    index = 0
+    while index < len(chars):
+        ch, op_index = chars[index]
         if index in cut_set:
+            # Keep the boundary whitespace on the row it ends, so the runs
+            # still spell the annotation text and keep their source faces.
+            while index < len(chars) and chars[index][0].isspace() and ops[chars[index][1]].get("type") != "break":
+                ws_char, ws_op = chars[index]
+                if buffer_op is not None and ws_op != buffer_op:
+                    flush()
+                buffer_op = ws_op
+                buffer += ws_char
+                index += 1
             flush()
             out.append({"type": "break"})
-            drop_ws = True
+            continue
         if ops[op_index].get("type") == "break":
             flush()
             out.append({"type": "break"})
-            drop_ws = True
+            index += 1
             continue
-        if drop_ws and ch.isspace():
-            continue
-        drop_ws = False
         if buffer_op is not None and op_index != buffer_op:
             flush()
         buffer_op = op_index
         buffer += ch
+        index += 1
     flush()
     return out
 
@@ -8688,9 +8696,14 @@ def _pdfjs_overlay_was_resized(ann: Dict[str, Any], tolerance: float = 2.0) -> b
         return False
     if cur_w <= 0 or src_w <= 0:
         return False
+    # Only a handle drag counts: a moved promoted paragraph's box can differ
+    # from its captured source box by a few points without any resize, and
+    # treating that as one sent it down the reflow path in a fallback face.
+    if not _boolish(ann.get("userSizedTextBox")):
+        return False
     if abs(cur_w - src_w) > tolerance:
         return True
-    return cur_h > 0 and src_h > 0 and abs(cur_h - src_h) > tolerance and _boolish(ann.get("userSizedTextBox"))
+    return cur_h > 0 and src_h > 0 and abs(cur_h - src_h) > tolerance
 
 
 def should_preserve_pdfjs_moved_source_line(ann: Dict[str, Any], text: str) -> bool:

@@ -1,0 +1,74 @@
+[
+    {
+        "key": "digit-3-spacing",
+        "document_id": 7341,
+        "annotation_id": "pdfjs_7341_0_0:24",
+        "page_index": 0,
+        "title": "[Bug] PDF digit replacement collapses source spacing",
+        "instruction": "Replace 3 with 5 in pdfjs_7341_0_0:24. Preserve captured run gaps and baselines during typing, commit, and zoom/reopen."
+    },
+    {
+        "key": "digit-6-spacing",
+        "document_id": 7341,
+        "annotation_id": "pdfjs_7341_0_0:29",
+        "page_index": 0,
+        "title": "[Bug] Second PDF digit label loses source spacing on edit",
+        "instruction": "Replace 6 with 5 in pdfjs_7341_0_0:29. Preserve captured run gaps and baselines during typing, commit, and zoom/reopen."
+    },
+    {
+        "key": "paragraph-enter-move-bold",
+        "document_id": 7341,
+        "annotation_id": "promoted_2_6",
+        "page_index": 1,
+        "title": "[Bug] Paragraph Enter and move removes bold formatting",
+        "instruction": "In promoted_2_6 insert Enter after the first paragraph ending 'have been completed.', then move it. Preserve the paragraph break and bold Caution: and Purpose of form. through deselect, reopen, zoom/rebuild, and the serialized save payload."
+    },
+    {
+        "key": "income-taxes-spacing",
+        "document_id": 7339,
+        "annotation_id": "pdfjs_7339_0_0:129",
+        "page_index": 0,
+        "title": "[Bug] Unequal-length middle-run edit collapses PDF spacing",
+        "instruction": "Replace income with taxes by typing in pdfjs_7339_0_0:129. Preserve every source run font and gap during typing, commit, and zoom/reopen."
+    },
+    {
+        "key": "stationary-label-stripe",
+        "document_id": 7339,
+        "annotation_id": "pdfjs_7339_0_0:24",
+        "page_index": 0,
+        "title": "[Bug] Editing 2a without moving leaves an old-glyph stripe",
+        "instruction": "Replace 2a with 44 in pdfjs_7339_0_0:24 without moving the annotation. Confirm displacement stays zero and no old-glyph pixels remain under the replacement after delayed mask refreshes. Preserve real form rules."
+    },
+    {
+        "key": "preformatted-move-residue",
+        "document_id": 7151,
+        "annotation_id": "promoted_1_1",
+        "page_index": 0,
+        "title": "[Bug] Moving a preformatted PDF block leaves short strokes behind",
+        "instruction": "Move promoted_1_1 fully away from its source at 120% and 190% zoom. The old footprint must have zero residual glyph pixels; the moved configuration text, underscores, and line breaks must stay intact. Protect neighboring content."
+    },
+    {
+        "key": "paragraph-row-spacing",
+        "document_id": 5294,
+        "annotation_id": "promoted_3_4",
+        "page_index": 2,
+        "title": "[Bug] Inline paragraph edits discard marker gaps and hanging indents",
+        "instruction": "Replace agency with abcd in promoted_3_4. Also test agency to office and reason to explanation. Then independently resize, insert Enter after agency, and change only agency to Georgia. Preserve marker-to-body gap, continuation indents, row pitch, and unaffected fonts through each action, deselection, save payload, and zoom/reopen. New lines inherit the body indent; changing width may wrap text without discarding paragraph spacing."
+    },
+    {
+        "key": "paragraph-action-layout",
+        "document_id": 5294,
+        "annotation_id": "promoted_3_8",
+        "page_index": 2,
+        "title": "[Bug] Paragraph resize, Enter, and selected-word font changes lose layout",
+        "instruction": "In promoted_3_8 independently narrow the right edge, press Enter after your own behalf, and change only physically to Georgia. Deselect after each action. Preserve original insets, hanging indent, marker spacing, text, and unaffected fonts. The new continuation line inherits the body indent. Check every visible character through commit, save payload, and zoom/reopen."
+    },
+    {
+        "key": "gray-cell-move-background",
+        "document_id": 5294,
+        "annotation_id": "pdfjs_5294_4_4:128",
+        "page_index": 4,
+        "title": "[Bug] Moving label 18 erases the gray PDF cell background",
+        "instruction": "On page 5 move pdfjs_5294_4_4:128 (18) out of its gray cell. Move only the text. Preserve the original gray background without a white hole, clear the old digits, and keep the moved text unchanged. Compare source background pixels with UI shadows excluded."
+    }
+]

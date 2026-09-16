@@ -84,6 +84,7 @@ Thumbs.db
 !/tests/Unit/
 /tests/Unit/*
 !/tests/Unit/RecraftPromptBuilderTest.php
+!/tests/Unit/PdfInlineRegressionCasesTest.php
 
 # Debug/temp files
 /tmp/
