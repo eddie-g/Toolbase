@@ -5710,6 +5710,72 @@ class DocumentController extends Controller
             ->with('status', 'Template created. Customize it below.');
     }
 
+    /**
+     * "Fill out now" on /forms/{form}: copy the official PDF into a new
+     * document for the visitor and open it in the editor, where pdf.js
+     * renders its AcroForm fields and the download writes their values.
+     */
+    public function createFromFillableForm(Request $request, string $form)
+    {
+        $entry = \App\Support\FillableForms::find($form);
+        abort_unless($entry !== null, 404);
+
+        $sourcePath = \App\Support\FillableForms::filePath($entry);
+        if ($sourcePath === null) {
+            Log::error('Fillable form PDF is missing', ['form' => $form, 'file' => $entry['file'] ?? null]);
+
+            return redirect()
+                ->route('forms.show', $form)
+                ->withErrors('This form is not available right now. Please try again later.');
+        }
+
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
+        }
+
+        Storage::makeDirectory('documents');
+        $storedRelative = 'documents/' . Str::uuid()->toString() . '.pdf';
+        $contents = @file_get_contents($sourcePath);
+        if ($contents === false || !Storage::put($storedRelative, $contents)) {
+            Log::error('Failed to copy fillable form into documents storage', ['form' => $form]);
+
+            return redirect()
+                ->route('forms.show', $form)
+                ->withErrors('Failed to prepare the form. Please try again.');
+        }
+
+        $document = Document::create([
+            ...$this->documentOwnershipPayload(),
+            'original_name' => $this->normalizeUploadedDocumentName((string) $entry['document_name']),
+            'path' => $storedRelative,
+            'original_backup_path' => $this->createOriginalBackup($storedRelative),
+            'mime_type' => 'application/pdf',
+            'size_bytes' => strlen($contents),
+            'mode' => 'editor',
+        ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
+
+        $userEmail = $this->resolveEditorEmail();
+        $sessionId = $request->session()->getId();
+        Cache::put(
+            ProcessUploadedDocumentJob::processingCacheKey($document->id),
+            true,
+            now()->addMinutes(10)
+        );
+        try {
+            ProcessUploadedDocumentJob::dispatch($document->id, $userEmail, $sessionId);
+        } catch (\Throwable $exception) {
+            Cache::forget(ProcessUploadedDocumentJob::processingCacheKey($document->id));
+            throw $exception;
+        }
+
+        return redirect()
+            ->route('documents.editPdfjs', $document)
+            ->with('status', $entry['title'] . ' is ready. Click a field to start filling it in.');
+    }
+
     public function createSimpleInvoice(Request $request)
     {
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');

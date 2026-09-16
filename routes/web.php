@@ -48,6 +48,9 @@ Route::get('auth/google/callback', [\App\Http\Controllers\SocialAuthController::
 
 
 Route::get('/pdf-editor', [DocumentController::class, 'index'])->name('documents.index');
+Route::get('/forms', [\App\Http\Controllers\FillableFormController::class, 'index'])->name('forms.index');
+Route::get('/forms/{form}', [\App\Http\Controllers\FillableFormController::class, 'show'])->where('form', '[a-z0-9-]+')->name('forms.show');
+Route::post('/forms/{form}/fill', [DocumentController::class, 'createFromFillableForm'])->where('form', '[a-z0-9-]+')->name('forms.fill');
 Route::post('/pdf-state/stamp-preview', [DocumentController::class, 'stampPdfStatePreview'])->name('pdfState.stampPreview');
 Route::post('/documents', [DocumentController::class, 'store'])->name('documents.store');
 Route::post('/documents/create-blank', [DocumentController::class, 'createBlank'])->name('documents.createBlank');
