@@ -74,10 +74,11 @@
 
                 <div class="form-details">
                     <nav class="nk-crumbs" aria-label="Breadcrumb">
-                        <a href="{{ route('forms.index') }}">All forms</a>
+                        <a href="{{ route('documents.index') }}">PDF editor</a>
                         <span aria-hidden="true">/</span>
-                        <a href="{{ route('forms.index') }}#forms-group-{{ Str::slug($form['category']) }}">{{ $form['category'] }}</a>
+                        <a href="{{ route('documents.index') }}#fillable-forms">Fillable forms</a>
                         <span aria-hidden="true">/</span>
+                        <span>{{ $form['category'] }}</span>
                     </nav>
 
                     <div class="form-heading">

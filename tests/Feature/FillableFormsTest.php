@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Document;
+use App\Support\FillableForms;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Storage;
@@ -13,23 +14,50 @@ class FillableFormsTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_forms_index_lists_form_1040(): void
+    public function test_the_catalogue_has_the_ten_requested_forms_and_their_files(): void
     {
-        $this->get(route('forms.index'))
-            ->assertOk()
-            ->assertSee('Form 1040')
-            ->assertSee('U.S. Individual Income Tax Return')
-            ->assertSee(route('forms.show', 'irs-form-1040'), false);
+        $slugs = FillableForms::all()->keys()->all();
+        foreach ([
+            'irs-form-w9', 'irs-form-w2', 'irs-form-1099-nec', 'lease-agreement', 'invoice',
+            'bill-of-sale', 'nda', 'power-of-attorney', 'liability-waiver', 'employment-contract',
+            'irs-form-1040',
+        ] as $slug) {
+            $this->assertContains($slug, $slugs);
+            $form = FillableForms::find($slug);
+            $this->assertNotNull(FillableForms::filePath($form), "$slug has no PDF on disk");
+            $this->assertGreaterThan(0, $form['fields'], "$slug lists no fields");
+            $this->assertFileExists(public_path($form['preview']), "$slug has no preview");
+        }
     }
 
-    public function test_form_detail_page_shows_the_form_and_its_fill_action(): void
+    public function test_the_pdf_editor_page_offers_every_form_with_fill_out_now(): void
     {
-        $this->get(route('forms.show', 'irs-form-1040'))
-            ->assertOk()
-            ->assertSee('Form 1040')
-            ->assertSee('199')
-            ->assertSee('Fill out now')
-            ->assertSee(route('forms.fill', 'irs-form-1040'), false);
+        $response = $this->get(route('documents.index'))->assertOk()->assertSee('Fillable forms');
+        foreach (FillableForms::all() as $form) {
+            $response->assertSee($form['title'])
+                ->assertSee(route('forms.fill', $form['slug']), false)
+                ->assertSee(route('forms.show', $form['slug']), false);
+        }
+        // Popular forms come first.
+        $body = $response->getContent();
+        $this->assertLessThan(strpos($body, 'Form 1040 <small>'), strpos($body, 'Form W-9 <small>'));
+    }
+
+    public function test_there_is_no_separate_forms_listing_page(): void
+    {
+        $this->get('/forms')->assertNotFound();
+    }
+
+    public function test_each_form_has_a_detail_page(): void
+    {
+        foreach (FillableForms::all() as $form) {
+            $this->get(route('forms.show', $form['slug']))
+                ->assertOk()
+                ->assertSee($form['title'])
+                ->assertSee('Fill out now')
+                ->assertSee(route('forms.fill', $form['slug']), false)
+                ->assertSee(route('documents.index') . '#fillable-forms', false);
+        }
     }
 
     public function test_unknown_form_is_not_found(): void
@@ -38,29 +66,38 @@ class FillableFormsTest extends TestCase
         $this->post('/forms/not-a-form/fill')->assertNotFound();
     }
 
-    public function test_fill_out_now_creates_a_document_from_the_form_and_opens_the_editor(): void
+    public function test_fill_out_now_creates_a_document_from_every_form_and_opens_the_editor(): void
     {
         Storage::fake('local');
         Bus::fake();
 
-        $response = $this->post(route('forms.fill', 'irs-form-1040'));
+        foreach (FillableForms::all() as $form) {
+            $response = $this->post(route('forms.fill', $form['slug']));
 
+            $document = Document::query()->latest('id')->first();
+            $this->assertNotNull($document, $form['slug']);
+            $this->assertSame($form['document_name'], $document->original_name);
+            $this->assertSame('editor', $document->mode);
+            $this->assertSame(
+                file_get_contents(FillableForms::filePath($form)),
+                Storage::disk('local')->get($document->path),
+                $form['slug'] . ' was not copied byte for byte',
+            );
+            $response->assertRedirect(route('documents.editPdfjs', $document));
+            Bus::assertDispatched(ProcessUploadedDocumentJob::class, fn ($job) => $job->documentId === $document->id);
+        }
+
+        $this->assertSame(FillableForms::all()->count(), Document::query()->count());
+    }
+
+    public function test_the_visitor_who_filled_a_form_can_open_it_and_a_stranger_cannot(): void
+    {
+        Storage::fake('local');
+        Bus::fake();
+
+        $this->post(route('forms.fill', 'irs-form-w9'));
         $document = Document::query()->latest('id')->first();
-        $this->assertNotNull($document);
-        $this->assertSame('Form 1040 (2025).pdf', $document->original_name);
-        $this->assertSame('editor', $document->mode);
-        $this->assertTrue(Storage::disk('local')->exists($document->path));
-        $this->assertGreaterThan(100_000, $document->size_bytes);
-        $this->assertSame(
-            file_get_contents(resource_path('forms/f1040.pdf')),
-            Storage::disk('local')->get($document->path),
-        );
 
-        $response->assertRedirect(route('documents.editPdfjs', $document));
-        Bus::assertDispatched(ProcessUploadedDocumentJob::class, fn ($job) => $job->documentId === $document->id);
-
-        // The guest who filled it can open it (the editor route redirects to
-        // the pdf.js editor page); a stranger cannot.
         $this->followingRedirects()->get(route('documents.editPdfjs', $document))->assertOk();
         $this->flushSession();
         $this->followingRedirects()->get(route('documents.editPdfjs', $document))->assertNotFound();

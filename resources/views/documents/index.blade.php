@@ -532,6 +532,31 @@
             .docs-grid.is-list .doc-actions { justify-self: start; margin-top: 6px; }
         }
 
+        /* Fillable forms */
+        .forms-header p { max-width: 62ch; }
+        .forms-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; }
+        .form-card { display: grid; grid-template-rows: auto 1fr; border-radius: var(--nk-radius); border: 1px solid var(--nk-border); background: var(--nk-surface); overflow: hidden; transition: border-color 0.16s ease, box-shadow 0.16s ease; }
+        .form-card:hover { border-color: var(--nk-border-2); box-shadow: var(--nk-shadow-lg); }
+        .form-card-preview {
+            position: relative; display: block; height: 132px; padding: 14px 18px 0; overflow: hidden; border-bottom: 1px solid var(--nk-border);
+            background:
+                radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--nk-ink) 7%, transparent) 1px, transparent 0) 0 0 / 14px 14px,
+                var(--nk-surface-2);
+        }
+        .form-card-preview img { display: block; width: 100%; height: auto; border-radius: 3px 3px 0 0; box-shadow: 0 12px 24px -10px rgba(24, 24, 27, 0.4); background: #fff; }
+        .form-card-preview:focus-visible { outline: 2px solid var(--nk-accent); outline-offset: -2px; }
+        .form-popular { position: absolute; top: 8px; right: 8px; padding: 3px 7px; border-radius: 999px; background: var(--nk-accent); color: #fff; font-size: 10px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+        .form-card-body { display: grid; gap: 3px; padding: 12px; align-content: start; }
+        .form-card-title { display: flex; align-items: baseline; gap: 6px; font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+        .form-card-title small { font-size: 12px; font-weight: 500; color: var(--nk-muted-2); }
+        .form-card-subtitle { font-size: 12.5px; color: var(--nk-muted); line-height: 1.4; min-height: 2.8em; }
+        .form-card-meta { font-size: 11.5px; color: var(--nk-muted); }
+        .form-card-actions { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 8px; }
+        .form-card-actions .button-secondary { padding-inline: 10px; }
+        @media (max-width: 1080px) { .forms-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+        @media (max-width: 720px) { .forms-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+        @media (max-width: 460px) { .forms-grid { grid-template-columns: minmax(0, 1fr); } }
+
         /* Upload limit modal */
         .limit-modal { position: fixed; inset: 0; z-index: 100000; background: rgba(9, 9, 11, 0.55); display: none; align-items: center; justify-content: center; padding: 20px; }
         .limit-modal-card { width: min(440px, 94vw); padding: 22px; border-radius: var(--nk-radius); background: var(--nk-surface); border: 1px solid var(--nk-border); box-shadow: var(--nk-shadow-lg); }
@@ -794,6 +819,43 @@
                             </div>
                         </div>
                     </section>
+
+                    @if ($fillableForms->isNotEmpty())
+                        <section class="section-card forms-section" id="fillable-forms">
+                            <div class="card-header forms-header">
+                                <div>
+                                    <h2>Fillable forms</h2>
+                                    <p>Official forms and ready-made templates with their own fields. Fill out now opens one in the editor as a new document of yours.</p>
+                                </div>
+                            </div>
+                            <div class="forms-grid">
+                                @foreach ($fillableForms as $form)
+                                    <article class="form-card">
+                                        <a href="{{ route('forms.show', $form['slug']) }}" class="form-card-preview" aria-label="About {{ $form['title'] }}">
+                                            @if ($form['preview'])
+                                                <img src="{{ asset($form['preview']) }}" alt="" loading="lazy" width="1224" height="1584">
+                                            @endif
+                                            @if (!empty($form['popular']))
+                                                <span class="form-popular">Popular</span>
+                                            @endif
+                                        </a>
+                                        <div class="form-card-body">
+                                            <div class="form-card-title">{{ $form['title'] }} <small>{{ $form['year'] }}</small></div>
+                                            <div class="form-card-subtitle">{{ $form['subtitle'] }}</div>
+                                            <div class="form-card-meta">{{ $form['fields'] }} fields &middot; {{ $form['pages'] }} {{ Str::plural('page', $form['pages']) }} &middot; {{ $form['issuer'] }}</div>
+                                            <div class="form-card-actions">
+                                                <form action="{{ route('forms.fill', $form['slug']) }}" method="POST" style="margin:0;">
+                                                    @csrf
+                                                    <button type="submit" class="button-primary" style="width:100%;">Fill out now</button>
+                                                </form>
+                                                <a href="{{ route('forms.show', $form['slug']) }}" class="button-secondary">Details</a>
+                                            </div>
+                                        </div>
+                                    </article>
+                                @endforeach
+                            </div>
+                        </section>
+                    @endif
 
                     <section class="docs-section">
                         <div class="docs-section-header">
