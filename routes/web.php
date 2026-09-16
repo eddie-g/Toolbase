@@ -194,7 +194,11 @@ Route::middleware('auth:admin')
         Route::get('/{pdfUploadTest}/original', [PdfUploadTestController::class, 'original'])->name('original');
     });
 
-Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
+Route::post('/documents/trash/empty', [DocumentController::class, 'emptyTrash'])->name('documents.emptyTrash');
+Route::get('/documents/{document}/download', [DocumentController::class, 'download'])->withTrashed()->name('documents.download');
+Route::post('/documents/{document}/trash', [DocumentController::class, 'trash'])->name('documents.trash');
+Route::post('/documents/{document}/restore', [DocumentController::class, 'restore'])->withTrashed()->name('documents.restore');
+Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->withTrashed()->name('documents.destroy');
 Route::post('/documents/bulk-destroy', [DocumentController::class, 'bulkDestroy'])->name('documents.bulkDestroy');
 
 Route::post('/developer-chat', [DeveloperChatController::class, 'chat'])->name('developerChat.chat');
