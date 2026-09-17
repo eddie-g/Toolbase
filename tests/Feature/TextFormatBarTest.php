@@ -26,6 +26,7 @@ class TextFormatBarTest extends TestCase
             'name' => 'Format Bar Admin',
             'email' => 'format-bar@example.test',
             'password' => Hash::make('password'),
+            'role' => Admin::ROLE_ADMIN,
         ]);
     }
 

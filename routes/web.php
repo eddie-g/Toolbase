@@ -37,11 +37,6 @@ Route::get('/docs/logo-generator', function () {
     return view('docs.logo-generator');
 })->name('docs.logoGenerator');
 
-Route::get('/fix-migration-3', function () {
-    \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
-    return 'Migrated: ' . \Illuminate\Support\Facades\Artisan::output();
-});
-
 Route::get('auth/google', [\App\Http\Controllers\SocialAuthController::class, 'redirectToGoogle'])->name('auth.google');
 Route::get('auth/google/callback', [\App\Http\Controllers\SocialAuthController::class, 'handleGoogleCallback']);
 
