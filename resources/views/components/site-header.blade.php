@@ -32,7 +32,6 @@
             @if ($showNavigation)
                 <nav class="hidden md:flex items-center gap-8">
                     <a href="/pdf-editor" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">PDF Editor</a>
-                    <a href="/forms" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Forms</a>
                     <a href="/domain-search" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Domain Search</a>
                     <a href="/logo-generator" class="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition">Logo Generator</a>
                 </nav>
@@ -119,7 +118,6 @@
                     @if ($showNavigation)
                         <nav class="flex flex-col">
                             <a @click="mobileMenuOpen = false" href="/pdf-editor" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">PDF Editor</a>
-                            <a @click="mobileMenuOpen = false" href="/forms" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Forms</a>
                             <a @click="mobileMenuOpen = false" href="/domain-search" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Domain Search</a>
                             <a @click="mobileMenuOpen = false" href="/logo-generator" class="px-3 py-2 rounded-lg text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition">Logo Generator</a>
                         </nav>

@@ -5445,6 +5445,9 @@ class DocumentController extends Controller
             'guidedTemplatesByType' => $guidedTemplatesByType,
             'showTrash' => $showTrash,
             'trashCount' => $trashCount,
+            'fillableForms' => \App\Support\FillableForms::all()
+                ->sortBy(fn (array $form) => [empty($form['popular']) ? 1 : 0, $form['title']])
+                ->values(),
         ]);
     }
 
