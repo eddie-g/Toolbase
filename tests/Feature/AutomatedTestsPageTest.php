@@ -23,6 +23,7 @@ class AutomatedTestsPageTest extends TestCase
             'name' => 'Automated Tests Admin',
             'email' => 'automated-tests@example.com',
             'password' => Hash::make('password'),
+            'role' => Admin::ROLE_ADMIN,
         ]);
     }
 

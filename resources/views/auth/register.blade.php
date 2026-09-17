@@ -27,6 +27,15 @@
 
             <form method="POST" action="{{ route('register') }}" class="space-y-4">
                 @csrf
+                {{-- Honeypot: hidden from people, filled by bots; the server refuses the post when it is not empty. --}}
+                <div class="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">
+                    <label for="website_hp">Website</label>
+                    <input id="website_hp" type="text" name="website" tabindex="-1" autocomplete="off" value="">
+                </div>
+                @if (config('security.turnstile.site_key'))
+                    <div class="cf-turnstile" data-sitekey="{{ config('security.turnstile.site_key') }}" data-theme="auto"></div>
+                    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+                @endif
 
                 <div>
                     <label for="name" class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-gray-300">Name</label>
@@ -50,6 +59,7 @@
                     <label for="password" class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-gray-300">Password</label>
                     <input id="password" type="password" name="password" required autocomplete="new-password"
                         class="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-gray-700 dark:bg-gray-900 dark:text-white">
+                    <p class="mt-1.5 text-xs text-slate-500 dark:text-gray-400">At least 12 characters. Passwords found in known data breaches are refused.</p>
                     @error('password')
                         <p class="mt-1.5 text-xs text-red-500 dark:text-red-400">{{ $message }}</p>
                     @enderror

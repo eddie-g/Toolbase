@@ -15,10 +15,21 @@ class Admin extends Authenticatable implements FilamentUser
 
     protected $guard = 'admin';
 
+    public const ROLE_OWNER = 'owner';
+    public const ROLE_ADMIN = 'admin';
+    public const ROLE_SUPPORT = 'support';
+
+    /** Roles that may sign in to the admin panel at all. */
+    public const PANEL_ROLES = [self::ROLE_OWNER, self::ROLE_ADMIN, self::ROLE_SUPPORT];
+
+    /** Roles that may open Horizon and other operational pages. */
+    public const OPERATOR_ROLES = [self::ROLE_OWNER, self::ROLE_ADMIN];
+
     protected $fillable = [
         'name',
         'email',
         'password',
+        'role',
         'credit_balance',
         'last_login_at',
         'last_login_ip',
@@ -39,11 +50,22 @@ class Admin extends Authenticatable implements FilamentUser
     }
 
     /**
-     * All rows in the admins table can access the Filament panel.
+     * Only rows with an explicit panel role may sign in; a row without a
+     * role (or with an unknown one) is locked out until someone grants it.
      */
     public function canAccessPanel(Panel $panel): bool
     {
-        return true;
+        return $this->hasRole(...self::PANEL_ROLES);
+    }
+
+    public function hasRole(string ...$roles): bool
+    {
+        return in_array((string) $this->role, $roles, true);
+    }
+
+    public function isOperator(): bool
+    {
+        return $this->hasRole(...self::OPERATOR_ROLES);
     }
 
     /**

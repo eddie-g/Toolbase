@@ -24,8 +24,8 @@ class UserEmailVerificationTest extends TestCase
         $this->post('/register', [
             'name' => 'New User',
             'email' => 'new-user-'.uniqid().'@example.com',
-            'password' => 'password',
-            'password_confirmation' => 'password',
+            'password' => 'a-long-enough-password-2026',
+            'password_confirmation' => 'a-long-enough-password-2026',
         ])->assertRedirect('/portal');
 
         $user = User::where('name', 'New User')->latest('id')->firstOrFail();
@@ -93,6 +93,7 @@ class UserEmailVerificationTest extends TestCase
             ->fillForm([
                 'name' => 'New Name',
                 'email' => $newEmail,
+                'current_password' => 'password',
             ])
             ->call('save')
             ->assertHasNoErrors();
@@ -119,6 +120,7 @@ class UserEmailVerificationTest extends TestCase
                 'email' => $user->email,
                 'password' => 'new-password',
                 'passwordConfirmation' => 'new-password',
+                'current_password' => 'password',
             ])
             ->call('save')
             ->assertHasNoErrors();

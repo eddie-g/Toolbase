@@ -19,6 +19,7 @@ class PdfTestReportViewPageTest extends TestCase
             'name' => 'Test Admin',
             'email' => 'infolist-admin@example.test',
             'password' => bcrypt('secret-password'),
+            'role' => Admin::ROLE_ADMIN,
         ]);
         $this->actingAs($admin, 'admin');
 

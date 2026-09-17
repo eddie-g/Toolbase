@@ -15,6 +15,7 @@ use App\Models\AiPriceLog;
 use App\Models\CreditTransaction;
 use App\Models\Document;
 use App\Services\DeveloperChatClient;
+use App\Services\LogoShowcase;
 use App\Services\NamecheapClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -124,16 +125,48 @@ class DomainSearchController extends Controller
         ]);
     }
 
-    public function logoGenerator2(Request $request)
+    /**
+     * The Logo Lab: the generator and the showcase, as two tabs of one
+     * contained page. The full-screen layout (logo-generator-2) is sidelined
+     * - kept, unlinked, behind ?layout=full - until it is wanted again.
+     */
+    public function logoGenerator2(Request $request, LogoShowcase $showcase)
     {
         $user = $request->user();
         $settings = $user && Schema::hasTable('logo_generator_settings')
             ? $this->logoGeneratorSettingsForUser($user)
             : [];
 
-        return view('logo-generator-2', [
+        if ($request->query('layout') === 'full') {
+            return view('logo-generator-2', [
+                'logoUser' => $user,
+                'logoGeneratorSettings' => $settings,
+            ]);
+        }
+
+        return view('logo-lab', [
             'logoUser' => $user,
-            'logoGeneratorSettings' => $settings,
+            'tab' => $request->query('tab') === 'browse' ? 'browse' : 'generate',
+        ] + ($user ? $showcase->library($user, $request) : []) + $showcase->browse($request));
+    }
+
+    /**
+     * The Logo Studio: the generator on its own, full screen. Generating
+     * spends credits, so it needs an account; the Lab page's Generate tab
+     * links here and lists what was made.
+     */
+    public function logoStudio(Request $request)
+    {
+        $user = $request->user();
+        if (! $user) {
+            return redirect()->guest(route('login'));
+        }
+
+        return view('logo-studio', [
+            'logoUser' => $user,
+            'logoGeneratorSettings' => Schema::hasTable('logo_generator_settings')
+                ? $this->logoGeneratorSettingsForUser($user)
+                : [],
         ]);
     }
 
@@ -1262,19 +1295,9 @@ class DomainSearchController extends Controller
                 ], 429);
             }
             
+            // The rate limiter (cache-backed, so it works with any session
+            // driver) is the only record of the day's free requests.
             \Illuminate\Support\Facades\RateLimiter::hit($key, 86400); // 24 hours
-            
-            // Also update the count in the db sessions table
-            $sessionId = $request->session()->getId();
-            if ($sessionId) {
-                try {
-                    \Illuminate\Support\Facades\DB::table('sessions')
-                        ->where('id', $sessionId)
-                        ->increment('free_domain_requests');
-                } catch (\Exception $e) {
-                    // Ignore if sessions table is not used or doesn't exist
-                }
-            }
         }
 
         $request->validate([

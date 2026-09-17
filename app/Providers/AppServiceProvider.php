@@ -2,7 +2,9 @@
 
 namespace App\Providers;
 
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\Rules\Password;
 use Livewire\Livewire;
 
 class AppServiceProvider extends ServiceProvider
@@ -21,10 +23,36 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Behind a TLS-terminating proxy every generated URL must be https,
+        // or redirects and asset links fall back to plain http.
+        if (str_starts_with((string) config('app.url'), 'https://')) {
+            URL::forceScheme('https');
+        }
+
+        // Twelve characters minimum everywhere; in production also refuse
+        // passwords that appear in known breaches (a k-anonymity lookup, so
+        // the password never leaves the server).
+        Password::defaults(function () {
+            $rule = Password::min(12);
+
+            return $this->app->isProduction() ? $rule->uncompromised() : $rule;
+        });
+
         \Illuminate\Support\Facades\Event::listen(
             \Laravel\Fortify\Events\TwoFactorAuthenticationChallenged::class,
             \App\Listeners\SendTwoFactorCodeListener::class
         );
+
+        // Every sign-in, sign-out, failure, lockout and password reset on
+        // either guard lands in auth_events (and last_login_* on the account).
+        \Illuminate\Support\Facades\Event::listen([
+            \Illuminate\Auth\Events\Login::class,
+            \Illuminate\Auth\Events\Logout::class,
+            \Illuminate\Auth\Events\Failed::class,
+            \Illuminate\Auth\Events\Lockout::class,
+            \Illuminate\Auth\Events\PasswordReset::class,
+            \Illuminate\Auth\Events\OtherDeviceLogout::class,
+        ], \App\Listeners\RecordAuthEvent::class);
 
         // Register Filament user-portal widgets in a custom namespace so
         // Livewire can resolve them when rendered from the user dashboard.

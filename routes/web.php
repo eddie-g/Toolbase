@@ -37,17 +37,14 @@ Route::get('/docs/logo-generator', function () {
     return view('docs.logo-generator');
 })->name('docs.logoGenerator');
 
-Route::get('/fix-migration-3', function () {
-    \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
-    return 'Migrated: ' . \Illuminate\Support\Facades\Artisan::output();
-});
-
 Route::get('auth/google', [\App\Http\Controllers\SocialAuthController::class, 'redirectToGoogle'])->name('auth.google');
 Route::get('auth/google/callback', [\App\Http\Controllers\SocialAuthController::class, 'handleGoogleCallback']);
 
 
 
 Route::get('/pdf-editor', [DocumentController::class, 'index'])->name('documents.index');
+Route::get('/forms/{form}', [\App\Http\Controllers\FillableFormController::class, 'show'])->where('form', '[a-z0-9-]+')->name('forms.show');
+Route::post('/forms/{form}/fill', [DocumentController::class, 'createFromFillableForm'])->where('form', '[a-z0-9-]+')->name('forms.fill');
 Route::post('/pdf-state/stamp-preview', [DocumentController::class, 'stampPdfStatePreview'])->name('pdfState.stampPreview');
 Route::post('/documents', [DocumentController::class, 'store'])->name('documents.store');
 Route::post('/documents/create-blank', [DocumentController::class, 'createBlank'])->name('documents.createBlank');
@@ -191,7 +188,11 @@ Route::middleware('auth:admin')
         Route::get('/{pdfUploadTest}/original', [PdfUploadTestController::class, 'original'])->name('original');
     });
 
-Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->name('documents.destroy');
+Route::post('/documents/trash/empty', [DocumentController::class, 'emptyTrash'])->name('documents.emptyTrash');
+Route::get('/documents/{document}/download', [DocumentController::class, 'download'])->withTrashed()->name('documents.download');
+Route::post('/documents/{document}/trash', [DocumentController::class, 'trash'])->name('documents.trash');
+Route::post('/documents/{document}/restore', [DocumentController::class, 'restore'])->withTrashed()->name('documents.restore');
+Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->withTrashed()->name('documents.destroy');
 Route::post('/documents/bulk-destroy', [DocumentController::class, 'bulkDestroy'])->name('documents.bulkDestroy');
 
 Route::post('/developer-chat', [DeveloperChatController::class, 'chat'])->name('developerChat.chat');
@@ -215,6 +216,7 @@ Route::get('/ai/add-to-pdf', function() {
 // Domain Search
 Route::get('/domain-search', [DomainSearchController::class, 'index'])->name('domainSearch.index');
 Route::get('/logo-generator', [DomainSearchController::class, 'logoGenerator2'])->name('domainSearch.logoGenerator');
+Route::get('/logo-generator/studio', [DomainSearchController::class, 'logoStudio'])->name('domainSearch.logoStudio');
 Route::get('/domain-search/faq', function () {
     return view('domain-search-faq');
 })->name('domainSearch.faq');
