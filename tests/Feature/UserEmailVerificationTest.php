@@ -24,8 +24,8 @@ class UserEmailVerificationTest extends TestCase
         $this->post('/register', [
             'name' => 'New User',
             'email' => 'new-user-'.uniqid().'@example.com',
-            'password' => 'password',
-            'password_confirmation' => 'password',
+            'password' => 'a-long-enough-password-2026',
+            'password_confirmation' => 'a-long-enough-password-2026',
         ])->assertRedirect('/portal');
 
         $user = User::where('name', 'New User')->latest('id')->firstOrFail();

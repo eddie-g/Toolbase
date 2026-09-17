@@ -42,6 +42,7 @@
                     <label for="password" class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-gray-300">Password</label>
                     <input id="password" type="password" name="password" required autocomplete="new-password"
                         class="w-full rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm text-slate-900 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-gray-700 dark:bg-gray-900 dark:text-white">
+                    <p class="mt-1.5 text-xs text-slate-500 dark:text-gray-400">At least 12 characters. Passwords found in known data breaches are refused.</p>
                     @error('password')
                         <p class="mt-1.5 text-xs text-red-500 dark:text-red-400">{{ $message }}</p>
                     @enderror

@@ -41,14 +41,44 @@ class FortifyServiceProvider extends ServiceProvider
         Fortify::resetUserPasswordsUsing(ResetUserPassword::class);
         Fortify::redirectUserForTwoFactorAuthenticationUsing(RedirectIfTwoFactorAuthenticatable::class);
 
+        // Three buckets, so credential stuffing from many addresses against one
+        // account and many accounts from one address both hit a wall, while a
+        // shared office NAT still gets fifty tries an hour.
         RateLimiter::for('login', function (Request $request) {
-            $throttleKey = Str::transliterate(Str::lower($request->input(Fortify::username())).'|'.$request->ip());
+            $email = Str::transliterate(Str::lower((string) $request->input(Fortify::username())));
+            $ip = (string) $request->ip();
 
-            return Limit::perMinute(5)->by($throttleKey);
+            return [
+                Limit::perMinute(5)->by($email.'|'.$ip),
+                Limit::perHour(20)->by('login-email:'.sha1($email)),
+                Limit::perHour(50)->by('login-ip:'.$ip),
+            ];
         });
 
         RateLimiter::for('two-factor', function (Request $request) {
-            return Limit::perMinute(5)->by($request->session()->get('login.id'));
+            $challenged = $request->session()->get('login.id');
+
+            return Limit::perMinute(5)->by(($challenged !== null ? 'user:'.$challenged : 'anon').'|'.$request->ip());
+        });
+
+        // Applied by App\Http\Middleware\ProtectAuthForms to the Fortify
+        // registration and password-reset forms.
+        RateLimiter::for('register', function (Request $request) {
+            $ip = (string) $request->ip();
+
+            return [
+                Limit::perMinute(5)->by('register-ip:'.$ip),
+                Limit::perDay(20)->by('register-ip-day:'.$ip),
+            ];
+        });
+
+        RateLimiter::for('forgot-password', function (Request $request) {
+            $email = Str::lower((string) $request->input('email'));
+
+            return [
+                Limit::perMinute(3)->by('forgot-ip:'.$request->ip()),
+                Limit::perHour(5)->by('forgot-email:'.sha1($email)),
+            ];
         });
     }
 }

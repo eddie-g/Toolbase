@@ -4,6 +4,7 @@ namespace App\Providers;
 
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
+use Illuminate\Validation\Rules\Password;
 use Livewire\Livewire;
 
 class AppServiceProvider extends ServiceProvider
@@ -26,6 +27,15 @@ class AppServiceProvider extends ServiceProvider
         if (str_starts_with((string) config('app.url'), 'https://')) {
             URL::forceScheme('https');
         }
+
+        // Twelve characters minimum everywhere; in production also refuse
+        // passwords that appear in known breaches (a k-anonymity lookup, so
+        // the password never leaves the server).
+        Password::defaults(function () {
+            $rule = Password::min(12);
+
+            return $this->app->isProduction() ? $rule->uncompromised() : $rule;
+        });
 
         \Illuminate\Support\Facades\Event::listen(
             \Laravel\Fortify\Events\TwoFactorAuthenticationChallenged::class,

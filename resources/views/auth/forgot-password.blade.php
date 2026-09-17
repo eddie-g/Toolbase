@@ -33,6 +33,15 @@
 
             <form method="POST" action="{{ route('password.email') }}" class="space-y-4">
                 @csrf
+                {{-- Honeypot: hidden from people, filled by bots; the server refuses the post when it is not empty. --}}
+                <div class="absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true">
+                    <label for="website_hp">Website</label>
+                    <input id="website_hp" type="text" name="website" tabindex="-1" autocomplete="off" value="">
+                </div>
+                @if (config('security.turnstile.site_key'))
+                    <div class="cf-turnstile" data-sitekey="{{ config('security.turnstile.site_key') }}" data-theme="auto"></div>
+                    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+                @endif
 
                 <div>
                     <label for="email" class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-gray-300">Email</label>
