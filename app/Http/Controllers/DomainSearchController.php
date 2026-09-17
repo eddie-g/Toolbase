@@ -2324,18 +2324,7 @@ class DomainSearchController extends Controller
 
     private function recraftRequestSize(string $outputFormat, bool $isPro, string $imageSize): string
     {
-        if ($outputFormat === 'vector') {
-            return '1:1';
-        }
-
-        return match (true) {
-            $isPro && $imageSize === '16:9' => '2688x1536',
-            $isPro && $imageSize === '9:16' => '1536x2688',
-            $isPro => '2048x2048',
-            $imageSize === '16:9' => '1344x768',
-            $imageSize === '9:16' => '768x1344',
-            default => '1024x1024',
-        };
+        return \App\Services\RecraftPricing::requestSize($outputFormat, $isPro, $imageSize);
     }
 
     private function isUnsupportedRecraftImageSize(string $imageModel, string $outputFormat, bool $isPro, string $imageSize): bool

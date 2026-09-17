@@ -461,8 +461,8 @@
 
                     if (this.selectedModel === 'recraft') {
                         const isRayPro = Boolean(this.getEffectiveProSettings().pro);
-                        if (this.imageSize === '16:9') return '1344x768';
-                        if (this.imageSize === '9:16') return '768x1344';
+                        if (this.imageSize === '16:9') return isRayPro ? '1344x768' : '1820x1024';
+                        if (this.imageSize === '9:16') return isRayPro ? '768x1344' : '1024x1820';
                         return '1024x1024';
                     }
 
