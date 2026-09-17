@@ -361,6 +361,9 @@ class PdfTestController extends Controller
             $uploadConfigPath = $tempDir.'/pdf_upload_test_'.$uploadFixture->id.'_'.$token.'.json';
 
             $scenarioConfig = $this->resolveUploadTestScenario($uploadTestCase);
+            if ($scenarioConfig['scenario'] === 'inline_regression') {
+                $nodeScript = resource_path('js/edit-new-pdfjs/inline-stability.browser.cjs');
+            }
             $savedTargetAnnotation = PdfState::query()
                 ->where('document_id', $uploadFixture->document_id)
                 ->where('page_number', $uploadTestCase->page_index)
@@ -413,6 +416,7 @@ class PdfTestController extends Controller
                     'target_text' => $uploadTestCase->target_text,
                     'test_comment' => $uploadTestCase->test_comment,
                     'scenario' => $scenarioConfig['scenario'],
+                    'inline_regression' => $scenarioConfig['inline_regression'],
                     'paragraph_grouping_enabled' => (bool) $uploadFixture->paragraph_grouping_enabled,
                     'saved_target_annotation' => is_array($savedTargetAnnotation)
                         ? $savedTargetAnnotation
@@ -4704,6 +4708,7 @@ PYTHON;
 
     private function resolveUploadTestScenario(PdfUploadTestCase $testCase): array
     {
+        $inlineRegression = \App\Support\PdfInlineRegressionCases::resolve($testCase);
         $savedRuntimeId = trim((string) (
             $testCase->runtime_annotation_id
             ?: $testCase->annotation_id
@@ -5075,6 +5080,7 @@ PYTHON;
 
         return [
             'scenario' => match (true) {
+                $inlineRegression !== null => 'inline_regression',
                 $isUnderlineDeletion => 'ss5_page4_delete_underlined_neighbor',
                 $isPageOneSwap => 'ss5_page1_swap_annotations',
                 $isParagraphSentenceDeletion => 'ss5_page1_delete_paragraph_sentence',
@@ -5112,6 +5118,7 @@ PYTHON;
                 $isBookmarkShapeLayerOrder => 'bookmark_sample_page1_shape_z_index_controls',
                 default => 'unsupported',
             },
+            'inline_regression' => $inlineRegression,
             'swap_primary_suffix' => $savedSwapSuffix,
             'swap_partner_suffix' => $swapPartnerSuffix,
             'sentence_to_delete' => $sentenceToDelete,

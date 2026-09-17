@@ -2332,7 +2332,7 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         }
         self.assertTrue(self.module._pdfjs_overlay_was_resized(annotation))
         self.assertFalse(self.module.should_preserve_pdfjs_moved_source_line(annotation, annotation["text"]))
-        untouched = {**annotation, "pdfWidth": 190.58, "pdfHeight": 10.32, "userSizedTextBox": False}
+        untouched = {**annotation, "userSizedTextBox": False}
         self.assertFalse(self.module._pdfjs_overlay_was_resized(untouched))
         ops = [{"type": "text", "text": annotation["text"], "font_weight": "400"}]
         rows = self.module._apply_pdfjs_visual_line_breaks(ops, annotation["pdfjsVisualLines"])

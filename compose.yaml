@@ -80,6 +80,7 @@ networks:
         driver: bridge
 volumes:
     sail-mysql:
-        driver: local
+        external: true
+        name: toolbase_sail-mysql
     sail-redis:
         driver: local
