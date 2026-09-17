@@ -6,6 +6,7 @@ use App\Actions\Fortify\CreateNewUser;
 use App\Actions\Fortify\ResetUserPassword;
 use App\Actions\Fortify\UpdateUserPassword;
 use App\Actions\Fortify\UpdateUserProfileInformation;
+use Illuminate\Auth\Events\Lockout;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -48,10 +49,21 @@ class FortifyServiceProvider extends ServiceProvider
             $email = Str::transliterate(Str::lower((string) $request->input(Fortify::username())));
             $ip = (string) $request->ip();
 
+            // A refused attempt is a lockout for the audit trail, and the
+            // client gets a 429 with Retry-After.
+            $lockedOut = function (Request $request, array $headers) {
+                event(new Lockout($request));
+
+                return response()->json([
+                    'message' => 'Too many login attempts. Please try again later.',
+                    'errors' => ['email' => ['Too many login attempts. Please try again later.']],
+                ], 429, $headers);
+            };
+
             return [
-                Limit::perMinute(5)->by($email.'|'.$ip),
-                Limit::perHour(20)->by('login-email:'.sha1($email)),
-                Limit::perHour(50)->by('login-ip:'.$ip),
+                Limit::perMinute(5)->by($email.'|'.$ip)->response($lockedOut),
+                Limit::perHour(20)->by('login-email:'.sha1($email))->response($lockedOut),
+                Limit::perHour(50)->by('login-ip:'.$ip)->response($lockedOut),
             ];
         });
 

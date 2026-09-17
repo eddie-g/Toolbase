@@ -22,7 +22,6 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->trustProxies(at: '*');
 
         $middleware->alias([
-            'admin' => \App\Http\Middleware\EnsureIsAdmin::class,
             'json.response' => \App\Http\Middleware\ForceJsonResponse::class,
             'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
         ]);
@@ -33,7 +32,12 @@ return Application::configure(basePath: dirname(__DIR__))
             '/stripe/webhook',
         ]);
 
+        // AuthenticateSession keeps the password hash in the session and logs
+        // every other session out when it changes (password change, "log out
+        // other devices"). The Filament panels already run it; the plain web
+        // routes did not.
         $middleware->web(append: [
+            \Illuminate\Session\Middleware\AuthenticateSession::class,
             \App\Http\Middleware\SecurityHeaders::class,
             \App\Http\Middleware\ProtectAuthForms::class,
         ]);

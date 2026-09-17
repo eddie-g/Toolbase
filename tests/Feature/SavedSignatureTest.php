@@ -30,6 +30,7 @@ class SavedSignatureTest extends TestCase
             'name' => 'Signature Admin',
             'email' => $email,
             'password' => Hash::make('password'),
+            'role' => Admin::ROLE_ADMIN,
         ]);
     }
 
@@ -331,7 +332,8 @@ class SavedSignatureTest extends TestCase
 
         $this->assertDatabaseHas('saved_signatures', ['id' => $signature->id]);
 
-        // The owner can.
+        // The owner can (in a fresh session: AuthenticateSession ties a session to one account).
+        $this->flushSession();
         $this->actingAs($owner, 'admin')
             ->deleteJson('/saved-signatures/'.$signature->id)
             ->assertOk();

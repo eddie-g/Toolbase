@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Models\Admin;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
 use Laravel\Horizon\Horizon;
 use Laravel\Horizon\HorizonApplicationServiceProvider;
@@ -27,10 +29,12 @@ class HorizonServiceProvider extends HorizonApplicationServiceProvider
      */
     protected function gate(): void
     {
+        // Horizon hands the gate the default guard's user, which is a web
+        // visitor; operators sign in on the admin guard, so look there.
         Gate::define('viewHorizon', function ($user = null) {
-            return in_array(optional($user)->email, [
-                'admin@admin.com',
-            ]);
+            $admin = $user instanceof Admin ? $user : Auth::guard('admin')->user();
+
+            return $admin instanceof Admin && $admin->isOperator();
         });
     }
 }

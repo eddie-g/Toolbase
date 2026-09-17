@@ -42,6 +42,17 @@ class AppServiceProvider extends ServiceProvider
             \App\Listeners\SendTwoFactorCodeListener::class
         );
 
+        // Every sign-in, sign-out, failure, lockout and password reset on
+        // either guard lands in auth_events (and last_login_* on the account).
+        \Illuminate\Support\Facades\Event::listen([
+            \Illuminate\Auth\Events\Login::class,
+            \Illuminate\Auth\Events\Logout::class,
+            \Illuminate\Auth\Events\Failed::class,
+            \Illuminate\Auth\Events\Lockout::class,
+            \Illuminate\Auth\Events\PasswordReset::class,
+            \Illuminate\Auth\Events\OtherDeviceLogout::class,
+        ], \App\Listeners\RecordAuthEvent::class);
+
         // Register Filament user-portal widgets in a custom namespace so
         // Livewire can resolve them when rendered from the user dashboard.
         Livewire::component(

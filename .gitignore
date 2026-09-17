@@ -87,6 +87,7 @@ Thumbs.db
 !/tests/Feature/TextFormatBarTest.php
 !/tests/Feature/ProductionLoginHardeningTest.php
 !/tests/Feature/AuthThrottlingAndPasswordPolicyTest.php
+!/tests/Feature/SessionInvalidationAndAuditTest.php
 !/tests/Unit/
 /tests/Unit/*
 !/tests/Unit/RecraftPromptBuilderTest.php

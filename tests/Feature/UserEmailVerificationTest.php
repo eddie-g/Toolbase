@@ -93,6 +93,7 @@ class UserEmailVerificationTest extends TestCase
             ->fillForm([
                 'name' => 'New Name',
                 'email' => $newEmail,
+                'current_password' => 'password',
             ])
             ->call('save')
             ->assertHasNoErrors();
@@ -119,6 +120,7 @@ class UserEmailVerificationTest extends TestCase
                 'email' => $user->email,
                 'password' => 'new-password',
                 'passwordConfirmation' => 'new-password',
+                'current_password' => 'password',
             ])
             ->call('save')
             ->assertHasNoErrors();
