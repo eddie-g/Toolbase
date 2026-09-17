@@ -5406,14 +5406,22 @@ class DocumentController extends Controller
 
     public function index()
     {
-        $documentQuery = $this->applyAccessibleDocumentScope(request(), Document::query())
+        // ?view=trash lists the visitor's trashed documents instead.
+        $showTrash = request()->query('view') === 'trash';
+        $scopedDocuments = fn () => $this->applyAccessibleDocumentScope(request(), Document::query())
             ->where(function ($query) {
                 $query->whereNull('mode')
                     ->orWhere('mode', '!=', 'regression');
             });
 
+        $trashCount = $scopedDocuments()->onlyTrashed()->count();
+        $documentQuery = $scopedDocuments();
+        if ($showTrash) {
+            $documentQuery->onlyTrashed();
+        }
+
         $documents = $documentQuery
-            ->latest()
+            ->latest($showTrash ? 'deleted_at' : 'created_at')
             ->get();
 
         if ($this->hasDocumentPreviewColumns()) {
@@ -5435,7 +5443,77 @@ class DocumentController extends Controller
             'documents' => $documents,
             'guidedTemplates' => $guidedTemplates,
             'guidedTemplatesByType' => $guidedTemplatesByType,
+            'showTrash' => $showTrash,
+            'trashCount' => $trashCount,
         ]);
+    }
+
+    /** The document's current PDF as stored, with its own file name. */
+    public function download(Document $document)
+    {
+        if (!$document->path || !Storage::exists($document->path)) {
+            abort(404);
+        }
+
+        $name = $this->normalizeUploadedDocumentName((string) $document->original_name);
+
+        return Storage::download($document->path, $name, [
+            'Content-Type' => 'application/pdf',
+        ]);
+    }
+
+    /** Move to trash: the row and its files stay, the document disappears from every list. */
+    public function trash(Document $document)
+    {
+        $document->delete();
+
+        return redirect()
+            ->route('documents.index')
+            ->with('status', '"' . $document->original_name . '" moved to the trash.');
+    }
+
+    public function restore(Document $document)
+    {
+        if ($document->trashed()) {
+            $document->restore();
+        }
+
+        return redirect()
+            ->route('documents.index')
+            ->with('status', '"' . $document->original_name . '" restored.');
+    }
+
+    /** Delete every trashed document the visitor can see, files included. */
+    public function emptyTrash(Request $request)
+    {
+        $documents = $this->applyAccessibleDocumentScope($request, Document::query())
+            ->onlyTrashed()
+            ->get();
+
+        foreach ($documents as $document) {
+            $this->deleteDocumentPermanently($document);
+        }
+
+        return redirect()
+            ->route('documents.index')
+            ->with('status', $documents->count() === 1
+                ? 'The trash is empty; 1 document was deleted.'
+                : 'The trash is empty; ' . $documents->count() . ' documents were deleted.');
+    }
+
+    private function deleteDocumentPermanently(Document $document): void
+    {
+        DB::table('pdf_extractions_fitz')
+            ->where('document_id', $document->id)
+            ->delete();
+
+        if ($document->path) {
+            Storage::delete($document->path);
+        }
+        if ($document->original_backup_path) {
+            Storage::delete($document->original_backup_path);
+        }
+        $document->forceDelete();
     }
 
     private function normalizeUploadedDocumentName(string $value): string
@@ -5708,6 +5786,72 @@ class DocumentController extends Controller
         return redirect()
             ->route('documents.edit', $document)
             ->with('status', 'Template created. Customize it below.');
+    }
+
+    /**
+     * "Fill out now" on /forms/{form}: copy the official PDF into a new
+     * document for the visitor and open it in the editor, where pdf.js
+     * renders its AcroForm fields and the download writes their values.
+     */
+    public function createFromFillableForm(Request $request, string $form)
+    {
+        $entry = \App\Support\FillableForms::find($form);
+        abort_unless($entry !== null, 404);
+
+        $sourcePath = \App\Support\FillableForms::filePath($entry);
+        if ($sourcePath === null) {
+            Log::error('Fillable form PDF is missing', ['form' => $form, 'file' => $entry['file'] ?? null]);
+
+            return redirect()
+                ->route('forms.show', $form)
+                ->withErrors('This form is not available right now. Please try again later.');
+        }
+
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
+        }
+
+        Storage::makeDirectory('documents');
+        $storedRelative = 'documents/' . Str::uuid()->toString() . '.pdf';
+        $contents = @file_get_contents($sourcePath);
+        if ($contents === false || !Storage::put($storedRelative, $contents)) {
+            Log::error('Failed to copy fillable form into documents storage', ['form' => $form]);
+
+            return redirect()
+                ->route('forms.show', $form)
+                ->withErrors('Failed to prepare the form. Please try again.');
+        }
+
+        $document = Document::create([
+            ...$this->documentOwnershipPayload(),
+            'original_name' => $this->normalizeUploadedDocumentName((string) $entry['document_name']),
+            'path' => $storedRelative,
+            'original_backup_path' => $this->createOriginalBackup($storedRelative),
+            'mime_type' => 'application/pdf',
+            'size_bytes' => strlen($contents),
+            'mode' => 'editor',
+        ]);
+
+        $this->refreshDocumentPreviewSnapshot($document);
+        $this->rememberSessionAccessibleDocument($request, $document);
+
+        $userEmail = $this->resolveEditorEmail();
+        $sessionId = $request->session()->getId();
+        Cache::put(
+            ProcessUploadedDocumentJob::processingCacheKey($document->id),
+            true,
+            now()->addMinutes(10)
+        );
+        try {
+            ProcessUploadedDocumentJob::dispatch($document->id, $userEmail, $sessionId);
+        } catch (\Throwable $exception) {
+            Cache::forget(ProcessUploadedDocumentJob::processingCacheKey($document->id));
+            throw $exception;
+        }
+
+        return redirect()
+            ->route('documents.editPdfjs', $document)
+            ->with('status', $entry['title'] . ' is ready. Click a field to start filling it in.');
     }
 
     public function createSimpleInvoice(Request $request)
@@ -8125,22 +8269,14 @@ class DocumentController extends Controller
         ]);
     }
 
+    /** Delete permanently (from the trash): files and row are gone for good. */
     public function destroy(Document $document)
     {
-        // Delete related extraction data
-        DB::table('pdf_extractions_fitz')
-            ->where('document_id', $document->id)
-            ->delete();
-        
-        Storage::delete($document->path);
-        if ($document->original_backup_path) {
-            Storage::delete($document->original_backup_path);
-        }
-        $document->delete();
+        $this->deleteDocumentPermanently($document);
 
         return redirect()
-            ->route('documents.index')
-            ->with('status', 'Document deleted.');
+            ->route('documents.index', ['view' => 'trash'])
+            ->with('status', '"' . $document->original_name . '" deleted permanently.');
     }
 
     public function restoreOriginal(Request $request, Document $document)
@@ -8269,23 +8405,16 @@ class DocumentController extends Controller
         }
         $count = 0;
 
+        // "Delete selected" moves the selection to the trash; files stay
+        // until the trash is emptied or a document is deleted permanently.
         foreach ($documents as $document) {
-            // Delete related extraction data
-            DB::table('pdf_extractions_fitz')
-                ->where('document_id', $document->id)
-                ->delete();
-            
-            Storage::delete($document->path);
-            if ($document->original_backup_path) {
-                Storage::delete($document->original_backup_path);
-            }
             $document->delete();
             $count++;
         }
 
         return redirect()
             ->route('documents.index')
-            ->with('status', "$count documents deleted.");
+            ->with('status', $count === 1 ? '1 document moved to the trash.' : "$count documents moved to the trash.");
     }
 
     public function prepareOverlay(Request $request, Document $document)
