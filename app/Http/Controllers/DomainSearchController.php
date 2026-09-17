@@ -15,6 +15,7 @@ use App\Models\AiPriceLog;
 use App\Models\CreditTransaction;
 use App\Models\Document;
 use App\Services\DeveloperChatClient;
+use App\Services\LogoShowcase;
 use App\Services\NamecheapClient;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -124,17 +125,30 @@ class DomainSearchController extends Controller
         ]);
     }
 
-    public function logoGenerator2(Request $request)
+    /**
+     * The Logo Lab: the generator and the showcase, as two tabs of one
+     * contained page. The full-screen layout (logo-generator-2) is sidelined
+     * - kept, unlinked, behind ?layout=full - until it is wanted again.
+     */
+    public function logoGenerator2(Request $request, LogoShowcase $showcase)
     {
         $user = $request->user();
         $settings = $user && Schema::hasTable('logo_generator_settings')
             ? $this->logoGeneratorSettingsForUser($user)
             : [];
 
-        return view('logo-generator-2', [
+        if ($request->query('layout') === 'full') {
+            return view('logo-generator-2', [
+                'logoUser' => $user,
+                'logoGeneratorSettings' => $settings,
+            ]);
+        }
+
+        return view('logo-lab', [
             'logoUser' => $user,
             'logoGeneratorSettings' => $settings,
-        ]);
+            'tab' => $request->query('tab') === 'browse' ? 'browse' : 'generate',
+        ] + $showcase->browse($request));
     }
 
     public function check(Request $request)
