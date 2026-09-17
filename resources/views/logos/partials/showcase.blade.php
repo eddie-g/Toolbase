@@ -16,7 +16,16 @@
         x-data="{
             selected: null,
             open(item) { this.selected = item; document.body.style.overflow = 'hidden'; },
-            close() { this.selected = null; document.body.style.overflow = ''; }
+            close() { this.selected = null; document.body.style.overflow = ''; },
+            makeYourOwn(item) {
+                // The generator is on this same page: hand it the exact
+                // prompt and settings and switch to it. Signed out, the
+                // preset waits in the browser for the next visit signed in.
+                const preset = { ...item };
+                this.close();
+                try { sessionStorage.setItem('logo-lab:preset', JSON.stringify(preset)); } catch (e) {}
+                window.dispatchEvent(new CustomEvent('logo-lab:preset', { detail: preset }));
+            }
         }"
         @keydown.escape.window="close()"
     >
@@ -50,7 +59,7 @@
                 class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 text-sm text-zinc-700 dark:text-zinc-300 px-3 py-2.5 shadow-sm focus:border-blue-500 focus:ring-blue-500">
                 <option value="">All Models</option>
                 @foreach($models as $m)
-                    <option value="{{ $m }}" @selected($filterModel === $m)>{{ \App\Services\LogoShowcase::modelLabel($m) }}</option>
+                    <option value="{{ $m }}" @selected($filterModel === $m)>{{ \App\Services\LogoShowcase::codeName($m) }}</option>
                 @endforeach
             </select>
             <button type="submit" class="px-5 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors">
@@ -120,7 +129,7 @@
                             </p>
                             <div class="flex items-center gap-1.5 flex-wrap">
                                 <span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold {{ $modelColor($item['model']) }}">
-                                    {{ \App\Services\LogoShowcase::modelLabel($item['model']) }}
+                                    {{ $item['model_name'] }}
                                 </span>
                                 <span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium {{ $styleColor }}">
                                     {{ ucfirst($item['style']) }}
@@ -173,7 +182,7 @@
                         <div class="p-6 pb-4">
                             <div class="flex items-center gap-2 flex-wrap mb-2">
                                 <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
-                                    x-text="selected.model"></span>
+                                    x-text="selected.model_name"></span>
                                 <span class="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-medium bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
                                     x-text="selected.style ? selected.style.charAt(0).toUpperCase() + selected.style.slice(1) : ''"></span>
                             </div>
@@ -187,8 +196,8 @@
 
                             <div class="grid grid-cols-2 gap-4">
                                 <div>
-                                    <p class="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mb-0.5">AI Model</p>
-                                    <p class="text-sm font-medium text-zinc-800 dark:text-zinc-200" x-text="selected.model"></p>
+                                    <p class="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mb-0.5">Model</p>
+                                    <p class="text-sm font-medium text-zinc-800 dark:text-zinc-200" x-text="selected.model_name"></p>
                                 </div>
                                 <div>
                                     <p class="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mb-0.5">Style</p>
@@ -236,19 +245,10 @@
                                 </svg>
                                 Download
                             </a>
-                            <a
-                                :href="'/logo-generator?' + new URLSearchParams(Object.fromEntries(Object.entries({
-                                    domain: selected.domain,
-                                    style: selected.style_raw || selected.style,
-                                    model: selected.image_model,
-                                    shape: selected.logo_shape,
-                                    detail: selected.logo_detail,
-                                    bg: selected.bg_color,
-                                    icon_only: selected.icon_only ? '1' : null,
-                                }).filter(([, v]) => v != null && v !== '' && v !== 'none'))).toString()"
+                            <button type="button" @click="makeYourOwn(selected)" data-action="make-your-own"
                                 class="px-4 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors">
-                                Make Your Own
-                            </a>
+                                Make your own
+                            </button>
                             <button
                                 @click="close()"
                                 class="px-4 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:bg-zinc-50 dark:hover:bg-zinc-800 text-zinc-700 dark:text-zinc-300 text-sm font-medium transition-colors"

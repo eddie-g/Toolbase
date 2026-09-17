@@ -265,11 +265,49 @@
                     this.enforceLunaVectorDefaults();
                     this.ensureSupportedImageSize();
 
+                    // "Make your own" on a showcased logo: the exact prompt and
+                    // settings it was made with, whether the click happens now
+                    // (the event) or happened before signing in (the stash).
+                    window.addEventListener('logo-lab:preset', (event) => this.applyShowcasePreset(event.detail));
+                    try {
+                        const stashed = sessionStorage.getItem('logo-lab:preset');
+                        if (stashed) {
+                            sessionStorage.removeItem('logo-lab:preset');
+                            this.applyShowcasePreset(JSON.parse(stashed));
+                        }
+                    } catch (e) {}
+
                     // Delay initial price fetch to ensure everything is loaded
                     this.$nextTick(() => {
                         this.fetchLogoPrice();
                     });
                     this.fetchSavedPalettes();
+                },
+
+                /**
+                 * Set the generator exactly as a showcased logo was made: its
+                 * output format, model, style, pro flag, mode, text, prompt,
+                 * background, shape and detail. Anything the record does not
+                 * carry is left as it is.
+                 */
+                applyShowcasePreset(item) {
+                    if (!item || typeof item !== 'object') return;
+                    if (item.output_format === 'raster') this.switchToImageMode(); else this.switchToLogoMode();
+                    const model = ['flux', 'recraft', 'dalle'].includes(item.generator_model) ? item.generator_model : null;
+                    if (model && !(model === 'dalle' && this.workMode === 'logo')) this.selectModel(model);
+                    this.proMode = Boolean(item.pro);
+                    this.logoMode = item.icon_only ? 'icon_only' : (item.domain ? (this.outputFormat === 'vector' ? 'text_only' : 'icon_text') : 'icon_only');
+                    this.logoDomain = item.domain || '';
+                    this.logoPrompt = item.prompt || '';
+                    if (item.style_id) this.logoStyle = item.style_id;
+                    if (item.logo_shape !== undefined && item.logo_shape !== null) this.shapeContainer = item.logo_shape === 'none' ? '' : item.logo_shape;
+                    if (['min', 'medium', 'max'].includes(item.logo_detail)) this.detailLevel = item.logo_detail;
+                    const bg = String(item.bg_color || '');
+                    if (bg === 'white' || bg === 'none') this.backgroundColor = bg;
+                    else if (/^#[0-9a-fA-F]{6}$/.test(bg)) this.applyCustomBackgroundColor(bg);
+                    this.enforceLunaVectorDefaults();
+                    this.ensureSupportedImageSize();
+                    this.fetchLogoPrice();
                 },
 
                 selectModel(model) {

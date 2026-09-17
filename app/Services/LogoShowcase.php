@@ -69,12 +69,28 @@ class LogoShowcase
                 $imageData = $resultData['images'][$idx] ?? [];
                 $imageSeed = is_array($imageData) ? ($imageData['seed'] ?? null) : null;
 
+                // The style column carries the pro flag as a suffix
+                // ("fantasy_pro"); the style id the generator takes is in
+                // result_data, or the column without the suffix.
+                $storedStyle = (string) ($logo->style ?? '');
+                $pro = str_ends_with($storedStyle, '_pro');
+                $styleId = (string) ($resultData['style'] ?? preg_replace('/_pro$/', '', strtolower($storedStyle)));
+                $outputFormat = (string) ($logo->output_format ?: (str_contains((string) $logo->model, 'vector') ? 'vector' : 'raster'));
+
                 $items->push([
                     'logo_id' => $logo->id,
                     'image_index' => $idx,
                     'url' => $url,
                     'model' => $logo->model ?? 'unknown',
+                    'model_name' => self::codeName($logo->model),
+                    'generator_model' => self::generatorModel($resultData['image_model'] ?? $logo->model),
                     'style' => $logo->style,
+                    'style_id' => $styleId,
+                    'pro' => $pro,
+                    'output_format' => $outputFormat,
+                    // The words the maker typed, not the composed prompt the
+                    // generator builds around them on its own.
+                    'prompt' => (string) ($logo->original_prompt ?: ''),
                     'domain' => $logo->domain,
                     'seed_number' => $imageSeed ?? $logo->seed_number,
                     'width' => $logo->width,
@@ -83,7 +99,7 @@ class LogoShowcase
                     'bg_color' => $resultData['bg_color'] ?? null,
                     'image_model' => $resultData['image_model'] ?? null,
                     'style_raw' => $resultData['style'] ?? null,
-                    'icon_only' => $resultData['icon_only'] ?? false,
+                    'icon_only' => (bool) ($resultData['icon_only'] ?? false),
                     'logo_shape' => $resultData['logo_shape'] ?? null,
                     'logo_detail' => $resultData['logo_detail'] ?? null,
                     'cost' => $resultData['cost'] ?? null,
@@ -111,6 +127,33 @@ class LogoShowcase
             'filterStyle' => $filterStyle,
             'filterModel' => $filterModel,
         ];
+    }
+
+    /**
+     * The name Netkit gives a model on its own pages: Luna, Ray or Cosmo.
+     * The provider behind each is not something the page talks about.
+     */
+    public static function codeName(?string $model): string
+    {
+        $model = strtolower((string) $model);
+
+        return match (true) {
+            str_contains($model, 'recraft') => 'Ray',
+            str_contains($model, 'flux'), str_contains($model, 'nano-banana') => 'Luna',
+            default => 'Cosmo',
+        };
+    }
+
+    /** The generator's own key for a stored model: what selectModel() takes. */
+    public static function generatorModel(?string $model): string
+    {
+        $model = strtolower((string) $model);
+
+        return match (true) {
+            str_contains($model, 'recraft') => 'recraft',
+            str_contains($model, 'flux'), str_contains($model, 'nano-banana') => 'flux',
+            default => 'dalle',
+        };
     }
 
     public static function modelLabel(string $model): string

@@ -53,15 +53,21 @@
                 const url = new URL(window.location.href);
                 if (name === 'browse') url.searchParams.set('tab', 'browse'); else url.searchParams.delete('tab');
                 history.replaceState(null, '', url.toString());
+            },
+            preset() {
+                if (document.querySelector('[data-login-gate]')) { window.location.href = '/login'; return; }
+                this.show('generate');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
             }
         }"
+        @logo-lab:preset.window="preset()"
     >
         {{-- Page header: title on the left, the two tabs on the right --}}
         <div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
             <div>
                 <p class="inline-flex items-center gap-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
                     <span class="inline-block h-1.5 w-1.5 rounded-full bg-blue-600 dark:bg-blue-400"></span>
-                    AI Logo Lab
+                    Netkit tools
                 </p>
                 <h1 class="mt-2 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl dark:text-zinc-50">Logo Lab</h1>
                 <p class="mt-2 max-w-xl text-sm leading-6 text-zinc-500 dark:text-zinc-400">
@@ -214,7 +220,7 @@
                             <span class="{{ $label }} mb-3">Colour palette</span>
                             <button type="button" @click="logoColorPalette = 'none'" class="mb-2 flex w-full items-center gap-2 rounded-lg border p-2 transition" :class="logoColorPalette === 'none' ? '{{ $chipOn }}' : '{{ $chipOff }}'">
                                 <div class="flex h-6 flex-1 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
-                                    <span class="text-xs font-medium text-zinc-400 dark:text-zinc-500">AI picks</span>
+                                    <span class="text-xs font-medium text-zinc-400 dark:text-zinc-500">Auto</span>
                                 </div>
                                 <span class="text-xs font-medium">None</span>
                             </button>

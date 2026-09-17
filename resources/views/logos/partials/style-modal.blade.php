@@ -25,7 +25,7 @@
                         </button>
                     </div>
 
-                    <!-- DALL-E styles -->
+                    <!-- Cosmo styles -->
                     <div x-show="styleModalTab === 'style' && selectedModel === 'dalle'">
                         <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
                             <button type="button" @click="selectStyle('default')"
@@ -141,7 +141,7 @@
                         </div>
                     </div>
 
-                    <!-- Flux/Recraft styles -->
+                    <!-- Luna and Ray styles -->
                     <div x-show="styleModalTab === 'style' && selectedModel !== 'dalle'" class="grid grid-cols-2 sm:grid-cols-3 gap-3">
                         <button type="button" @click="selectStyle('default')"
                             class="group rounded-xl border p-3 transition-all text-center"
