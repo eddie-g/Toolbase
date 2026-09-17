@@ -121,6 +121,8 @@ class DocumentOwnershipTest extends TestCase
     {
         $unowned = $this->document(null, 'guest.pdf');
         $this->app['env'] = 'local';
+        // Outside the testing environment CSRF is enforced (as it should be); that is not what this test is about.
+        $this->withoutMiddleware(\Illuminate\Foundation\Http\Middleware\ValidateCsrfToken::class);
 
         $this->postJson('/documents/overwrite-annotation-text', [
             'document_id' => $unowned->id, 'annotation_id' => 'promoted_1_1', 'text' => 'x',
