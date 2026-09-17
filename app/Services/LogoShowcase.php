@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\AiLogoRequest;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 
@@ -12,7 +13,8 @@ use Illuminate\Support\Collection;
  *
  * Lifted out of BrowseLogosController when the showcase became a tab of the
  * Logo Lab: the generator page now needs the same data, and a controller
- * calling another controller is the wrong shape for that.
+ * calling another controller is the wrong shape for that. The same item
+ * shape serves the signed-in account's own library on the Generate tab.
  */
 class LogoShowcase
 {
@@ -48,64 +50,12 @@ class LogoShowcase
 
         $items = collect();
         foreach ($logos as $logo) {
-            $urls = is_array($logo->image_urls) ? $logo->image_urls : [];
-            $showcaseIndexes = $this->showcaseIndexesFor($logo, $urls);
-            foreach ($urls as $idx => $url) {
-                if (! is_string($url) || $url === '' || $url === '[base64-omitted]') {
+            $showcaseIndexes = $this->showcaseIndexesFor($logo, is_array($logo->image_urls) ? $logo->image_urls : []);
+            foreach ($this->usableImageUrls($logo) as $idx => $url) {
+                if (! in_array($idx, $showcaseIndexes, true)) {
                     continue;
                 }
-                if (! in_array((int) $idx, $showcaseIndexes, true)) {
-                    continue;
-                }
-
-                $parsed = parse_url($url);
-                if (isset($parsed['host'], $parsed['path'])) {
-                    $url = $parsed['path'];
-                }
-
-                $resultData = is_string($logo->result_data)
-                    ? (json_decode($logo->result_data, true) ?: [])
-                    : (is_array($logo->result_data) ? $logo->result_data : []);
-                $imageData = $resultData['images'][$idx] ?? [];
-                $imageSeed = is_array($imageData) ? ($imageData['seed'] ?? null) : null;
-
-                // The style column carries the pro flag as a suffix
-                // ("fantasy_pro"); the style id the generator takes is in
-                // result_data, or the column without the suffix.
-                $storedStyle = (string) ($logo->style ?? '');
-                $pro = str_ends_with($storedStyle, '_pro');
-                $styleId = (string) ($resultData['style'] ?? preg_replace('/_pro$/', '', strtolower($storedStyle)));
-                $outputFormat = (string) ($logo->output_format ?: (str_contains((string) $logo->model, 'vector') ? 'vector' : 'raster'));
-
-                $items->push([
-                    'logo_id' => $logo->id,
-                    'image_index' => $idx,
-                    'url' => $url,
-                    'model' => $logo->model ?? 'unknown',
-                    'model_name' => self::codeName($logo->model),
-                    'generator_model' => self::generatorModel($resultData['image_model'] ?? $logo->model),
-                    'style' => $logo->style,
-                    'style_id' => $styleId,
-                    'pro' => $pro,
-                    'output_format' => $outputFormat,
-                    // The words the maker typed, not the composed prompt the
-                    // generator builds around them on its own.
-                    'prompt' => (string) ($logo->original_prompt ?: ''),
-                    'domain' => $logo->domain,
-                    'seed_number' => $imageSeed ?? $logo->seed_number,
-                    'width' => $logo->width,
-                    'height' => $logo->height,
-                    'response_time_ms' => $logo->response_time_ms,
-                    'bg_color' => $resultData['bg_color'] ?? null,
-                    'image_model' => $resultData['image_model'] ?? null,
-                    'style_raw' => $resultData['style'] ?? null,
-                    'icon_only' => (bool) ($resultData['icon_only'] ?? false),
-                    'logo_shape' => $resultData['logo_shape'] ?? null,
-                    'logo_detail' => $resultData['logo_detail'] ?? null,
-                    'cost' => $resultData['cost'] ?? null,
-                    'created_at' => $logo->created_at?->format('M j, Y'),
-                    'created_diff' => $logo->created_at?->diffForHumans(),
-                ]);
+                $items->push($this->item($logo, $idx, $url));
             }
         }
 
@@ -126,6 +76,116 @@ class LogoShowcase
             'search' => $search,
             'filterStyle' => $filterStyle,
             'filterModel' => $filterModel,
+        ];
+    }
+
+    /**
+     * A signed-in account's own logos, newest first, one item per image: the
+     * library on the Logo Lab's Generate tab. Paged on its own query key so
+     * it does not fight the showcase's pages.
+     *
+     * @return array<string, mixed> the view data for the library
+     */
+    public function library(User $user, Request $request): array
+    {
+        $logos = AiLogoRequest::query()
+            ->where('user_id', $user->id)
+            ->where('status', 'completed')
+            ->whereNotNull('image_urls')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id')
+            ->paginate(24, ['*'], 'logos')
+            ->withQueryString();
+
+        $items = collect();
+        foreach ($logos as $logo) {
+            foreach ($this->usableImageUrls($logo) as $idx => $url) {
+                $item = $this->item($logo, $idx, $url);
+                $item['preview_url'] = route('generatedImages.preview', ['logoRequest' => $logo->id, 'index' => $idx]);
+                $item['original_url'] = route('generatedImages.original', ['logoRequest' => $logo->id, 'index' => $idx]);
+                $items->push($item);
+            }
+        }
+
+        return [
+            'libraryItems' => $items,
+            'libraryLogos' => $logos,
+        ];
+    }
+
+    /**
+     * The image urls of a request worth showing: blanks and omitted base64
+     * skipped, absolute urls reduced to their path.
+     *
+     * @return array<int, string> image index => url
+     */
+    private function usableImageUrls(AiLogoRequest $logo): array
+    {
+        $out = [];
+        foreach ((is_array($logo->image_urls) ? $logo->image_urls : []) as $idx => $url) {
+            if (! is_string($url) || $url === '' || $url === '[base64-omitted]') {
+                continue;
+            }
+            $parsed = parse_url($url);
+            if (isset($parsed['host'], $parsed['path'])) {
+                $url = $parsed['path'];
+            }
+            $out[(int) $idx] = $url;
+        }
+
+        return $out;
+    }
+
+    /**
+     * One showcase or library item: the image plus everything "Make your
+     * own" needs to set the generator exactly as this logo was made.
+     *
+     * @return array<string, mixed>
+     */
+    public function item(AiLogoRequest $logo, int $idx, string $url): array
+    {
+        $resultData = is_string($logo->result_data)
+            ? (json_decode($logo->result_data, true) ?: [])
+            : (is_array($logo->result_data) ? $logo->result_data : []);
+        $imageData = $resultData['images'][$idx] ?? [];
+        $imageSeed = is_array($imageData) ? ($imageData['seed'] ?? null) : null;
+
+        // The style column carries the pro flag as a suffix
+        // ("fantasy_pro"); the style id the generator takes is in
+        // result_data, or the column without the suffix.
+        $storedStyle = (string) ($logo->style ?? '');
+        $pro = str_ends_with($storedStyle, '_pro');
+        $styleId = (string) ($resultData['style'] ?? preg_replace('/_pro$/', '', strtolower($storedStyle)));
+        $outputFormat = (string) ($logo->output_format ?: (str_contains((string) $logo->model, 'vector') ? 'vector' : 'raster'));
+
+        return [
+            'logo_id' => $logo->id,
+            'image_index' => $idx,
+            'url' => $url,
+            'model' => $logo->model ?? 'unknown',
+            'model_name' => self::codeName($logo->model),
+            'generator_model' => self::generatorModel($resultData['image_model'] ?? $logo->model),
+            'style' => $logo->style,
+            'style_id' => $styleId,
+            'pro' => $pro,
+            'output_format' => $outputFormat,
+            // The words the maker typed, not the composed prompt the
+            // generator builds around them on its own.
+            'prompt' => (string) ($logo->original_prompt ?: ''),
+            'domain' => $logo->domain,
+            'seed_number' => $imageSeed ?? $logo->seed_number,
+            'width' => $logo->width,
+            'height' => $logo->height,
+            'response_time_ms' => $logo->response_time_ms,
+            'bg_color' => $resultData['bg_color'] ?? null,
+            'image_model' => $resultData['image_model'] ?? null,
+            'style_raw' => $resultData['style'] ?? null,
+            'icon_only' => (bool) ($resultData['icon_only'] ?? false),
+            'logo_shape' => $resultData['logo_shape'] ?? null,
+            'logo_detail' => $resultData['logo_detail'] ?? null,
+            'cost' => $resultData['cost'] ?? null,
+            'created_at' => $logo->created_at?->format('M j, Y'),
+            'created_diff' => $logo->created_at?->diffForHumans(),
         ];
     }
 

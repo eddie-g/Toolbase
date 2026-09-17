@@ -146,9 +146,28 @@ class DomainSearchController extends Controller
 
         return view('logo-lab', [
             'logoUser' => $user,
-            'logoGeneratorSettings' => $settings,
             'tab' => $request->query('tab') === 'browse' ? 'browse' : 'generate',
-        ] + $showcase->browse($request));
+        ] + ($user ? $showcase->library($user, $request) : []) + $showcase->browse($request));
+    }
+
+    /**
+     * The Logo Studio: the generator on its own, full screen. Generating
+     * spends credits, so it needs an account; the Lab page's Generate tab
+     * links here and lists what was made.
+     */
+    public function logoStudio(Request $request)
+    {
+        $user = $request->user();
+        if (! $user) {
+            return redirect()->guest(route('login'));
+        }
+
+        return view('logo-studio', [
+            'logoUser' => $user,
+            'logoGeneratorSettings' => Schema::hasTable('logo_generator_settings')
+                ? $this->logoGeneratorSettingsForUser($user)
+                : [],
+        ]);
     }
 
     public function check(Request $request)

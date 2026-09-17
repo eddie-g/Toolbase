@@ -1,4 +1,4 @@
-{{-- The Browse tab of the Logo Lab: the public showcase. Expects the LogoShowcase::browse() view data. --}}
+{{-- The Browse logos tab of the Logo Lab: the public showcase. Expects the LogoShowcase::browse() view data. --}}
     @php
         $modelColor = fn(string $m) => match(true) {
             str_contains($m, 'flux-pro')    => 'bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300',
@@ -18,13 +18,13 @@
             open(item) { this.selected = item; document.body.style.overflow = 'hidden'; },
             close() { this.selected = null; document.body.style.overflow = ''; },
             makeYourOwn(item) {
-                // The generator is on this same page: hand it the exact
-                // prompt and settings and switch to it. Signed out, the
-                // preset waits in the browser for the next visit signed in.
+                // The studio is its own page: leave it the exact prompt and
+                // settings to pick up, then go there. Signed out, sign in
+                // first; the preset waits in the browser for that visit.
                 const preset = { ...item };
                 this.close();
                 try { sessionStorage.setItem('logo-lab:preset', JSON.stringify(preset)); } catch (e) {}
-                window.dispatchEvent(new CustomEvent('logo-lab:preset', { detail: preset }));
+                window.location.href = document.querySelector('[data-login-gate]') ? '{{ route('login') }}' : '{{ route('domainSearch.logoStudio') }}';
             }
         }"
         @keydown.escape.window="close()"

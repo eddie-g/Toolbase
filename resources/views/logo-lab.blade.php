@@ -9,10 +9,6 @@
     <title>Logo Lab - Netkit</title>
     <link rel="preconnect" href="https://fonts.bunny.net">
     <link href="https://fonts.bunny.net/css?family=inter:400,500,600,700&display=swap" rel="stylesheet" />
-    {{-- The faces a generated vector logo's text may be set in: the generator's script renders them. --}}
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Abril+Fatface&family=Anton&family=Arvo:wght@400;700&family=Bebas+Neue&family=Bitter:wght@400;700&family=Bungee&family=Cabin:wght@400;700&family=Cinzel:wght@400;700&family=Comfortaa:wght@400;700&family=Cormorant+Garamond:wght@400;700&family=Dancing+Script:wght@400;700&family=DM+Sans:wght@400;700&family=Exo+2:wght@400;700&family=Fira+Sans:wght@400;700&family=IBM+Plex+Sans:wght@400;700&family=Inter:wght@400;700&family=Josefin+Sans:wght@400;700&family=Lato:wght@400;700&family=Libre+Baskerville:wght@400;700&family=Lobster&family=Macondo&family=Merriweather:wght@400;700&family=Montserrat:wght@400;700&family=Nunito:wght@400;700&family=Open+Sans:wght@400;700&family=Oswald:wght@400;700&family=Playfair+Display:wght@400;700&family=Poppins:wght@400;700&family=Raleway:wght@400;700&family=Roboto:wght@400;700&family=Rubik:wght@400;700&family=Source+Sans+3:wght@400;700&family=Space+Grotesk:wght@400;700&family=Work+Sans:wght@400;700&display=swap" rel="stylesheet">
     @vite(['resources/css/app.css', 'resources/js/app.js'])
     <style>
         .nk-lab {
@@ -21,9 +17,6 @@
             -webkit-font-smoothing: antialiased;
         }
         [x-cloak] { display: none !important; }
-        .selection-box { vector-effect: non-scaling-stroke; }
-        .style-sample-image { transition: transform 0.25s ease, filter 0.25s ease; }
-        .group:hover .style-sample-image { transform: scale(1.06); filter: saturate(1.08); }
     </style>
 </head>
 <body class="nk-lab bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
@@ -44,6 +37,7 @@
         $input = "w-full rounded-lg border border-zinc-200 bg-white px-3.5 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50 dark:placeholder-zinc-500";
     @endphp
 
+
     <main
         class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8 pt-28 pb-20"
         x-data="{
@@ -53,14 +47,8 @@
                 const url = new URL(window.location.href);
                 if (name === 'browse') url.searchParams.set('tab', 'browse'); else url.searchParams.delete('tab');
                 history.replaceState(null, '', url.toString());
-            },
-            preset() {
-                if (document.querySelector('[data-login-gate]')) { window.location.href = '/login'; return; }
-                this.show('generate');
-                window.scrollTo({ top: 0, behavior: 'smooth' });
             }
         }"
-        @logo-lab:preset.window="preset()"
     >
         {{-- Page header: title on the left, the two tabs on the right --}}
         <div class="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
@@ -71,7 +59,7 @@
                 </p>
                 <h1 class="mt-2 text-3xl font-semibold tracking-tight text-zinc-900 sm:text-4xl dark:text-zinc-50">Logo Lab</h1>
                 <p class="mt-2 max-w-xl text-sm leading-6 text-zinc-500 dark:text-zinc-400">
-                    Describe a mark, pick a style and a palette, and generate vector or raster logos. Everything made here can be browsed with the settings behind it.
+                    Make logos in the studio: describe a mark, pick a style and a palette, generate vector or raster. Everything you make is kept here, and what others made can be browsed with the settings behind it.
                 </p>
             </div>
             <div role="tablist" aria-label="Logo Lab sections" class="inline-flex shrink-0 self-start rounded-lg border border-zinc-200 bg-zinc-100 p-1 dark:border-zinc-800 dark:bg-zinc-900">
@@ -82,406 +70,119 @@
             </div>
         </div>
 
-        {{-- ── Generate ─────────────────────────────────────────────────── --}}
+        {{-- ── Generate: the studio button and the logos this account has made ── --}}
         <section x-show="tab === 'generate'" role="tabpanel" data-panel="generate" class="mt-8">
             @if ($logoUser ?? false)
-            <div x-data="logoGenerator()" x-effect="if (outputFormat === 'vector' && logoMode === 'icon_text') logoMode = 'icon_only'" class="space-y-6">
+            @php
+                $menuItem = "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] font-medium text-zinc-700 transition hover:bg-zinc-100 hover:text-zinc-900 focus-visible:bg-zinc-100 focus-visible:outline-none dark:text-zinc-300 dark:hover:bg-zinc-800 dark:hover:text-zinc-50 dark:focus-visible:bg-zinc-800";
+                $viewButton = "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition";
+                $viewOn = "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200 dark:bg-zinc-800 dark:text-zinc-50 dark:ring-zinc-700";
+                $viewOff = "text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100";
+            @endphp
 
-                {{-- Prompt --}}
-                <div class="{{ $card }} p-5 sm:p-6">
-                    <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                        <div class="flex items-center gap-3">
-                            <h2 class="text-base font-semibold text-zinc-900 dark:text-zinc-50" x-text="workMode === 'logo' ? 'Vector logo' : 'Raster image'"></h2>
-                            <div class="inline-flex rounded-lg border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-800 dark:bg-zinc-950">
-                                <button type="button" @click="switchToLogoMode()" class="rounded-md px-3 py-1 text-xs font-medium transition" :class="workMode === 'logo' ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'">Vector</button>
-                                <button type="button" @click="switchToImageMode()" class="rounded-md px-3 py-1 text-xs font-medium transition" :class="workMode === 'image' ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'">Image</button>
-                            </div>
-                        </div>
-                        <div class="inline-flex flex-wrap gap-1 rounded-lg border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-800 dark:bg-zinc-950">
-                            <button type="button"
-                                @click="logoMode = 'icon_only'; logoDomain = ''; if (outputFormat === 'vector' && isTextStyle(logoStyle)) logoStyle = 'default'; fetchLogoPrice()"
-                                class="rounded-md px-3 py-1 text-xs font-medium transition" :class="logoMode === 'icon_only' ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'">Icon only</button>
-                            <button type="button" x-show="outputFormat !== 'vector'" x-transition
-                                @click="logoMode = 'icon_text'; fetchLogoPrice()"
-                                class="rounded-md px-3 py-1 text-xs font-medium transition" :class="logoMode === 'icon_text' ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'">Icon + text</button>
-                            <button type="button"
-                                @click="logoMode = 'text_only'; if (logoStyle !== 'default' && !isTextStyle(logoStyle)) logoStyle = 'modern_sans'; fetchLogoPrice()"
-                                class="rounded-md px-3 py-1 text-xs font-medium transition" :class="logoMode === 'text_only' ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100'">Text only</button>
-                        </div>
+            {{-- Studio --}}
+            <div class="{{ $card }} flex flex-col gap-5 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+                <div class="flex items-start gap-4">
+                    <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950">
+                        <svg class="h-5 w-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
+                        </svg>
                     </div>
-
-                    <div class="mt-4 space-y-3">
-                        <input type="text" x-model="logoDomain" @input="fetchLogoPrice()" x-show="logoMode !== 'icon_only'" x-transition
-                            placeholder="Logo text, e.g. TechStart, CloudSync, DataFlow" class="{{ $input }}">
-                        <textarea x-model="logoPrompt" @input="fetchLogoPrice()" x-show="logoMode !== 'text_only'" x-transition rows="3"
-                            placeholder="Describe the logo: style (modern, vintage, minimalist), mood (professional, playful, elegant), imagery (abstract shapes, tech elements, nature), colours, anything it must include."
-                            class="{{ $input }} resize-y leading-relaxed"></textarea>
-                        <p x-show="logoMode !== 'text_only'" x-transition class="text-xs text-zinc-500 dark:text-zinc-400">Be specific about style, colours and elements for the best results.</p>
+                    <div>
+                        <h2 class="text-base font-semibold text-zinc-900 dark:text-zinc-50">Logo Studio</h2>
+                        <p class="mt-1 max-w-lg text-sm leading-6 text-zinc-500 dark:text-zinc-400">
+                            The full generator on its own screen: prompt, model, style, palette, background, shape, count and PRO. Every logo you make there lands in the list below.
+                        </p>
                     </div>
+                </div>
+                <a href="{{ route('domainSearch.logoStudio') }}" class="{{ $btnPrimary }} shrink-0" data-action="open-studio">
+                    Open Logo Studio
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M13 7l5 5-5 5M6 12h12" /></svg>
+                </a>
+            </div>
 
-                    <div class="mt-5 flex flex-col gap-4 border-t border-zinc-200 pt-4 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between">
-                        <div class="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm">
-                            <div class="text-zinc-500 dark:text-zinc-400">
-                                Estimated cost
-                                <span class="ml-1 font-semibold text-zinc-900 dark:text-zinc-50" x-text="'$' + logoPrice.toFixed(2)"></span>
-                                <span class="ml-1 text-zinc-400 dark:text-zinc-500" x-text="'· ' + logoCount + ' logo' + (logoCount > 1 ? 's' : '')"></span>
-                            </div>
-                            <div class="text-zinc-500 dark:text-zinc-400">
-                                Balance
-                                <span class="ml-1 font-semibold" :class="creditBalance < 0.01 ? 'text-red-600 dark:text-red-400' : 'text-zinc-900 dark:text-zinc-50'" x-text="'$' + creditBalance.toFixed(4)"></span>
-                            </div>
-                        </div>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <div class="flex flex-col items-end gap-1">
-                                <button type="button" @click="saveLogoGeneratorSettings()" :disabled="settingsSaving || !canSaveSettings" class="{{ $btnSecondary }}"
-                                    :title="canSaveSettings ? 'Save these generator settings for next time' : 'Sign in to save generator settings'">
-                                    <span x-show="!settingsSaving && canSaveSettings">Save settings</span>
-                                    <span x-show="settingsSaving">Saving…</span>
-                                    <span x-show="!canSaveSettings">Sign in to save</span>
-                                </button>
-                                <span x-show="settingsStatus" x-text="settingsStatus" class="text-xs text-emerald-600 dark:text-emerald-400"></span>
-                                <span x-show="settingsError" x-text="settingsError" class="text-xs text-red-600 dark:text-red-400"></span>
-                            </div>
-                            <button type="button" @click="generateLogo()" :disabled="(!logoDomain && !logoPrompt) || generating" class="{{ $btnPrimary }}" data-action="generate">
-                                <svg x-show="generating" class="h-4 w-4 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                </svg>
-                                <span x-show="!generating && logoBatches.length === 0">Generate logos</span>
-                                <span x-show="!generating && logoBatches.length > 0">Generate more</span>
-                                <span x-show="generating">Generating…</span>
-                            </button>
-                        </div>
+            {{-- Library: one card per generated image, grid or list --}}
+            <div class="mt-8" x-data="logoLibrary()">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <h2 class="flex items-center text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+                        Your logos
+                        <span class="ml-2 rounded-md bg-zinc-100 px-1.5 py-0.5 text-xs font-medium text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400" title="Generations">{{ number_format($libraryLogos->total()) }}</span>
+                    </h2>
+                    <div role="group" aria-label="View" class="inline-flex rounded-lg border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-800 dark:bg-zinc-900">
+                        <button type="button" data-logos-view="grid" @click="setView('grid')" :aria-pressed="view === 'grid' ? 'true' : 'false'" title="Grid view"
+                            class="{{ $viewButton }}" :class="view === 'grid' ? '{{ $viewOn }}' : '{{ $viewOff }}'">
+                            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" /></svg>
+                            Grid
+                        </button>
+                        <button type="button" data-logos-view="list" @click="setView('list')" :aria-pressed="view === 'list' ? 'true' : 'false'" title="List view"
+                            class="{{ $viewButton }}" :class="view === 'list' ? '{{ $viewOn }}' : '{{ $viewOff }}'">
+                            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+                            List
+                        </button>
                     </div>
                 </div>
 
-                <div class="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)]">
-                    {{-- Settings column --}}
-                    <aside class="space-y-4">
-
-                        {{-- Model --}}
-                        <div class="{{ $card }} p-4">
-                            <div class="mb-3 flex items-center justify-between">
-                                <span class="{{ $label }}">Model</span>
-                                <div x-show="workMode === 'image'" x-transition class="inline-flex rounded-md border border-zinc-200 bg-zinc-100 p-0.5 dark:border-zinc-800 dark:bg-zinc-950">
-                                    <button type="button" @click="genMode = 'logo'" class="rounded px-2 py-0.5 text-[11px] font-medium transition" :class="genMode === 'logo' ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 dark:text-zinc-400'">Logo</button>
-                                    <button type="button" @click="genMode = 'image'" class="rounded px-2 py-0.5 text-[11px] font-medium transition" :class="genMode === 'image' ? 'bg-white text-zinc-900 shadow-sm dark:bg-zinc-800 dark:text-zinc-50' : 'text-zinc-500 dark:text-zinc-400'">Image</button>
-                                </div>
-                            </div>
-                            <div class="space-y-2">
-                                <button type="button" @click="selectModel('flux')" class="w-full rounded-lg border p-3 text-left transition" :class="selectedModel === 'flux' ? '{{ $chipOn }}' : '{{ $chipOff }}'">
-                                    <div class="flex items-center justify-between gap-2">
-                                        <span class="text-sm font-semibold">Luna</span>
-                                        <span class="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">Fast</span>
-                                    </div>
-                                    <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Quick iterations, good quality</p>
-                                </button>
-                                <button type="button" @click="selectModel('recraft')" class="w-full rounded-lg border p-3 text-left transition" :class="selectedModel === 'recraft' ? '{{ $chipOn }}' : '{{ $chipOff }}'">
-                                    <div class="flex items-center justify-between gap-2">
-                                        <span class="text-sm font-semibold">Ray</span>
-                                        <span class="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">Balanced</span>
-                                    </div>
-                                    <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Best quality-to-speed ratio</p>
-                                </button>
-                                <button type="button" x-show="workMode === 'image'" @click="selectModel('dalle')" class="w-full rounded-lg border p-3 text-left transition" :class="selectedModel === 'dalle' ? '{{ $chipOn }}' : '{{ $chipOff }}'">
-                                    <div class="flex items-center justify-between gap-2">
-                                        <span class="text-sm font-semibold">Cosmo</span>
-                                        <span class="rounded-md bg-zinc-100 px-1.5 py-0.5 text-[11px] font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400">Pro</span>
-                                    </div>
-                                    <p class="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">Highest quality, complex prompts</p>
-                                </button>
-                            </div>
-                            <p x-show="workMode === 'logo'" class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Vector mode: Ray draws native SVG, Luna's output is vectorised.</p>
-                            <p x-show="workMode === 'image'" class="mt-3 text-xs text-zinc-500 dark:text-zinc-400">Image mode: high-resolution raster PNGs for any use.</p>
-                        </div>
-
-                        {{-- Style --}}
-                        <div class="{{ $card }} p-4">
-                            <span class="{{ $label }} mb-3">Style</span>
-                            <button type="button" @click="showStyleModal = true" class="group flex w-full items-center gap-3 rounded-lg border border-zinc-200 p-2.5 text-left transition hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:hover:border-zinc-700 dark:hover:bg-zinc-800">
-                                <div class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-zinc-100 dark:bg-zinc-800">
-                                    <template x-if="logoStyle === 'chrome'">
-                                        <img src="/images/chrome-preview.svg" alt="Chrome" class="h-full w-full object-cover" />
-                                    </template>
-                                    <template x-if="logoStyle !== 'chrome'">
-                                        <svg class="h-5 w-5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42"></path></svg>
-                                    </template>
-                                </div>
-                                <div class="min-w-0 flex-1">
-                                    <div class="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50" x-text="getStyleLabel()"></div>
-                                    <div class="truncate text-xs text-zinc-500 dark:text-zinc-400" x-text="'Theme: ' + getThemeLabel()"></div>
-                                </div>
-                                <svg class="h-4 w-4 text-zinc-400 transition group-hover:text-zinc-600 dark:group-hover:text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
-                            </button>
-                        </div>
-
-                        {{-- Palette --}}
-                        <div class="{{ $card }} p-4">
-                            <span class="{{ $label }} mb-3">Colour palette</span>
-                            <button type="button" @click="logoColorPalette = 'none'" class="mb-2 flex w-full items-center gap-2 rounded-lg border p-2 transition" :class="logoColorPalette === 'none' ? '{{ $chipOn }}' : '{{ $chipOff }}'">
-                                <div class="flex h-6 flex-1 items-center justify-center rounded-md bg-zinc-100 dark:bg-zinc-800">
-                                    <span class="text-xs font-medium text-zinc-400 dark:text-zinc-500">Auto</span>
-                                </div>
-                                <span class="text-xs font-medium">None</span>
-                            </button>
-                            <div class="grid grid-cols-2 gap-2">
-                                <template x-for="p in colorPalettes" :key="p.id">
-                                    <button type="button" @click="logoColorPalette = p.id" class="rounded-lg border p-2 transition" :class="logoColorPalette === p.id ? '{{ $chipOn }}' : '{{ $chipOff }}'">
-                                        <div class="flex h-6 overflow-hidden rounded-md">
-                                            <template x-for="(c, ci) in p.colors" :key="ci">
-                                                <div class="flex-1" :style="'background-color: ' + c"></div>
-                                            </template>
-                                        </div>
-                                        <div class="mt-1.5 truncate text-center text-xs font-medium" x-text="p.name"></div>
-                                    </button>
-                                </template>
-                            </div>
-                            <button type="button" @click="logoColorPalette = 'custom'" class="mt-2 flex w-full items-center justify-center gap-2 rounded-lg border py-2 text-xs font-semibold transition" :class="logoColorPalette === 'custom' ? '{{ $chipOn }}' : '{{ $chipOff }}'">
-                                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>
-                                Choose custom
-                            </button>
-                            <div x-show="logoColorPalette === 'custom'" x-transition class="mt-3 rounded-lg bg-zinc-50 p-3 dark:bg-zinc-950">
-                                <span class="{{ $label }} mb-2">Custom colours</span>
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <template x-for="(c, ci) in logoCustomColors" :key="ci">
-                                        <div class="relative">
-                                            <div class="h-9 w-9 cursor-pointer rounded-md border border-zinc-200 dark:border-zinc-700" :style="'background-color: ' + c"></div>
-                                            <input type="color" :value="normalizeHexColor(c)" @input="logoCustomColors[ci] = normalizeHexColor($event.target.value)" class="absolute inset-0 h-full w-full cursor-pointer opacity-0" />
-                                        </div>
-                                    </template>
-                                    <button type="button" @click="logoCustomColors.length < 5 && logoCustomColors.push('#888888')" x-show="logoCustomColors.length < 5"
-                                        class="flex h-9 w-9 items-center justify-center rounded-md border border-dashed border-zinc-300 text-zinc-400 transition hover:border-zinc-400 hover:text-zinc-600 dark:border-zinc-700 dark:hover:border-zinc-600 dark:hover:text-zinc-300">
-                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
-                                    </button>
-                                    <button type="button" @click="logoCustomColors.length > 2 && logoCustomColors.pop()" x-show="logoCustomColors.length > 2"
-                                        class="flex h-9 w-9 items-center justify-center rounded-md border border-dashed border-zinc-300 text-zinc-400 transition hover:border-zinc-400 hover:text-zinc-600 dark:border-zinc-700 dark:hover:border-zinc-600 dark:hover:text-zinc-300">
-                                        <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
-                                    </button>
-                                </div>
-                                <div x-show="canManagePalettes" class="mt-3 border-t border-zinc-200 pt-3 dark:border-zinc-800">
-                                    <span class="{{ $label }} mb-2">Save palette</span>
-                                    <div class="flex items-center gap-2">
-                                        <input type="text" x-model="savedPaletteName" maxlength="60" placeholder="Palette name" class="{{ $input }} py-2 text-xs" />
-                                        <button type="button" @click="saveCurrentPalette()" :disabled="paletteSaving" class="{{ $btnPrimary }} px-3 py-2 text-xs" x-text="paletteSaving ? 'Saving…' : 'Save'"></button>
-                                    </div>
-                                    <p class="mt-1 text-xs text-red-600 dark:text-red-400" x-show="paletteError" x-text="paletteError"></p>
-                                    <p class="mt-1 text-xs text-blue-600 dark:text-blue-400" x-show="paletteSuccess" x-text="paletteSuccess"></p>
-                                    <div class="mt-2 space-y-1">
-                                        <template x-for="palette in savedPalettes" :key="palette.id">
-                                            <div class="flex items-center gap-1 rounded-md border border-zinc-200 bg-white p-1.5 dark:border-zinc-800 dark:bg-zinc-900">
-                                                <button type="button" @click="applySavedPalette(palette)" class="flex min-w-0 flex-1 items-center gap-2 text-left">
-                                                    <div class="flex h-4 w-14 overflow-hidden rounded border border-zinc-200 dark:border-zinc-700">
-                                                        <template x-for="(c, ci) in palette.colors" :key="ci">
-                                                            <div class="flex-1" :style="'background-color: ' + c"></div>
-                                                        </template>
-                                                    </div>
-                                                    <span class="truncate text-xs text-zinc-700 dark:text-zinc-300" x-text="palette.name"></span>
-                                                </button>
-                                                <button type="button" @click.stop="deleteSavedPalette(palette.id)" class="rounded p-1 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-500/10" title="Delete palette">
-                                                    <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M9 7h6m-7 0V5a1 1 0 011-1h4a1 1 0 011 1v2"></path></svg>
-                                                </button>
-                                            </div>
-                                        </template>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        {{-- Background --}}
-                        <div class="{{ $card }} p-4">
-                            <span class="{{ $label }} mb-3">Background</span>
-                            <div class="grid grid-cols-3 gap-2">
-                                <button type="button" @click="backgroundColor = 'white'; fetchLogoPrice()" class="{{ $chip }}" :class="backgroundColor === 'white' ? '{{ $chipOn }}' : '{{ $chipOff }}'">White</button>
-                                <button type="button" @click="backgroundColor = 'none'; fetchLogoPrice()" class="{{ $chip }}" :class="backgroundColor === 'none' ? '{{ $chipOn }}' : '{{ $chipOff }}'">None</button>
-                                <div class="relative">
-                                    <button type="button" @click="selectCustomBackground()" class="{{ $chip }} flex w-full items-center justify-center gap-2" :class="isCustomBackgroundColor() ? '{{ $chipOn }}' : '{{ $chipOff }}'">
-                                        <span class="inline-block h-3.5 w-3.5 rounded border border-zinc-300 dark:border-zinc-600" :style="'background-color: ' + backgroundCustomColor"></span>
-                                        Colour
-                                    </button>
-                                    <input type="color" :value="normalizeHexColor(backgroundCustomColor, '#4F46E5')" @input="applyCustomBackgroundColor($event.target.value)" class="absolute inset-0 h-full w-full cursor-pointer opacity-0" aria-label="Pick background colour" />
-                                </div>
-                            </div>
-                        </div>
-
-                        {{-- Image size (raster image content only) --}}
-                        <div x-show="workMode === 'image' && genMode === 'image'" x-transition class="{{ $card }} p-4">
-                            <span class="{{ $label }} mb-3">Image size</span>
-                            <div class="grid grid-cols-2 gap-2">
-                                <template x-for="sz in imageSizeOptions()" :key="sz.id">
-                                    <button type="button" @click="imageSize = sz.id; fetchLogoPrice()" class="{{ $chip }} text-center" :class="imageSize === sz.id ? '{{ $chipOn }}' : '{{ $chipOff }}'">
-                                        <span class="block text-sm font-semibold" x-text="sz.label"></span>
-                                        <span class="block text-xs opacity-70" x-text="sz.id"></span>
-                                    </button>
-                                </template>
-                            </div>
-                        </div>
-
-                        {{-- Output: count, detail, shape, PRO --}}
-                        <div class="{{ $card }} space-y-5 p-4">
-                            <div>
-                                <span class="{{ $label }} mb-3">Number of logos</span>
-                                <div class="grid grid-cols-4 gap-2">
-                                    <template x-for="num in [1,2,3,4]">
-                                        <button type="button" @click="logoCount = num; fetchLogoPrice()" class="{{ $chip }} text-center" :class="logoCount === num ? '{{ $chipOn }}' : '{{ $chipOff }}'" x-text="num"></button>
-                                    </template>
-                                </div>
-                            </div>
-                            <div x-show="outputFormat !== 'vector'" x-transition>
-                                <span class="{{ $label }} mb-3">Detail level</span>
-                                <div class="grid grid-cols-3 gap-2">
-                                    <template x-for="level in [{id:'min',label:'Minimal'},{id:'medium',label:'Medium'},{id:'max',label:'Maximum'}]" :key="level.id">
-                                        <button type="button" @click="detailLevel = level.id; fetchLogoPrice();" class="{{ $chip }} text-center" :class="detailLevel === level.id ? '{{ $chipOn }}' : '{{ $chipOff }}'" x-text="level.label"></button>
-                                    </template>
-                                </div>
-                                <p class="mt-2 text-xs text-zinc-500 dark:text-zinc-400" x-show="selectedModel === 'flux'">Detail level applies to Luna.</p>
-                            </div>
-                            <div x-show="outputFormat !== 'vector'" x-transition>
-                                <span class="{{ $label }} mb-3">Shape</span>
-                                <div class="grid grid-cols-3 gap-2">
-                                    <template x-for="shape in [{id:'',label:'None'},{id:'circle',label:'Circle'},{id:'square',label:'Square'},{id:'hexagon',label:'Hexagon'},{id:'triangle',label:'Triangle'},{id:'pentagon',label:'Pentagon'}]" :key="shape.id">
-                                        <button type="button" @click="shapeContainer = shape.id; fetchLogoPrice(); saveLogoGeneratorSettings()" class="{{ $chip }} text-center" :class="shapeContainer === shape.id ? '{{ $chipOn }}' : '{{ $chipOff }}'" x-text="shape.label"></button>
-                                    </template>
-                                </div>
-                                <p class="mt-2 text-xs text-zinc-500 dark:text-zinc-400">The logo is kept inside the chosen shape.</p>
-                            </div>
-                            <div x-show="!isLunaVectorMode() && !(selectedModel === 'recraft' && outputFormat === 'vector')">
-                                <button type="button" @click="proMode = !proMode; ensureSupportedImageSize(); fetchLogoPrice()" class="flex w-full items-center justify-between rounded-lg border p-3 text-left transition" :class="proMode ? '{{ $chipOn }}' : '{{ $chipOff }}'">
-                                    <span class="text-sm font-semibold" x-text="selectedModel === 'dalle' ? 'HD quality' : 'PRO mode'"></span>
-                                    <span class="relative inline-flex h-5 w-9 items-center rounded-full transition" :class="proMode ? 'bg-blue-600' : 'bg-zinc-300 dark:bg-zinc-700'">
-                                        <span class="inline-block h-4 w-4 rounded-full bg-white shadow transition" :class="proMode ? 'translate-x-[18px]' : 'translate-x-0.5'"></span>
-                                    </span>
-                                </button>
-                                <div x-show="proMode && selectedModel === 'flux'" x-transition class="mt-3">
-                                    <span class="{{ $label }} mb-2">PRO resolution</span>
-                                    <div class="grid grid-cols-3 gap-2">
-                                        <button type="button" @click="proSize = '512'; fetchLogoPrice()" class="{{ $chip }} text-center text-xs" :class="proSize === '512' ? '{{ $chipOn }}' : '{{ $chipOff }}'">512</button>
-                                        <button type="button" @click="proSize = '1024'; fetchLogoPrice()" class="{{ $chip }} text-center text-xs" :class="proSize === '1024' ? '{{ $chipOn }}' : '{{ $chipOff }}'">1024</button>
-                                        <button type="button" @click="proSize = '1536'; fetchLogoPrice()" class="{{ $chip }} text-center text-xs" :class="proSize === '1536' ? '{{ $chipOn }}' : '{{ $chipOff }}'">1536</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </aside>
-
-                    {{-- Results column --}}
-                    <div class="min-w-0">
-                        <div x-show="error" x-cloak class="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-500/30 dark:bg-red-500/10">
-                            <div class="flex items-start gap-3">
-                                <svg class="mt-0.5 h-5 w-5 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"/>
-                                </svg>
-                                <div class="flex-1">
-                                    <h4 class="text-sm font-semibold text-red-900 dark:text-red-200">Something went wrong</h4>
-                                    <p class="mt-1 text-sm text-red-700 dark:text-red-300" x-text="error"></p>
-                                </div>
-                                <button type="button" @click="error = null" class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-200">
-                                    <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
-                                </button>
-                            </div>
-                        </div>
-
-                        {{-- Empty state --}}
-                        <div x-show="logoBatches.length === 0" class="{{ $card }} flex flex-col items-center justify-center px-6 py-24 text-center">
-                            <div class="mb-5 flex h-14 w-14 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950">
-                                <svg class="h-7 w-7 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 008 10.172V5L7 4z"/>
-                                </svg>
-                            </div>
-                            <h3 class="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Ready when you are</h3>
-                            <p class="mt-1 max-w-sm text-sm text-zinc-500 dark:text-zinc-400">Describe the logo above, set the model, style and palette on the left, then generate. Your results land here.</p>
-                        </div>
-
-                        {{-- Results --}}
-                        <div x-show="logoBatches.length > 0" class="space-y-8">
-                            <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Generated logos</h2>
-                            <template x-for="(batch, batchIndex) in logoBatches" :key="batch.id">
-                                <div class="space-y-4">
-                                    <div x-show="batchIndex > 0" class="flex items-center gap-4 py-2">
-                                        <div class="h-px flex-1 bg-zinc-200 dark:bg-zinc-800"></div>
-                                        <div class="text-xs font-medium text-zinc-500 dark:text-zinc-400" x-text="'Previous generation · ' + new Date(batch.timestamp).toLocaleString()"></div>
-                                        <div class="h-px flex-1 bg-zinc-200 dark:bg-zinc-800"></div>
-                                    </div>
-                                    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                                        <template x-if="batch.loading">
-                                            <template x-for="n in batch.expectedCount" :key="n">
-                                                <div class="{{ $card }} overflow-hidden">
-                                                    <div class="relative flex aspect-square items-center justify-center bg-zinc-50 dark:bg-zinc-950">
-                                                        <div class="text-center">
-                                                            <svg class="mx-auto h-8 w-8 animate-spin text-blue-600 dark:text-blue-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                                                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                                                                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                                                            </svg>
-                                                            <p class="mt-3 text-sm text-zinc-500 dark:text-zinc-400">Generating…</p>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </template>
-                                        </template>
-                                        <template x-for="(image, imageIndex) in batch.images" :key="image.key || image.editUrl || image.url || imageIndex">
-                                            <div class="{{ $card }} overflow-hidden transition hover:border-zinc-300 dark:hover:border-zinc-700">
-                                                <template x-if="image.failed">
-                                                    <div class="relative flex aspect-square items-center justify-center bg-zinc-50 dark:bg-zinc-950">
-                                                        <div class="text-center">
-                                                            <svg class="mx-auto h-10 w-10 text-red-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                                                            <p class="mt-3 px-4 text-sm text-red-600 dark:text-red-400" x-text="image.error || 'Failed to generate'"></p>
-                                                        </div>
-                                                    </div>
-                                                </template>
-                                                <div x-show="!image.failed" class="group relative aspect-square cursor-pointer bg-white dark:bg-zinc-100" @click="zoomImage(image.displayUrl || image.url)">
-                                                    <img :src="image.displayUrl || image.url" :alt="'Logo ' + (imageIndex + 1)" class="h-full w-full object-contain p-4" loading="lazy">
-                                                    <div class="absolute left-2 top-2 flex flex-wrap gap-1.5">
-                                                        <span class="rounded-md bg-zinc-900/85 px-2 py-0.5 text-[11px] font-medium text-white" x-text="image.metadata?.model || batch.metadata?.model || 'Luna'"></span>
-                                                        <span class="rounded-md bg-zinc-900/85 px-2 py-0.5 text-[11px] font-medium text-white" x-text="image.metadata?.resolution || batch.metadata?.resolution || '512x512'"></span>
-                                                    </div>
-                                                    <div class="absolute right-2 top-2 flex flex-wrap justify-end gap-1.5">
-                                                        <span class="rounded-md bg-zinc-900/85 px-2 py-0.5 text-[11px] font-medium capitalize text-white" x-text="image.metadata?.style || batch.metadata?.style || 'professional'"></span>
-                                                        <span class="rounded-md bg-blue-600 px-2 py-0.5 text-[11px] font-semibold text-white" x-text="'$' + (image.metadata?.price || batch.metadata?.price || '0.00')"></span>
-                                                    </div>
-                                                </div>
-                                                <div x-show="!image.failed" class="grid gap-2 border-t border-zinc-200 p-3 dark:border-zinc-800">
-                                                    <button type="button" @click="saveLogo(image.editUrl || image.url)" class="{{ $btnPrimary }} py-2">Save</button>
-                                                    <button type="button" x-show="!image.isVector" @click.stop="upscaleGeneratedImage(batchIndex, imageIndex)" :disabled="image.upscaling" class="{{ $btnSecondary }} py-2"
-                                                        x-text="image.upscaling ? 'Upsizing…' : 'Upsize ($' + upscalePrice.toFixed(2) + ')'"></button>
-                                                    <p x-show="image.upscaleError" x-text="image.upscaleError" class="text-xs text-red-600 dark:text-red-400"></p>
-                                                </div>
-                                            </div>
-                                        </template>
-                                    </div>
-                                </div>
-                            </template>
-                        </div>
-
-                        {{-- Similar ideas --}}
-                        <div x-show="similarIdeas.length > 0" class="mt-10 space-y-4">
-                            <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Similar ideas</h2>
-                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-                                <template x-for="idea in similarIdeas" :key="idea.id">
-                                    <div class="{{ $card }} overflow-hidden">
-                                        <div class="relative aspect-square cursor-pointer bg-zinc-50 dark:bg-zinc-950" @click="zoomImage(idea.prompt_outputs[0].url)">
-                                            <img :src="idea.prompt_outputs[0].url" :alt="idea.query" class="h-full w-full object-contain p-4" loading="lazy">
-                                        </div>
-                                        <div class="border-t border-zinc-200 p-3 dark:border-zinc-800">
-                                            <p class="line-clamp-2 text-sm text-zinc-700 dark:text-zinc-300" x-text="idea.query"></p>
-                                            <button type="button" @click="loadFromSimilar(idea)" class="{{ $btnSecondary }} mt-3 w-full py-2">Load this</button>
-                                        </div>
-                                    </div>
-                                </template>
-                            </div>
-                        </div>
+                @if ($libraryItems->isEmpty())
+                    <div class="mt-4 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 px-6 py-16 text-center dark:border-zinc-700 dark:bg-zinc-950" data-library-empty>
+                        <h3 class="text-base font-semibold text-zinc-900 dark:text-zinc-50">Nothing here yet</h3>
+                        <p class="mx-auto mt-1 max-w-sm text-sm text-zinc-500 dark:text-zinc-400">Open the studio, describe a mark and generate. Every logo you make shows up here, ready to download or make more of.</p>
+                        <a href="{{ route('domainSearch.logoStudio') }}" class="{{ $btnPrimary }} mt-5">Open Logo Studio</a>
                     </div>
-                </div>
-
-                @include('logos.partials.style-modal')
-
-                {{-- Zoom --}}
-                <div x-show="zoomImageUrl" x-cloak class="fixed inset-0 z-50 flex items-center justify-center bg-zinc-950/85 p-4" @click="zoomImageUrl = null">
-                    <div class="w-full max-w-5xl" @click.stop>
-                        <img :src="zoomImageUrl" alt="Zoomed logo" class="h-auto w-full rounded-lg shadow-xl">
+                @else
+                    <div id="logo-library" class="mt-4 grid gap-4" :class="view === 'list' ? 'grid-cols-1 gap-2' : 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4'">
+                        @foreach ($libraryItems as $item)
+                            @php
+                                $title = $item['domain'] ?: ($item['prompt'] ?: 'Untitled');
+                                $itemJson = json_encode($item, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_HEX_AMP);
+                                $styleLabel = ucfirst(str_replace('_', ' ', (string) preg_replace('/_pro$/', '', (string) $item['style'])));
+                            @endphp
+                            <div class="{{ $card }} group relative transition hover:border-zinc-300 dark:hover:border-zinc-700" data-library-item
+                                :class="view === 'list' ? 'flex items-center gap-4 pr-14' : ''"
+                                x-data="{ menuOpen: false }" @keydown.escape.window="menuOpen = false">
+                                <div class="overflow-hidden bg-white dark:bg-zinc-100" :class="view === 'list' ? 'm-2 h-16 w-16 shrink-0 rounded-md border border-zinc-200' : 'aspect-square rounded-t-xl border-b border-zinc-200 dark:border-zinc-800'">
+                                    <img src="{{ $item['preview_url'] }}" alt="{{ $title }}" class="h-full w-full object-contain" :class="view === 'list' ? 'p-1' : 'p-4'" loading="lazy">
+                                </div>
+                                <div class="min-w-0" :class="view === 'list' ? 'flex-1 py-3' : 'p-3'">
+                                    <p class="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50" title="{{ $title }}">{{ $title }}</p>
+                                    <p class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                                        <span class="rounded-md bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{{ $item['model_name'] }}</span>
+                                        @if ($styleLabel !== '')
+                                            <span class="rounded-md bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{{ $styleLabel }}</span>
+                                        @endif
+                                        <span>{{ $item['created_diff'] }}</span>
+                                    </p>
+                                </div>
+                                <div class="absolute" :class="[view === 'list' ? 'right-3 top-1/2 -translate-y-1/2' : 'right-2 top-2', menuOpen ? 'z-30' : 'z-10']" @click.away="menuOpen = false">
+                                    <button type="button" @click="menuOpen = !menuOpen" :aria-expanded="menuOpen ? 'true' : 'false'" aria-haspopup="menu" aria-label="More options for {{ $title }}"
+                                        class="grid h-8 w-8 place-items-center rounded-md border border-zinc-200 bg-white/95 text-zinc-500 shadow-sm transition hover:text-zinc-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 dark:border-zinc-700 dark:bg-zinc-900/95 dark:text-zinc-400 dark:hover:text-zinc-100">
+                                        <svg class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8" /><circle cx="12" cy="12" r="1.8" /><circle cx="19" cy="12" r="1.8" /></svg>
+                                    </button>
+                                    <ul role="menu" x-show="menuOpen" x-cloak x-transition.opacity.duration.120ms
+                                        class="absolute right-0 top-[calc(100%+6px)] z-30 m-0 min-w-[200px] list-none rounded-lg border border-zinc-200 bg-white p-1 shadow-lg dark:border-zinc-800 dark:bg-zinc-900">
+                                        <li role="none">
+                                            <button type="button" role="menuitem" class="{{ $menuItem }}" data-action="make-more" @click="menuOpen = false; openInStudio({{ $itemJson }})">
+                                                <svg class="h-4 w-4 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1M5.6 18.4l2.1-2.1m8.6-8.6 2.1-2.1" /></svg>
+                                                Make more like this
+                                            </button>
+                                        </li>
+                                        <li role="none">
+                                            <a href="{{ $item['original_url'] }}" download role="menuitem" class="{{ $menuItem }}">
+                                                <svg class="h-4 w-4 text-zinc-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" /></svg>
+                                                Download
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </div>
+                            </div>
+                        @endforeach
                     </div>
-                </div>
+                    <div class="mt-8">
+                        {{ $libraryLogos->links() }}
+                    </div>
+                @endif
             </div>
             @else
-            {{-- Signed-out: the generator needs an account, the showcase does not --}}
+            {{-- Signed-out: the studio needs an account, the showcase does not --}}
             <div class="{{ $card }} mx-auto max-w-md px-6 py-12 text-center" data-login-gate>
                 <div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl border border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950">
                     <svg class="h-6 w-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -491,7 +192,7 @@
                 <h2 class="text-lg font-semibold text-zinc-900 dark:text-zinc-50">Sign in to generate</h2>
                 <p class="mt-1 text-sm text-zinc-500 dark:text-zinc-400">Generating logos uses credits on your account. Browsing what others made is open to everyone.</p>
                 <div class="mt-6 flex flex-wrap items-center justify-center gap-2">
-                    <a href="/login" class="{{ $btnPrimary }}">Sign in</a>
+                    <a href="{{ route('login') }}" class="{{ $btnPrimary }}">Sign in</a>
                     <button type="button" @click="show('browse')" class="{{ $btnSecondary }}">Browse logos</button>
                 </div>
             </div>
@@ -505,7 +206,26 @@
     </main>
 
     @if ($logoUser ?? false)
-        @include('logos.partials.generator-script')
+    <script>
+        // The library: grid or list (remembered per browser), and "Make more
+        // like this", which hands the studio the exact settings of a logo.
+        function logoLibrary() {
+            return {
+                view: 'grid',
+                init() {
+                    try { this.view = localStorage.getItem('netkit-logos-view') === 'list' ? 'list' : 'grid'; } catch (e) {}
+                },
+                setView(view) {
+                    this.view = view === 'list' ? 'list' : 'grid';
+                    try { localStorage.setItem('netkit-logos-view', this.view); } catch (e) {}
+                },
+                openInStudio(item) {
+                    try { sessionStorage.setItem('logo-lab:preset', JSON.stringify(item)); } catch (e) {}
+                    window.location.href = '{{ route('domainSearch.logoStudio') }}';
+                },
+            };
+        }
+    </script>
     @endif
 </body>
 </html>

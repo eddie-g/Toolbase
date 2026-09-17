@@ -8,8 +8,10 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * The Logo Lab page: the generator and the showcase as two tabs of one
- * contained page, and the old showcase address still leading there.
+ * The Logo Lab page: the studio button and the account's own logos on the
+ * Generate tab, the showcase on the Browse logos tab, the studio itself full
+ * screen at /logo-generator/studio, and the old showcase address still
+ * leading to the Browse tab.
  */
 class LogoLabPageTest extends TestCase
 {
@@ -43,17 +45,71 @@ class LogoLabPageTest extends TestCase
             ->assertDontSee('logoGenerator()', false);
     }
 
-    public function test_a_signed_in_user_gets_the_generator_inside_the_container(): void
+    public function test_a_signed_in_user_gets_the_studio_button_and_their_own_logos(): void
     {
-        $response = $this->actingAs(User::factory()->create())->get('/logo-generator');
+        $user = User::factory()->create();
+        $other = User::factory()->create();
+        $mine = $this->showcaseLogo(['user_id' => $user->id, 'domain' => 'my-brand', 'is_showcase' => false, 'image_urls' => ['/storage/logos/a.png', '/storage/logos/b.png']]);
+        $this->showcaseLogo(['user_id' => $other->id, 'domain' => 'their-brand', 'is_showcase' => false]);
+        $this->showcaseLogo(['user_id' => $user->id, 'domain' => 'still-running', 'status' => 'processing', 'is_showcase' => false]);
+
+        $response = $this->actingAs($user)->get('/logo-generator');
+
+        $response->assertOk()
+            ->assertSee('max-w-6xl', false)
+            ->assertSee('data-action="open-studio"', false)
+            ->assertSee(route('domainSearch.logoStudio'), false)
+            ->assertSee('Your logos')
+            ->assertSee('data-logos-view="grid"', false)
+            ->assertSee('data-logos-view="list"', false)
+            ->assertSee('my-brand')
+            ->assertSee(route('generatedImages.preview', ['logoRequest' => $mine->id, 'index' => 1]), false)
+            ->assertSee(route('generatedImages.original', ['logoRequest' => $mine->id, 'index' => 0]), false)
+            ->assertSee('data-action="make-more"', false)
+            ->assertDontSee('their-brand')
+            ->assertDontSee('still-running')
+            ->assertDontSee('x-data="logoGenerator()"', false)
+            ->assertDontSee('Sign in to generate');
+
+        $this->assertSame(2, substr_count($response->getContent(), 'data-library-item'), 'one card per generated image');
+    }
+
+    public function test_the_library_tells_a_new_account_to_open_the_studio(): void
+    {
+        $this->actingAs(User::factory()->create())
+            ->get('/logo-generator')
+            ->assertOk()
+            ->assertSee('data-library-empty', false)
+            ->assertSee('Open Logo Studio');
+    }
+
+    public function test_the_studio_is_the_whole_generator_full_screen(): void
+    {
+        $response = $this->actingAs(User::factory()->create())->get('/logo-generator/studio');
 
         $response->assertOk()
             ->assertSee('x-data="logoGenerator()"', false)
             ->assertSee('data-action="generate"', false)
+            ->assertSee('data-studio-bar', false)
+            ->assertSee('data-action="back-to-logos"', false)
             ->assertSee('Luna')
             ->assertSee('Ray')
-            ->assertSee('max-w-6xl', false)
-            ->assertDontSee('Sign in to generate');
+            ->assertDontSee('max-w-6xl', false)
+            ->assertDontSee('data-tab="browse"', false)
+            ->assertDontSee('href="/pdf-editor"', false);
+    }
+
+    public function test_the_studio_needs_an_account(): void
+    {
+        $this->get('/logo-generator/studio')->assertRedirect(route('login'));
+    }
+
+    public function test_browse_logos_is_not_in_the_site_navigation(): void
+    {
+        $html = $this->get('/logo-generator')->assertOk()->getContent();
+
+        $this->assertStringNotContainsString('href="/browse-logos"', $html);
+        $this->assertStringContainsString('href="/logo-generator"', $html);
     }
 
     public function test_the_browse_tab_opens_from_the_query_string(): void
@@ -102,17 +158,20 @@ class LogoLabPageTest extends TestCase
         $this->showcaseLogo(['model' => 'fal-ai/flux/schnell', 'domain' => 'luna-made']);
         $this->showcaseLogo(['model' => 'gpt-image-1.5', 'domain' => 'cosmo-made']);
 
-        $response = $this->actingAs(User::factory()->create())->get('/logo-generator');
-        $response->assertOk();
+        $user = User::factory()->create();
+        foreach (['/logo-generator', '/logo-generator/studio'] as $path) {
+            $response = $this->actingAs($user)->get($path);
+            $response->assertOk();
 
-        // What the page shows, not what its script says to itself.
-        $visible = preg_replace('~<script\b[^>]*>.*?</script>~is', '', $response->getContent());
+            // What the page shows, not what its script says to itself.
+            $visible = preg_replace('~<script\b[^>]*>.*?</script>~is', '', $response->getContent());
 
-        foreach (['Ray', 'Luna', 'Cosmo'] as $name) {
-            $this->assertStringContainsString($name, $visible);
-        }
-        foreach (['Recraft', '>Flux<', 'GPT Image', 'DALL', 'AI Model', 'AI Logo Lab', 'AI picks'] as $word) {
-            $this->assertStringNotContainsString($word, $visible, "the page must not say '{$word}'");
+            foreach (['Ray', 'Luna', 'Cosmo'] as $name) {
+                $this->assertStringContainsString($name, $visible, "{$path} should name {$name}");
+            }
+            foreach (['Recraft', '>Flux<', 'GPT Image', 'DALL', 'AI Model', 'AI Logo Lab', 'AI picks'] as $word) {
+                $this->assertStringNotContainsString($word, $visible, "{$path} must not say '{$word}'");
+            }
         }
     }
 
@@ -133,6 +192,7 @@ class LogoLabPageTest extends TestCase
         $html = $this->get('/logo-generator?tab=browse')->assertOk()->getContent();
 
         $this->assertStringContainsString('data-action="make-your-own"', $html);
+        $this->assertStringContainsString(route('domainSearch.logoStudio'), $html, 'Make your own opens the studio');
         $this->assertStringContainsString('&quot;prompt&quot;:&quot;a lion with a cloak&quot;', $html, 'the words the maker typed, not the composed prompt');
         $this->assertStringContainsString('&quot;generator_model&quot;:&quot;recraft&quot;', $html);
         $this->assertStringContainsString('&quot;style_id&quot;:&quot;minimal_geometric&quot;', $html);
