@@ -85,6 +85,7 @@ Thumbs.db
 !/tests/Feature/PdfTestReportViewPageTest.php
 !/tests/Feature/SavedSignatureTest.php
 !/tests/Feature/TextFormatBarTest.php
+!/tests/Feature/DocumentOwnershipTest.php
 !/tests/Unit/
 /tests/Unit/*
 !/tests/Unit/RecraftPromptBuilderTest.php

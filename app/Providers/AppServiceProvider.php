@@ -12,7 +12,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // One instance per request: the guest-document claim runs once.
+        $this->app->scoped(\App\Services\DocumentAccess::class);
     }
 
     /**

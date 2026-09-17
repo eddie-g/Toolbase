@@ -8,6 +8,7 @@ use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Admin;
 use App\Models\CreditTransaction;
 use App\Models\Document;
+use App\Services\DocumentAccess;
 use App\Models\DocumentConversion;
 use App\Models\DocumentConversionSetting;
 use App\Models\DocumentNote;
@@ -45,7 +46,7 @@ class DocumentController extends Controller
     private const MONTHLY_UPLOAD_LIMIT = 100;
     private const MONTHLY_ACTION_LIMIT = 1000;
     private const PDF_ACRO_FORM_BASE_SESSION = '__document_acro_form__';
-    private const SESSION_DOCUMENT_ACCESS_KEY = 'pdf_editor_accessible_document_ids';
+    private const SESSION_DOCUMENT_ACCESS_KEY = DocumentAccess::SESSION_KEY;
     private const DOCUMENT_NOTE_PIN_COLORS = [
         '#2563eb',
         '#ef4444',
@@ -79,29 +80,20 @@ class DocumentController extends Controller
         });
     }
 
+    /** The ownership rules live in App\Services\DocumentAccess so other controllers share them. */
+    private function documentAccess(): DocumentAccess
+    {
+        return app(DocumentAccess::class);
+    }
+
     private function sessionAccessibleDocumentIds(Request $request): array
     {
-        return collect($request->session()->get(self::SESSION_DOCUMENT_ACCESS_KEY, []))
-            ->map(static fn ($value) => (int) $value)
-            ->filter(static fn (int $value) => $value > 0)
-            ->unique()
-            ->values()
-            ->all();
+        return $this->documentAccess()->sessionDocumentIds($request);
     }
 
     private function rememberSessionAccessibleDocument(Request $request, Document $document): void
     {
-        if ($document->id <= 0 || $this->documentHasPersistentOwner($document)) {
-            return;
-        }
-
-        $documentIds = collect($this->sessionAccessibleDocumentIds($request))
-            ->push((int) $document->id)
-            ->unique()
-            ->values()
-            ->all();
-
-        $request->session()->put(self::SESSION_DOCUMENT_ACCESS_KEY, $documentIds);
+        $this->documentAccess()->remember($request, $document);
     }
 
     private function currentWebUserId(): ?int
@@ -256,78 +248,12 @@ class DocumentController extends Controller
 
     private function claimSessionAccessibleDocuments(Request $request): void
     {
-        static $claimed = false;
-
-        if ($claimed) {
-            return;
-        }
-
-        $claimed = true;
-        $ownership = $this->currentEditorOwnership();
-        if (($ownership['user_id'] ?? null) === null && ($ownership['admin_id'] ?? null) === null) {
-            return;
-        }
-
-        $sessionDocumentIds = $this->sessionAccessibleDocumentIds($request);
-        if (empty($sessionDocumentIds)) {
-            return;
-        }
-
-        $unownedDocumentIds = Document::query()
-            ->whereIn('id', $sessionDocumentIds)
-            ->whereNull('user_id')
-            ->whereNull('admin_id')
-            ->pluck('id')
-            ->map(static fn ($value) => (int) $value)
-            ->all();
-
-        if (empty($unownedDocumentIds)) {
-            return;
-        }
-
-        DB::table('documents')
-            ->whereIn('id', $unownedDocumentIds)
-            ->update($ownership);
-
-        if (Schema::hasColumn('pdf_state', 'admin_id')) {
-            DB::table('pdf_state')
-                ->whereIn('document_id', $unownedDocumentIds)
-                ->whereNull('user_id')
-                ->whereNull('admin_id')
-                ->update(array_merge($ownership, ['user_email' => null]));
-        }
-
-        if (Schema::hasColumn('pdf_acro_form', 'admin_id')) {
-            DB::table('pdf_acro_form')
-                ->whereIn('document_id', $unownedDocumentIds)
-                ->whereNull('user_id')
-                ->whereNull('admin_id')
-                ->update($ownership);
-        }
+        $this->documentAccess()->claim($request);
     }
 
     private function canAccessDocument(Request $request, Document $document): bool
     {
-        $this->claimSessionAccessibleDocuments($request);
-
-        $webUserId = $this->currentWebUserId();
-        if ($webUserId !== null && (int) $document->user_id === $webUserId) {
-            return true;
-        }
-
-        $adminId = $this->currentAdminId();
-        if ($adminId !== null && (int) $document->admin_id === $adminId) {
-            return true;
-        }
-
-        if (!$this->documentHasPersistentOwner($document)) {
-            if (app()->environment('local')) {
-                return true;
-            }
-            return in_array((int) $document->id, $this->sessionAccessibleDocumentIds($request), true);
-        }
-
-        return false;
+        return $this->documentAccess()->canAccess($request, $document);
     }
 
     private function authorizeDocumentAccess(Request $request, Document $document): void
@@ -359,37 +285,7 @@ class DocumentController extends Controller
 
     private function applyAccessibleDocumentScope(Request $request, $query)
     {
-        $this->claimSessionAccessibleDocuments($request);
-
-        $webUserId = $this->currentWebUserId();
-        $adminId = $this->currentAdminId();
-        $sessionDocumentIds = $this->sessionAccessibleDocumentIds($request);
-
-        $query->where(function ($scopedQuery) use ($webUserId, $adminId, $sessionDocumentIds) {
-            if ($webUserId !== null) {
-                $scopedQuery->where('user_id', $webUserId);
-            }
-
-            if ($adminId !== null) {
-                $method = $webUserId !== null ? 'orWhere' : 'where';
-                $scopedQuery->{$method}('admin_id', $adminId);
-            }
-
-            if (!empty($sessionDocumentIds)) {
-                $method = ($webUserId !== null || $adminId !== null) ? 'orWhere' : 'where';
-                $scopedQuery->{$method}(function ($sessionQuery) use ($sessionDocumentIds) {
-                    $sessionQuery->whereNull('user_id')
-                        ->whereNull('admin_id')
-                        ->whereIn('id', $sessionDocumentIds);
-                });
-            }
-
-            if ($webUserId === null && $adminId === null && empty($sessionDocumentIds)) {
-                $scopedQuery->whereRaw('1 = 0');
-            }
-        });
-
-        return $query;
+        return $this->documentAccess()->scope($request, $query);
     }
 
     private function resolveEditorActor(): mixed
@@ -10535,7 +10431,10 @@ class DocumentController extends Controller
                 $editorOwnership['admin_id'] ?? null,
             );
         } elseif ($requestedSessionIds->isNotEmpty()) {
-            $query->whereIn('session_id', $requestedSessionIds->all());
+            // A guest sees saved sessions only for documents their own
+            // browser session created, whatever session ids they send.
+            $query->whereIn('session_id', $requestedSessionIds->all())
+                ->whereIn('document_id', $this->sessionAccessibleDocumentIds($request));
         } else {
             return response()->json([
                 'success' => true,
@@ -11293,6 +11192,9 @@ class DocumentController extends Controller
                 'document_id' => (int) $validated['document_id'],
             ], 404);
         }
+        // Same rule as the {document} route binding: only the owner (or the
+        // creating session) may rewrite text in this document.
+        $this->authorizeDocumentAccess($request, $document);
 
         $annotationId = trim((string) $validated['annotation_id']);
         $newText      = (string) $validated['text'];
@@ -11635,6 +11537,9 @@ class DocumentController extends Controller
         $annotationsPayload = $request->input('annotations', null);
         $singleAnnotationPayload = $request->input('annotation', null);
         $documentIdFilter = isset($validated['document_id']) ? (int) $validated['document_id'] : 0;
+        if ($documentIdFilter > 0) {
+            $this->documentAccess()->authorizeId($request, $documentIdFilter);
+        }
         $pdfStateSource = (string) ($validated['pdf_state_source'] ?? 'saved');
         $useBase = $request->has('use_base')
             ? (bool) ($validated['use_base'] ?? false)
@@ -11667,6 +11572,11 @@ class DocumentController extends Controller
                 ->whereIn('id', $pdfStateIds)
                 ->get()
                 ->keyBy(static fn (PdfState $record) => (int) $record->id);
+
+            // Every requested row must belong to a document this visitor may open.
+            foreach ($records->pluck('document_id')->filter()->unique() as $stateDocumentId) {
+                $this->documentAccess()->authorizeId($request, (int) $stateDocumentId);
+            }
 
             $missingIds = array_values(array_filter(
                 $pdfStateIds,
