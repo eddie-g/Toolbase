@@ -32,6 +32,35 @@ class RecraftPricing
     }
 
     /**
+     * Size parameter to send to Recraft for a logo request.
+     *
+     * Ray PRO raster is Recraft's `recraftv4` model (not the `recraftv4.1_pro` tier), so it takes the
+     * plain V4 sizes: 1024x1024, 1344x768 and 768x1344. 2048x2048 / 2688x1536 / 1536x2688 belong to
+     * the Pro tier only and V4 rejects them with "Recraft V4 doesn't support 2048x2048 image size".
+     * Regular Ray raster is `recraftv2`, whose landscape / portrait sizes are 1820x1024 / 1024x1820.
+     * Vector models take an aspect ratio; logos are always requested square.
+     *
+     * @param string $type      'raster' or 'vector'
+     * @param bool   $isPro     Ray PRO (recraftv4) or regular Ray (recraftv2) for raster
+     * @param string $imageSize '1:1', '16:9' or '9:16'
+     */
+    public static function requestSize(string $type, bool $isPro, string $imageSize): string
+    {
+        if ($type === 'vector') {
+            return '1:1';
+        }
+
+        return match (true) {
+            $isPro && $imageSize === '16:9' => '1344x768',
+            $isPro && $imageSize === '9:16' => '768x1344',
+            $isPro => '1024x1024',
+            $imageSize === '16:9' => '1820x1024',
+            $imageSize === '9:16' => '1024x1820',
+            default => '1024x1024',
+        };
+    }
+
+    /**
      * Estimate the total cost for logo generation via Recraft endpoint with 50% markup.
      *
      * @param int    $imageCount Number of images to generate
