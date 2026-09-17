@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Livewire\Livewire;
 
@@ -20,6 +21,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Behind a TLS-terminating proxy every generated URL must be https,
+        // or redirects and asset links fall back to plain http.
+        if (str_starts_with((string) config('app.url'), 'https://')) {
+            URL::forceScheme('https');
+        }
+
         \Illuminate\Support\Facades\Event::listen(
             \Laravel\Fortify\Events\TwoFactorAuthenticationChallenged::class,
             \App\Listeners\SendTwoFactorCodeListener::class

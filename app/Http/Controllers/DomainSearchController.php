@@ -1262,19 +1262,9 @@ class DomainSearchController extends Controller
                 ], 429);
             }
             
+            // The rate limiter (cache-backed, so it works with any session
+            // driver) is the only record of the day's free requests.
             \Illuminate\Support\Facades\RateLimiter::hit($key, 86400); // 24 hours
-            
-            // Also update the count in the db sessions table
-            $sessionId = $request->session()->getId();
-            if ($sessionId) {
-                try {
-                    \Illuminate\Support\Facades\DB::table('sessions')
-                        ->where('id', $sessionId)
-                        ->increment('free_domain_requests');
-                } catch (\Exception $e) {
-                    // Ignore if sessions table is not used or doesn't exist
-                }
-            }
         }
 
         $request->validate([

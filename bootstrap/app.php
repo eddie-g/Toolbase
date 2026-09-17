@@ -16,24 +16,26 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Production sits behind a load balancer or reverse proxy that terminates
+        // TLS; without this the app never sees https, secure cookies are not
+        // sent and every client shares the proxy's IP in rate limiters.
+        $middleware->trustProxies(at: '*');
+
         $middleware->alias([
             'admin' => \App\Http\Middleware\EnsureIsAdmin::class,
             'json.response' => \App\Http\Middleware\ForceJsonResponse::class,
             'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
         ]);
 
+        // Only Stripe's webhook is called without a session. Every other
+        // POST is made by the app's own pages, which send X-CSRF-TOKEN.
         $middleware->validateCsrfTokens(except: [
-            '/ai/chat',
-            '/ai/sections',
-            '/ai/sections/*',
-            '/domain-search/ai-generate',
             '/stripe/webhook',
-            '/pdf-state/stamp-preview',
-            '/documents/overwrite-annotation-text',
         ]);
-        
-        // Enable stateful Sanctum authentication
-        $middleware->statefulApi();
+
+        $middleware->web(append: [
+            \App\Http\Middleware\SecurityHeaders::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
