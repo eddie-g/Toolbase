@@ -74,6 +74,25 @@ class LogoLabPageTest extends TestCase
         $this->assertSame(2, substr_count($response->getContent(), 'data-library-item'), 'one card per generated image');
     }
 
+    public function test_an_admin_account_gets_its_own_library_too(): void
+    {
+        // Logo requests key on the account id and reference users, so an
+        // admin who generates logos has a users row with the same id.
+        $user = User::factory()->create();
+        $admin = new \App\Models\Admin(['name' => 'QA Admin', 'email' => 'qa-admin@netkit.test', 'password' => bcrypt('secret-secret')]);
+        $admin->id = $user->id;
+        $admin->save();
+        $this->showcaseLogo(['user_id' => $user->id, 'domain' => 'admin-brand', 'is_showcase' => false]);
+
+        $this->actingAs($admin, 'admin')
+            ->get('/logo-generator')
+            ->assertOk()
+            ->assertSee('admin-brand')
+            ->assertSee('data-action="open-studio"', false);
+
+        $this->actingAs($admin, 'admin')->get('/logo-generator/studio')->assertOk()->assertSee('x-data="logoGenerator()"', false);
+    }
+
     public function test_the_library_tells_a_new_account_to_open_the_studio(): void
     {
         $this->actingAs(User::factory()->create())

@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Models\AiLogoRequest;
-use App\Models\User;
+use Illuminate\Contracts\Auth\Authenticatable;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 
@@ -81,15 +81,16 @@ class LogoShowcase
 
     /**
      * A signed-in account's own logos, newest first, one item per image: the
-     * library on the Logo Lab's Generate tab. Paged on its own query key so
+     * library on the Logo Lab's Generate tab. The account may come from the
+     * web or the admin guard; logo requests key on its id either way. Paged on its own query key so
      * it does not fight the showcase's pages.
      *
      * @return array<string, mixed> the view data for the library
      */
-    public function library(User $user, Request $request): array
+    public function library(Authenticatable $user, Request $request): array
     {
         $logos = AiLogoRequest::query()
-            ->where('user_id', $user->id)
+            ->where('user_id', $user->getAuthIdentifier())
             ->where('status', 'completed')
             ->whereNotNull('image_urls')
             ->orderByDesc('created_at')
