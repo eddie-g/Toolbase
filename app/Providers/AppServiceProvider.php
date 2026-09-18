@@ -17,6 +17,9 @@ class AppServiceProvider extends ServiceProvider
     {
         // One instance per request: the guest-document claim runs once.
         $this->app->scoped(\App\Services\DocumentAccess::class);
+
+        // One runner per process: the interpreter lookup is memoised on it.
+        $this->app->singleton(\App\Services\PythonRunner::class);
     }
 
     /**

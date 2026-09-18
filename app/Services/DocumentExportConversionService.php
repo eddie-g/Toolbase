@@ -22,7 +22,7 @@ class DocumentExportConversionService
         $pythonBinary = $this->resolvePythonBinary(['fitz']);
         $output = [];
         $exitCode = 1;
-        exec(sprintf(
+        app(PythonRunner::class)->exec(sprintf(
             '%s -c %s %s 2>&1',
             escapeshellarg($pythonBinary),
             escapeshellarg('import fitz,sys; doc=fitz.open(sys.argv[1]); print(doc.page_count); doc.close()'),
@@ -203,7 +203,7 @@ class DocumentExportConversionService
 
         try {
             $result = $this->parseLocalConversionResult(
-                shell_exec($command),
+                app(PythonRunner::class)->shellExec($command),
                 'Adobe input preparation'
             );
         } catch (\Throwable $exception) {
@@ -241,7 +241,7 @@ class DocumentExportConversionService
             $visualFidelity ? '--visual-fidelity' : ''
         );
 
-        return $this->parseLocalConversionResult(shell_exec($command), 'Word');
+        return $this->parseLocalConversionResult(app(PythonRunner::class)->shellExec($command), 'Word');
     }
 
     private function runLocalExcelConversion(string $inputPath, string $outputPath, array $options): array
@@ -262,7 +262,7 @@ class DocumentExportConversionService
             $sheetPerPage ? '--sheet-per-page' : '--single-sheet'
         );
 
-        return $this->parseLocalConversionResult(shell_exec($command), 'Excel');
+        return $this->parseLocalConversionResult(app(PythonRunner::class)->shellExec($command), 'Excel');
     }
 
     private function parseLocalConversionResult(?string $output, string $format): array
@@ -286,40 +286,6 @@ class DocumentExportConversionService
 
     private function resolvePythonBinary(array $requiredModules): string
     {
-        static $resolved = [];
-        $requiredModules = array_values(array_filter(
-            $requiredModules,
-            static fn ($module) => is_string($module) && preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $module)
-        ));
-        $cacheKey = implode('|', $requiredModules);
-        if (isset($resolved[$cacheKey])) {
-            return $resolved[$cacheKey];
-        }
-
-        $candidates = array_values(array_unique([
-            base_path('.venv/bin/python'),
-            base_path('venv/bin/python'),
-            base_path('python/venv/bin/python'),
-            '/usr/bin/python3',
-            'python3',
-        ]));
-
-        foreach ($candidates as $candidate) {
-            if (str_contains($candidate, '/') && ! is_executable($candidate)) {
-                continue;
-            }
-            $output = [];
-            $exitCode = 1;
-            exec(sprintf(
-                '%s -c %s 2>&1',
-                escapeshellarg($candidate),
-                escapeshellarg(implode('; ', array_map(static fn ($module) => "import {$module}", $requiredModules)))
-            ), $output, $exitCode);
-            if ($exitCode === 0) {
-                return $resolved[$cacheKey] = $candidate;
-            }
-        }
-
-        return $resolved[$cacheKey] = 'python3';
+        return app(PythonRunner::class)->interpreter($requiredModules);
     }
 }
