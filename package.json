@@ -10,6 +10,7 @@
         "test:word-export": "node --test resources/js/edit-new-pdfjs/converted-export.test.mjs",
         "test:excel-export": "node --test resources/js/edit-new-pdfjs/converted-export.test.mjs",
         "test:pdf-queued-export": "node --test resources/js/edit-new-pdfjs/queued-pdf-export.test.mjs",
+        "test:pdf-autosave-guard": "node --test resources/js/edit-new-pdfjs/autosave-guard.test.mjs",
         "test:pdf-source-regressions": "node --test resources/js/edit-new-pdfjs/runtime-element-state.test.mjs resources/js/edit-new-pdfjs/stamp-frame.test.mjs resources/js/edit-new-pdfjs/canvas-backdrop.test.mjs resources/js/edit-new/text/decoration.test.mjs resources/js/edit-new-pdfjs/annotation-rotation.test.mjs resources/js/edit-new-pdfjs/source-edit-contract.test.mjs && node tests/OverlayEditor/run_promoted_single_span_title_regression.cjs && node tests/OverlayEditor/run_pdfjs_moved_source_title_regression.cjs"
     },
     "devDependencies": {

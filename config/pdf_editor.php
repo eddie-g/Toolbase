@@ -41,6 +41,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Autosave limits
+    |--------------------------------------------------------------------------
+    |
+    | The editor posts its whole annotation state a couple of seconds after
+    | every change. These bound one such request, so a runaway client or a
+    | crafted one cannot make the server decode and store an unbounded body.
+    | A refused save answers 413 or 422 with a message the editor shows.
+    |
+    */
+    'autosave' => [
+        'max_body_kb' => (int) env('PDF_AUTOSAVE_MAX_BODY_KB', 20480),
+        'max_annotations' => (int) env('PDF_AUTOSAVE_MAX_ANNOTATIONS', 3000),
+        // Characters of text in one annotation; rich-text HTML gets four times this.
+        'max_text_length' => (int) env('PDF_AUTOSAVE_MAX_TEXT_LENGTH', 50000),
+        // Saves per minute for one editor (account, or guest session) on one document.
+        'saves_per_minute' => (int) env('PDF_AUTOSAVE_SAVES_PER_MINUTE', 60),
+        // Backstop for clients that drop their cookies to dodge the limit above.
+        'saves_per_minute_per_ip' => (int) env('PDF_AUTOSAVE_SAVES_PER_MINUTE_PER_IP', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Split Paragraph Fully In Edit Mode
     |--------------------------------------------------------------------------
     |
