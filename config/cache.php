@@ -15,7 +15,7 @@ return [
     |
     */
 
-    'default' => env('CACHE_STORE', 'database'),
+    'default' => env('CACHE_STORE', 'redis'),
 
     /*
     |--------------------------------------------------------------------------
@@ -78,6 +78,15 @@ return [
             'lock_connection' => env('REDIS_CACHE_LOCK_CONNECTION', 'default'),
         ],
 
+        // Rate limiter counters (login, 2FA, password reset, route throttles).
+        // Their own connection, so cache:clear does not hand an attacker a
+        // fresh set of attempts and cache churn cannot push them out.
+        'limiter' => [
+            'driver' => 'redis',
+            'connection' => env('REDIS_LIMITER_CONNECTION', 'limiter'),
+            'lock_connection' => env('REDIS_CACHE_LOCK_CONNECTION', 'default'),
+        ],
+
         'dynamodb' => [
             'driver' => 'dynamodb',
             'key' => env('AWS_ACCESS_KEY_ID'),
@@ -113,5 +122,19 @@ return [
     */
 
     'prefix' => env('CACHE_PREFIX', Str::slug((string) env('APP_NAME', 'laravel')).'-cache-'),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Rate Limiter Store
+    |--------------------------------------------------------------------------
+    |
+    | Every RateLimiter and throttle middleware counter goes to this store.
+    | With Redis as the cache it is the dedicated "limiter" store above; with
+    | any other cache driver (array in tests, file on a laptop without Redis)
+    | the limiter follows the default store.
+    |
+    */
+
+    'limiter' => env('CACHE_LIMITER_STORE', env('CACHE_STORE', 'redis') === 'redis' ? 'limiter' : null),
 
 ];

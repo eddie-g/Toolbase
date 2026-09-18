@@ -2,6 +2,7 @@
 
 namespace App\Providers;
 
+use App\Support\ProductionConfig;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
@@ -23,6 +24,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Fail fast: production does not serve a request or start a worker
+        // with unsafe settings or a missing secret (config/production.php).
+        if ($this->app->isProduction()
+            && config('production.enforce', true)
+            && ProductionConfig::appliesTo($this->app->runningInConsole(), $this->artisanCommand())) {
+            ProductionConfig::assertValid();
+        }
+
         // Behind a TLS-terminating proxy every generated URL must be https,
         // or redirects and asset links fall back to plain http.
         if (str_starts_with((string) config('app.url'), 'https://')) {
@@ -84,5 +93,13 @@ class AppServiceProvider extends ServiceProvider
             'app.user-portal.widgets.user-pdf-commands-widget',
             \App\UserPortal\Widgets\UserPdfCommandsWidget::class
         );
+    }
+
+    /** The artisan command being run ("horizon", "queue:work", ...), options skipped; null for web requests. */
+    private function artisanCommand(): ?string
+    {
+        return $this->app->runningInConsole()
+            ? (new \Symfony\Component\Console\Input\ArgvInput)->getFirstArgument()
+            : null;
     }
 }

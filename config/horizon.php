@@ -52,9 +52,16 @@ return [
     | meta information required for it to function. It includes the list
     | of supervisors, failed jobs, job metrics, and other information.
     |
+    | It stays on the connection the queues use: Horizon's metadata and the
+    | jobs it describes are one concern, and the cache, the sessions and the
+    | rate limiter are already on connections of their own.
+    |
     */
 
-    'use' => 'default',
+    'use' => env('HORIZON_REDIS_CONNECTION', 'default'),
+
+    // ops:horizon-watchdog mails this address when it has to restart Horizon.
+    'alert_email' => env('HORIZON_ALERT_EMAIL'),
 
     /*
     |--------------------------------------------------------------------------
