@@ -140,6 +140,11 @@ import {
     requestQueuedPdfExport,
 } from './queued-pdf-export.js';
 import {
+    processingWaitMessage,
+    retryDocumentProcessing,
+    waitForDocumentProcessing,
+} from './extraction-wait.js';
+import {
     classifySaveFailure,
     createStateVersionTracker,
     createTabChannel,
@@ -19833,24 +19838,85 @@ async function fetchAnnotationBoxesPayload(options = {}) {
     return data;
 }
 
-const INITIAL_EXTRACTION_POLL_ATTEMPTS = 40;
-const INITIAL_EXTRACTION_POLL_INTERVAL_MS = 350;
+const PROCESSING_STATUS_URL = editNewRoot?.dataset?.processingStatusUrl || '';
+const PROCESSING_RETRY_URL = editNewRoot?.dataset?.processingRetryUrl || '';
+const DOCUMENTS_URL = editNewRoot?.dataset?.documentsUrl || '/documents';
 
-function waitForInitialExtractionPoll() {
+/**
+ * The extraction failed (or was lost). Turns the loading card into the failure
+ * with its two ways on, and resolves with the one chosen: 'retry' or 'open'.
+ */
+function askAboutFailedProcessing(outcome) {
     return new Promise((resolve) => {
-        window.setTimeout(resolve, INITIAL_EXTRACTION_POLL_INTERVAL_MS);
+        const card = loadingScreen?.querySelector?.('.enpv-loading-card');
+        if (!card) {
+            resolve('open');
+            return;
+        }
+        card.classList.add('is-failed');
+        setLoadingScreenMessage(outcome?.message || 'This PDF could not be prepared for editing.');
+        card.querySelector('.enpv-loading-actions')?.remove();
+
+        const actions = document.createElement('div');
+        actions.className = 'enpv-loading-actions';
+        const detail = document.createElement('p');
+        detail.textContent = 'You can try again, or open it as it is: text will then be selectable line by line instead of as paragraphs.';
+        const choose = (choice) => {
+            actions.remove();
+            card.classList.remove('is-failed');
+            resolve(choice);
+        };
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'enpv-btn enpv-primary';
+        retry.textContent = 'Try again';
+        retry.addEventListener('click', () => choose('retry'));
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'enpv-btn';
+        open.textContent = 'Open without paragraphs';
+        open.addEventListener('click', () => choose('open'));
+        const back = document.createElement('a');
+        back.href = DOCUMENTS_URL;
+        back.textContent = 'Back to documents';
+        actions.append(detail, retry, open, back);
+        card.appendChild(actions);
+        if (outcome?.can_retry === false || !PROCESSING_RETRY_URL) retry.hidden = true;
+        (retry.hidden ? open : retry).focus();
     });
 }
 
+/**
+ * The document's state, once its extraction has settled. While the server
+ * reports the upload as queued or extracting the editor waits, for minutes if
+ * need be: opening early would show row-grouped text, and the first autosave
+ * would store that as the document's state. A failed extraction is shown as
+ * such, with a retry; the editor only opens on it if the user says so.
+ */
 async function fetchInitialAnnotationBoxesPayload() {
-    let data = null;
-    for (let attempt = 0; attempt < INITIAL_EXTRACTION_POLL_ATTEMPTS; attempt += 1) {
-        data = await fetchAnnotationBoxesPayload();
-        if (data?.extraction_pending !== true) return data;
-        setLoadingScreenMessage('Grouping PDF text into paragraphs...');
-        await waitForInitialExtractionPoll();
+    for (;;) {
+        const data = await fetchAnnotationBoxesPayload();
+        const failed = data?.processing?.status === 'failed' && data?.processing?.can_retry === true;
+        if (data?.extraction_pending !== true && !failed) return data;
+
+        let outcome = failed ? { status: 'failed', ...data.processing } : null;
+        if (!outcome) {
+            setLoadingScreenMessage(processingWaitMessage({ status: data?.processing?.status }));
+            outcome = await waitForDocumentProcessing(PROCESSING_STATUS_URL, {
+                onWaiting: (status) => setLoadingScreenMessage(processingWaitMessage(status)),
+            });
+        }
+        if (outcome.status !== 'failed') continue;   // ready: fetch the state again, now with its paragraphs
+
+        const choice = await askAboutFailedProcessing(outcome);
+        if (choice === 'open') return failed ? data : fetchAnnotationBoxesPayload();
+        setLoadingScreenMessage('Starting again…');
+        const restarted = await retryDocumentProcessing(PROCESSING_RETRY_URL, { csrf: CSRF });
+        if (restarted.status === 'failed') {
+            const again = await askAboutFailedProcessing(restarted);
+            if (again === 'open') return failed ? data : fetchAnnotationBoxesPayload();
+        }
     }
-    return data;
 }
 
 function preloadInitialAnnotationBoxes() {

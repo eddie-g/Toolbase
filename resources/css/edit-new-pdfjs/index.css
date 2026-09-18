@@ -3920,6 +3920,40 @@ body.enpv-body.enpv-viewer-ready .enpv-loading-screen {
     letter-spacing: 0;
     white-space: nowrap;
 }
+.enpv-loading-card.is-failed {
+    flex-direction: column;
+    align-items: flex-start;
+    max-width: 440px;
+    padding: 20px 22px;
+    border-radius: 10px;
+    background: #24272a;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.enpv-loading-card.is-failed .enpv-loading-spinner {
+    display: none;
+}
+.enpv-loading-card.is-failed .enpv-loading-title {
+    white-space: normal;
+    font-size: 15px;
+}
+.enpv-loading-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+.enpv-loading-actions p {
+    flex: 1 0 100%;
+    margin: 0 0 6px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: #c4c9cc;
+}
+.enpv-loading-actions a {
+    margin-left: auto;
+    font-size: 13px;
+    color: #c4c9cc;
+}
 @keyframes enpv-spin {
     to { transform: rotate(360deg); }
 }

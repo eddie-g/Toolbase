@@ -3,13 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Exceptions\InsufficientCreditBalanceException;
+use App\Exceptions\PythonServiceBusyException;
 use App\Jobs\ConvertDocumentExportJob;
 use App\Jobs\ExportAnnotatedPdfJob;
-use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Admin;
 use App\Models\CreditTransaction;
 use App\Models\Document;
 use App\Services\DocumentAccess;
+use App\Services\DocumentProcessing;
 use App\Services\PythonRunner;
 use App\Models\DocumentConversion;
 use App\Models\DocumentConversionSetting;
@@ -724,14 +725,23 @@ class DocumentController extends Controller
         }
     }
 
-    public function processUploadedDocument(int $documentId, ?string $userEmail = null, ?string $sessionId = null): void
+    /**
+     * The work of ProcessUploadedDocumentJob. Returns ['success' => true] or
+     * ['success' => false, 'code' => ...]: the job turns that into the
+     * document's processing_status, which is what the editor waits on. A
+     * failed extraction used to be logged and swallowed here, leaving an
+     * editor that never filled.
+     *
+     * @return array{success: bool, code?: string}
+     */
+    public function processUploadedDocument(int $documentId, ?string $userEmail = null, ?string $sessionId = null): array
     {
         $document = Document::find($documentId);
         if (!$document) {
             Log::warning('Queued upload processing skipped missing document', [
                 'document_id' => $documentId,
             ]);
-            return;
+            return ['success' => false, 'code' => 'file_missing'];
         }
 
         $fullPath = Storage::path($document->path);
@@ -740,7 +750,7 @@ class DocumentController extends Controller
                 'document_id' => $document->id,
                 'path' => $document->path,
             ]);
-            return;
+            return ['success' => false, 'code' => 'file_missing'];
         }
 
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
@@ -774,7 +784,7 @@ class DocumentController extends Controller
                 ]);
             }
         } else {
-            Log::warning('Queued upload-time Fitz extraction failed; overlay prep will retry', [
+            Log::warning('Queued upload-time Fitz extraction failed', [
                 'document_id' => $document->id,
                 'python_binary' => $pythonBinary,
                 'return_code' => $extractionReturnCode,
@@ -787,7 +797,22 @@ class DocumentController extends Controller
             'materialized_count' => $materializedAcroFormCount,
         ]);
 
-        $this->refreshDocumentPreviewSnapshot($document);
+        // The preview is a nicety of the documents list; it never decides
+        // whether the editor can open.
+        try {
+            $this->refreshDocumentPreviewSnapshot($document);
+        } catch (PythonServiceBusyException $exception) {
+            Log::info('Preview snapshot skipped: PDF service busy', ['document_id' => $document->id]);
+        }
+
+        if ($extractionReturnCode === 0) {
+            return ['success' => true];
+        }
+
+        return [
+            'success' => false,
+            'code' => $extractionReturnCode === PythonRunner::TIMEOUT_EXIT_CODE ? 'extraction_timeout' : 'extraction_failed',
+        ];
     }
 
     private function normalizeDocumentOriginalName(Document $document, string $value): string
@@ -5522,17 +5547,9 @@ class DocumentController extends Controller
         $userEmail = $this->resolveEditorEmail();
         $sessionId = $request->session()->getId();
         $this->rememberSessionAccessibleDocument($request, $document);
-        Cache::put(
-            ProcessUploadedDocumentJob::processingCacheKey($document->id),
-            true,
-            now()->addMinutes(10)
-        );
-        try {
-            ProcessUploadedDocumentJob::dispatch($document->id, $userEmail, $sessionId);
-        } catch (\Throwable $exception) {
-            Cache::forget(ProcessUploadedDocumentJob::processingCacheKey($document->id));
-            throw $exception;
-        }
+        // If the queue refuses the job the document is marked failed and the
+        // editor offers a retry, rather than the upload itself failing.
+        app(DocumentProcessing::class)->queue($document, $userEmail, $sessionId);
 
         return redirect()
             ->route('documents.editPdfjs', $document)
@@ -5725,17 +5742,9 @@ class DocumentController extends Controller
 
         $userEmail = $this->resolveEditorEmail();
         $sessionId = $request->session()->getId();
-        Cache::put(
-            ProcessUploadedDocumentJob::processingCacheKey($document->id),
-            true,
-            now()->addMinutes(10)
-        );
-        try {
-            ProcessUploadedDocumentJob::dispatch($document->id, $userEmail, $sessionId);
-        } catch (\Throwable $exception) {
-            Cache::forget(ProcessUploadedDocumentJob::processingCacheKey($document->id));
-            throw $exception;
-        }
+        // If the queue refuses the job the document is marked failed and the
+        // editor offers a retry, rather than the upload itself failing.
+        app(DocumentProcessing::class)->queue($document, $userEmail, $sessionId);
 
         return redirect()
             ->route('documents.editPdfjs', $document)
@@ -12286,6 +12295,47 @@ class DocumentController extends Controller
      * Called by the "Save" button — shapes stay editable in the editor.
      */
     /**
+     * Where the upload's extraction is: queued, extracting, ready or failed.
+     * The editor polls this while it waits, instead of the much heavier
+     * document-info request.
+     */
+    public function processingStatus(Request $request, Document $document, DocumentProcessing $processing)
+    {
+        return response()->json($this->processingStatusPayload($document, $processing));
+    }
+
+    /**
+     * "Try again" on a failed extraction. Only a failed (or lost) run can be
+     * retried, and the job is unique per document, so repeated clicks queue
+     * at most one.
+     */
+    public function retryProcessing(Request $request, Document $document, DocumentProcessing $processing)
+    {
+        $status = $processing->status($document);
+        if ($status['can_retry']) {
+            $processing->queue($document, $this->resolveEditorEmail(), $request->session()->getId());
+        }
+
+        return response()->json($this->processingStatusPayload($document, $processing), $status['can_retry'] ? 202 : 200);
+    }
+
+    private function processingStatusPayload(Document $document, DocumentProcessing $processing): array
+    {
+        $status = $processing->status($document);
+
+        return [
+            'success' => true,
+            'status' => $status['status'],
+            'pending' => $status['pending'],
+            'can_retry' => $status['can_retry'],
+            'error_code' => $status['error_code'],
+            'message' => $status['message'],
+            'waited_seconds' => $status['waited_seconds'],
+            'retry_url' => $status['can_retry'] ? route('documents.processing.retry', $document) : null,
+        ];
+    }
+
+    /**
      * The editor's autosave: the whole annotation state of one editing
      * session, a couple of seconds after every change. Bounded (body size,
      * annotation count, text length), guarded against a second tab
@@ -14872,19 +14922,11 @@ class DocumentController extends Controller
                 $tokenOutputPath = null;
                 $this->rememberSessionAccessibleDocument($request, $splitDocument);
 
-                try {
-                    ProcessUploadedDocumentJob::dispatch(
-                        $splitDocument->id,
-                        $this->resolveEditorEmail(),
-                        $request->session()->getId(),
-                    );
-                } catch (\Throwable $error) {
-                    Log::warning('Split PDF background processing could not be queued', [
-                        'document_id' => $splitDocument->id,
-                        'source_document_id' => $document->id,
-                        'error' => $error->getMessage(),
-                    ]);
-                }
+                app(DocumentProcessing::class)->queue(
+                    $splitDocument,
+                    $this->resolveEditorEmail(),
+                    $request->session()->getId(),
+                );
 
                 if (Auth::check()) {
                     UserActivity::create([
