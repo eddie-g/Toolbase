@@ -10209,7 +10209,7 @@ class DocumentController extends Controller
         
         // Build the URL - use host.docker.internal if running in Docker, otherwise localhost
         // This allows the headless browser inside the container to reach the Laravel app
-        $baseUrl = env('APP_URL', 'http://localhost:8081');
+        $baseUrl = config('app.url', 'http://localhost:8081');
         // If running in Docker, the browser needs to access the host machine
         if (file_exists('/.dockerenv')) {
             $baseUrl = 'http://host.docker.internal:8081';

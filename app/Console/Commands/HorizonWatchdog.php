@@ -78,7 +78,7 @@ class HorizonWatchdog extends Command
             'host' => gethostname(),
         ]);
 
-        $email = env('HORIZON_ALERT_EMAIL');
+        $email = config('horizon.alert_email');
         if (! $email) {
             return;
         }
