@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\PythonRunner;
 use Illuminate\Http\Request;
 use App\Models\AiRequest;
 use App\Models\AiResponse;
@@ -675,14 +676,15 @@ PROMPT;
             $pythonScript = base_path('python/pdf-editor/add_ai_pages_to_pdf.py');
             
             $command = sprintf(
-                '/usr/bin/python3 %s %s %s %s 2>&1',
+                '%s %s %s %s %s 2>&1',
+                escapeshellarg(app(PythonRunner::class)->interpreter('fitz')),
                 escapeshellarg($pythonScript),
                 escapeshellarg($originalPath),
                 escapeshellarg($outputPath),
                 escapeshellarg($jsonTempFile)
             );
             
-            exec($command, $output, $returnCode);
+            app(PythonRunner::class)->exec($command, $output, $returnCode);
             
             // Clean up the temporary JSON file
             if (file_exists($jsonTempFile)) {

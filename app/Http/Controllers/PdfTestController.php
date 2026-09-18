@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\PythonRunner;
 use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Document;
 use App\Models\PdfTestReport;
@@ -200,24 +201,14 @@ class PdfTestController extends Controller
             && !$this->promotedAnnotationHasMaterialEdits($annotation);
     }
 
+    private function python(): PythonRunner
+    {
+        return app(PythonRunner::class);
+    }
+
     private function resolvePythonBinary(): string
     {
-        $candidates = [
-            base_path('python/venv/bin/python'),
-            'python3',
-            '/usr/bin/python3',
-        ];
-        foreach ($candidates as $candidate) {
-            if (str_contains($candidate, '/') && !is_executable($candidate)) {
-                continue;
-            }
-            $probeExit = 1;
-            exec(sprintf('%s -c %s 2>&1', escapeshellarg($candidate), escapeshellarg('import fitz')), $_, $probeExit);
-            if ($probeExit === 0) {
-                return $candidate;
-            }
-        }
-        return 'python3';
+        return $this->python()->interpreter('fitz');
     }
 
     private function embeddedFontsCachePath(int $documentId, string $sourceKey): string
@@ -271,7 +262,7 @@ class PdfTestController extends Controller
                 'open(' . json_encode($cachePath, JSON_UNESCAPED_SLASHES) . ', "w").write(json.dumps(fonts, indent=2)) if fonts else None',
             ]));
             if ($scriptWritten !== false) {
-                exec(sprintf('timeout 30 %s %s 2>&1', escapeshellarg($python), escapeshellarg($tmpScript)));
+                $this->python()->exec(sprintf('%s %s 2>&1', escapeshellarg($python), escapeshellarg($tmpScript)), $ignoredOutput, $ignoredExit, ['timeout' => 30]);
             }
             @unlink($tmpScript);
         }
@@ -288,7 +279,7 @@ class PdfTestController extends Controller
         $nodeScript = base_path('tests/OverlayEditor/Pdf/run_pdf_tests.cjs');
 
         $command = sprintf('node %s --list-files 2>&1', escapeshellarg($nodeScript));
-        $output = shell_exec($command);
+        $output = $this->python()->shellExec($command);
 
         if (!$output) {
             return response()->json(['success' => false, 'message' => 'Could not list PDF tests'], 500);
@@ -553,7 +544,7 @@ class PdfTestController extends Controller
                 escapeshellarg($testKey)
             );
 
-        $output = shell_exec($command);
+        $output = $this->python()->shellExec($command);
         if ($uploadConfigPath) {
             File::delete($uploadConfigPath);
         }
@@ -656,20 +647,16 @@ class PdfTestController extends Controller
         $storedFull = Storage::path($storedRelative);
         Storage::makeDirectory('documents');
 
-        $scriptCode = implode("\n", [
-            'import fitz, sys',
-            'doc = fitz.open()',
-            sprintf('doc.new_page(width=%s, height=%s)', (float) $width, (float) $height),
-            sprintf('doc.save(%s)', var_export($storedFull, true)),
-            'doc.close()',
-        ]);
-        $tmpScript = tempnam(sys_get_temp_dir(), 'pdf_test_blank_') . '.py';
-        file_put_contents($tmpScript, $scriptCode);
-
         $output = [];
         $exitCode = 0;
-        exec(sprintf('%s %s 2>&1', escapeshellarg($this->resolvePythonBinary()), escapeshellarg($tmpScript)), $output, $exitCode);
-        @unlink($tmpScript);
+        $this->python()->exec(sprintf(
+            '%s %s %s %s %s 2>&1',
+            escapeshellarg($this->resolvePythonBinary()),
+            escapeshellarg(base_path('python/pdf-editor/create_blank_pdf.py')),
+            escapeshellarg($storedFull),
+            escapeshellarg((string) (float) $width),
+            escapeshellarg((string) (float) $height)
+        ), $output, $exitCode);
 
         if ($exitCode !== 0 || !file_exists($storedFull)) {
             Log::error('PDF test blank creation failed', [
@@ -1105,7 +1092,7 @@ PYTHON;
             escapeshellarg($basePdfPath)
         );
 
-        $rawOutput = shell_exec($command);
+        $rawOutput = $this->python()->shellExec($command);
         @unlink($annotationsFile);
         @unlink($inlinePyFile);
 

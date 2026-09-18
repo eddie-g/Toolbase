@@ -14,7 +14,8 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // One runner per process: the interpreter lookup is memoised on it.
+        $this->app->singleton(\App\Services\PythonRunner::class);
     }
 
     /**

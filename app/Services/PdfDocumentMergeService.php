@@ -12,7 +12,6 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use RuntimeException;
-use Symfony\Component\Process\Process;
 use Throwable;
 
 class PdfDocumentMergeService
@@ -86,16 +85,14 @@ class PdfDocumentMergeService
                 'max_file_pages' => max(1, (int) config('pdf_editor.merge.max_file_pages', 100)),
             ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES));
 
-            $process = new Process([
+            $process = app(PythonRunner::class)->run([
                 $this->resolvePythonBinary('fitz'),
                 base_path('python/pdf-editor/merge_pdf_documents.py'),
                 $manifestPath,
-            ]);
-            $process->setTimeout(max(10, (int) config('pdf_editor.merge.timeout_seconds', 120)));
-            $process->run();
+            ], ['timeout' => max(10, (int) config('pdf_editor.merge.timeout_seconds', 120)), 'label' => 'merge_pdf_documents']);
 
-            $result = $this->decodeProcessResult($process->getOutput());
-            if (!$process->isSuccessful() || !($result['success'] ?? false) || !is_file($candidatePath)) {
+            $result = $this->decodeProcessResult($process->stdout);
+            if (!$process->ok() || !($result['success'] ?? false) || !is_file($candidatePath)) {
                 $message = (string) ($result['error'] ?? 'The PDF files could not be merged.');
                 foreach ($inputs as $input) {
                     $message = str_replace((string) $input['path'], 'selected PDF', $message);
@@ -199,29 +196,6 @@ class PdfDocumentMergeService
 
     private function resolvePythonBinary(?string $requiredModule = null): string
     {
-        $candidates = array_values(array_unique([
-            base_path('.venv/bin/python'),
-            base_path('venv/bin/python'),
-            base_path('python/venv/bin/python'),
-            '/usr/bin/python3',
-            'python3',
-        ]));
-
-        foreach ($candidates as $candidate) {
-            if (str_contains($candidate, '/') && !is_executable($candidate)) {
-                continue;
-            }
-            if ($requiredModule === null) {
-                return $candidate;
-            }
-            $probe = new Process([$candidate, '-c', "import {$requiredModule}"]);
-            $probe->setTimeout(10);
-            $probe->run();
-            if ($probe->isSuccessful()) {
-                return $candidate;
-            }
-        }
-
-        return 'python3';
+        return app(PythonRunner::class)->interpreter($requiredModule);
     }
 }

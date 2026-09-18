@@ -1039,12 +1039,12 @@ class DomainSearchController extends Controller
         $command = implode(' ', array_map('escapeshellarg', $args));
 
         // Launch in background, capture PID
-        $pid = (int) trim(shell_exec(sprintf(
+        $pid = (int) trim((string) app(\App\Services\PythonRunner::class)->shellExec(sprintf(
             'nohup %s > %s 2> %s & echo $!',
             $command,
             escapeshellarg($outputFile),
             escapeshellarg($errorFile)
-        )));
+        ), ['slot' => false, 'timeout' => 15]));
         file_put_contents($pidFile, $pid);
 
         Cache::put("domain-job:{$jobId}", [

@@ -8,6 +8,7 @@ use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Admin;
 use App\Models\CreditTransaction;
 use App\Models\Document;
+use App\Services\PythonRunner;
 use App\Models\DocumentConversion;
 use App\Models\DocumentConversionSetting;
 use App\Models\DocumentNote;
@@ -575,63 +576,13 @@ class DocumentController extends Controller
 
     protected function resolvePythonBinaryForPdfEditor(string|array|null $requiredModule = null): string
     {
-        $requiredModules = array_values(array_filter(
-            is_array($requiredModule) ? $requiredModule : [$requiredModule],
-            static fn ($module) => is_string($module) && $module !== ''
-        ));
+        return $this->python()->interpreter($requiredModule);
+    }
 
-        // Probing a candidate costs a full python start-up per call. The
-        // interpreter cannot change within a request, so memoize per module
-        // set — endpoints that shell out several times only pay it once.
-        static $resolved = [];
-        $cacheKey = implode('|', $requiredModules);
-        if (isset($resolved[$cacheKey])) {
-            return $resolved[$cacheKey];
-        }
-
-        $candidates = array_values(array_unique([
-            base_path('.venv/bin/python'),
-            base_path('venv/bin/python'),
-            base_path('.venv/Scripts/python.exe'),
-            base_path('venv/Scripts/python.exe'),
-            base_path('python/venv/bin/python'),
-            base_path('python/venv/Scripts/python.exe'),
-            '/usr/bin/python3',
-            'python3',
-        ]));
-
-        foreach ($candidates as $candidate) {
-            if (str_contains($candidate, '/') && !is_executable($candidate)) {
-                continue;
-            }
-
-            if ($requiredModules === []) {
-                return $resolved[$cacheKey] = $candidate;
-            }
-
-            $invalidModules = array_filter(
-                $requiredModules,
-                static fn ($module) => !preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $module)
-            );
-            if ($invalidModules !== []) {
-                break;
-            }
-
-            $probeOutput = [];
-            $probeExitCode = 1;
-            $probeCommand = sprintf(
-                '%s -c %s 2>&1',
-                escapeshellarg($candidate),
-                escapeshellarg(implode('; ', array_map(static fn ($module) => "import {$module}", $requiredModules)))
-            );
-            exec($probeCommand, $probeOutput, $probeExitCode);
-
-            if ($probeExitCode === 0) {
-                return $resolved[$cacheKey] = $candidate;
-            }
-        }
-
-        return $resolved[$cacheKey] = 'python3';
+    /** Every subprocess goes through the runner: timeouts, a concurrency cap, one interpreter. */
+    private function python(): PythonRunner
+    {
+        return app(PythonRunner::class);
     }
 
     private function annotationAssets(): PdfAnnotationAssetService
@@ -713,49 +664,25 @@ class DocumentController extends Controller
 
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
         $tmpOutputBase = tempnam(sys_get_temp_dir(), 'doc_preview_');
-        $tmpScriptBase = tempnam(sys_get_temp_dir(), 'doc_preview_script_');
-
-        if ($tmpOutputBase === false || $tmpScriptBase === false) {
+        if ($tmpOutputBase === false) {
             return null;
         }
 
         $tmpOutput = $tmpOutputBase . '.jpg';
-        $tmpScript = $tmpScriptBase . '.py';
         @unlink($tmpOutputBase);
-        @unlink($tmpScriptBase);
-
-        $script = implode("\n", [
-            'import fitz, sys',
-            'src, dest, target_width, quality = sys.argv[1], sys.argv[2], max(int(sys.argv[3]), 64), max(int(sys.argv[4]), 20)',
-            'doc = fitz.open(src)',
-            'if doc.page_count < 1:',
-            '    raise RuntimeError("Document has no pages")',
-            'page = doc.load_page(0)',
-            'rect = page.rect',
-            'scale = float(target_width) / max(float(rect.width), 1.0)',
-            'pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)',
-            'pix.save(dest, output="jpeg", jpg_quality=quality)',
-            'print(f"{pix.width}x{pix.height}")',
-        ]);
-
-        if (@file_put_contents($tmpScript, $script) === false) {
-            return null;
-        }
 
         $output = [];
         $returnCode = 1;
         $command = sprintf(
             '%s %s %s %s %d %d 2>&1',
             escapeshellarg($pythonBinary),
-            escapeshellarg($tmpScript),
+            escapeshellarg(base_path('python/pdf-editor/render_page_preview.py')),
             escapeshellarg($fullPath),
             escapeshellarg($tmpOutput),
             $targetWidth,
             $quality
         );
-        exec($command, $output, $returnCode);
-
-        @unlink($tmpScript);
+        $this->python()->exec($command, $output, $returnCode);
 
         if ($returnCode !== 0 || !is_file($tmpOutput)) {
             @unlink($tmpOutput);
@@ -1940,7 +1867,7 @@ class DocumentController extends Controller
 
         $output = [];
         $returnCode = 0;
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
         if ($returnCode !== 0) {
             Log::warning('Failed to extract AcroForm fields for materialization', [
                 'document_id' => $document->id,
@@ -2027,7 +1954,7 @@ class DocumentController extends Controller
 
         $output = [];
         $returnCode = 0;
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
         @unlink($entriesPath);
 
         if ($returnCode !== 0 || !file_exists($outputPdfPath)) {
@@ -2196,7 +2123,7 @@ class DocumentController extends Controller
 
         $output = [];
         $returnCode = 1;
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
 
         return [$returnCode, $output];
     }
@@ -4465,7 +4392,7 @@ class DocumentController extends Controller
 
             $output = [];
             $returnCode = 0;
-            exec($command, $output, $returnCode);
+            $this->python()->exec($command, $output, $returnCode);
 
             if ($returnCode !== 0 || !file_exists($cleanPath)) {
                 \Log::warning('Failed to create clean PDF from extraction source', [
@@ -5207,7 +5134,7 @@ class DocumentController extends Controller
 
             $output = [];
             $returnCode = 0;
-            exec($command, $output, $returnCode);
+            $this->python()->exec($command, $output, $returnCode);
 
             if ($returnCode !== 0) {
                 \Log::error('Selective annotation page redraw failed', [
@@ -5260,7 +5187,7 @@ class DocumentController extends Controller
 
         $refreshOutput = [];
         $refreshCode = 0;
-        exec($refreshCommand, $refreshOutput, $refreshCode);
+        $this->python()->exec($refreshCommand, $refreshOutput, $refreshCode);
         \Log::info('Refreshed extraction data', [
             'document_id' => $document->id,
             'return_code' => $refreshCode,
@@ -5299,7 +5226,7 @@ class DocumentController extends Controller
 
             $cleanOutput = [];
             $cleanCode = 0;
-            exec($cleanCommand, $cleanOutput, $cleanCode);
+            $this->python()->exec($cleanCommand, $cleanOutput, $cleanCode);
 
             \Log::info('Regenerated clean PDF after save', [
                 'document_id' => $document->id,
@@ -5362,7 +5289,7 @@ class DocumentController extends Controller
 
             $output = [];
             $exitCode = 0;
-            exec($command, $output, $exitCode);
+            $this->python()->exec($command, $output, $exitCode);
             $outputStr = implode("\n", $output);
 
             $jsonLine = '';
@@ -5685,21 +5612,16 @@ class DocumentController extends Controller
 
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
-        // Write the Python code to a temp file to avoid shell quoting issues.
-        $scriptCode = implode("\n", [
-            'import fitz, sys',
-            'doc = fitz.open()',
-            sprintf('doc.new_page(width=%s, height=%s)', (float) $width, (float) $height),
-            sprintf('doc.save(%s)', var_export($storedFull, true)),
-            'doc.close()',
-        ]);
-        $tmpScript = tempnam(sys_get_temp_dir(), 'blank_pdf_') . '.py';
-        file_put_contents($tmpScript, $scriptCode);
-
         $output = [];
         $exitCode = 0;
-        exec(sprintf('%s %s 2>&1', escapeshellarg($pythonBinary), escapeshellarg($tmpScript)), $output, $exitCode);
-        @unlink($tmpScript);
+        $this->python()->exec(sprintf(
+            '%s %s %s %s %s 2>&1',
+            escapeshellarg($pythonBinary),
+            escapeshellarg(base_path('python/pdf-editor/create_blank_pdf.py')),
+            escapeshellarg($storedFull),
+            escapeshellarg((string) (float) $width),
+            escapeshellarg((string) (float) $height)
+        ), $output, $exitCode);
 
         if ($exitCode !== 0 || !file_exists($storedFull)) {
             Log::error('Blank PDF creation failed', [
@@ -5761,7 +5683,7 @@ class DocumentController extends Controller
 
         $output = [];
         $exitCode = 0;
-        exec($command, $output, $exitCode);
+        $this->python()->exec($command, $output, $exitCode);
 
         if ($exitCode !== 0 || !file_exists($storedFull)) {
             Log::error('Template generation failed', [
@@ -5926,7 +5848,7 @@ class DocumentController extends Controller
 
         $output = [];
         $exitCode = 0;
-        exec($command, $output, $exitCode);
+        $this->python()->exec($command, $output, $exitCode);
         @unlink($tmpPayload);
 
         if ($exitCode !== 0 || !file_exists($storedFull)) {
@@ -6027,7 +5949,7 @@ class DocumentController extends Controller
 
         $output = [];
         $exitCode = 0;
-        exec($command, $output, $exitCode);
+        $this->python()->exec($command, $output, $exitCode);
         @unlink($tmpPayload);
 
         if ($exitCode !== 0 || !file_exists($storedFull)) {
@@ -6109,7 +6031,7 @@ class DocumentController extends Controller
 
         $output = [];
         $exitCode = 0;
-        exec($command, $output, $exitCode);
+        $this->python()->exec($command, $output, $exitCode);
         @unlink($tmpPayload);
 
         if ($exitCode !== 0) {
@@ -6167,7 +6089,7 @@ class DocumentController extends Controller
 
         $output = [];
         $exitCode = 0;
-        exec($command, $output, $exitCode);
+        $this->python()->exec($command, $output, $exitCode);
         @unlink($tmpPayload);
 
         if ($exitCode !== 0) {
@@ -6296,7 +6218,7 @@ class DocumentController extends Controller
 
         $output = [];
         $exitCode = 0;
-        exec($command, $output, $exitCode);
+        $this->python()->exec($command, $output, $exitCode);
         if ($skipBakePath !== null) {
             @unlink($skipBakePath);
         }
@@ -6716,7 +6638,7 @@ class DocumentController extends Controller
 
         $output = [];
         $exitCode = 0;
-        exec($command, $output, $exitCode);
+        $this->python()->exec($command, $output, $exitCode);
         @unlink($tmpPayload);
 
         if ($exitCode !== 0) {
@@ -6752,7 +6674,7 @@ class DocumentController extends Controller
             $documentId
         );
         
-        exec($command);
+        $this->python()->exec($command);
         
         return response()->json([
             'success' => true,
@@ -6782,7 +6704,7 @@ class DocumentController extends Controller
             escapeshellarg($sessionId)
         );
         
-        exec($command);
+        $this->python()->exec($command);
         
         return response()->json([
             'success' => true,
@@ -6877,7 +6799,7 @@ class DocumentController extends Controller
                     $docId,
                     $escapedJsonPath
                 );
-                exec($command);
+                $this->python()->exec($command);
                 if (file_exists($embeddedFontsPath)) {
                     $embeddedFonts = json_decode(file_get_contents($embeddedFontsPath), true);
                 }
@@ -7205,7 +7127,7 @@ class DocumentController extends Controller
             escapeshellarg($tmpOut),
             escapeshellarg($editsJsonPath)
         );
-        exec($cmd, $output, $exitCode);
+        $this->python()->exec($cmd, $output, $exitCode);
         @unlink($tmpIn);
         @unlink($editsJsonPath);
 
@@ -7283,7 +7205,7 @@ class DocumentController extends Controller
             escapeshellarg($tmpOut),
             escapeshellarg($editsJsonPath)
         );
-        exec($cmd, $output, $exitCode);
+        $this->python()->exec($cmd, $output, $exitCode);
         @unlink($tmpIn);
         @unlink($editsJsonPath);
 
@@ -7427,7 +7349,7 @@ class DocumentController extends Controller
         );
         $redactOutput = [];
         $redactExitCode = 0;
-        exec($redactCommand, $redactOutput, $redactExitCode);
+        $this->python()->exec($redactCommand, $redactOutput, $redactExitCode);
         if ($redactExitCode !== 0 || !is_file($redactedPdfPath)) {
             $cleanup();
             return response()->json([
@@ -7446,7 +7368,7 @@ class DocumentController extends Controller
         );
         $stampOutput = [];
         $stampExitCode = 0;
-        exec($stampCommand, $stampOutput, $stampExitCode);
+        $this->python()->exec($stampCommand, $stampOutput, $stampExitCode);
         if ($stampExitCode !== 0 || !is_file($redactedPdfPath)) {
             $cleanup();
             return response()->json([
@@ -7553,7 +7475,7 @@ class DocumentController extends Controller
             escapeshellarg($tmpOut),
             escapeshellarg($movesJsonPath)
         );
-        exec($cmd, $output, $exitCode);
+        $this->python()->exec($cmd, $output, $exitCode);
         @unlink($tmpIn);
         @unlink($movesJsonPath);
 
@@ -7642,7 +7564,7 @@ class DocumentController extends Controller
             escapeshellarg($tmpOut),
             escapeshellarg($jsonPath)
         );
-        exec($cmd, $output, $exitCode);
+        $this->python()->exec($cmd, $output, $exitCode);
         @unlink($tmpIn);
         @unlink($jsonPath);
 
@@ -7811,7 +7733,7 @@ class DocumentController extends Controller
                 );
                 $output = [];
                 $exitCode = 0;
-                exec($command, $output, $exitCode);
+                $this->python()->exec($command, $output, $exitCode);
                 @unlink($tmpPayload);
 
                 if ($exitCode === 0 && is_file($storedFull)) {
@@ -7959,7 +7881,7 @@ class DocumentController extends Controller
             escapeshellarg($outputPath)
         );
         
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
         
         if ($returnCode !== 0) {
             Log::error('Rotation flattening failed', [
@@ -8016,7 +7938,7 @@ class DocumentController extends Controller
                 (int)$rotation
             );
             
-            exec($command, $output, $returnCode);
+            $this->python()->exec($command, $output, $returnCode);
             
             if ($returnCode !== 0) {
                 Log::error('Rotation failed', [
@@ -8067,7 +7989,7 @@ class DocumentController extends Controller
         
         $output = [];
         $returnCode = 0;
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
         
         if ($returnCode === 0) {
             \Log::info('PDF normalized with qpdf', ['path' => $pdfPath]);
@@ -8595,7 +8517,7 @@ class DocumentController extends Controller
             escapeshellarg($cleanPath)
         );
         
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
         
         // Clean up temp extraction file
         if (file_exists($extractionFile)) {
@@ -9120,7 +9042,7 @@ class DocumentController extends Controller
                 'configured_save_mode' => $saveMode,
             ]);
 
-            exec($command, $output, $returnCode);
+            $this->python()->exec($command, $output, $returnCode);
         } elseif ($useStrictSurgicalSave) {
             // New save mode: strict in-place surgical edits only.
             // This path never rebuilds full pages and will abort if the
@@ -9148,7 +9070,7 @@ class DocumentController extends Controller
                 'all_edits_support_strict_surgical' => $allEditsSupportStrictSurgical,
             ]);
 
-            exec($command, $output, $returnCode);
+            $this->python()->exec($command, $output, $returnCode);
         } else {
             // Full-page rebuild mode.
             // For each edited page: clear ALL text, then redraw everything from
@@ -9221,7 +9143,7 @@ class DocumentController extends Controller
                 'configured_save_mode' => $saveMode,
             ]);
 
-            exec($command, $output, $returnCode);
+            $this->python()->exec($command, $output, $returnCode);
         }
         
         // Log the output
@@ -9534,7 +9456,7 @@ class DocumentController extends Controller
             );
             $output = [];
             $exitCode = 0;
-            exec($command, $output, $exitCode);
+            $this->python()->exec($command, $output, $exitCode);
             @unlink($annotationsFile);
 
             if ($exitCode !== 0 || !is_file($generatedPath)) {
@@ -9673,7 +9595,7 @@ class DocumentController extends Controller
                     $embeddedFontsPath,
                 ))
             );
-            $output = shell_exec($command);
+            $output = $this->python()->shellExec($command);
             if (file_exists($embeddedFontsPath)) {
                 $decoded = json_decode((string) file_get_contents($embeddedFontsPath), true);
                 $embeddedFonts = is_array($decoded) ? $decoded : [];
@@ -9767,7 +9689,7 @@ class DocumentController extends Controller
             escapeshellarg($outputCssPath)
         );
         
-        $output = shell_exec($command);
+        $output = $this->python()->shellExec($command);
         
         // Log the full output for debugging
         \Log::info('Font matching output:', ['output' => $output]);
@@ -9839,7 +9761,7 @@ class DocumentController extends Controller
             escapeshellarg($pageOrderStr)
         );
         
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
         $output = implode("\n", $output);
         
         // Parse JSON response from Python script
@@ -9879,7 +9801,7 @@ class DocumentController extends Controller
             
             // Get original page count to detect deleted pages
             $pdf = new \finfo(FILEINFO_MIME_TYPE);
-            $pdfInfo = shell_exec(sprintf('pdfinfo %s 2>&1 | grep "Pages:"', escapeshellarg($inputPath)));
+            $pdfInfo = $this->python()->shellExec(sprintf('pdfinfo %s 2>&1 | grep "Pages:"', escapeshellarg($inputPath)));
             $originalPageCount = 0;
             if (preg_match('/Pages:\s+(\d+)/', $pdfInfo, $matches)) {
                 $originalPageCount = (int)$matches[1];
@@ -9942,7 +9864,7 @@ class DocumentController extends Controller
                 escapeshellarg($currentSessionId)
             );
             
-            exec($extractCommand, $extractOutput, $extractReturnCode);
+            $this->python()->exec($extractCommand, $extractOutput, $extractReturnCode);
             
             if ($extractReturnCode === 0) {
                 \Log::info('Re-extraction completed successfully', [
@@ -10089,7 +10011,7 @@ class DocumentController extends Controller
             escapeshellarg((string) $sizeReference)
         );
 
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
         $outputStr = implode("\n", $output);
 
         // Try to find JSON in the output (last line should be JSON)
@@ -10155,7 +10077,7 @@ class DocumentController extends Controller
                 escapeshellarg($currentSessionId)
             );
             
-            exec($extractCommand, $extractOutput, $extractReturnCode);
+            $this->python()->exec($extractCommand, $extractOutput, $extractReturnCode);
             
             if ($extractReturnCode !== 0) {
                 \Log::warning('Failed to re-extract PDF after adding blank page', [
@@ -10222,7 +10144,7 @@ class DocumentController extends Controller
             escapeshellarg((string) $rotation)
         );
 
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
         $outputStr = implode("\n", $output);
 
         // Check for SUCCESS message
@@ -10273,7 +10195,7 @@ class DocumentController extends Controller
                 escapeshellarg($currentSessionId)
             );
             
-            exec($extractCommand, $extractOutput, $extractReturnCode);
+            $this->python()->exec($extractCommand, $extractOutput, $extractReturnCode);
             
             if ($extractReturnCode !== 0) {
                 \Log::warning('Failed to re-extract PDF after rotating page', [
@@ -10348,7 +10270,7 @@ class DocumentController extends Controller
         
         $output = [];
         $returnCode = 0;
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
         
         \Log::info('Screenshot result', [
             'return_code' => $returnCode,
@@ -10917,7 +10839,7 @@ class DocumentController extends Controller
 
         $output = [];
         $returnCode = 0;
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
 
         if (file_exists($annotationsFile)) {
             @unlink($annotationsFile);
@@ -11260,12 +11182,12 @@ class DocumentController extends Controller
                         'error' => $selectiveResult['error'] ?? null,
                     ], 500);
                 }
-                exec($command, $output, $returnCode);
+                $this->python()->exec($command, $output, $returnCode);
             } else {
                 $usedSelectiveRedraw = true;
             }
         } else {
-            exec($command, $output, $returnCode);
+            $this->python()->exec($command, $output, $returnCode);
         }
 
         if (file_exists($annotationsFile)) {
@@ -11663,7 +11585,7 @@ class DocumentController extends Controller
 
         $output = [];
         $returnCode = 0;
-        exec($command, $output, $returnCode);
+        $this->python()->exec($command, $output, $returnCode);
 
         $stdout = implode("\n", $output);
 
@@ -12057,7 +11979,7 @@ class DocumentController extends Controller
         $output = [];
         $returnCode = 1;
         try {
-            exec($command, $output, $returnCode);
+            $this->python()->exec($command, $output, $returnCode);
         } finally {
             @unlink($annotationsFile);
         }
@@ -12808,12 +12730,12 @@ class DocumentController extends Controller
                         'error' => $selectiveResult['error'] ?? null,
                     ], 500);
                 }
-                exec($command, $output, $returnCode);
+                $this->python()->exec($command, $output, $returnCode);
             } else {
                 $usedSelectiveRedraw = true;
             }
         } else {
-            exec($command, $output, $returnCode);
+            $this->python()->exec($command, $output, $returnCode);
         }
 
         if (file_exists($annotationsFile)) {
@@ -12992,7 +12914,7 @@ class DocumentController extends Controller
             $srgbProfile ? '--srgb' : '--no-srgb'
         );
 
-        $output = shell_exec($command);
+        $output = $this->python()->shellExec($command);
         if ($uploadedInputPath && file_exists($uploadedInputPath)) {
             @unlink($uploadedInputPath);
         }
@@ -13841,7 +13763,7 @@ class DocumentController extends Controller
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
         $output = [];
         $exitCode = 1;
-        exec(sprintf(
+        $this->python()->exec(sprintf(
             '%s -c %s %s 2>&1',
             escapeshellarg($pythonBinary),
             escapeshellarg('import fitz,sys; doc=fitz.open(sys.argv[1]); print(doc.page_count); doc.close()'),
@@ -13969,7 +13891,7 @@ class DocumentController extends Controller
             $ocr ? '--ocr' : ''
         );
 
-        return $this->parseLocalConversionResult(shell_exec($command), 'Word');
+        return $this->parseLocalConversionResult($this->python()->shellExec($command), 'Word');
     }
 
     private function runLocalExcelConversion(
@@ -13992,7 +13914,7 @@ class DocumentController extends Controller
             $sheetPerPage ? '--sheet-per-page' : '--single-sheet'
         );
 
-        return $this->parseLocalConversionResult(shell_exec($command), 'Excel');
+        return $this->parseLocalConversionResult($this->python()->shellExec($command), 'Excel');
     }
 
     private function parseLocalConversionResult(?string $output, string $format): array
@@ -14222,7 +14144,7 @@ class DocumentController extends Controller
         );
 
         try {
-            $output = shell_exec($command);
+            $output = $this->python()->shellExec($command);
         } finally {
             if (file_exists($passwordPayloadPath)) {
                 @unlink($passwordPayloadPath);
@@ -14373,7 +14295,7 @@ class DocumentController extends Controller
 
         $command .= ' --json 2>&1';
 
-        $output = shell_exec($command);
+        $output = $this->python()->shellExec($command);
 
         // Parse JSON output
         $result = null;
@@ -14569,7 +14491,7 @@ class DocumentController extends Controller
 
             $outputLines = [];
             $returnCode = 0;
-            exec($command, $outputLines, $returnCode);
+            $this->python()->exec($command, $outputLines, $returnCode);
             $result = null;
             foreach (array_reverse($outputLines) as $line) {
                 $decoded = json_decode(trim((string) $line), true);

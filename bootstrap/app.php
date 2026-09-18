@@ -43,5 +43,14 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // Every Python slot taken: tell the client to retry rather than
+        // queueing another process behind the ones already running.
+        $exceptions->render(function (\App\Exceptions\PythonServiceBusyException $e, \Illuminate\Http\Request $request) {
+            $headers = ['Retry-After' => (string) $e->retryAfterSeconds];
+            if ($request->expectsJson()) {
+                return response()->json(['success' => false, 'message' => $e->getMessage()], 503, $headers);
+            }
+
+            return response($e->getMessage(), 503, $headers + ['Content-Type' => 'text/plain']);
+        });
     })->create();
