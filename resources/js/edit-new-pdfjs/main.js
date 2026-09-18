@@ -140,6 +140,26 @@ import {
     requestQueuedPdfExport,
 } from './queued-pdf-export.js';
 import {
+    processingWaitMessage,
+    retryDocumentProcessing,
+    waitForDocumentProcessing,
+} from './extraction-wait.js';
+import {
+    createDirtyTracker,
+    createDraftStore,
+    describeDraftTime,
+    draftIsRestorable,
+    fitsKeepalive,
+    planAfterSaveFailure,
+} from './save-resilience.js';
+import {
+    classifySaveFailure,
+    createStateVersionTracker,
+    createTabChannel,
+    rememberStoredAssets,
+    slimAnnotationForSave,
+} from './autosave-guard.js';
+import {
     buildConvertedDownloadUrl,
     estimateConvertedFileBytes,
     readQueuedConversionResponse,
@@ -997,6 +1017,17 @@ let saveToastTimer = null;
 let autoSaveTimer = 0;
 let saveInFlight = false;
 let saveAgainAfterCurrent = false;
+let retryAutoSaveAfterMs = 0;
+// Save resilience (save-resilience.js): whether anything is unsaved, how many
+// saves in a row have failed, and why autosave is not running when it is not.
+const unsavedChanges = createDirtyTracker();
+const editorDrafts = createDraftStore();
+let saveFailureAttempts = 0;
+let autosaveHalted = false;
+let waitingForOnline = false;
+let waitingForSignIn = false;
+let draftRecoveryChecked = false;
+let restoredDraftNeedsSave = false;
 let saveAfterHydration = false;
 let acroFormSaveTimer = 0;
 let acroFormSaveInFlight = false;
@@ -1200,15 +1231,66 @@ function setSaveStatus(text, isError = false) {
 
 installDocumentRename();
 
-function scheduleAutoSave() {
+// Autosave guard (autosave-guard.js): the state version this tab loaded, the
+// image references the server has already stored, and the channel on which
+// tabs of this document announce their saves.
+const editorStateVersion = createStateVersionTracker();
+const storedImageAssets = new Map();
+const editorTabChannel = createTabChannel(editNewRoot?.dataset?.docId, {
+    onRemoteSave: (version) => {
+        if (editorStateVersion.noteRemoteSave(version)) {
+            enterStaleEditorState('This document was just saved from another tab or window.');
+        }
+    },
+});
+window.addEventListener('pagehide', () => editorTabChannel.close());
+
+/**
+ * Another tab has saved a newer state. Saving from here would overwrite it, so
+ * this tab stops saving and exporting until it is reloaded.
+ */
+function enterStaleEditorState(reason) {
+    editorStateVersion.markStale();
+    if (autoSaveTimer) {
+        window.clearTimeout(autoSaveTimer);
+        autoSaveTimer = 0;
+    }
+    saveAgainAfterCurrent = false;
+    setSaveStatus('Not saving', true);
+    setStatus('This tab is out of date. Reload to keep editing.', true);
+    if (document.querySelector('.enpv-stale-banner')) return;
+    const banner = document.createElement('div');
+    banner.className = 'enpv-stale-banner';
+    banner.setAttribute('role', 'alert');
+    const text = document.createElement('span');
+    text.textContent = `${reason || 'This document was changed in another tab or window.'} Changes made in this tab since then are not being saved. Reload to continue from the latest version.`;
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.textContent = 'Reload';
+    reload.addEventListener('click', () => {
+        suppressAutoSaveForNavigation = true;
+        window.location.reload();
+    });
+    banner.append(text, reload);
+    document.body.appendChild(banner);
+}
+
+function scheduleAutoSave(delayMs = AUTO_SAVE_DELAY_MS) {
     if (suppressAutoSaveForNavigation || structuralMutationInFlight) return;
-    if (!SAVE_URL) return;
+    if (!SAVE_URL || editorStateVersion.isStale) return;
+    // Called with no delay of its own it reports a change; the retry paths
+    // pass their delay and are not changes.
+    if (typeof delayMs !== 'number') delayMs = AUTO_SAVE_DELAY_MS;
+    if (arguments.length === 0 || typeof arguments[0] !== 'number') unsavedChanges.markChanged();
+    // 413/422, signed out, offline: more attempts would only repeat the
+    // failure. The change is still tracked (and drafted) for when saving resumes.
+    if (autosaveHalted || waitingForSignIn || waitingForOnline) return;
     if (autoSaveTimer) window.clearTimeout(autoSaveTimer);
     autoSaveTimer = window.setTimeout(() => {
         autoSaveTimer = 0;
         if (suppressAutoSaveForNavigation) return;
         saveAnnotationStateToDb({ source: 'autosave' }).catch(() => {});
-    }, AUTO_SAVE_DELAY_MS);
+    }, Math.max(0, Number(delayMs) || AUTO_SAVE_DELAY_MS));
 }
 
 function cancelPendingAutoSaveForNavigation() {
@@ -1231,9 +1313,137 @@ function cancelPendingAutoSaveForNavigation() {
     }
 }
 
-window.addEventListener('pagehide', cancelPendingAutoSaveForNavigation);
-window.addEventListener('beforeunload', cancelPendingAutoSaveForNavigation);
+function hasUnsavedEditorChanges() {
+    return Boolean(SAVE_URL) && !editorStateVersion.isStale
+        && (unsavedChanges.isDirty || autoSaveTimer !== 0 || saveAgainAfterCurrent);
+}
+
+/**
+ * The page is going away with changes the debounce has not sent yet. They go
+ * out in a request that outlives the page when they fit (browsers cap those
+ * at 64 KiB), and into the local draft either way, so the next visit can
+ * offer them back.
+ */
+function flushUnsavedChangesOnExit() {
+    if (!hasUnsavedEditorChanges() || structuralMutationInFlight || suppressAutoSaveForNavigation) return;
+    if (hydratingPersistedAnnotations) return;
+    try {
+        const { annotationsPayload, body } = buildSaveRequest({
+            isAutosave: true,
+            acroPayload: Array.isArray(latestAcroFormEntriesSnapshot) ? latestAcroFormEntriesSnapshot : [],
+        });
+        writeEditorDraft(annotationsPayload, latestAcroFormEntriesSnapshot);
+        if (autosaveHalted || waitingForSignIn || !fitsKeepalive(body)) return;
+        fetch(SAVE_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            keepalive: true,
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': CSRF },
+            body,
+        }).catch(() => {});
+    } catch (err) {
+        console.warn('Could not flush unsaved changes on exit', err);
+    }
+}
+
+window.addEventListener('pagehide', () => {
+    flushUnsavedChangesOnExit();
+    cancelPendingAutoSaveForNavigation();
+});
+// A page restored from the back/forward cache is live again.
+window.addEventListener('pageshow', (event) => {
+    if (event.persisted) suppressAutoSaveForNavigation = false;
+});
+// "Leave site? Changes you made may not be saved." Only while there is
+// something unsaved. The pending save is started at once, so choosing to stay
+// (or simply being slow to answer) is enough for it to land. Not under
+// automation: an unanswered prompt would hang a scripted navigation.
+window.addEventListener('beforeunload', (event) => {
+    if (suppressAutoSaveForNavigation || !hasUnsavedEditorChanges()) return;
+    if (!saveInFlight && !autosaveHalted && !waitingForSignIn) {
+        saveAnnotationStateToDb({ source: 'autosave' }).catch(() => {});
+    }
+    if (navigator.webdriver) return;
+    event.preventDefault();
+    event.returnValue = '';
+});
+// Switching tabs or apps (and, on phones, most ways of leaving): save now
+// rather than when the debounce gets round to it.
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden' && autoSaveTimer && !saveInFlight) {
+        saveAnnotationStateToDb({ source: 'autosave' }).catch(() => {});
+    } else if (document.visibilityState === 'visible' && waitingForSignIn) {
+        retrySaveAfterSignIn();
+    }
+});
 window.addEventListener('popstate', cancelPendingAutoSaveForNavigation);
+window.addEventListener('online', () => {
+    if (!waitingForOnline) return;
+    waitingForOnline = false;
+    setSaveStatus('Autosaving…');
+    saveAnnotationStateToDb({ source: 'autosave' }).catch(() => {});
+});
+window.addEventListener('offline', () => {
+    if (hasUnsavedEditorChanges()) showUnsavedBanner(planAfterSaveFailure('network', { online: false }));
+});
+
+/** Came back from signing in elsewhere: a fresh CSRF token, then the save. */
+async function retrySaveAfterSignIn() {
+    try {
+        await refreshCsrfToken();
+    } catch (_) {
+        return;
+    }
+    waitingForSignIn = false;
+    saveAnnotationStateToDb({ source: 'manual' }).catch(() => {});
+}
+
+/**
+ * The sticky "not saved" notice. Stays until a save succeeds, unlike the
+ * seven-second error toast it replaces for saves.
+ */
+function showUnsavedBanner(plan) {
+    let banner = document.querySelector('.enpv-unsaved-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.className = 'enpv-unsaved-banner';
+        banner.setAttribute('role', 'alert');
+        banner.append(document.createElement('span'));
+        const signIn = document.createElement('a');
+        signIn.textContent = 'Sign in';
+        signIn.target = '_blank';
+        signIn.rel = 'noopener';
+        signIn.href = editNewRoot?.dataset?.loginUrl || '/login';
+        const saveNow = document.createElement('button');
+        saveNow.type = 'button';
+        saveNow.textContent = 'Save now';
+        saveNow.addEventListener('click', () => {
+            waitingForOnline = false;
+            if (waitingForSignIn) retrySaveAfterSignIn();
+            else saveAnnotationStateToDb({ source: 'manual' }).catch(() => {});
+        });
+        banner.append(signIn, saveNow);
+        document.body.appendChild(banner);
+    }
+    banner.querySelector('span').textContent = plan.message;
+    banner.querySelector('a').hidden = plan.action !== 'session';
+}
+
+function clearUnsavedBanner() {
+    document.querySelector('.enpv-unsaved-banner')?.remove();
+}
+
+/** The local copy of what is not on the server yet; removed once a save leaves nothing unsaved. */
+function writeEditorDraft(annotationsPayload, acroPayload) {
+    editorDrafts.put(DOC_ID, {
+        documentId: DOC_ID,
+        sessionId: getSessionId(),
+        baseVersion: editorStateVersion.baseVersion,
+        savedAt: Date.now(),
+        annotations: annotationsPayload,
+        acroFormEntries: Array.isArray(acroPayload) ? acroPayload : [],
+    });
+}
 
 function markManualSaveNeeded() {
     if (hydratingPersistedAnnotations) return;
@@ -19775,27 +19985,144 @@ async function fetchAnnotationBoxesPayload(options = {}) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (!data?.success) throw new Error(data?.message || 'Failed to load annotation boxes.');
+    if (editorStateVersion.noteLoaded(data.state_version)) {
+        enterStaleEditorState('This document was saved from another tab or window while this one was loading.');
+    }
     return data;
 }
 
-const INITIAL_EXTRACTION_POLL_ATTEMPTS = 40;
-const INITIAL_EXTRACTION_POLL_INTERVAL_MS = 350;
+const PROCESSING_STATUS_URL = editNewRoot?.dataset?.processingStatusUrl || '';
+const PROCESSING_RETRY_URL = editNewRoot?.dataset?.processingRetryUrl || '';
+const DOCUMENTS_URL = editNewRoot?.dataset?.documentsUrl || '/documents';
 
-function waitForInitialExtractionPoll() {
+/**
+ * The extraction failed (or was lost). Turns the loading card into the failure
+ * with its two ways on, and resolves with the one chosen: 'retry' or 'open'.
+ */
+function askOnLoadingCard({ title, detail, choices, link = null }) {
     return new Promise((resolve) => {
-        window.setTimeout(resolve, INITIAL_EXTRACTION_POLL_INTERVAL_MS);
+        const card = loadingScreen?.querySelector?.('.enpv-loading-card');
+        if (!card || document.body.classList.contains('enpv-viewer-ready')) {
+            resolve(null);
+            return;
+        }
+        const previousTitle = card.querySelector('.enpv-loading-title')?.textContent || '';
+        card.classList.add('is-failed');
+        setLoadingScreenMessage(title);
+        card.querySelector('.enpv-loading-actions')?.remove();
+
+        const actions = document.createElement('div');
+        actions.className = 'enpv-loading-actions';
+        const text = document.createElement('p');
+        text.textContent = detail;
+        actions.append(text);
+        const buttons = choices.filter((choice) => !choice.hidden).map((choice) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = choice.primary ? 'enpv-btn enpv-primary' : 'enpv-btn';
+            button.textContent = choice.label;
+            button.addEventListener('click', () => {
+                actions.remove();
+                card.classList.remove('is-failed');
+                setLoadingScreenMessage(previousTitle);
+                resolve(choice.value);
+            });
+            actions.append(button);
+            return button;
+        });
+        if (link) {
+            const anchor = document.createElement('a');
+            anchor.href = link.href;
+            anchor.textContent = link.label;
+            actions.append(anchor);
+        }
+        card.appendChild(actions);
+        buttons[0]?.focus();
     });
 }
 
-async function fetchInitialAnnotationBoxesPayload() {
-    let data = null;
-    for (let attempt = 0; attempt < INITIAL_EXTRACTION_POLL_ATTEMPTS; attempt += 1) {
-        data = await fetchAnnotationBoxesPayload();
-        if (data?.extraction_pending !== true) return data;
-        setLoadingScreenMessage('Grouping PDF text into paragraphs...');
-        await waitForInitialExtractionPoll();
+/**
+ * The extraction failed (or was lost). Resolves with the way on the user
+ * chose: 'retry' or 'open'.
+ */
+async function askAboutFailedProcessing(outcome) {
+    const choice = await askOnLoadingCard({
+        title: outcome?.message || 'This PDF could not be prepared for editing.',
+        detail: 'You can try again, or open it as it is: text will then be selectable line by line instead of as paragraphs.',
+        choices: [
+            { label: 'Try again', value: 'retry', primary: true, hidden: outcome?.can_retry === false || !PROCESSING_RETRY_URL },
+            { label: 'Open without paragraphs', value: 'open' },
+        ],
+        link: { href: DOCUMENTS_URL, label: 'Back to documents' },
+    });
+    return choice || 'open';
+}
+
+/**
+ * Changes that never reached the server (a closed tab, a crash, a dead
+ * network) are kept in this browser. Offered once per page load, and only
+ * while the server still has the state they were made against.
+ */
+async function recoverUnsavedDraft(serverData) {
+    if (draftRecoveryChecked) return null;
+    draftRecoveryChecked = true;
+    const draft = await editorDrafts.get(DOC_ID);
+    if (!draft) return null;
+    const restorable = draftIsRestorable(draft, {
+        documentId: DOC_ID,
+        sessionId: getSessionId(),
+        stateVersion: Number.isInteger(serverData?.state_version) ? serverData.state_version : null,
+    });
+    if (!restorable) {
+        editorDrafts.remove(DOC_ID);
+        return null;
     }
-    return data;
+    const choice = await askOnLoadingCard({
+        title: 'Unsaved changes were found',
+        detail: `Changes from ${describeDraftTime(draft.savedAt)} were not saved before this document was closed. They are still in this browser.`,
+        choices: [
+            { label: 'Restore them', value: 'restore', primary: true },
+            { label: 'Discard', value: 'discard' },
+        ],
+    });
+    if (choice !== 'restore') {
+        editorDrafts.remove(DOC_ID);
+        return null;
+    }
+    return draft;
+}
+
+/**
+ * The document's state, once its extraction has settled. While the server
+ * reports the upload as queued or extracting the editor waits, for minutes if
+ * need be: opening early would show row-grouped text, and the first autosave
+ * would store that as the document's state. A failed extraction is shown as
+ * such, with a retry; the editor only opens on it if the user says so.
+ */
+async function fetchInitialAnnotationBoxesPayload() {
+    for (;;) {
+        const data = await fetchAnnotationBoxesPayload();
+        const failed = data?.processing?.status === 'failed' && data?.processing?.can_retry === true;
+        if (data?.extraction_pending !== true && !failed) return data;
+
+        let outcome = failed ? { status: 'failed', ...data.processing } : null;
+        if (!outcome) {
+            setLoadingScreenMessage(processingWaitMessage({ status: data?.processing?.status }));
+            outcome = await waitForDocumentProcessing(PROCESSING_STATUS_URL, {
+                onWaiting: (status) => setLoadingScreenMessage(processingWaitMessage(status)),
+            });
+        }
+        if (outcome.status !== 'failed') continue;   // ready: fetch the state again, now with its paragraphs
+
+        const choice = await askAboutFailedProcessing(outcome);
+        if (choice === 'open') return failed ? data : fetchAnnotationBoxesPayload();
+        setLoadingScreenMessage('Starting again…');
+        const restarted = await retryDocumentProcessing(PROCESSING_RETRY_URL, { csrf: CSRF });
+        if (restarted.status === 'failed') {
+            const again = await askAboutFailedProcessing(restarted);
+            if (again === 'open') return failed ? data : fetchAnnotationBoxesPayload();
+        }
+    }
 }
 
 function preloadInitialAnnotationBoxes() {
@@ -19845,7 +20172,18 @@ async function loadAnnotationBoxesOnce(loadGeneration, payloadPromise) {
             pendingAnnotationStateOverride = null;
             replacePersistedAnnotations(Array.from(merged.values()));
         } else {
-            replacePersistedAnnotations(serverAnnotations);
+            const draft = await recoverUnsavedDraft(data);
+            if (!isCurrentViewerLoad(loadGeneration)) return false;
+            if (draft) {
+                replacePersistedAnnotations(draft.annotations);
+                if (Array.isArray(draft.acroFormEntries) && draft.acroFormEntries.length) {
+                    data.acro_form_entries = draft.acroFormEntries;
+                }
+                // Restored, but still only here: mark it unsaved and save once loading is done.
+                restoredDraftNeedsSave = true;
+            } else {
+                replacePersistedAnnotations(serverAnnotations);
+            }
         }
         // Capture echoed AcroForm entries so a) we can re-populate the
         // pdf.js form fields with previously-saved values, and b) the
@@ -19879,6 +20217,11 @@ async function loadAnnotationBoxesOnce(loadGeneration, payloadPromise) {
         if (hydratingPersistedAnnotationsGeneration === loadGeneration) {
             hydratingPersistedAnnotations = false;
             hydratingPersistedAnnotationsGeneration = 0;
+        }
+        if (restoredDraftNeedsSave && isCurrentViewerLoad(loadGeneration)) {
+            restoredDraftNeedsSave = false;
+            unsavedChanges.markChanged();
+            saveAfterHydration = true;
         }
     }
 }
@@ -28346,6 +28689,12 @@ async function requestEditedPdfBlob({ onProgress = null } = {}) {
         && hydratingPersistedAnnotationsGeneration === viewerLoadGeneration) {
         throw new Error('The saved document state is still loading.');
     }
+    if (editorStateVersion.isStale) {
+        // The export also stores this tab's state; from a stale tab that
+        // would overwrite the newer one just like a save.
+        enterStaleEditorState();
+        throw new Error('This tab is out of date. Reload it, then download again.');
+    }
     const payload = await buildPdfjsDownloadPayload();
     // The export runs on a queue worker: this submits it, polls the status URL
     // and fetches the finished PDF. See queued-pdf-export.js.
@@ -28413,6 +28762,45 @@ for (const button of [downloadBtn, downloadPdfButton].filter(Boolean)) {
     });
 }
 
+/**
+ * The save request for the editor's current state. Synchronous on purpose: the
+ * autosave, the exit flush and the local draft all build it, and the exit
+ * flush cannot wait for anything.
+ */
+function buildSaveRequest({ isAutosave, acroPayload }) {
+    const preserveEmptyUserCreated = isAutosave;
+    syncSelectedBoxToPersistedAnnotations({
+        preserveEmptyUserCreated,
+        preserveEditMode: isAutosave,
+    });
+    syncDirtyBoxesToPersistedAnnotations({
+        preserveEmptyUserCreated,
+        preserveEditMode: isAutosave,
+    });
+    syncRenderedPersistedOverlayBoxesToPersistedAnnotations();
+    const annotationsPayload = Array.from(persistedAnnotationsById.values())
+        .filter((annotation) => !isRedundantPdfjsSourceOverlay(annotation))
+        .filter((annotation) => !isSuppressedStalePdfjsOverlay(annotation))
+        .map((annotation) => stripTransientAnnotationFields(annotation))
+        .filter((annotation) => shouldIncludeInPdfjsSessionPayload(annotation))
+        .filter(Boolean);
+    // One list (the server stores "annotations" as the session state when no
+    // separate session list is sent), images by reference once the server has
+    // them, and the version this tab loaded so another tab's newer state is
+    // never overwritten.
+    const body = JSON.stringify({
+        annotations: annotationsPayload.map((annotation) => slimAnnotationForSave(annotation, storedImageAssets)),
+        ...(editorStateVersion.baseVersion !== null ? { base_version: editorStateVersion.baseVersion } : {}),
+        acro_form_entries: acroPayload,
+        deleted_annotation_ids: Array.from(new Set([
+            ...Array.from(pendingDeletedAnnotationIds),
+            ...Array.from(suppressedStalePdfjsOverlayIds),
+        ])),
+        session_id: getSessionId(),
+    });
+    return { annotationsPayload, body };
+}
+
 async function saveAnnotationStateToDb(options = {}) {
     if (!SAVE_URL) {
         showError('Save endpoint not configured');
@@ -28425,6 +28813,10 @@ async function saveAnnotationStateToDb(options = {}) {
             setSaveStatus('Loading…');
             setStatus('Saved edits are still loading. Please try again in a moment.');
         }
+        return false;
+    }
+    if (editorStateVersion.isStale) {
+        enterStaleEditorState();
         return false;
     }
     if (saveInFlight) {
@@ -28440,26 +28832,11 @@ async function saveAnnotationStateToDb(options = {}) {
         autoSaveTimer = 0;
     }
     saveInFlight = true;
+    const isAutosave = options.source === 'autosave';
+    const dirtyToken = unsavedChanges.beginSave();
+    let failure = null;
 
     try {
-        const isAutosave = options.source === 'autosave';
-        const preserveEmptyUserCreated = isAutosave;
-        syncSelectedBoxToPersistedAnnotations({
-            preserveEmptyUserCreated,
-            preserveEditMode: isAutosave,
-        });
-        syncDirtyBoxesToPersistedAnnotations({
-            preserveEmptyUserCreated,
-            preserveEditMode: isAutosave,
-        });
-        syncRenderedPersistedOverlayBoxesToPersistedAnnotations();
-        const sessionId = getSessionId();
-        const annotationsPayload = Array.from(persistedAnnotationsById.values())
-            .filter((annotation) => !isRedundantPdfjsSourceOverlay(annotation))
-            .filter((annotation) => !isSuppressedStalePdfjsOverlay(annotation))
-            .map((annotation) => stripTransientAnnotationFields(annotation))
-            .filter((annotation) => shouldIncludeInPdfjsSessionPayload(annotation))
-            .filter(Boolean);
         // Snapshot AcroForm field state from pdf.js's annotationStorage so
         // anything the user typed/checked since load is included in this
         // save. Falls back to the entries echoed by documentInfo when the
@@ -28468,33 +28845,38 @@ async function saveAnnotationStateToDb(options = {}) {
             console.warn('Failed to collect AcroForm entries for save', err);
             return Array.isArray(acroFormEntries) ? acroFormEntries : [];
         });
+        const { annotationsPayload, body } = buildSaveRequest({ isAutosave, acroPayload });
+        // Kept locally until the server has it: a crash, a closed laptop or a
+        // dead network between here and the response loses nothing.
+        if (unsavedChanges.isDirty) writeEditorDraft(annotationsPayload, acroPayload);
 
         setSaveStatus('Saving…');
         setStatus('Saving annotation state…');
         if (saveButton) saveButton.disabled = true;
-        const response = await fetch(SAVE_URL, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: {
-                'Content-Type': 'application/json',
-                Accept: 'application/json',
-                'X-CSRF-TOKEN': CSRF,
-            },
-            body: JSON.stringify({
-                annotations: annotationsPayload,
-                session_annotations: annotationsPayload,
-                acro_form_entries: acroPayload,
-                deleted_annotation_ids: Array.from(new Set([
-                    ...Array.from(pendingDeletedAnnotationIds),
-                    ...Array.from(suppressedStalePdfjsOverlayIds),
-                ])),
-                session_id: sessionId,
-            }),
-        });
+        let response;
+        try {
+            response = await fetch(SAVE_URL, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                    'X-CSRF-TOKEN': CSRF,
+                },
+                body,
+            });
+        } catch (networkError) {
+            failure = { kind: 'network', message: 'Could not reach the server.' };
+            throw networkError;
+        }
         const result = await response.json().catch(() => ({}));
         if (!response.ok || !result?.success) {
-            throw new Error(result?.message || `Save failed (${response.status})`);
+            failure = classifySaveFailure(response.status, result, response.headers.get('Retry-After') || '');
+            throw new Error(failure.message);
         }
+        editorStateVersion.noteSaved(result.state_version);
+        rememberStoredAssets(storedImageAssets, annotationsPayload, result.assets);
+        editorTabChannel.announceSave(result.state_version);
         if (result.session_id && String(result.session_id).trim()) {
             safeLocalStorageSet(`edit_new_session_${DOC_ID}`, String(result.session_id).trim());
         }
@@ -28507,11 +28889,43 @@ async function saveAnnotationStateToDb(options = {}) {
         setStatus(savedChangeCount ? 'Document state saved.' : 'No changes to save.');
         flashSaveToast(savedChangeCount ? 'Saved' : 'No changes to save');
         pendingDeletedAnnotationIds.clear();
+
+        unsavedChanges.completeSave(dirtyToken);
+        saveFailureAttempts = 0;
+        autosaveHalted = false;
+        waitingForOnline = false;
+        waitingForSignIn = false;
+        clearUnsavedBanner();
+        if (!unsavedChanges.isDirty) editorDrafts.remove(DOC_ID);
+        return true;
     } catch (err) {
+        if (failure?.kind === 'stale') {
+            enterStaleEditorState(failure.message);
+            return false;
+        }
+        if (failure?.kind === 'throttled') {
+            // Not an error: the same state goes out again once the limit allows.
+            setSaveStatus('Saving paused…');
+            setStatus(failure.message);
+            retryAutoSaveAfterMs = failure.retryAfterMs;
+            return false;
+        }
+
         console.error(err);
-        setSaveStatus('Save failed', true);
-        setStatus('Save failed.', true);
-        showError(err.message || 'Save failed.');
+        const plan = planAfterSaveFailure(failure?.kind || 'error', {
+            attempt: saveFailureAttempts,
+            online: navigator.onLine !== false,
+            message: failure?.message || '',
+        });
+        saveFailureAttempts += 1;
+        if (plan.action === 'retry') retryAutoSaveAfterMs = plan.delayMs;
+        waitingForOnline = plan.action === 'wait_online';
+        waitingForSignIn = plan.action === 'session';
+        autosaveHalted = plan.action === 'halt';
+        setSaveStatus('Not saved', true);
+        setStatus(plan.message, true);
+        showUnsavedBanner(plan);
+        if (isAutosave) return false;
         throw err;
     } finally {
         if (saveButton) {
@@ -28519,11 +28933,16 @@ async function saveAnnotationStateToDb(options = {}) {
                 && hydratingPersistedAnnotationsGeneration === viewerLoadGeneration;
         }
         saveInFlight = false;
-        if (saveAgainAfterCurrent && !suppressAutoSaveForNavigation) {
+        if (retryAutoSaveAfterMs > 0 && !suppressAutoSaveForNavigation) {
+            const delayMs = retryAutoSaveAfterMs;
+            retryAutoSaveAfterMs = 0;
+            saveAgainAfterCurrent = false;
+            scheduleAutoSave(delayMs);
+        } else if (saveAgainAfterCurrent && !suppressAutoSaveForNavigation) {
             saveAgainAfterCurrent = false;
             setSaveStatus('Autosaving…');
             setStatus('Saving latest changes…');
-            scheduleAutoSave();
+            scheduleAutoSave(AUTO_SAVE_DELAY_MS);
         } else if (suppressAutoSaveForNavigation) {
             saveAgainAfterCurrent = false;
         }
