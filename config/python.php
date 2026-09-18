@@ -25,6 +25,8 @@ return [
         'extract_pdf_pymupdf' => (int) env('PYTHON_TIMEOUT_EXTRACT', 120),
         'render_page_preview' => 30,
         'create_blank_pdf' => 30,
+        // The upload check: answers in well under a second for a sane PDF.
+        'probe_pdf' => (int) env('PYTHON_TIMEOUT_PROBE', 10),
         'merge_pdf_documents' => (int) env('PDF_MERGE_TIMEOUT_SECONDS', 120),
         'convert_pdf_to_word' => 300,
         'convert_pdf_to_excel' => 300,

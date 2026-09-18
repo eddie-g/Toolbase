@@ -41,6 +41,31 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Uploads
+    |--------------------------------------------------------------------------
+    |
+    | How many documents an account or a guest may create (App\Services\
+    | UploadQuota), and what a PDF must look like to be accepted at all
+    | (App\Services\PdfUploadProbe), checked before anything is stored or
+    | queued. The HTTP rate limits in config/editor_limits.php count attempts;
+    | these count documents.
+    |
+    */
+    'uploads' => [
+        'max_kb' => (int) env('PDF_UPLOAD_MAX_KB', 20480),
+        'max_pages' => (int) env('PDF_UPLOAD_MAX_PAGES', 500),
+        // Accounts without the PDF editor plan, per calendar month.
+        'monthly_limit' => (int) env('PDF_UPLOAD_MONTHLY_LIMIT', 100),
+        // Without an account: per session and address, and per address alone
+        // (several people behind one address; scripts that drop cookies).
+        // Local development is effectively unlimited: the QA suites upload a
+        // fixture per case as a guest.
+        'guest_daily_limit' => (int) env('PDF_UPLOAD_GUEST_DAILY_LIMIT', env('APP_ENV', 'production') === 'local' ? 5000 : 5),
+        'guest_daily_limit_per_ip' => (int) env('PDF_UPLOAD_GUEST_DAILY_LIMIT_PER_IP', env('APP_ENV', 'production') === 'local' ? 20000 : 20),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Upload processing (text extraction)
     |--------------------------------------------------------------------------
     |

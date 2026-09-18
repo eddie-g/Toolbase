@@ -11,6 +11,9 @@ use App\Models\CreditTransaction;
 use App\Models\Document;
 use App\Services\DocumentAccess;
 use App\Services\DocumentProcessing;
+use App\Services\PdfUploadProbe;
+use App\Services\UploadQuota;
+use App\Support\BlankPdf;
 use App\Services\PythonRunner;
 use App\Models\DocumentConversion;
 use App\Models\DocumentConversionSetting;
@@ -48,7 +51,6 @@ use Illuminate\Validation\Rule;
 
 class DocumentController extends Controller
 {
-    private const MONTHLY_UPLOAD_LIMIT = 100;
     private const MONTHLY_ACTION_LIMIT = 1000;
     private const PDF_ACRO_FORM_BASE_SESSION = '__document_acro_form__';
     private const SESSION_DOCUMENT_ACCESS_KEY = DocumentAccess::SESSION_KEY;
@@ -5464,15 +5466,11 @@ class DocumentController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'document' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'document' => ['required', 'file', 'mimes:pdf', 'max:' . max(1, (int) config('pdf_editor.uploads.max_kb', 20480))],
             'document_mode' => ['nullable', 'string', 'in:editor,regression'],
             'rename_to' => ['nullable', 'string', 'max:240'],
             'allow_duplicate_name' => ['nullable', 'boolean'],
         ]);
-
-        if ($response = $this->consumeMonthlyUploadQuota($request)) {
-            return $response;
-        }
 
         $file = $validated['document'];
 
@@ -5514,12 +5512,28 @@ class DocumentController extends Controller
             }
         }
 
+        // Is it a PDF the editor can work with? Asked before the file is
+        // stored and before any quota is spent: a damaged file, one that needs
+        // a password or one with thousands of pages is refused here, with a
+        // reason, instead of failing in the extraction queue minutes later.
+        if ($refusal = app(PdfUploadProbe::class)->check($file->getRealPath())) {
+            return $this->uploadRefusedResponse($request, $refusal, 422);
+        }
+
+        // Counted last, and only for an upload that is going ahead: the
+        // duplicate-name prompt and a refused file used to cost an upload each.
+        $quota = app(UploadQuota::class);
+        if ($refusal = $quota->consume($request)) {
+            return $this->uploadRefusedResponse($request, $refusal, 429);
+        }
+
         Storage::makeDirectory('documents');
         $storedPath = $file->storeAs(
             'documents',
             Str::uuid()->toString() . '.pdf'
         );
         if (!$storedPath || !Storage::exists($storedPath)) {
+            $quota->refund();
             Log::error('Failed to persist uploaded PDF before document creation', [
                 'original_name' => $file->getClientOriginalName(),
                 'mime_type' => $file->getClientMimeType(),
@@ -5590,24 +5604,12 @@ class DocumentController extends Controller
 
         Storage::makeDirectory('documents');
 
-        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
-
-        $output = [];
-        $exitCode = 0;
-        $this->python()->exec(sprintf(
-            '%s %s %s %s %s 2>&1',
-            escapeshellarg($pythonBinary),
-            escapeshellarg(base_path('python/pdf-editor/create_blank_pdf.py')),
-            escapeshellarg($storedFull),
-            escapeshellarg((string) (float) $width),
-            escapeshellarg((string) (float) $height)
-        ), $output, $exitCode);
-
-        if ($exitCode !== 0 || !file_exists($storedFull)) {
-            Log::error('Blank PDF creation failed', [
-                'output' => implode("\n", $output),
-                'exit_code' => $exitCode,
-            ]);
+        // Written directly (App\Support\BlankPdf): this used to fork Python
+        // inside the request, twice, for an empty page and its preview. The
+        // preview is made when the documents page first needs it.
+        if (!Storage::put($storedRelative, BlankPdf::make((float) $width, (float) $height)) || !file_exists($storedFull)) {
+            app(UploadQuota::class)->refund();
+            Log::error('Blank PDF creation failed', ['path' => $storedRelative]);
             return redirect()
                 ->route('documents.index')
                 ->withErrors('Failed to create blank PDF. Please try again.');
@@ -5622,7 +5624,6 @@ class DocumentController extends Controller
             'size_bytes' => filesize($storedFull),
         ]);
 
-        $this->refreshDocumentPreviewSnapshot($document);
         $this->rememberSessionAccessibleDocument($request, $document);
 
         return redirect()
@@ -5637,6 +5638,10 @@ class DocumentController extends Controller
         $validated = $request->validate([
             'template' => ['required', 'string', 'in:clean_modern,bold_red,classic_blue'],
         ]);
+
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
+        }
 
         $templateNames = [
             'clean_modern' => 'Invoice - Clean Modern.pdf',
@@ -5773,6 +5778,10 @@ class DocumentController extends Controller
             'style'            => ['nullable', 'string', 'in:default,bold_red'],
         ]);
 
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
+        }
+
         $style = $validated['style'] ?? 'default';
         $template = GuidedTemplate::where('type', 'invoice')
             ->where('slug', $style)
@@ -5893,6 +5902,10 @@ class DocumentController extends Controller
             return redirect()
                 ->route('documents.guided', ['document' => $existing, 'template_type' => $templateType, 'template_slug' => $templateSlug])
                 ->with('status', 'You already have this guided template. Editing existing one.');
+        }
+
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
         }
 
         $uuid = Str::uuid()->toString();
@@ -15084,24 +15097,31 @@ class DocumentController extends Controller
         ])->deleteFileAfterSend(true);
     }
 
+    /**
+     * The document allowance for every way of creating one (upload, blank,
+     * templates, forms): App\Services\UploadQuota. Returns the refusal
+     * response, or null when the document may be created.
+     */
     private function consumeMonthlyUploadQuota(Request $request)
     {
-        $user = $this->resolveQuotaUser();
-        if (!$user) {
-            return null;
+        $refusal = app(UploadQuota::class)->consume($request);
+
+        return $refusal ? $this->uploadRefusedResponse($request, $refusal, 429) : null;
+    }
+
+    /** JSON for the XHR upload and the editor, the page's error banner for a plain form post. */
+    private function uploadRefusedResponse(Request $request, array $refusal, int $status)
+    {
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => false,
+                'code' => $refusal['code'],
+                'message' => $refusal['message'],
+                'errors' => ['document' => [$refusal['message']]],
+            ], $status);
         }
 
-        $usage = $this->resolveMonthlyUsage($user);
-        if ($usage->uploads_count >= self::MONTHLY_UPLOAD_LIMIT) {
-            return redirect()
-                ->back()
-                ->withErrors("Monthly PDF upload limit reached (".self::MONTHLY_UPLOAD_LIMIT.").");
-        }
-
-        $usage->uploads_count = (int) $usage->uploads_count + 1;
-        $usage->save();
-
-        return null;
+        return redirect()->back()->withErrors(['document' => $refusal['message']]);
     }
 
     private function consumeMonthlyActionQuota(Request $request)

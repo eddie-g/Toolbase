@@ -22,6 +22,9 @@ class AppServiceProvider extends ServiceProvider
         // One instance per request: the guest-document claim runs once.
         $this->app->scoped(\App\Services\DocumentAccess::class);
 
+        // One per request: refund() undoes what consume() took earlier in the same request.
+        $this->app->scoped(\App\Services\UploadQuota::class);
+
         // One runner per process: the interpreter lookup is memoised on it.
         $this->app->singleton(\App\Services\PythonRunner::class);
     }
