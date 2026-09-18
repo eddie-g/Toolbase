@@ -45,6 +45,7 @@ class PdfPasswordProtectionTest extends TestCase
             $table->string('pdf_password_hash')->nullable();
             $table->string('pdf_password_algorithm', 16)->nullable();
             $table->timestamp('pdf_password_set_at')->nullable();
+            $table->timestamp('deleted_at')->nullable(); // Document uses SoftDeletes (trash)
             $table->timestamps();
         });
     }
