@@ -140,6 +140,13 @@ import {
     requestQueuedPdfExport,
 } from './queued-pdf-export.js';
 import {
+    classifySaveFailure,
+    createStateVersionTracker,
+    createTabChannel,
+    rememberStoredAssets,
+    slimAnnotationForSave,
+} from './autosave-guard.js';
+import {
     buildConvertedDownloadUrl,
     estimateConvertedFileBytes,
     readQueuedConversionResponse,
@@ -997,6 +1004,7 @@ let saveToastTimer = null;
 let autoSaveTimer = 0;
 let saveInFlight = false;
 let saveAgainAfterCurrent = false;
+let retryAutoSaveAfterMs = 0;
 let saveAfterHydration = false;
 let acroFormSaveTimer = 0;
 let acroFormSaveInFlight = false;
@@ -1200,15 +1208,59 @@ function setSaveStatus(text, isError = false) {
 
 installDocumentRename();
 
-function scheduleAutoSave() {
+// Autosave guard (autosave-guard.js): the state version this tab loaded, the
+// image references the server has already stored, and the channel on which
+// tabs of this document announce their saves.
+const editorStateVersion = createStateVersionTracker();
+const storedImageAssets = new Map();
+const editorTabChannel = createTabChannel(editNewRoot?.dataset?.docId, {
+    onRemoteSave: (version) => {
+        if (editorStateVersion.noteRemoteSave(version)) {
+            enterStaleEditorState('This document was just saved from another tab or window.');
+        }
+    },
+});
+window.addEventListener('pagehide', () => editorTabChannel.close());
+
+/**
+ * Another tab has saved a newer state. Saving from here would overwrite it, so
+ * this tab stops saving and exporting until it is reloaded.
+ */
+function enterStaleEditorState(reason) {
+    editorStateVersion.markStale();
+    if (autoSaveTimer) {
+        window.clearTimeout(autoSaveTimer);
+        autoSaveTimer = 0;
+    }
+    saveAgainAfterCurrent = false;
+    setSaveStatus('Not saving', true);
+    setStatus('This tab is out of date. Reload to keep editing.', true);
+    if (document.querySelector('.enpv-stale-banner')) return;
+    const banner = document.createElement('div');
+    banner.className = 'enpv-stale-banner';
+    banner.setAttribute('role', 'alert');
+    const text = document.createElement('span');
+    text.textContent = `${reason || 'This document was changed in another tab or window.'} Changes made in this tab since then are not being saved. Reload to continue from the latest version.`;
+    const reload = document.createElement('button');
+    reload.type = 'button';
+    reload.textContent = 'Reload';
+    reload.addEventListener('click', () => {
+        suppressAutoSaveForNavigation = true;
+        window.location.reload();
+    });
+    banner.append(text, reload);
+    document.body.appendChild(banner);
+}
+
+function scheduleAutoSave(delayMs = AUTO_SAVE_DELAY_MS) {
     if (suppressAutoSaveForNavigation || structuralMutationInFlight) return;
-    if (!SAVE_URL) return;
+    if (!SAVE_URL || editorStateVersion.isStale) return;
     if (autoSaveTimer) window.clearTimeout(autoSaveTimer);
     autoSaveTimer = window.setTimeout(() => {
         autoSaveTimer = 0;
         if (suppressAutoSaveForNavigation) return;
         saveAnnotationStateToDb({ source: 'autosave' }).catch(() => {});
-    }, AUTO_SAVE_DELAY_MS);
+    }, Math.max(0, Number(delayMs) || AUTO_SAVE_DELAY_MS));
 }
 
 function cancelPendingAutoSaveForNavigation() {
@@ -19775,6 +19827,9 @@ async function fetchAnnotationBoxesPayload(options = {}) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (!data?.success) throw new Error(data?.message || 'Failed to load annotation boxes.');
+    if (editorStateVersion.noteLoaded(data.state_version)) {
+        enterStaleEditorState('This document was saved from another tab or window while this one was loading.');
+    }
     return data;
 }
 
@@ -28346,6 +28401,12 @@ async function requestEditedPdfBlob({ onProgress = null } = {}) {
         && hydratingPersistedAnnotationsGeneration === viewerLoadGeneration) {
         throw new Error('The saved document state is still loading.');
     }
+    if (editorStateVersion.isStale) {
+        // The export also stores this tab's state; from a stale tab that
+        // would overwrite the newer one just like a save.
+        enterStaleEditorState();
+        throw new Error('This tab is out of date. Reload it, then download again.');
+    }
     const payload = await buildPdfjsDownloadPayload();
     // The export runs on a queue worker: this submits it, polls the status URL
     // and fetches the finished PDF. See queued-pdf-export.js.
@@ -28427,6 +28488,10 @@ async function saveAnnotationStateToDb(options = {}) {
         }
         return false;
     }
+    if (editorStateVersion.isStale) {
+        enterStaleEditorState();
+        return false;
+    }
     if (saveInFlight) {
         saveAgainAfterCurrent = true;
         if (options.source !== 'autosave') {
@@ -28480,9 +28545,13 @@ async function saveAnnotationStateToDb(options = {}) {
                 Accept: 'application/json',
                 'X-CSRF-TOKEN': CSRF,
             },
+            // One list (the server stores "annotations" as the session state
+            // when no separate session list is sent), images by reference once
+            // the server has them, and the version this tab loaded so another
+            // tab's newer state is never overwritten.
             body: JSON.stringify({
-                annotations: annotationsPayload,
-                session_annotations: annotationsPayload,
+                annotations: annotationsPayload.map((annotation) => slimAnnotationForSave(annotation, storedImageAssets)),
+                ...(editorStateVersion.baseVersion !== null ? { base_version: editorStateVersion.baseVersion } : {}),
                 acro_form_entries: acroPayload,
                 deleted_annotation_ids: Array.from(new Set([
                     ...Array.from(pendingDeletedAnnotationIds),
@@ -28493,8 +28562,23 @@ async function saveAnnotationStateToDb(options = {}) {
         });
         const result = await response.json().catch(() => ({}));
         if (!response.ok || !result?.success) {
-            throw new Error(result?.message || `Save failed (${response.status})`);
+            const failure = classifySaveFailure(response.status, result, response.headers.get('Retry-After') || '');
+            if (failure.kind === 'stale') {
+                enterStaleEditorState(failure.message);
+                return false;
+            }
+            if (failure.kind === 'throttled') {
+                // Not an error: the same state goes out again once the limit allows.
+                setSaveStatus('Saving paused…');
+                setStatus(failure.message);
+                retryAutoSaveAfterMs = failure.retryAfterMs;
+                return false;
+            }
+            throw new Error(failure.message);
         }
+        editorStateVersion.noteSaved(result.state_version);
+        rememberStoredAssets(storedImageAssets, annotationsPayload, result.assets);
+        editorTabChannel.announceSave(result.state_version);
         if (result.session_id && String(result.session_id).trim()) {
             safeLocalStorageSet(`edit_new_session_${DOC_ID}`, String(result.session_id).trim());
         }
@@ -28519,7 +28603,12 @@ async function saveAnnotationStateToDb(options = {}) {
                 && hydratingPersistedAnnotationsGeneration === viewerLoadGeneration;
         }
         saveInFlight = false;
-        if (saveAgainAfterCurrent && !suppressAutoSaveForNavigation) {
+        if (retryAutoSaveAfterMs > 0 && !suppressAutoSaveForNavigation) {
+            const delayMs = retryAutoSaveAfterMs;
+            retryAutoSaveAfterMs = 0;
+            saveAgainAfterCurrent = false;
+            scheduleAutoSave(delayMs);
+        } else if (saveAgainAfterCurrent && !suppressAutoSaveForNavigation) {
             saveAgainAfterCurrent = false;
             setSaveStatus('Autosaving…');
             setStatus('Saving latest changes…');

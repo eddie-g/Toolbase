@@ -4454,6 +4454,11 @@ PYTHON;
             ],
             'annotations'    => $annotations,
             'count'          => $annotations->count(),
+            // The autosave sends this back as base_version. It was read when
+            // the route bound the document, before the annotations above, so
+            // it can only be older than them: a save in between costs this
+            // editor a reload, never a silent overwrite.
+            'state_version'  => (int) $document->editor_state_version,
             'extraction_pending' => $extractionPending,
             'acro_form_entries' => $acroFormEntries,
             'has_acro_form_widgets' => $hasAcroFormWidgets,

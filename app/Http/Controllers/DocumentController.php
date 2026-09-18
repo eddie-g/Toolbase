@@ -1496,7 +1496,12 @@ class DocumentController extends Controller
             $normalizedAnnotations
         )));
 
-        DB::transaction(function () use ($document, $sessionId, $normalizedAnnotations, $annotationIds, $state, $ownership) {
+        // An autosave carries the whole state but usually changes one
+        // annotation. Rows whose content and ownership already match are left
+        // alone; the changed ones go in one upsert and the new ones in one
+        // insert, so a 500-annotation save is a handful of statements rather
+        // than one UPDATE per annotation.
+        DB::transaction(function () use ($document, $sessionId, $normalizedAnnotations, $state, $ownership) {
             $existingRowsQuery = PdfState::query()
                 ->where('document_id', $document->id)
                 ->where('state', '!=', 'deleted')
@@ -1506,6 +1511,11 @@ class DocumentController extends Controller
                 ->get()
                 ->keyBy(fn (PdfState $record) => $this->durablePdfStateIdentityKeyFromRecord($record));
 
+            $now = now();
+            $hasOwner = $ownership['user_id'] !== null || $ownership['admin_id'] !== null;
+            $newRowOwnership = $this->pdfStateOwnershipPayload($document, $sessionId);
+            $changedRows = [];
+            $newRows = [];
             $seenIds = [];
             foreach ($normalizedAnnotations as $annotation) {
                 $annotationId = $this->durablePdfStateIdentityKeyFromAnnotation($annotation);
@@ -1516,32 +1526,58 @@ class DocumentController extends Controller
                 $pageIndex = isset($annotation['pageIndex']) && is_numeric($annotation['pageIndex'])
                     ? (int) $annotation['pageIndex']
                     : null;
+                $encoded = json_encode($annotation, JSON_INVALID_UTF8_SUBSTITUTE);
 
                 /** @var PdfState|null $existing */
                 $existing = $existingRows->get($annotationId);
                 if ($existing) {
-                    $existing->update([
-                        'annotation_data' => $annotation,
-                        'page_number' => $pageIndex,
-                        'session_id' => $sessionId,
-                        'user_id' => $ownership['user_id'],
-                        'admin_id' => $ownership['admin_id'],
-                        'user_email' => ($ownership['user_id'] !== null || $ownership['admin_id'] !== null)
-                            ? null
-                            : $existing->user_email,
-                        'state' => $state,
-                    ]);
+                    $userEmail = $hasOwner ? null : $existing->user_email;
+                    $unchanged = $existing->state === $state
+                        && $existing->session_id === $sessionId
+                        && $existing->page_number === $pageIndex
+                        && $existing->user_id === $ownership['user_id']
+                        && $existing->admin_id === $ownership['admin_id']
+                        && $existing->user_email === $userEmail
+                        && $this->sameAnnotationContent($existing->annotation_data, $annotation);
+                    if (!$unchanged) {
+                        $changedRows[] = [
+                            'id' => $existing->id,
+                            'document_id' => $document->id,
+                            'page_number' => $pageIndex,
+                            'annotation_data' => $encoded,
+                            'session_id' => $sessionId,
+                            'user_id' => $ownership['user_id'],
+                            'admin_id' => $ownership['admin_id'],
+                            'user_email' => $userEmail,
+                            'state' => $state,
+                        ];
+                    }
                 } else {
-                    PdfState::create([
+                    // Two payload entries with one identity: the later one wins.
+                    $newRows[$annotationId] = [
                         'document_id' => $document->id,
                         'page_number' => $pageIndex,
-                        'annotation_data' => $annotation,
+                        'annotation_data' => $encoded,
                         'state' => $state,
-                        ...$this->pdfStateOwnershipPayload($document, $sessionId),
-                    ]);
+                        ...$newRowOwnership,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
                 }
 
                 $seenIds[$annotationId] = true;
+            }
+
+            // Keyed on the primary key, so this only ever updates.
+            foreach (array_chunk($changedRows, 200) as $chunk) {
+                PdfState::query()->upsert(
+                    $chunk,
+                    ['id'],
+                    ['page_number', 'annotation_data', 'session_id', 'user_id', 'admin_id', 'user_email', 'state']
+                );
+            }
+            foreach (array_chunk(array_values($newRows), 200) as $chunk) {
+                PdfState::query()->insert($chunk);
             }
 
             $staleIds = [];
@@ -1565,6 +1601,34 @@ class DocumentController extends Controller
         });
 
         return count($annotationIds);
+    }
+
+    /**
+     * Whether a stored annotation and an incoming one carry the same content.
+     * MySQL's JSON type reorders object keys, so the comparison is on a
+     * key-sorted form. A false "different" only costs one redundant write.
+     */
+    private function sameAnnotationContent(mixed $stored, array $incoming): bool
+    {
+        if (!is_array($stored)) {
+            return false;
+        }
+
+        $canonical = static function (array $value) use (&$canonical): array {
+            if (!array_is_list($value)) {
+                ksort($value);
+            }
+            foreach ($value as $key => $item) {
+                if (is_array($item)) {
+                    $value[$key] = $canonical($item);
+                }
+            }
+
+            return $value;
+        };
+
+        return json_encode($canonical($stored), JSON_INVALID_UTF8_SUBSTITUTE)
+            === json_encode($canonical($incoming), JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
     private function normalizeAcroFormEntriesForPersistence(array $entries): array
@@ -12221,38 +12285,64 @@ class DocumentController extends Controller
      * Upsert all current annotations to PdfState DB without stamping the PDF.
      * Called by the "Save" button — shapes stay editable in the editor.
      */
+    /**
+     * The editor's autosave: the whole annotation state of one editing
+     * session, a couple of seconds after every change. Bounded (body size,
+     * annotation count, text length), guarded against a second tab
+     * (base_version), and written as a diff (upsertPdfStateSessionSnapshot).
+     */
     public function saveAnnotationState(Request $request, Document $document)
     {
+        $limits = (array) config('pdf_editor.autosave', []);
+        $maxBodyBytes = max(1, (int) ($limits['max_body_kb'] ?? 20480)) * 1024;
+        $bodyBytes = max((int) $request->header('Content-Length', 0), strlen((string) $request->getContent()));
+        if ($bodyBytes > $maxBodyBytes) {
+            return response()->json([
+                'success' => false,
+                'code' => 'payload_too_large',
+                'message' => sprintf(
+                    'This document has too much edited content to save at once (%s MB, the limit is %s MB). Remove very large images and try again.',
+                    number_format($bodyBytes / 1048576, 1),
+                    number_format($maxBodyBytes / 1048576, 0)
+                ),
+            ], 413);
+        }
+
+        $maxAnnotations = max(1, (int) ($limits['max_annotations'] ?? 3000));
         $validated = $request->validate([
-            'annotations' => 'nullable|array',
-            'annotations.*.type' => 'required_with:annotations|string',
-            'annotations.*.pageIndex' => 'required_with:annotations',
-            'session_annotations' => 'nullable|array',
-            'session_annotations.*.type' => 'required_with:session_annotations|string',
-            'session_annotations.*.pageIndex' => 'required_with:session_annotations',
-            'acro_form_entries' => 'nullable|array',
-            'deleted_annotation_ids' => 'nullable|array',
+            'annotations' => "nullable|array|max:{$maxAnnotations}",
+            'session_annotations' => "nullable|array|max:{$maxAnnotations}",
+            'acro_form_entries' => "nullable|array|max:{$maxAnnotations}",
+            'deleted_annotation_ids' => "nullable|array|max:{$maxAnnotations}",
             'deleted_annotation_ids.*' => 'string',
-            'deleted_promoted_source_keys' => 'nullable|array',
+            'deleted_promoted_source_keys' => "nullable|array|max:{$maxAnnotations}",
             'deleted_promoted_source_keys.*' => 'string',
-            'session_id' => 'nullable|string',
+            'session_id' => 'nullable|string|max:191',
+            'base_version' => 'nullable|integer|min:0',
+        ], [
+            'annotations.max' => "A document can hold at most {$maxAnnotations} edited items. Remove some and save again.",
+            'session_annotations.max' => "A document can hold at most {$maxAnnotations} edited items. Remove some and save again.",
         ]);
 
-        $annotationsPayload = $request->input('annotations', []);
-        if (!is_array($annotationsPayload)) {
+        // The editor sends one list; older clients and the QA tools send the
+        // same list under both keys. Only the one that is stored is checked
+        // and normalised.
+        $listKey = $request->exists('session_annotations') ? 'session_annotations' : 'annotations';
+        $incomingAnnotations = $request->input($listKey, []);
+        if (!is_array($incomingAnnotations)) {
             return response()->json(['success' => false, 'message' => 'Invalid annotations payload.'], 422);
         }
+        $this->validateAnnotationList($incomingAnnotations, $listKey, max(1, (int) ($limits['max_text_length'] ?? 50000)));
 
-        $annotationsPayload = $this->normalizeAnnotationsForPersistence($document, $annotationsPayload);
-        $sessionAnnotationsPayload = $request->input('session_annotations', null);
-        if ($request->exists('session_annotations')) {
-            if (!is_array($sessionAnnotationsPayload)) {
-                return response()->json(['success' => false, 'message' => 'Invalid session annotations payload.'], 422);
+        $annotationAssets = $this->annotationAssets();
+        $inlineImageIds = [];
+        foreach ($incomingAnnotations as $annotation) {
+            if (is_array($annotation) && is_string($annotation['id'] ?? null) && $annotationAssets->hasBlobPayload($annotation)) {
+                $inlineImageIds[trim($annotation['id'])] = true;
             }
-            $sessionAnnotationsPayload = $this->normalizeAnnotationsForPersistence($document, $sessionAnnotationsPayload);
-        } else {
-            $sessionAnnotationsPayload = $annotationsPayload;
         }
+
+        $sessionAnnotationsPayload = $this->normalizeAnnotationsForPersistence($document, $incomingAnnotations);
         $acroFormEntries = $this->normalizeAcroFormEntriesForPersistence(
             is_array($validated['acro_form_entries'] ?? null) ? $validated['acro_form_entries'] : []
         );
@@ -12260,62 +12350,158 @@ class DocumentController extends Controller
         $sessionId = is_string($validated['session_id'] ?? null)
             ? trim((string) $validated['session_id'])
             : '';
+        $baseVersion = isset($validated['base_version']) ? (int) $validated['base_version'] : null;
 
-        // Apply pending deletions (annotation ids + promoted source keys) inline
-        // so the frontend only needs a single round-trip to persist a save that
-        // also removed annotations. The helper performs the same PdfState marking
-        // that the dedicated deleteAnnotations endpoint does; suppression-record
-        // bookkeeping is handled below by syncDeletedPromotedSourceKeysForSession.
-        $explicitDeletedKeys = is_array($validated['deleted_promoted_source_keys'] ?? null)
-            ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
-            : [];
-        $deletedAnnotationIds = is_array($validated['deleted_annotation_ids'] ?? null)
-            ? $validated['deleted_annotation_ids']
-            : [];
-        $combinedDeletedKeys = $explicitDeletedKeys;
-        if (!empty($deletedAnnotationIds) || !empty($explicitDeletedKeys)) {
-            $combinedDeletedKeys = $this->applyAnnotationDeletions(
+        $stateVersion = DB::transaction(function () use (
+            $document,
+            $validated,
+            $sessionId,
+            $baseVersion,
+            $sessionAnnotationsPayload,
+            $acroFormEntries
+        ) {
+            // Compare-and-swap on the document's state version: the save only
+            // goes ahead if nobody saved since this editor loaded. Clients
+            // that send no version (QA tools, replay scripts) are not checked.
+            // The query builder is used so documents.updated_at is not touched.
+            $versionRow = DB::table('documents')->where('id', $document->id);
+            if ($baseVersion !== null) {
+                $claimed = (clone $versionRow)
+                    ->where('editor_state_version', $baseVersion)
+                    ->update(['editor_state_version' => $baseVersion + 1]);
+                if ($claimed !== 1) {
+                    return null;
+                }
+            } else {
+                (clone $versionRow)->increment('editor_state_version');
+            }
+
+            // Apply pending deletions (annotation ids + promoted source keys) inline
+            // so the frontend only needs a single round-trip to persist a save that
+            // also removed annotations. The helper performs the same PdfState marking
+            // that the dedicated deleteAnnotations endpoint does; suppression-record
+            // bookkeeping is handled below by syncDeletedPromotedSourceKeysForSession.
+            $explicitDeletedKeys = is_array($validated['deleted_promoted_source_keys'] ?? null)
+                ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
+                : [];
+            $deletedAnnotationIds = is_array($validated['deleted_annotation_ids'] ?? null)
+                ? $validated['deleted_annotation_ids']
+                : [];
+            $combinedDeletedKeys = $explicitDeletedKeys;
+            if (!empty($deletedAnnotationIds) || !empty($explicitDeletedKeys)) {
+                $combinedDeletedKeys = $this->applyAnnotationDeletions(
+                    $document,
+                    $sessionId,
+                    $deletedAnnotationIds,
+                    $explicitDeletedKeys
+                );
+            }
+
+            $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
                 $document,
                 $sessionId,
-                $deletedAnnotationIds,
-                $explicitDeletedKeys
+                $combinedDeletedKeys,
+                $sessionAnnotationsPayload
             );
+            if ($sessionId !== '') {
+                $this->upsertPdfStateSessionSnapshot(
+                    $document,
+                    $sessionId,
+                    $sessionAnnotationsPayload,
+                    'saved'
+                );
+                $this->syncDeletedPromotedSourceKeysForSession(
+                    $document,
+                    $sessionId,
+                    $deletedPromotedSourceKeys
+                );
+
+                $this->upsertPdfAcroFormSessionState(
+                    $document,
+                    $sessionId,
+                    $acroFormEntries,
+                    $this->resolvePdfStateOwnership($document),
+                    'saved'
+                );
+            }
+
+            return (int) (clone $versionRow)->value('editor_state_version');
+        });
+
+        if ($stateVersion === null) {
+            return response()->json([
+                'success' => false,
+                'code' => 'stale_state',
+                'message' => 'This document was changed in another tab or window. Reload to get the latest version before editing here.',
+                'state_version' => (int) DB::table('documents')->where('id', $document->id)->value('editor_state_version'),
+            ], 409);
         }
 
-        $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
-            $document,
-            $sessionId,
-            $combinedDeletedKeys,
-            $sessionAnnotationsPayload
-        );
-
-        if ($sessionId !== '') {
-            $this->upsertPdfStateSessionSnapshot(
-                $document,
-                $sessionId,
-                $sessionAnnotationsPayload,
-                'saved'
-            );
-            $this->syncDeletedPromotedSourceKeysForSession(
-                $document,
-                $sessionId,
-                $deletedPromotedSourceKeys
-            );
-
-            $this->upsertPdfAcroFormSessionState(
-                $document,
-                $sessionId,
-                $acroFormEntries,
-                $this->resolvePdfStateOwnership($document),
-                'saved'
-            );
+        // Inline images are stored as files on the first save that carries
+        // them. Telling the editor where lets it send the reference instead
+        // of the base64 data on every later save.
+        $storedAssets = [];
+        foreach ($sessionAnnotationsPayload as $annotation) {
+            $annotationId = is_array($annotation) && is_string($annotation['id'] ?? null) ? trim($annotation['id']) : '';
+            $assetPath = is_array($annotation) && is_string($annotation['assetPath'] ?? null) ? $annotation['assetPath'] : '';
+            if ($annotationId !== '' && $assetPath !== '' && isset($inlineImageIds[$annotationId])) {
+                $storedAssets[$annotationId] = [
+                    'assetPath' => $assetPath,
+                    'src' => $annotationAssets->assetUrl($assetPath),
+                    // Stored with the reference; sent back so the editor's
+                    // next payload matches the row and rewrites nothing.
+                    'mimeType' => $annotation['mimeType'] ?? null,
+                    'fileName' => $annotation['fileName'] ?? null,
+                ];
+            }
         }
 
         return response()->json([
             'success' => true,
             'message' => 'Annotation state saved.',
             'session_id' => $sessionId !== '' ? $sessionId : null,
+            'state_version' => $stateVersion,
+            'assets' => (object) $storedAssets,
         ]);
+    }
+
+    /**
+     * The per-annotation checks of a save: a type, a page, and bounded text.
+     * A plain loop on purpose: the validator's wildcard rules took ~80 ms on a
+     * 500-annotation save, this takes a fraction of one. Errors keep the
+     * validator's shape ("annotations.3.type").
+     */
+    private function validateAnnotationList(array $annotations, string $key, int $maxTextLength): void
+    {
+        $errors = [];
+        foreach ($annotations as $index => $annotation) {
+            if (!is_array($annotation)) {
+                $errors["{$key}.{$index}"][] = 'Each annotation must be an object.';
+            } else {
+                if (!is_string($annotation['type'] ?? null) || trim($annotation['type']) === '') {
+                    $errors["{$key}.{$index}.type"][] = 'The annotation type is required.';
+                }
+                if (!isset($annotation['pageIndex']) || $annotation['pageIndex'] === '') {
+                    $errors["{$key}.{$index}.pageIndex"][] = 'The annotation page is required.';
+                }
+                foreach (['text' => 1, 'richTextHtml' => 4] as $field => $factor) {
+                    if (is_string($annotation[$field] ?? null) && mb_strlen($annotation[$field]) > $maxTextLength * $factor) {
+                        $errors["{$key}.{$index}.{$field}"][] = sprintf(
+                            'One text box on page %s is too long to save (the limit is %s characters). Split it into smaller boxes.',
+                            is_numeric($annotation['pageIndex'] ?? null) ? ((int) $annotation['pageIndex'] + 1) : '?',
+                            number_format($maxTextLength * $factor)
+                        );
+                    }
+                }
+            }
+            if (count($errors) >= 20) {
+                break;
+            }
+        }
+
+        if ($errors !== []) {
+            throw \Illuminate\Validation\ValidationException::withMessages($errors);
+        }
     }
 
     public function saveAcroFormState(Request $request, Document $document)

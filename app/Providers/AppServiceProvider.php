@@ -3,6 +3,10 @@
 namespace App\Providers;
 
 use App\Support\ProductionConfig;
+use Illuminate\Cache\RateLimiting\Limit;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
@@ -48,6 +52,23 @@ class AppServiceProvider extends ServiceProvider
             $rule = Password::min(12);
 
             return $this->app->isProduction() ? $rule->uncompromised() : $rule;
+        });
+
+        // The editor's autosave: per editor (account, or guest session) and
+        // document, with a looser per-address backstop for clients that drop
+        // their cookies. An office behind one address shares only the backstop.
+        RateLimiter::for('editor-autosave', function (Request $request) {
+            $limits = (array) config('pdf_editor.autosave', []);
+            $editor = Auth::guard('web')->id() !== null ? 'u'.Auth::guard('web')->id()
+                : (Auth::guard('admin')->id() !== null ? 'a'.Auth::guard('admin')->id()
+                : 's'.($request->hasSession() ? $request->session()->getId() : $request->ip()));
+            $document = $request->route('document');
+            $documentId = is_object($document) ? $document->getKey() : (string) $document;
+
+            return [
+                Limit::perMinute(max(1, (int) ($limits['saves_per_minute'] ?? 60)))->by("autosave|{$editor}|{$documentId}"),
+                Limit::perMinute(max(1, (int) ($limits['saves_per_minute_per_ip'] ?? 600)))->by('autosave-ip|'.$request->ip()),
+            ];
         });
 
         \Illuminate\Support\Facades\Event::listen(
