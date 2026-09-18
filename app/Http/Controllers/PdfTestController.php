@@ -739,11 +739,11 @@ class PdfTestController extends Controller
     {
         $candidates = array_filter([
             storage_path('app/overlay_regression_artifacts/' . $filename),
-            env('PDF_TEST_OUTPUT_DIR')
-                ? rtrim((string) env('PDF_TEST_OUTPUT_DIR'), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename
+            config('automated_tests.output_dir')
+                ? rtrim((string) config('automated_tests.output_dir'), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename
                 : null,
-            env('PDF_TEST_FALLBACK_OUTPUT_DIR')
-                ? rtrim((string) env('PDF_TEST_FALLBACK_OUTPUT_DIR'), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename
+            config('automated_tests.fallback_output_dir')
+                ? rtrim((string) config('automated_tests.fallback_output_dir'), DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $filename
                 : null,
             '/tmp/overlay_regression_artifacts/' . $filename,
         ]);
@@ -854,7 +854,7 @@ class PdfTestController extends Controller
     {
         $configuredUrl = rtrim((string) config('app.url', ''), '/');
         $requestUrl = rtrim($request->getSchemeAndHttpHost(), '/');
-        $appPort = (string) env('APP_PORT', '80');
+        $appPort = (string) config('automated_tests.app_port', '80');
         $localhostUrl = 'http://localhost' . ($appPort !== '80' ? ':' . $appPort : '');
         $loopbackUrl = 'http://127.0.0.1' . ($appPort !== '80' ? ':' . $appPort : '');
         $hostGatewayUrl = 'http://host.docker.internal' . ($appPort !== '80' ? ':' . $appPort : '');
