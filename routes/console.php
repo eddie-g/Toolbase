@@ -10,6 +10,14 @@ Artisan::command('inspire', function () {
 
 Schedule::command('logos:redact-base64')->dailyAt('23:55');
 
+// Expired queued exports, working files leaked by a fatal or a killed worker,
+// and temp artefacts of deleted documents. onOneServer needs a shared cache.
+Schedule::command('documents:cleanup-temp')
+    ->hourly()
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->runInBackground();
+
 // Detect a dead/zombie Horizon master every minute and auto-restart it.
 // withoutOverlapping prevents a slow recovery run from stacking on the next tick.
 Schedule::command('ops:horizon-watchdog')

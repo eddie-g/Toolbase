@@ -93,6 +93,10 @@ Route::post('/documents/overwrite-annotation-text', [DocumentController::class, 
 Route::post('/documents/{document}/save-acro-form-state', [DocumentController::class, 'saveAcroFormState'])->name('documents.saveAcroFormState');
 Route::post('/documents/{document}/save-annotation-state', [DocumentController::class, 'saveAnnotationState'])->name('documents.saveAnnotationState');
 Route::post('/documents/{document}/download-annotated-pdf', [DocumentController::class, 'downloadAnnotatedPdf'])->name('documents.downloadAnnotatedPdf');
+Route::get('/documents/{document}/exports/{export}', [DocumentController::class, 'exportStatus'])->name('documents.exports.status');
+Route::get('/documents/{document}/exports/{export}/download', [DocumentController::class, 'downloadExport'])
+    ->middleware('signed')
+    ->name('documents.exports.download');
 Route::get('/documents/{document}/saved-acro-form-state', [DocumentController::class, 'getSavedAcroFormState'])->name('documents.getSavedAcroFormState');
 Route::post('documents/{document}/process-ocr', [DocumentController::class, 'processOcr'])->name('documents.processOcr');
 Route::get('documents/{document}/extraction-data', [DocumentController::class, 'getExtractionData'])->name('documents.getExtractionData');
