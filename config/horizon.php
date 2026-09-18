@@ -107,6 +107,7 @@ return [
         'redis:default' => 60,
         'redis:document-conversion' => 120,
         'redis:pdf-export' => 20,
+        'redis:pdf-extraction' => 30,
     ],
 
     /*
@@ -266,6 +267,24 @@ return [
             'nice' => 5,
         ],
 
+        // Upload processing (ProcessUploadedDocumentJob): text extraction of a
+        // new PDF, up to five minutes. It used to share "default" with mail,
+        // where the 60 s supervisor timeout killed it despite the job asking
+        // for 300. The editor is waiting on it, so it is not niced.
+        'supervisor-pdf-extraction' => [
+            'connection' => env('PDF_EXTRACTION_QUEUE_CONNECTION', 'redis'),
+            'queue' => [env('PDF_EXTRACTION_QUEUE', 'pdf-extraction')],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 100,
+            'memory' => 512,
+            'tries' => 2,
+            'timeout' => (int) env('PDF_EXTRACTION_JOB_TIMEOUT', 300),
+            'nice' => 0,
+        ],
+
         // The editor's Download (ExportAnnotatedPdfJob): a user is waiting on
         // it, so it gets its own workers instead of queueing behind uploads.
         // Python concurrency per server is still capped by PYTHON_MAX_CONCURRENT.
@@ -306,6 +325,12 @@ return [
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 5,
             ],
+            'supervisor-pdf-extraction' => [
+                'minProcesses' => 2,
+                'maxProcesses' => 6,
+                'balanceMaxShift' => 2,
+                'balanceCooldown' => 3,
+            ],
             'supervisor-pdf-export' => [
                 'minProcesses' => 2,
                 'maxProcesses' => 6,
@@ -325,6 +350,9 @@ return [
                 'maxProcesses' => 5,
             ],
             'supervisor-document-conversions' => [
+                'maxProcesses' => 2,
+            ],
+            'supervisor-pdf-extraction' => [
                 'maxProcesses' => 2,
             ],
             'supervisor-pdf-export' => [
