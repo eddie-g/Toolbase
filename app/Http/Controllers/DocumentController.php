@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Exceptions\InsufficientCreditBalanceException;
 use App\Jobs\ConvertDocumentExportJob;
+use App\Jobs\ExportAnnotatedPdfJob;
 use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Admin;
 use App\Models\CreditTransaction;
@@ -15,6 +16,7 @@ use App\Models\DocumentConversionSetting;
 use App\Models\DocumentNote;
 use App\Models\GuidedTemplate;
 use App\Models\PdfAcroForm;
+use App\Models\PdfExport;
 use App\Models\PdfGroup;
 use App\Models\PdfState;
 use App\Services\PdfAnnotationAssetService;
@@ -35,6 +37,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
@@ -12357,13 +12360,18 @@ class DocumentController extends Controller
     }
 
     /**
-     * Stamp annotations onto a temporary copy of the PDF and serve it as a
-     * file download. Never overwrites document.path. Also saves annotation state to DB.
+     * Stamp annotations onto a temporary copy of the PDF. Never overwrites
+     * document.path. Also saves annotation state to DB.
+     *
+     * The editor asks for a queued export (X-Export-Mode: queued): this request
+     * only stores the payload and enqueues ExportAnnotatedPdfJob, the client
+     * polls exportStatus() and fetches the result through a signed link. Without
+     * that header, and only while pdf_export.allow_sync is on (QA suites, replay
+     * tools), the PDF is generated in the request and streamed back as before.
      */
     public function downloadAnnotatedPdf(Request $request, Document $document)
     {
         $this->requireDocumentPdfUnlock($request, $document);
-        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
 
         $validated = $request->validate([
             'annotations' => 'present|array',
@@ -12388,330 +12396,543 @@ class DocumentController extends Controller
             'session_id' => 'nullable|string',
         ]);
 
-        $annotationsPayload = $request->input('annotations', []);
-        if (!is_array($annotationsPayload)) {
-            return response()->json(['success' => false, 'message' => 'Invalid annotations payload.'], 422);
-        }
-
-        $annotationsPayload = $this->normalizeAnnotationsForPersistence($document, $annotationsPayload);
-        $sessionAnnotationsPayload = $request->input('session_annotations', null);
-        if ($request->exists('session_annotations')) {
-            if (!is_array($sessionAnnotationsPayload)) {
-                return response()->json(['success' => false, 'message' => 'Invalid session annotations payload.'], 422);
-            }
-            $sessionAnnotationsPayload = $this->normalizeAnnotationsForPersistence($document, $sessionAnnotationsPayload);
-        } else {
-            $sessionAnnotationsPayload = $annotationsPayload;
-        }
-        $renderAnnotationsPayload = $request->input('render_annotations', []);
-        if (!is_array($renderAnnotationsPayload)) {
-            $renderAnnotationsPayload = [];
-        }
-        $renderAnnotationsPayload = $this->normalizeAnnotationsForPersistence($document, $renderAnnotationsPayload);
-        $acroFormEntries = $this->normalizeAcroFormEntriesForPersistence(
-            is_array($validated['acro_form_entries'] ?? null) ? $validated['acro_form_entries'] : []
-        );
-        $sessionId = is_string($validated['session_id'] ?? null)
-            ? trim((string) $validated['session_id'])
-            : '';
-        $redrawPageIndices = is_array($validated['redraw_page_indices'] ?? null)
-            ? array_values(array_unique(array_map('intval', $validated['redraw_page_indices'])))
-            : [];
-        $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
-            $document,
-            $sessionId,
-            is_array($validated['deleted_promoted_source_keys'] ?? null)
-                ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
-                : [],
-            $annotationsPayload
-        );
-        if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload) && !empty($redrawPageIndices)) {
-            $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
-                $sessionAnnotationsPayload,
-                $redrawPageIndices
-            );
-        }
-        if (empty($redrawPageIndices) && !empty($renderAnnotationsPayload)) {
-            $redrawPageIndices = $this->collectAnnotationPageIndices($renderAnnotationsPayload);
-        }
-        $redrawPageIndices = $this->mergeSelectiveRedrawPageIndices(
-            $redrawPageIndices,
-            $annotationsPayload,
-            $renderAnnotationsPayload,
-            $deletedPromotedSourceKeys
-        );
-        if (empty($renderAnnotationsPayload) && !empty($redrawPageIndices)) {
-            $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
-                !empty($sessionAnnotationsPayload) ? $sessionAnnotationsPayload : $annotationsPayload,
-                $redrawPageIndices
-            );
-        }
-
-        $pdfPath = Storage::path($document->path);
-        $useCleanPdf = $request->boolean('use_clean_pdf');
-        $useOriginalPdf = $request->boolean('use_original_pdf');
-        $useExactDownloadPath = $request->boolean('use_exact_download_path');
-        $usePdfjsVisibleExport = $request->boolean('use_pdfjs_visible_export');
-        // Searchable source text must never survive underneath a painted
-        // replacement. Enforce destructive source-glyph removal for every
-        // PDF.js-visible export, including requests from older cached clients
-        // that do not yet send use_conversion_safe_export.
-        $useConversionSafeExport = $usePdfjsVisibleExport;
-        // The browser payload is the live editor state and must remain
-        // authoritative. Re-merging a prior PdfState row here used to replace
-        // current style flags, font choices, and rich-text mode whenever the
-        // text itself was unchanged, producing a download that looked like an
-        // older save. Persistence happens after the PDF has been generated.
-        $editorEmail = $this->resolveEditorEmail();
-        $originalSourcePdfPath = $pdfPath;
-        if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
-            $originalBackupPath = Storage::path($document->original_backup_path);
-            if (file_exists($originalBackupPath)) {
-                $originalSourcePdfPath = $originalBackupPath;
-            }
-        }
-
-        // Select the redraw working source separately from the preserve source
-        // used for untouched pages. Clean PDFs are valid redraw bases but cannot
-        // be used to preserve untouched pages because their text layer is stripped.
-        $sourcePdfPath = $pdfPath;
-        $preservePdfPath = $pdfPath;
-        $useExactCleanRebuild = $useExactDownloadPath && !$usePdfjsVisibleExport && !empty($sessionAnnotationsPayload);
-        if ($useExactCleanRebuild) {
-            $cleanPath = $this->ensureCleanPdfPath(
-                $document,
-                $pythonBinary,
-                $editorEmail,
-                $sessionId !== '' ? $sessionId : null
-            );
-            if (!$cleanPath || !file_exists($cleanPath)) {
-                return response()->json(['success' => false, 'message' => 'Clean PDF source not found.'], 404);
-            }
-            $sourcePdfPath = $cleanPath;
-            $preservePdfPath = $originalSourcePdfPath;
-        } elseif ($usePdfjsVisibleExport) {
-            $sourcePdfPath = $pdfPath;
-            $preservePdfPath = $pdfPath;
-        } elseif ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
-            $originalPath = Storage::path($document->original_backup_path);
-            if (file_exists($originalPath)) {
-                $sourcePdfPath = $originalPath;
-                $preservePdfPath = $originalPath;
-            }
-        } elseif ($useCleanPdf) {
-            $cleanPath = $this->ensureCleanPdfPath(
-                $document,
-                $pythonBinary,
-                $editorEmail,
-                $sessionId !== '' ? $sessionId : null
-            );
-            if (!$cleanPath || !file_exists($cleanPath)) {
-                return response()->json(['success' => false, 'message' => 'Clean PDF source not found.'], 404);
-            }
-            $sourcePdfPath = $cleanPath;
-        }
-
-        if (!file_exists($sourcePdfPath)) {
-            return response()->json(['success' => false, 'message' => 'Source PDF not found.'], 404);
-        }
-
-        if ($useExactCleanRebuild) {
-            // Temporary exact-download path: rebuild from the clean/redacted base
-            // using the full session annotation set plus replay from the original
-            // source PDF for unchanged promoted extraction blocks.
-            $redrawPageIndices = [];
-            $renderAnnotationsPayload = [];
-        } elseif ($usePdfjsVisibleExport) {
-            // The PDF.js viewer renders the original PDF and only paints custom
-            // source masks / overlay annotations on top. Export must follow that
-            // same visible model, not the clean rebuild that re-stamps every
-            // promoted extraction block. Do not add a separate pre-redaction
-            // pass here: apply_annotations_direct_new.py owns source masking,
-            // neighbor-safe erasure, and replacement stamping in one pass.
-            $annotationsPayload = $this->filterAnnotationsForPdfjsVisibleExport($annotationsPayload);
-            $redrawPageIndices = [];
-            $renderAnnotationsPayload = [];
-        }
-
-        $tempDir = storage_path('app/temp');
-        if (!is_dir($tempDir)) {
-            @mkdir($tempDir, 0775, true);
-        }
-
-        // Copy source to a temp file — we never touch document.path.
-        $tempPdfPath = $tempDir . '/download_annotated_' . $document->id . '_' . Str::uuid() . '.pdf';
-        if (!@copy($sourcePdfPath, $tempPdfPath)) {
-            return response()->json(['success' => false, 'message' => 'Failed to prepare PDF working copy.'], 500);
-        }
-
-        // Write annotations payload to a temp JSON file for the Python script.
-        $annotationsFile = $tempDir . '/download_ann_' . $document->id . '_' . uniqid('', true) . '.json';
-        $pythonAnnotationsPayload = $useExactCleanRebuild ? $sessionAnnotationsPayload : $annotationsPayload;
-        $preparedAnnotationsForPython = $this->prepareAnnotationsForPython($pythonAnnotationsPayload);
-        if ($useConversionSafeExport) {
-            // Search, copy/paste, accessibility tools, and downstream
-            // converters inspect the content stream rather than only its final
-            // painted appearance. Mark this transient payload so source glyphs
-            // are removed before replacements are stamped; never persist it.
-            $preparedAnnotationsForPython = array_map(static function ($annotation) {
-                if (!is_array($annotation)) {
-                    return $annotation;
-                }
-                $annotation['conversionSafeSourceRedaction'] = true;
-                return $annotation;
-            }, $preparedAnnotationsForPython);
-        }
-        // Stamp __documentId on every annotation so apply_annotations_direct_new.py
-        // can load this document's embedded-font metadata (temp/embedded_fonts_{id}.json)
-        // and resolve `ann.fontFamily` like "DejaVuSans" to the actual embedded TTF.
-        // Without this, resolve_embedded_font_entry() returns None and the export
-        // falls back to FONT_FILE_VARIANTS["Helvetica"] (Arimo), so the saved PDF
-        // does not match the editor display which loads PDF_<cleanName> via @font-face.
-        $preparedAnnotationsForPython = array_map(static function ($annotation) use ($document) {
-            if (!is_array($annotation)) {
-                return $annotation;
-            }
-            $annotation['__documentId'] = $document->id;
-            return $annotation;
-        }, $preparedAnnotationsForPython);
-        if ($useExactCleanRebuild) {
-            $preparedAnnotationsForPython = array_map(static function ($annotation) use ($preservePdfPath) {
-                if (!is_array($annotation)) {
-                    return $annotation;
-                }
-                $annotation['__sourcePdfPath'] = $preservePdfPath;
-                return $annotation;
-            }, $preparedAnnotationsForPython);
-        }
-        $annotationsJson = json_encode($preparedAnnotationsForPython, JSON_INVALID_UTF8_SUBSTITUTE);
-        if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
-            @unlink($tempPdfPath);
-            return response()->json(['success' => false, 'message' => 'Failed to prepare annotations payload.'], 500);
-        }
-
-        $containsFieldAnnotations = count(array_filter(
-            $preparedAnnotationsForPython,
-            static fn ($annotation) => is_array($annotation)
-                && strtolower((string) ($annotation['type'] ?? '')) === 'field'
-        )) > 0;
-        $script = base_path(
-            ($useExactDownloadPath || $usePdfjsVisibleExport || $containsFieldAnnotations)
-                ? 'python/pdf-editor/apply_annotations_direct_new.py'
-                : 'python/pdf-editor/apply_annotations_direct.py'
-        );
-        $command = sprintf(
-            '%s %s %s %s 2>&1',
-            escapeshellarg($pythonBinary),
-            escapeshellarg($script),
-            escapeshellarg($tempPdfPath),
-            escapeshellarg($annotationsFile)
-        );
-
-        $output = [];
-        $returnCode = 0;
-        $usedSelectiveRedraw = false;
-
-        if (!empty($redrawPageIndices)) {
-            $selectiveResult = $this->runSelectiveAnnotationPageRedraw(
-                $document,
-                $pythonBinary,
-                $tempPdfPath,
-                $preservePdfPath,
-                $renderAnnotationsPayload,
-                $redrawPageIndices,
-                $deletedPromotedSourceKeys,
-                $this->resolveEditorEmail(),
-                $sessionId !== '' ? $sessionId : null
-            );
-
-            if (!($selectiveResult['success'] ?? false)) {
-                $message = (string) ($selectiveResult['message'] ?? '');
-                $errorText = (string) ($selectiveResult['error'] ?? '');
-                $shouldFallbackToDirect = str_contains($message, 'Selective redraw is blocked for AcroForm widget page(s):')
-                    || str_contains($errorText, 'Selective redraw is blocked for AcroForm widget page(s):');
-                if (!$shouldFallbackToDirect) {
-                    if (file_exists($annotationsFile)) {
-                        @unlink($annotationsFile);
-                    }
-                    @unlink($tempPdfPath);
-                    return response()->json([
-                        'success' => false,
-                        'message' => $selectiveResult['message'] ?? 'Failed to generate selectively redrawn PDF.',
-                        'error' => $selectiveResult['error'] ?? null,
-                    ], 500);
-                }
-                $this->python()->exec($command, $output, $returnCode);
-            } else {
-                $usedSelectiveRedraw = true;
-            }
-        } else {
-            $this->python()->exec($command, $output, $returnCode);
-        }
-
-        if (file_exists($annotationsFile)) {
-            @unlink($annotationsFile);
-        }
-
-        if (!$usedSelectiveRedraw && $returnCode !== 0) {
-            @unlink($tempPdfPath);
-            \Log::error('Download annotated PDF failed', [
-                'document_id' => $document->id,
-                'return_code' => $returnCode,
-                'output' => implode("\n", $output),
-            ]);
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate annotated PDF.',
-                'error' => implode("\n", $output),
-            ], 500);
-        }
-
-        // Save annotation state to DB (same as saveAnnotationState).
-        if ($sessionId !== '') {
-            $this->upsertPdfStateSessionSnapshot(
-                $document,
-                $sessionId,
-                $sessionAnnotationsPayload,
-                'saved'
-            );
-            $this->syncDeletedPromotedSourceKeysForSession(
-                $document,
-                $sessionId,
-                $deletedPromotedSourceKeys
-            );
-
-            $this->upsertPdfAcroFormSessionState(
-                $document,
-                $sessionId,
-                $acroFormEntries,
-                $this->resolvePdfStateOwnership($document),
-                'saved'
-            );
-        }
-
-        if (!empty($acroFormEntries)) {
-            $acroFormApplyResult = $this->applyAcroFormEntriesToPdf($tempPdfPath, $acroFormEntries, $pythonBinary);
-            if (!($acroFormApplyResult['success'] ?? false)) {
-                @unlink($tempPdfPath);
+        foreach (['annotations', 'session_annotations'] as $key) {
+            if ($request->exists($key) && !is_array($request->input($key))) {
                 return response()->json([
                     'success' => false,
-                    'message' => $acroFormApplyResult['message'] ?? 'Failed to apply AcroForm values.',
-                    'error' => $acroFormApplyResult['error'] ?? null,
-                ], 500);
-            }
-            $appliedPdfPath = (string) ($acroFormApplyResult['output_pdf_path'] ?? '');
-            if ($appliedPdfPath !== '' && $appliedPdfPath !== $tempPdfPath && file_exists($appliedPdfPath)) {
-                @unlink($tempPdfPath);
-                $tempPdfPath = $appliedPdfPath;
+                    'message' => 'Invalid ' . str_replace('_', ' ', $key) . ' payload.',
+                ], 422);
             }
         }
 
-        $downloadName = pathinfo($document->original_name ?? basename((string) $document->path), PATHINFO_FILENAME) . '_annotated.pdf';
+        $input = [
+            'annotations' => $request->input('annotations', []),
+            'session_annotations' => $request->exists('session_annotations') ? $request->input('session_annotations') : null,
+            'render_annotations' => $request->input('render_annotations', []),
+            'acro_form_entries' => $validated['acro_form_entries'] ?? null,
+            'redraw_page_indices' => $validated['redraw_page_indices'] ?? null,
+            'deleted_promoted_source_keys' => $validated['deleted_promoted_source_keys'] ?? null,
+            'session_id' => $validated['session_id'] ?? null,
+            'use_clean_pdf' => $request->boolean('use_clean_pdf'),
+            'use_original_pdf' => $request->boolean('use_original_pdf'),
+            'use_exact_download_path' => $request->boolean('use_exact_download_path'),
+            'use_pdfjs_visible_export' => $request->boolean('use_pdfjs_visible_export'),
+        ];
 
-        return response()->download($tempPdfPath, $downloadName, [
+        if (strtolower(trim((string) $request->header('X-Export-Mode'))) === 'queued') {
+            return $this->queueAnnotatedPdfExport($request, $document, $input);
+        }
+
+        if (!config('pdf_export.allow_sync')) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This editor tab is out of date. Reload the page, then download again.',
+            ], 409);
+        }
+
+        $result = $this->generateAnnotatedPdfExport($document, $input, (string) Str::uuid());
+        if (!($result['success'] ?? false)) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['message'],
+                'reference' => $result['reference'],
+            ], $result['status']);
+        }
+
+        return response()->download($result['path'], $this->annotatedPdfDownloadName($document), [
             'Content-Type' => 'application/pdf',
         ])->deleteFileAfterSend(true);
     }
+
+    private function annotatedPdfDownloadName(Document $document): string
+    {
+        return pathinfo($document->original_name ?? basename((string) $document->path), PATHINFO_FILENAME) . '_annotated.pdf';
+    }
+
+    /**
+     * Runs the export pipeline for a payload captured by downloadAnnotatedPdf().
+     * Called from the web request (sync mode) and from ExportAnnotatedPdfJob, so
+     * it must not read the request or the session.
+     *
+     * Returns ['success' => true, 'path' => <temp pdf the caller now owns>] or
+     * ['success' => false, 'status', 'message', 'reference']. Process output is
+     * logged under the reference and never returned: it carries server paths.
+     * Every temp file except a successful result is removed on the way out,
+     * including when a process times out or the concurrency cap throws.
+     */
+    public function generateAnnotatedPdfExport(
+        Document $document,
+        array $input,
+        string $reference,
+        ?callable $onProgress = null,
+    ): array {
+        $progress = static function (int $percent) use ($onProgress): void {
+            if ($onProgress) {
+                $onProgress($percent);
+            }
+        };
+        $fail = static function (int $status, string $message, string $detail = '') use ($document, $reference): array {
+            Log::error('Annotated PDF export failed', [
+                'reference' => $reference,
+                'document_id' => $document->id,
+                'message' => $message,
+                'output' => Str::limit($detail, 8000),
+            ]);
+
+            return [
+                'success' => false,
+                'status' => $status,
+                'message' => $message,
+                'reference' => $reference,
+            ];
+        };
+
+        $tempFiles = [];
+        $resultPath = null;
+
+        try {
+            $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
+            $annotationsPayload = is_array($input['annotations'] ?? null) ? $input['annotations'] : [];
+            $progress(25);
+
+            $annotationsPayload = $this->normalizeAnnotationsForPersistence($document, $annotationsPayload);
+            $sessionAnnotationsPayload = is_array($input['session_annotations'] ?? null)
+                ? $this->normalizeAnnotationsForPersistence($document, $input['session_annotations'])
+                : $annotationsPayload;
+            $renderAnnotationsPayload = is_array($input['render_annotations'] ?? null) ? $input['render_annotations'] : [];
+            $renderAnnotationsPayload = $this->normalizeAnnotationsForPersistence($document, $renderAnnotationsPayload);
+            $acroFormEntries = $this->normalizeAcroFormEntriesForPersistence(
+                is_array($input['acro_form_entries'] ?? null) ? $input['acro_form_entries'] : []
+            );
+            $sessionId = is_string($input['session_id'] ?? null)
+                ? trim((string) $input['session_id'])
+                : '';
+            $redrawPageIndices = is_array($input['redraw_page_indices'] ?? null)
+                ? array_values(array_unique(array_map('intval', $input['redraw_page_indices'])))
+                : [];
+            $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
+                $document,
+                $sessionId,
+                is_array($input['deleted_promoted_source_keys'] ?? null)
+                    ? array_values(array_filter($input['deleted_promoted_source_keys'], 'is_string'))
+                    : [],
+                $annotationsPayload
+            );
+            if (empty($renderAnnotationsPayload) && !empty($sessionAnnotationsPayload) && !empty($redrawPageIndices)) {
+                $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
+                    $sessionAnnotationsPayload,
+                    $redrawPageIndices
+                );
+            }
+            if (empty($redrawPageIndices) && !empty($renderAnnotationsPayload)) {
+                $redrawPageIndices = $this->collectAnnotationPageIndices($renderAnnotationsPayload);
+            }
+            $redrawPageIndices = $this->mergeSelectiveRedrawPageIndices(
+                $redrawPageIndices,
+                $annotationsPayload,
+                $renderAnnotationsPayload,
+                $deletedPromotedSourceKeys
+            );
+            if (empty($renderAnnotationsPayload) && !empty($redrawPageIndices)) {
+                $renderAnnotationsPayload = $this->filterRenderAnnotationsForSelectiveRedraw(
+                    !empty($sessionAnnotationsPayload) ? $sessionAnnotationsPayload : $annotationsPayload,
+                    $redrawPageIndices
+                );
+            }
+
+            $pdfPath = Storage::path($document->path);
+            $useCleanPdf = (bool) ($input['use_clean_pdf'] ?? false);
+            $useOriginalPdf = (bool) ($input['use_original_pdf'] ?? false);
+            $useExactDownloadPath = (bool) ($input['use_exact_download_path'] ?? false);
+            $usePdfjsVisibleExport = (bool) ($input['use_pdfjs_visible_export'] ?? false);
+            // Searchable source text must never survive underneath a painted
+            // replacement. Enforce destructive source-glyph removal for every
+            // PDF.js-visible export, including requests from older cached clients
+            // that do not yet send use_conversion_safe_export.
+            $useConversionSafeExport = $usePdfjsVisibleExport;
+            // The browser payload is the live editor state and must remain
+            // authoritative. Re-merging a prior PdfState row here used to replace
+            // current style flags, font choices, and rich-text mode whenever the
+            // text itself was unchanged, producing a download that looked like an
+            // older save. Persistence happens after the PDF has been generated.
+            $editorEmail = $this->resolveEditorEmail();
+            $originalSourcePdfPath = $pdfPath;
+            if ($document->original_backup_path && Storage::exists($document->original_backup_path)) {
+                $originalBackupPath = Storage::path($document->original_backup_path);
+                if (file_exists($originalBackupPath)) {
+                    $originalSourcePdfPath = $originalBackupPath;
+                }
+            }
+
+            // Select the redraw working source separately from the preserve source
+            // used for untouched pages. Clean PDFs are valid redraw bases but cannot
+            // be used to preserve untouched pages because their text layer is stripped.
+            $sourcePdfPath = $pdfPath;
+            $preservePdfPath = $pdfPath;
+            $useExactCleanRebuild = $useExactDownloadPath && !$usePdfjsVisibleExport && !empty($sessionAnnotationsPayload);
+            if ($useExactCleanRebuild) {
+                $cleanPath = $this->ensureCleanPdfPath(
+                    $document,
+                    $pythonBinary,
+                    $editorEmail,
+                    $sessionId !== '' ? $sessionId : null
+                );
+                if (!$cleanPath || !file_exists($cleanPath)) {
+                    return $fail(404, 'Clean PDF source not found.');
+                }
+                $sourcePdfPath = $cleanPath;
+                $preservePdfPath = $originalSourcePdfPath;
+            } elseif ($usePdfjsVisibleExport) {
+                $sourcePdfPath = $pdfPath;
+                $preservePdfPath = $pdfPath;
+            } elseif ($useOriginalPdf && $document->original_backup_path && Storage::exists($document->original_backup_path)) {
+                $originalPath = Storage::path($document->original_backup_path);
+                if (file_exists($originalPath)) {
+                    $sourcePdfPath = $originalPath;
+                    $preservePdfPath = $originalPath;
+                }
+            } elseif ($useCleanPdf) {
+                $cleanPath = $this->ensureCleanPdfPath(
+                    $document,
+                    $pythonBinary,
+                    $editorEmail,
+                    $sessionId !== '' ? $sessionId : null
+                );
+                if (!$cleanPath || !file_exists($cleanPath)) {
+                    return $fail(404, 'Clean PDF source not found.');
+                }
+                $sourcePdfPath = $cleanPath;
+            }
+
+            if (!file_exists($sourcePdfPath)) {
+                return $fail(404, 'Source PDF not found.');
+            }
+
+            if ($useExactCleanRebuild) {
+                // Temporary exact-download path: rebuild from the clean/redacted base
+                // using the full session annotation set plus replay from the original
+                // source PDF for unchanged promoted extraction blocks.
+                $redrawPageIndices = [];
+                $renderAnnotationsPayload = [];
+            } elseif ($usePdfjsVisibleExport) {
+                // The PDF.js viewer renders the original PDF and only paints custom
+                // source masks / overlay annotations on top. Export must follow that
+                // same visible model, not the clean rebuild that re-stamps every
+                // promoted extraction block. Do not add a separate pre-redaction
+                // pass here: apply_annotations_direct_new.py owns source masking,
+                // neighbor-safe erasure, and replacement stamping in one pass.
+                $annotationsPayload = $this->filterAnnotationsForPdfjsVisibleExport($annotationsPayload);
+                $redrawPageIndices = [];
+                $renderAnnotationsPayload = [];
+            }
+
+            $tempDir = storage_path('app/temp');
+            if (!is_dir($tempDir)) {
+                @mkdir($tempDir, 0775, true);
+            }
+
+            // Copy source to a temp file — we never touch document.path.
+            $tempPdfPath = $tempDir . '/download_annotated_' . $document->id . '_' . Str::uuid() . '.pdf';
+            $tempFiles[] = $tempPdfPath;
+            if (!@copy($sourcePdfPath, $tempPdfPath)) {
+                return $fail(500, 'Failed to prepare PDF working copy.');
+            }
+
+            // Write annotations payload to a temp JSON file for the Python script.
+            $annotationsFile = $tempDir . '/download_ann_' . $document->id . '_' . uniqid('', true) . '.json';
+            $tempFiles[] = $annotationsFile;
+            $pythonAnnotationsPayload = $useExactCleanRebuild ? $sessionAnnotationsPayload : $annotationsPayload;
+            $preparedAnnotationsForPython = $this->prepareAnnotationsForPython($pythonAnnotationsPayload);
+            if ($useConversionSafeExport) {
+                // Search, copy/paste, accessibility tools, and downstream
+                // converters inspect the content stream rather than only its final
+                // painted appearance. Mark this transient payload so source glyphs
+                // are removed before replacements are stamped; never persist it.
+                $preparedAnnotationsForPython = array_map(static function ($annotation) {
+                    if (!is_array($annotation)) {
+                        return $annotation;
+                    }
+                    $annotation['conversionSafeSourceRedaction'] = true;
+                    return $annotation;
+                }, $preparedAnnotationsForPython);
+            }
+            // Stamp __documentId on every annotation so apply_annotations_direct_new.py
+            // can load this document's embedded-font metadata (temp/embedded_fonts_{id}.json)
+            // and resolve `ann.fontFamily` like "DejaVuSans" to the actual embedded TTF.
+            // Without this, resolve_embedded_font_entry() returns None and the export
+            // falls back to FONT_FILE_VARIANTS["Helvetica"] (Arimo), so the saved PDF
+            // does not match the editor display which loads PDF_<cleanName> via @font-face.
+            $preparedAnnotationsForPython = array_map(static function ($annotation) use ($document) {
+                if (!is_array($annotation)) {
+                    return $annotation;
+                }
+                $annotation['__documentId'] = $document->id;
+                return $annotation;
+            }, $preparedAnnotationsForPython);
+            if ($useExactCleanRebuild) {
+                $preparedAnnotationsForPython = array_map(static function ($annotation) use ($preservePdfPath) {
+                    if (!is_array($annotation)) {
+                        return $annotation;
+                    }
+                    $annotation['__sourcePdfPath'] = $preservePdfPath;
+                    return $annotation;
+                }, $preparedAnnotationsForPython);
+            }
+            $annotationsJson = json_encode($preparedAnnotationsForPython, JSON_INVALID_UTF8_SUBSTITUTE);
+            if ($annotationsJson === false || @file_put_contents($annotationsFile, $annotationsJson) === false) {
+                return $fail(500, 'Failed to prepare annotations payload.');
+            }
+            $progress(45);
+
+            $containsFieldAnnotations = count(array_filter(
+                $preparedAnnotationsForPython,
+                static fn ($annotation) => is_array($annotation)
+                    && strtolower((string) ($annotation['type'] ?? '')) === 'field'
+            )) > 0;
+            $script = base_path(
+                ($useExactDownloadPath || $usePdfjsVisibleExport || $containsFieldAnnotations)
+                    ? 'python/pdf-editor/apply_annotations_direct_new.py'
+                    : 'python/pdf-editor/apply_annotations_direct.py'
+            );
+            $command = sprintf(
+                '%s %s %s %s 2>&1',
+                escapeshellarg($pythonBinary),
+                escapeshellarg($script),
+                escapeshellarg($tempPdfPath),
+                escapeshellarg($annotationsFile)
+            );
+
+            $output = [];
+            $returnCode = 0;
+            $usedSelectiveRedraw = false;
+
+            if (!empty($redrawPageIndices)) {
+                $selectiveResult = $this->runSelectiveAnnotationPageRedraw(
+                    $document,
+                    $pythonBinary,
+                    $tempPdfPath,
+                    $preservePdfPath,
+                    $renderAnnotationsPayload,
+                    $redrawPageIndices,
+                    $deletedPromotedSourceKeys,
+                    $this->resolveEditorEmail(),
+                    $sessionId !== '' ? $sessionId : null
+                );
+
+                if (!($selectiveResult['success'] ?? false)) {
+                    $message = (string) ($selectiveResult['message'] ?? '');
+                    $errorText = (string) ($selectiveResult['error'] ?? '');
+                    $shouldFallbackToDirect = str_contains($message, 'Selective redraw is blocked for AcroForm widget page(s):')
+                        || str_contains($errorText, 'Selective redraw is blocked for AcroForm widget page(s):');
+                    if (!$shouldFallbackToDirect) {
+                        return $fail(
+                            500,
+                            $selectiveResult['message'] ?? 'Failed to generate selectively redrawn PDF.',
+                            $errorText
+                        );
+                    }
+                    $this->python()->exec($command, $output, $returnCode);
+                } else {
+                    $usedSelectiveRedraw = true;
+                }
+            } else {
+                $this->python()->exec($command, $output, $returnCode);
+            }
+
+            if (!$usedSelectiveRedraw && $returnCode !== 0) {
+                $timedOut = $returnCode === PythonRunner::TIMEOUT_EXIT_CODE;
+
+                return $fail(
+                    $timedOut ? 504 : 500,
+                    $timedOut
+                        ? 'The PDF took too long to generate. Try again, or remove very large images from the document.'
+                        : 'Failed to generate annotated PDF.',
+                    "exit {$returnCode}\n" . implode("\n", $output)
+                );
+            }
+            $progress(80);
+
+            // Save annotation state to DB (same as saveAnnotationState).
+            if ($sessionId !== '') {
+                $this->upsertPdfStateSessionSnapshot(
+                    $document,
+                    $sessionId,
+                    $sessionAnnotationsPayload,
+                    'saved'
+                );
+                $this->syncDeletedPromotedSourceKeysForSession(
+                    $document,
+                    $sessionId,
+                    $deletedPromotedSourceKeys
+                );
+
+                $this->upsertPdfAcroFormSessionState(
+                    $document,
+                    $sessionId,
+                    $acroFormEntries,
+                    $this->resolvePdfStateOwnership($document),
+                    'saved'
+                );
+            }
+
+            if (!empty($acroFormEntries)) {
+                $acroFormApplyResult = $this->applyAcroFormEntriesToPdf($tempPdfPath, $acroFormEntries, $pythonBinary);
+                $appliedPdfPath = (string) ($acroFormApplyResult['output_pdf_path'] ?? '');
+                if ($appliedPdfPath !== '' && $appliedPdfPath !== $tempPdfPath) {
+                    $tempFiles[] = $appliedPdfPath;
+                }
+                if (!($acroFormApplyResult['success'] ?? false)) {
+                    return $fail(
+                        500,
+                        $acroFormApplyResult['message'] ?? 'Failed to apply AcroForm values.',
+                        (string) ($acroFormApplyResult['error'] ?? '')
+                    );
+                }
+                if ($appliedPdfPath !== '' && $appliedPdfPath !== $tempPdfPath && file_exists($appliedPdfPath)) {
+                    $tempPdfPath = $appliedPdfPath;
+                }
+            }
+
+            $resultPath = $tempPdfPath;
+            $progress(90);
+
+            return ['success' => true, 'path' => $resultPath];
+        } finally {
+            foreach (array_unique($tempFiles) as $tempFile) {
+                if ($tempFile !== $resultPath && is_file($tempFile)) {
+                    @unlink($tempFile);
+                }
+            }
+        }
+    }
+
+    private function queueAnnotatedPdfExport(Request $request, Document $document, array $input)
+    {
+        $userId = $this->currentWebUserId();
+        $adminId = $this->currentAdminId();
+        $payloadJson = json_encode($input, JSON_INVALID_UTF8_SUBSTITUTE);
+        if ($payloadJson === false) {
+            return response()->json(['success' => false, 'message' => 'Failed to prepare annotations payload.'], 422);
+        }
+        $payloadHash = hash('sha256', $document->id . '|' . ($userId ?? '') . '|' . ($adminId ?? '') . '|' . $payloadJson);
+
+        // A second click, or a client retry after a dropped response, joins the
+        // export that is already running instead of starting another.
+        $export = PdfExport::query()
+            ->where('document_id', $document->id)
+            ->where('payload_hash', $payloadHash)
+            ->whereIn('status', [PdfExport::STATUS_QUEUED, PdfExport::STATUS_PROCESSING])
+            ->where('created_at', '>=', now()->subMinutes(10))
+            ->latest('id')
+            ->first();
+
+        if (!$export) {
+            $uuid = (string) Str::uuid();
+            $payloadPath = PdfExport::directoryFor($uuid) . '/payload.json';
+            if (!Storage::put($payloadPath, $payloadJson)) {
+                return response()->json(['success' => false, 'message' => 'Failed to prepare annotations payload.'], 500);
+            }
+
+            $export = PdfExport::create([
+                'uuid' => $uuid,
+                'document_id' => $document->id,
+                'user_id' => $userId,
+                'admin_id' => $adminId,
+                'payload_hash' => $payloadHash,
+                'status' => PdfExport::STATUS_QUEUED,
+                'progress' => 5,
+                'payload_path' => $payloadPath,
+                'download_name' => $this->annotatedPdfDownloadName($document),
+                'ip_address' => $request->ip(),
+                'queued_at' => now(),
+            ]);
+
+            try {
+                ExportAnnotatedPdfJob::dispatch($export->id);
+            } catch (\Throwable $exception) {
+                $export->forceFill([
+                    'status' => PdfExport::STATUS_FAILED,
+                    'progress' => 100,
+                    'error' => 'The export queue is unavailable. Please try again shortly.',
+                    'completed_at' => now(),
+                ])->save();
+                $export->deleteFiles();
+                Log::error('Unable to dispatch annotated PDF export.', [
+                    'reference' => $export->uuid,
+                    'document_id' => $document->id,
+                    'error' => $exception->getMessage(),
+                ]);
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'The export queue is unavailable. Please try again shortly.',
+                    'reference' => $export->uuid,
+                ], 503)->header('Retry-After', '10');
+            }
+        }
+
+        return response()->json($this->pdfExportStatusPayload($document, $export), 202);
+    }
+
+    public function exportStatus(Request $request, Document $document, PdfExport $export)
+    {
+        abort_unless((int) $export->document_id === (int) $document->id, 404);
+
+        return response()->json($this->pdfExportStatusPayload($document, $export));
+    }
+
+    private function pdfExportStatusPayload(Document $document, PdfExport $export): array
+    {
+        $payload = [
+            'success' => $export->status !== PdfExport::STATUS_FAILED,
+            'queued' => true,
+            'export_id' => $export->uuid,
+            'status' => $export->status,
+            'progress' => $export->progress,
+            'status_url' => route('documents.exports.status', [$document, $export]),
+        ];
+
+        if ($export->status === PdfExport::STATUS_FAILED) {
+            $payload['message'] = $export->error ?: 'Failed to generate annotated PDF.';
+            $payload['reference'] = $export->uuid;
+        }
+        if ($export->status === PdfExport::STATUS_COMPLETED) {
+            if ($export->isDownloadable()) {
+                $payload['download_url'] = URL::temporarySignedRoute(
+                    'documents.exports.download',
+                    $export->expires_at ?? now()->addMinutes(max(1, (int) config('pdf_export.result_ttl_minutes', 15))),
+                    [$document, $export]
+                );
+                $payload['download_name'] = $export->download_name;
+                $payload['bytes'] = $export->output_bytes;
+            } else {
+                $payload['success'] = false;
+                $payload['status'] = 'expired';
+                $payload['message'] = 'This export has expired. Download the PDF again.';
+            }
+        }
+
+        return $payload;
+    }
+
+    /** Signed, expiring link handed out by exportStatus(); the document access check still applies. */
+    public function downloadExport(Request $request, Document $document, PdfExport $export)
+    {
+        abort_unless((int) $export->document_id === (int) $document->id, 404);
+        $this->requireDocumentPdfUnlock($request, $document);
+        if (!$export->isDownloadable()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'This export has expired. Download the PDF again.',
+            ], 410);
+        }
+
+        return Storage::download($export->output_path, $export->download_name ?: 'document_annotated.pdf', [
+            'Content-Type' => 'application/pdf',
+            'Cache-Control' => 'private, no-store',
+        ]);
+    }
+
 
     public function getSavedAcroFormState(Request $request, Document $document)
     {

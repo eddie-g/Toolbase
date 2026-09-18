@@ -106,6 +106,7 @@ return [
     'waits' => [
         'redis:default' => 60,
         'redis:document-conversion' => 120,
+        'redis:pdf-export' => 20,
     ],
 
     /*
@@ -264,6 +265,23 @@ return [
             'timeout' => 900,
             'nice' => 5,
         ],
+
+        // The editor's Download (ExportAnnotatedPdfJob): a user is waiting on
+        // it, so it gets its own workers instead of queueing behind uploads.
+        // Python concurrency per server is still capped by PYTHON_MAX_CONCURRENT.
+        'supervisor-pdf-export' => [
+            'connection' => env('PDF_EXPORT_QUEUE_CONNECTION', 'redis'),
+            'queue' => [env('PDF_EXPORT_QUEUE', 'pdf-export')],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 200,
+            'memory' => 384,
+            'tries' => 2,
+            'timeout' => (int) env('PDF_EXPORT_JOB_TIMEOUT', 240),
+            'nice' => 0,
+        ],
     ],
 
     'environments' => [
@@ -288,6 +306,12 @@ return [
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 5,
             ],
+            'supervisor-pdf-export' => [
+                'minProcesses' => 2,
+                'maxProcesses' => 6,
+                'balanceMaxShift' => 2,
+                'balanceCooldown' => 3,
+            ],
         ],
 
         'local' => [
@@ -301,6 +325,9 @@ return [
                 'maxProcesses' => 5,
             ],
             'supervisor-document-conversions' => [
+                'maxProcesses' => 2,
+            ],
+            'supervisor-pdf-export' => [
                 'maxProcesses' => 2,
             ],
         ],

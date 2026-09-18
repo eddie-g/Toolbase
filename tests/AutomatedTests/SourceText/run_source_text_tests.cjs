@@ -751,7 +751,9 @@ async function downloadPdf(page, testId, label) {
     const headers = {};
     for (const [name, value] of Object.entries(await request.allHeaders())) {
         const lower = name.toLowerCase();
-        if (lower.startsWith(':') || ['content-length', 'host', 'connection'].includes(lower)) continue;
+        // x-export-mode: the editor asks for a queued export; the replay wants
+        // the PDF in the response, which the sync path still gives outside production.
+        if (lower.startsWith(':') || ['content-length', 'host', 'connection', 'x-export-mode'].includes(lower)) continue;
         headers[name] = value;
     }
     const replay = await page.context().request.post(request.url(), { data: body, headers, timeout: 180000 });

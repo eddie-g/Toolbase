@@ -136,6 +136,10 @@ import {
     readPdfaConversionResponse,
 } from './pdfa-export.js';
 import {
+    exportProgressLabel,
+    requestQueuedPdfExport,
+} from './queued-pdf-export.js';
+import {
     buildConvertedDownloadUrl,
     estimateConvertedFileBytes,
     readQueuedConversionResponse,
@@ -28336,37 +28340,24 @@ async function buildPdfjsDownloadPayload() {
     return payload;
 }
 
-async function requestEditedPdfBlob() {
+async function requestEditedPdfBlob({ onProgress = null } = {}) {
     if (!DOWNLOAD_URL || !currentPdfDoc) throw new Error('PDF download endpoint is not available.');
     if (hydratingPersistedAnnotations
         && hydratingPersistedAnnotationsGeneration === viewerLoadGeneration) {
         throw new Error('The saved document state is still loading.');
     }
     const payload = await buildPdfjsDownloadPayload();
-    const response = await fetch(DOWNLOAD_URL, {
-        method: 'POST',
-        credentials: 'same-origin',
+    // The export runs on a queue worker: this submits it, polls the status URL
+    // and fetches the finished PDF. See queued-pdf-export.js.
+    const { blob } = await requestQueuedPdfExport(DOWNLOAD_URL, {
+        payload,
         headers: {
-            'Content-Type': 'application/json',
-            Accept: 'application/pdf, application/json',
             'X-CSRF-TOKEN': CSRF,
             ...(documentUnlockToken ? { 'X-PDF-Unlock-Token': documentUnlockToken } : {}),
         },
-        body: JSON.stringify(payload),
+        onProgress,
     });
-    if (!response.ok) {
-        let message = `PDF generation failed (${response.status})`;
-        const contentType = String(response.headers.get('content-type') || '');
-        if (contentType.includes('application/json')) {
-            const result = await response.json().catch(() => ({}));
-            message = result?.message || result?.error || message;
-        } else {
-            const responseText = await response.text().catch(() => '');
-            if (responseText) message = responseText.slice(0, 500);
-        }
-        throw new Error(message);
-    }
-    return { blob: await response.blob(), payload };
+    return { blob, payload };
 }
 
 async function downloadStampedPdf() {
@@ -28379,7 +28370,13 @@ async function downloadStampedPdf() {
     try {
         setDownloadButtonsDisabled(true, 'Preparing PDF...');
         setStatus('Preparing PDF...');
-        const { blob, payload } = await requestEditedPdfBlob();
+        const { blob, payload } = await requestEditedPdfBlob({
+            onProgress: (data) => {
+                const label = exportProgressLabel(data);
+                setDownloadButtonsDisabled(true, label);
+                setStatus(label);
+            },
+        });
         let downloadBlob = blob;
         if (passwordProtectionIsActive()) {
             setStatus('Encrypting PDF…');

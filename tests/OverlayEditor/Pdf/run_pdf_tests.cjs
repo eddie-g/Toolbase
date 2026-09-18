@@ -6166,7 +6166,7 @@ async function runPdfJsSs4DownloadNoGlyphSubstitutionFlow() {
             const safeHeaders = {};
             for (const [k, v] of Object.entries(reqHeaders)) {
                 const kl = k.toLowerCase();
-                if (kl.startsWith(':') || kl === 'content-length' || kl === 'host' || kl === 'connection') continue;
+                if (kl.startsWith(':') || kl === 'content-length' || kl === 'host' || kl === 'connection' || kl === 'x-export-mode') continue;
                 safeHeaders[k] = v;
             }
             const replay = await page.context().request.post(reqUrl, {
@@ -6601,7 +6601,7 @@ async function runPdfJsSs5SourceEditExportMatchesEditorFlow() {
         const safeHeaders = {};
         for (const [key, value] of Object.entries(await req.allHeaders())) {
             const lower = key.toLowerCase();
-            if (lower.startsWith(':') || lower === 'content-length' || lower === 'host' || lower === 'connection') continue;
+            if (lower.startsWith(':') || lower === 'content-length' || lower === 'host' || lower === 'connection' || lower === 'x-export-mode') continue;
             safeHeaders[key] = value;
         }
         const replay = await page.context().request.post(req.url(), {
@@ -20042,7 +20042,7 @@ async function capturePdfUploadEditorDownload(page, outputPath) {
     const safeHeaders = {};
     for (const [header, value] of Object.entries(requestHeaders)) {
         const lower = header.toLowerCase();
-        if (lower.startsWith(':') || ['content-length', 'host', 'connection'].includes(lower)) continue;
+        if (lower.startsWith(':') || ['content-length', 'host', 'connection', 'x-export-mode'].includes(lower)) continue;
         safeHeaders[header] = value;
     }
     const replay = await page.context().request.post(downloadRequest.url(), {
@@ -34309,7 +34309,7 @@ async function runPdfUploadSavedTestFlow() {
         const safeHeaders = {};
         for (const [header, value] of Object.entries(requestHeaders)) {
             const lower = header.toLowerCase();
-            if (lower.startsWith(':') || ['content-length', 'host', 'connection'].includes(lower)) continue;
+            if (lower.startsWith(':') || ['content-length', 'host', 'connection', 'x-export-mode'].includes(lower)) continue;
             safeHeaders[header] = value;
         }
         const replay = await page.context().request.post(downloadRequest.url(), {
