@@ -292,12 +292,15 @@ class LogoPromptThemeTest extends TestCase
         foreach ([$controllerMethod, $jobMethod] as $method) {
             $target = $method === $controllerMethod ? $controller : $job;
 
-            $this->assertSame('1344x768', $method->invoke($target, 'raster', false, '16:9'));
-            $this->assertSame('768x1344', $method->invoke($target, 'raster', false, '9:16'));
+            // NK_41: regular Ray is recraftv2 (1820x1024 / 1024x1820 / 1024x1024),
+            // Ray PRO is the plain recraftv4 model (1344x768 / 768x1344 / 1024x1024).
+            // 2048x2048 and friends belong to Recraft's V4 Pro tier and are rejected.
+            $this->assertSame('1820x1024', $method->invoke($target, 'raster', false, '16:9'));
+            $this->assertSame('1024x1820', $method->invoke($target, 'raster', false, '9:16'));
             $this->assertSame('1024x1024', $method->invoke($target, 'raster', false, '1:1'));
-            $this->assertSame('2688x1536', $method->invoke($target, 'raster', true, '16:9'));
-            $this->assertSame('1536x2688', $method->invoke($target, 'raster', true, '9:16'));
-            $this->assertSame('2048x2048', $method->invoke($target, 'raster', true, '1:1'));
+            $this->assertSame('1344x768', $method->invoke($target, 'raster', true, '16:9'));
+            $this->assertSame('768x1344', $method->invoke($target, 'raster', true, '9:16'));
+            $this->assertSame('1024x1024', $method->invoke($target, 'raster', true, '1:1'));
             $this->assertSame('1:1', $method->invoke($target, 'vector', false, '16:9'));
         }
     }
