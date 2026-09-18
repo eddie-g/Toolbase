@@ -109,7 +109,7 @@ function firstValidationMessage(body) {
 
 /**
  * What a refused save means. kind: stale | throttled | too_large | invalid |
- * session | error. Only "throttled" is worth retrying on its own.
+ * session | error. What happens next is planAfterSaveFailure() in save-resilience.js.
  */
 export function classifySaveFailure(status, body = {}, retryAfterHeader = '') {
     const code = cleanText(body?.code);
@@ -133,8 +133,11 @@ export function classifySaveFailure(status, body = {}, retryAfterHeader = '') {
     if (status === 422) {
         return { kind: 'invalid', message: firstValidationMessage(body) || 'Some edited content could not be saved.' };
     }
-    if (status === 401 || status === 419) {
-        return { kind: 'session', message: 'Your session has expired. Reload the page and sign in again to keep saving.' };
+    // An expired session shows up as 419 (CSRF), 401, or, once the token has
+    // been refreshed under the new session, as 403/404: the document is no
+    // longer this visitor's.
+    if ([401, 403, 404, 419].includes(status)) {
+        return { kind: 'session', message: 'Your session has expired. Sign in again to keep saving.' };
     }
     return { kind: 'error', message: cleanText(body?.message, `Save failed (${status || 'network error'}).`) };
 }

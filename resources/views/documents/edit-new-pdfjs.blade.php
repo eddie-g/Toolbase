@@ -118,6 +118,7 @@
      data-processing-status-url="{{ route('documents.processing.status', $document) }}"
      data-processing-retry-url="{{ route('documents.processing.retry', $document) }}"
      data-documents-url="{{ route('documents.index') }}"
+     data-login-url="{{ route('login') }}"
      data-save-url="{{ route('documents.saveAnnotationState', $document) }}"
      data-save-acro-form-url="{{ route('documents.saveAcroFormState', $document) }}"
      data-annotation-debug-url="{{ route('documents.annotationDebug.save', $document) }}"

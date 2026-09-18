@@ -80,6 +80,8 @@ test('each refused save gets its own meaning and message', () => {
 
     assert.equal(classifySaveFailure(419, {}).kind, 'session');
     assert.equal(classifySaveFailure(401, {}).kind, 'session');
+    assert.equal(classifySaveFailure(404, {}).kind, 'session', 'after the token refresh an expired session reads as not found');
+    assert.equal(classifySaveFailure(403, {}).kind, 'session');
     assert.deepEqual(classifySaveFailure(500, {}), { kind: 'error', message: 'Save failed (500).' });
 });
 

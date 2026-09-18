@@ -5714,6 +5714,45 @@ body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underli
     box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
 }
 
+/* A save failed and the changes are only in this browser (main.js,
+ * showUnsavedBanner). Stays until a save succeeds. */
+.enpv-unsaved-banner {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1090;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: min(720px, calc(100vw - 32px));
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: #7f1d1d;
+    color: #fff;
+    font-size: 13px;
+    line-height: 1.4;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+.enpv-unsaved-banner a {
+    flex: none;
+    color: #fff;
+    font-weight: 600;
+}
+.enpv-unsaved-banner a[hidden] {
+    display: none;
+}
+.enpv-unsaved-banner button {
+    flex: none;
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: #fff;
+    color: #7f1d1d;
+    font-weight: 600;
+    cursor: pointer;
+}
+
 .enpv-stale-banner button {
     flex: none;
     padding: 6px 14px;
