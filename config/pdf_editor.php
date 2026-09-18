@@ -41,6 +41,50 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Upload processing (text extraction)
+    |--------------------------------------------------------------------------
+    |
+    | ProcessUploadedDocumentJob extracts a new document's text into editable
+    | paragraphs. It has its own queue and Horizon supervisor so a slow PDF
+    | never holds up mail or other jobs, and documents.processing_status tells
+    | the editor where it is (App\Services\DocumentProcessing).
+    |
+    */
+    'extraction' => [
+        'connection' => env('PDF_EXTRACTION_QUEUE_CONNECTION', 'redis'),
+        'queue' => env('PDF_EXTRACTION_QUEUE', 'pdf-extraction'),
+        // Whole-job budget; each Python step inside has its own shorter
+        // timeout (config/python.php), so a hung script reports cleanly first.
+        'job_timeout' => (int) env('PDF_EXTRACTION_JOB_TIMEOUT', 300),
+        // A document still "queued" after this long was never picked up (no
+        // worker, lost job): the editor is told it failed and offers a retry.
+        'stale_queued_seconds' => (int) env('PDF_EXTRACTION_STALE_QUEUED_SECONDS', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Autosave limits
+    |--------------------------------------------------------------------------
+    |
+    | The editor posts its whole annotation state a couple of seconds after
+    | every change. These bound one such request, so a runaway client or a
+    | crafted one cannot make the server decode and store an unbounded body.
+    | A refused save answers 413 or 422 with a message the editor shows.
+    |
+    */
+    'autosave' => [
+        'max_body_kb' => (int) env('PDF_AUTOSAVE_MAX_BODY_KB', 20480),
+        'max_annotations' => (int) env('PDF_AUTOSAVE_MAX_ANNOTATIONS', 3000),
+        // Characters of text in one annotation; rich-text HTML gets four times this.
+        'max_text_length' => (int) env('PDF_AUTOSAVE_MAX_TEXT_LENGTH', 50000),
+        // Saves per minute for one editor (account, or guest session) on one document.
+        'saves_per_minute' => (int) env('PDF_AUTOSAVE_SAVES_PER_MINUTE', 60),
+        // Backstop for clients that drop their cookies to dodge the limit above.
+        'saves_per_minute_per_ip' => (int) env('PDF_AUTOSAVE_SAVES_PER_MINUTE_PER_IP', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Split Paragraph Fully In Edit Mode
     |--------------------------------------------------------------------------
     |

@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Services\PythonRunner;
-use App\Jobs\ProcessUploadedDocumentJob;
 use App\Models\Document;
 use App\Models\PdfTestReport;
 use App\Models\PdfAcroForm;
@@ -4202,8 +4201,11 @@ PYTHON;
                 FILTER_VALIDATE_BOOLEAN
             );
         });
-        $extractionPending = !$hasMaterializedExtraction
-            && Cache::has(ProcessUploadedDocumentJob::processingCacheKey($document->id));
+        // Pending means the pipeline says so (documents.processing_status),
+        // not a cache flag that expires on its own. A failed run is not
+        // pending: the editor shows the failure and offers a retry.
+        $processingStatus = app(\App\Services\DocumentProcessing::class)->status($document);
+        $extractionPending = !$hasMaterializedExtraction && $processingStatus['pending'];
         $deletedPromotedSourceKeys = [];
         foreach ($states as $state) {
             if ((string) $state->state !== 'deleted') {
@@ -4454,7 +4456,18 @@ PYTHON;
             ],
             'annotations'    => $annotations,
             'count'          => $annotations->count(),
+            // The autosave sends this back as base_version. It was read when
+            // the route bound the document, before the annotations above, so
+            // it can only be older than them: a save in between costs this
+            // editor a reload, never a silent overwrite.
+            'state_version'  => (int) $document->editor_state_version,
             'extraction_pending' => $extractionPending,
+            'processing' => [
+                'status' => $processingStatus['status'],
+                'error_code' => $hasMaterializedExtraction ? null : $processingStatus['error_code'],
+                'message' => $hasMaterializedExtraction ? null : $processingStatus['message'],
+                'can_retry' => !$hasMaterializedExtraction && $processingStatus['can_retry'],
+            ],
             'acro_form_entries' => $acroFormEntries,
             'has_acro_form_widgets' => $hasAcroFormWidgets,
             'embedded_fonts' => $embeddedFonts,
