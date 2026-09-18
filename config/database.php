@@ -2,6 +2,27 @@
 
 use Illuminate\Support\Str;
 
+// Settings shared by every Redis connection below. A named connection reads
+// REDIS_<NAME>_* first and falls back to the shared REDIS_* value.
+$redisConnection = static function (string $name, string|int $database): array {
+    $own = static fn (string $key, mixed $default = null): mixed => $name === ''
+        ? env("REDIS_{$key}", $default)
+        : env("REDIS_{$name}_{$key}", env("REDIS_{$key}", $default));
+
+    return [
+        'url' => $own('URL'),
+        'host' => $own('HOST', '127.0.0.1'),
+        'username' => $own('USERNAME'),
+        'password' => $own('PASSWORD'),
+        'port' => $own('PORT', '6379'),
+        'database' => $database,
+        'max_retries' => env('REDIS_MAX_RETRIES', 3),
+        'backoff_algorithm' => env('REDIS_BACKOFF_ALGORITHM', 'decorrelated_jitter'),
+        'backoff_base' => env('REDIS_BACKOFF_BASE', 100),
+        'backoff_cap' => env('REDIS_BACKOFF_CAP', 1000),
+    ];
+};
+
 return [
 
     /*
@@ -152,31 +173,18 @@ return [
             'persistent' => env('REDIS_PERSISTENT', false),
         ],
 
-        'default' => [
-            'url' => env('REDIS_URL'),
-            'host' => env('REDIS_HOST', '127.0.0.1'),
-            'username' => env('REDIS_USERNAME'),
-            'password' => env('REDIS_PASSWORD'),
-            'port' => env('REDIS_PORT', '6379'),
-            'database' => env('REDIS_DB', '0'),
-            'max_retries' => env('REDIS_MAX_RETRIES', 3),
-            'backoff_algorithm' => env('REDIS_BACKOFF_ALGORITHM', 'decorrelated_jitter'),
-            'backoff_base' => env('REDIS_BACKOFF_BASE', 100),
-            'backoff_cap' => env('REDIS_BACKOFF_CAP', 1000),
-        ],
-
-        'cache' => [
-            'url' => env('REDIS_URL'),
-            'host' => env('REDIS_HOST', '127.0.0.1'),
-            'username' => env('REDIS_USERNAME'),
-            'password' => env('REDIS_PASSWORD'),
-            'port' => env('REDIS_PORT', '6379'),
-            'database' => env('REDIS_CACHE_DB', '1'),
-            'max_retries' => env('REDIS_MAX_RETRIES', 3),
-            'backoff_algorithm' => env('REDIS_BACKOFF_ALGORITHM', 'decorrelated_jitter'),
-            'backoff_base' => env('REDIS_BACKOFF_BASE', 100),
-            'backoff_cap' => env('REDIS_BACKOFF_CAP', 1000),
-        ],
+        // One connection per concern, each on its own database index so it
+        // can be inspected or flushed without touching the others, and each
+        // able to move to its own instance (REDIS_<NAME>_URL / _HOST /
+        // _PORT / _PASSWORD) without a code change. On a shared instance set
+        // maxmemory-policy to noeviction or volatile-lru: queue payloads have
+        // no TTL and must never be evicted to make room for cache entries.
+        // Redis Cluster has no database indexes; give each concern its own
+        // instance there.
+        'default' => $redisConnection('', env('REDIS_DB', '0')),          // queues, Horizon, cache locks
+        'cache' => $redisConnection('CACHE', env('REDIS_CACHE_DB', '1')),     // cache:clear flushes this one
+        'session' => $redisConnection('SESSION', env('REDIS_SESSION_DB', '2')),
+        'limiter' => $redisConnection('LIMITER', env('REDIS_LIMITER_DB', '3')), // login and route throttles
 
     ],
 

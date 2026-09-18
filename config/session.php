@@ -18,7 +18,7 @@ return [
     |
     */
 
-    'driver' => env('SESSION_DRIVER', 'database'),
+    'driver' => env('SESSION_DRIVER', 'redis'),
 
     /*
     |--------------------------------------------------------------------------
@@ -71,9 +71,14 @@ return [
     | connection that should be used to manage these sessions. This should
     | correspond to a connection in your database configuration options.
     |
+    | Redis sessions get the "session" Redis connection (its own database
+    | index). Left unset, Laravel puts them on the default Redis connection
+    | beside the queues. For the database driver this names a database
+    | connection instead, so the default only applies to Redis.
+    |
     */
 
-    'connection' => env('SESSION_CONNECTION'),
+    'connection' => env('SESSION_CONNECTION', env('SESSION_DRIVER', 'redis') === 'redis' ? 'session' : null),
 
     /*
     |--------------------------------------------------------------------------

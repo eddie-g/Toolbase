@@ -62,6 +62,7 @@ class DocumentConversionQueueTest extends TestCase
             $table->string('path');
             $table->string('mime_type');
             $table->unsignedBigInteger('size_bytes')->default(0);
+            $table->timestamp('deleted_at')->nullable(); // Document uses SoftDeletes (trash)
             $table->timestamps();
         });
         Schema::create('monthly_plans', function (Blueprint $table): void {

@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\DocumentAccess;
 use App\Services\PythonRunner;
 use Illuminate\Http\Request;
 use App\Models\AiRequest;
@@ -47,6 +48,8 @@ class AIController extends Controller
                 'prompt_settings.additional' => 'nullable|string',
                 'confirmed' => 'nullable|boolean',
             ]);
+
+            app(DocumentAccess::class)->authorizeIdentifier($request, $validated['document_id'] ?? null);
 
             // Store prompt settings in session if provided
             if (isset($validated['prompt_settings'])) {
@@ -211,6 +214,9 @@ class AIController extends Controller
                 'errors' => $e->errors()
             ], 422);
         } catch (\Exception $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface || $e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             return response()->json([
                 'success' => false,
                 'message' => 'Server error: ' . $e->getMessage(),
@@ -316,6 +322,9 @@ PROMPT;
                 'parsed' => false
             ];
         } catch (\Exception $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface || $e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             return [
                 'raw_response' => $response,
                 'parsed' => false,
@@ -333,6 +342,8 @@ PROMPT;
                 'page_width' => 'nullable|numeric',
                 'page_height' => 'nullable|numeric',
             ]);
+
+            app(DocumentAccess::class)->authorizeIdentifier($request, $validated['document_id']);
 
             // Delete any existing sections for this document and session
             AiSection::where('document_id', $validated['document_id'])
@@ -354,6 +365,9 @@ PROMPT;
                 'section_id' => $aiSection->id,
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface || $e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             return response()->json([
                 'success' => false,
                 'message' => 'Error saving sections: ' . $e->getMessage(),
@@ -363,6 +377,8 @@ PROMPT;
 
     public function getSections(Request $request, $documentId)
     {
+        app(DocumentAccess::class)->authorizeIdentifier($request, (string) $documentId);
+
         try {
             $sections = AiSection::where('document_id', $documentId)
                 ->where('session', session()->getId())
@@ -409,6 +425,9 @@ PROMPT;
                 'generated_images' => $images,
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface || $e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             return response()->json([
                 'success' => false,
                 'message' => 'Error loading sections: ' . $e->getMessage(),
@@ -488,6 +507,12 @@ PROMPT;
                 ];
                 
             } catch (\Exception $e) {
+                
+                if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface || $e instanceof \Illuminate\Validation\ValidationException) {
+                
+                    throw $e;
+                
+                }
                 Log::error("Image generation failed for section", [
                     'error' => $e->getMessage(),
                     'trace' => $e->getTraceAsString(),
@@ -572,6 +597,8 @@ PROMPT;
 
     public function deleteSections(Request $request, $documentId)
     {
+        app(DocumentAccess::class)->authorizeIdentifier($request, (string) $documentId);
+
         try {
             $session = session()->getId();
             
@@ -585,6 +612,9 @@ PROMPT;
                 'deleted_count' => $deleted
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface || $e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             return response()->json([
                 'success' => false,
                 'message' => 'Error deleting sections: ' . $e->getMessage()
@@ -605,6 +635,9 @@ PROMPT;
                 'count' => $images->count()
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface || $e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             return response()->json([
                 'success' => false,
                 'message' => 'Error loading images: ' . $e->getMessage()
@@ -634,6 +667,9 @@ PROMPT;
                 'count' => $logs->count()
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface || $e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             return response()->json([
                 'success' => false,
                 'message' => 'Error loading price log: ' . $e->getMessage()
@@ -654,7 +690,7 @@ PROMPT;
             $images = $validated['images'];
             
             // Find the document
-            $document = \App\Models\Document::findOrFail($documentId);
+            $document = app(DocumentAccess::class)->authorizeId($request, $documentId); // owner or creating session only
             $originalPath = Storage::path($document->path);
             
             if (!file_exists($originalPath)) {
@@ -762,6 +798,9 @@ PROMPT;
                 'pages_added' => $result['pages_added'] ?? count($images)
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface || $e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             Log::error('Error in addToPdf', [
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
@@ -794,6 +833,9 @@ PROMPT;
                 'height' => $image->height,
             ]);
         } catch (\Exception $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface || $e instanceof \Illuminate\Validation\ValidationException) {
+                throw $e;
+            }
             Log::error('Error fetching image by ID', [
                 'image_id' => $imageId,
                 'error' => $e->getMessage()
