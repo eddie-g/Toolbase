@@ -1,0 +1,99 @@
+# Runs the production image the way it is meant to be deployed: one image,
+# three long-lived roles with their own limits, and a one-shot migration.
+# For trying the image locally and as the reference for the platform setup
+# (Azure Container Apps: web and horizon as apps, scheduler and migrate as jobs).
+#
+#   docker build -f docker/Dockerfile.prod -t netkit:prod .
+#   docker compose -f compose.prod.yaml --env-file .env.production up
+#
+# Secrets come from the environment file, never from the image. web and
+# horizon share the documents volume until documents move to object storage.
+
+x-app: &app
+    image: '${NETKIT_IMAGE:-netkit:prod}'
+    env_file: '${NETKIT_ENV_FILE:-.env.production}'
+    environment:
+        DB_HOST: mysql
+        REDIS_HOST: redis
+    volumes:
+        - 'netkit-storage:/var/www/html/storage/app'
+        # The extractor (horizon) writes a document's embedded fonts here; nginx (web) serves them.
+        - 'netkit-runtime-fonts:/var/www/html/public/fonts/runtime-extracted'
+    networks: [netkit]
+    depends_on:
+        mysql: { condition: service_healthy }
+        redis: { condition: service_healthy }
+
+services:
+    migrate:
+        <<: *app
+        command: migrate
+        restart: 'no'
+
+    web:
+        <<: *app
+        command: web
+        ports:
+            - '${NETKIT_PORT:-8088}:8080'
+        environment:
+            DB_HOST: mysql
+            REDIS_HOST: redis
+            PHP_FPM_MAX_CHILDREN: '${PHP_FPM_MAX_CHILDREN:-20}'
+        deploy:
+            resources:
+                limits: { cpus: '1.0', memory: 2G }
+        depends_on:
+            migrate: { condition: service_completed_successfully }
+
+    horizon:
+        <<: *app
+        command: horizon
+        stop_grace_period: 5m   # let a running export or extraction finish
+        deploy:
+            resources:
+                limits: { cpus: '2.0', memory: 4G }
+        depends_on:
+            migrate: { condition: service_completed_successfully }
+
+    scheduler:
+        <<: *app
+        command: scheduler
+        deploy:
+            resources:
+                limits: { cpus: '0.25', memory: 512M }
+        depends_on:
+            migrate: { condition: service_completed_successfully }
+
+    redis:
+        image: 'redis:7-alpine'
+        # Queued jobs have no TTL and must never be evicted (see .env.example).
+        command: ['redis-server', '--maxmemory-policy', 'noeviction']
+        networks: [netkit]
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            retries: 5
+            timeout: 5s
+
+    mysql:
+        image: 'mysql:8.4'
+        environment:
+            MYSQL_ROOT_PASSWORD: '${DB_PASSWORD:-netkit-local-only}'
+            MYSQL_DATABASE: '${DB_DATABASE:-netkit}'
+            MYSQL_USER: '${DB_USERNAME:-netkit}'
+            MYSQL_PASSWORD: '${DB_PASSWORD:-netkit-local-only}'
+        volumes:
+            - 'netkit-mysql:/var/lib/mysql'
+        networks: [netkit]
+        healthcheck:
+            test: ['CMD', 'mysqladmin', 'ping', '-p${DB_PASSWORD:-netkit-local-only}']
+            retries: 10
+            timeout: 5s
+
+networks:
+    netkit:
+        driver: bridge
+
+volumes:
+    netkit-storage:
+    netkit-runtime-fonts:
+    netkit-mysql:

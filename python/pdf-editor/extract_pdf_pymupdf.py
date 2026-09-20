@@ -5369,6 +5369,18 @@ def get_db_connection():
                 elif line.startswith('DB_PORT='):
                     db_config['port'] = int(line.split('=', 1)[1])
     
+    # A container gets its settings as environment variables and has no .env
+    # file at all (config is cached from the environment). They win over the
+    # file, the way they do for Laravel itself.
+    for env_name, key in (('DB_HOST', 'host'), ('DB_DATABASE', 'database'), ('DB_USERNAME', 'user'), ('DB_PASSWORD', 'password')):
+        if os.environ.get(env_name):
+            db_config[key] = os.environ[env_name]
+    if os.environ.get('DB_PORT', '').isdigit():
+        db_config['port'] = int(os.environ['DB_PORT'])
+    # Managed MySQL (Azure Flexible Server) requires TLS; same variable Laravel reads.
+    if os.environ.get('MYSQL_ATTR_SSL_CA'):
+        db_config['ssl_ca'] = os.environ['MYSQL_ATTR_SSL_CA']
+
     try:
         connection = mysql.connector.connect(**db_config)
         if connection.is_connected():

@@ -1,0 +1,131 @@
+# syntax=docker/dockerfile:1.7
+#
+# The production image: nginx + php-fpm, the PDF toolchain (PyMuPDF, qpdf,
+# poppler, pango/cairo for WeasyPrint, tesseract) and the built front end,
+# from tracked files only. One image, several roles (docker/entrypoint.sh):
+#
+#   web        nginx + php-fpm on :8080          (default)
+#   horizon    the queue workers
+#   scheduler  schedule:work                     (or "schedule-run" for a cron job)
+#   migrate    migrate --force, then exit
+#
+#   docker build -f docker/Dockerfile.prod -t netkit:prod .
+#
+# The development image stays Sail's (compose.yaml). Nothing here reads vendor/.
+
+ARG PHP_VERSION=8.5
+ARG NODE_VERSION=24
+
+# ---------------------------------------------------------------------------
+# base: the runtime, without the application
+# ---------------------------------------------------------------------------
+FROM ubuntu:24.04 AS base
+ARG PHP_VERSION
+ENV DEBIAN_FRONTEND=noninteractive TZ=UTC LANG=C.UTF-8 PHP_VERSION=${PHP_VERSION}
+
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsS 'https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xb8dc7e53946656efbce4c1dd71daeaab4ad4cab6' | gpg --dearmor -o /etc/apt/keyrings/ppa_ondrej_php.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/ppa_ondrej_php.gpg] https://ppa.launchpadcontent.net/ondrej/php/ubuntu noble main" > /etc/apt/sources.list.d/ppa_ondrej_php.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        # web
+        nginx libnginx-mod-http-brotli-filter libnginx-mod-http-brotli-static supervisor gettext-base tini \
+        # php: the same build and extensions the application is developed on, minus pcov and xdebug
+        php${PHP_VERSION}-fpm php${PHP_VERSION}-cli php${PHP_VERSION}-mysql php${PHP_VERSION}-redis \
+        php${PHP_VERSION}-gd php${PHP_VERSION}-curl php${PHP_VERSION}-mbstring php${PHP_VERSION}-xml \
+        php${PHP_VERSION}-zip php${PHP_VERSION}-bcmath php${PHP_VERSION}-intl php${PHP_VERSION}-imagick \
+        php${PHP_VERSION}-igbinary php${PHP_VERSION}-sqlite3 \
+        # python and what its PDF libraries load at run time
+        python3 python3-venv \
+        qpdf poppler-utils tesseract-ocr \
+        libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 libffi8 shared-mime-info \
+        # fonts the exporter and the templates fall back to
+        fontconfig fonts-liberation fonts-dejavu-core fonts-freefont-ttf fonts-noto-core \
+        # small tools the app shells out to or that make an incident bearable
+        unzip whois default-mysql-client \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
+    && rm -f /etc/nginx/sites-enabled/default
+
+# Python in its own environment; PythonRunner is pointed at it.
+COPY python/requirements-prod.txt /tmp/requirements-prod.txt
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir -r /tmp/requirements-prod.txt \
+    && rm /tmp/requirements-prod.txt
+ENV PYTHON_BINARY=/opt/venv/bin/python
+
+WORKDIR /var/www/html
+
+# ---------------------------------------------------------------------------
+# vendor: composer install on the runtime's own PHP
+# ---------------------------------------------------------------------------
+FROM base AS vendor
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --no-scripts --no-autoloader --prefer-dist --no-interaction --no-progress
+COPY . .
+# storage/ is not part of the build context (it holds documents locally);
+# artisan needs the framework directories to exist to run at all.
+RUN mkdir -p storage/app/private storage/app/public storage/app/temp storage/framework/cache/data \
+        storage/framework/sessions storage/framework/views storage/logs bootstrap/cache \
+    && composer dump-autoload --optimize --no-dev --classmap-authoritative
+
+# ---------------------------------------------------------------------------
+# assets: the Vite build (Tailwind scans the Blade views and a vendor path)
+# ---------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-bookworm-slim AS assets
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+# The whole application as the vendor stage has it: the Vite config, the
+# sources Tailwind scans (Blade views and one vendor path) and whatever build
+# scripts the project has. node_modules is not part of it, so npm ci's layer holds.
+COPY --from=vendor /var/www/html/ ./
+RUN npm run build
+
+# ---------------------------------------------------------------------------
+# the image
+# ---------------------------------------------------------------------------
+FROM base AS production
+
+COPY docker/php/php.ini /etc/php/${PHP_VERSION}/fpm/conf.d/99-netkit.ini
+COPY docker/php/php-cli.ini /etc/php/${PHP_VERSION}/cli/conf.d/99-netkit.ini
+COPY docker/php/fpm-pool.conf.template /etc/netkit/fpm-pool.conf.template
+COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
+COPY docker/nginx/site.conf /etc/nginx/conf.d/netkit.conf
+COPY docker/supervisor/web.conf /etc/supervisor/conf.d/web.conf
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint
+COPY docker/check-python-imports.py /usr/local/bin/check-python-imports.py
+
+COPY --from=vendor --chown=www-data:www-data /var/www/html /var/www/html
+COPY --from=assets --chown=www-data:www-data /app/public/build /var/www/html/public/build
+
+RUN chmod +x /usr/local/bin/entrypoint \
+    && rm -f /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf \
+    && mkdir -p /run/php storage/app/private storage/app/public storage/app/temp storage/framework/cache/data \
+        storage/framework/sessions storage/framework/views storage/logs bootstrap/cache \
+        public/fonts/runtime-extracted \
+    && chown -R www-data:www-data storage bootstrap/cache public/fonts/runtime-extracted /run/php /var/lib/nginx /var/log/nginx \
+    # the fonts shipped with the exporter, visible to fontconfig as well
+    && ln -s /var/www/html/python/pdf-editor/fonts /usr/local/share/fonts/netkit && fc-cache -f \
+    # build-time proof that requirements-prod.txt covers every script the app runs,
+    # and that the app boots far enough to list its routes
+    && /opt/venv/bin/python /usr/local/bin/check-python-imports.py /var/www/html \
+    && php artisan package:discover --ansi \
+    && php artisan route:list --no-ansi > /dev/null \
+    && rm -f bootstrap/cache/config.php
+
+ENV APP_ENV=production \
+    LOG_CHANNEL=stderr \
+    PHP_FPM_MAX_CHILDREN=20 \
+    PHP_FPM_START_SERVERS=4 \
+    PHP_FPM_MIN_SPARE=2 \
+    PHP_FPM_MAX_SPARE=8
+
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 CMD ["/usr/local/bin/entrypoint", "healthcheck"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint"]
+CMD ["web"]
