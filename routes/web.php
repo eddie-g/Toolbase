@@ -105,7 +105,9 @@ Route::get('/documents/{document}/exports/{export}/download', [DocumentControlle
     ->name('documents.exports.download');
 Route::get('/documents/{document}/saved-acro-form-state', [DocumentController::class, 'getSavedAcroFormState'])->name('documents.getSavedAcroFormState');
 Route::post('documents/{document}/process-ocr', [DocumentController::class, 'processOcr'])->name('documents.processOcr');
-Route::get('documents/{document}/extraction-data', [DocumentController::class, 'getExtractionData'])->name('documents.getExtractionData');
+// The action behind this was removed long ago and every call ended in a 500.
+// The legacy editor page still builds the URL, so the name stays: not found.
+Route::get('documents/{document}/extraction-data', fn () => abort(404))->name('documents.getExtractionData');
 Route::post('documents/{document}/process-fitz', [DocumentController::class, 'processFitz'])->name('documents.processFitz');
 Route::get('documents/{document}/fitz-extraction-data', [DocumentController::class, 'getFitzExtractionData'])->name('documents.getFitzExtractionData');
 Route::match(['get', 'post'], '/documents/{document}/prepare-overlay', [DocumentController::class, 'prepareOverlay'])->name('documents.prepareOverlay');

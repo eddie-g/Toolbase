@@ -68,9 +68,10 @@ class LogoPromptThemeTest extends TestCase
         $this->assertStringContainsString('stay separate and slender while converging', $prompt);
         $this->assertStringContainsString('never fuse them into a thick monogram or heavy block', $prompt);
         $this->assertStringContainsString('consistent thin-to-medium widths', $prompt);
-        $this->assertStringContainsString('Avoid heavy slabs, bulbous shapes, oversized fills', $prompt);
-        $this->assertStringContainsString('never enlarge thin parts to fill the frame', $prompt);
-        $this->assertStringContainsString('Colors: #1E3A5F, #000000, #E2621D.', $prompt);
+        $this->assertStringContainsString('restrained visual mass', $prompt);
+        // The user's own words lead the prompt, and the palette is mandatory.
+        $this->assertStringStartsWith('USER REQUEST (highest priority): "Several flowing lines that merge into an N"', $prompt);
+        $this->assertStringContainsString('use only #1E3A5F, #000000, #E2621D', $prompt);
         $this->assertStringContainsString('Background: #FFFFFF.', $prompt);
         $this->assertStringContainsString('ICON ONLY.', $prompt);
         $this->assertStringNotContainsString('one solid, continuous', $prompt);
@@ -116,14 +117,14 @@ class LogoPromptThemeTest extends TestCase
             ],
         );
 
-        $this->assertStringStartsWith('ICON ONLY.', $prompt);
+        $this->assertStringStartsWith('USER REQUEST (highest priority):', $prompt);
+        $this->assertStringContainsString('ICON ONLY.', $prompt);
         $this->assertStringContainsString('modern', strtolower($prompt));
         $this->assertStringContainsString('premium property or real estate', $prompt);
         $this->assertStringContainsString('property or real estate', $prompt);
         $this->assertStringContainsString('simplified building silhouettes', $prompt);
         $this->assertStringContainsString('window grids', $prompt);
         $this->assertStringContainsString('map pins', $prompt);
-        $this->assertStringContainsString('generous white space', $prompt);
         $this->assertStringContainsString('Do not create company names', $prompt);
         $this->assertStringContainsString('fake words', $prompt);
         $this->assertStringNotContainsString('swoosh', strtolower($prompt));

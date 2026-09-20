@@ -242,7 +242,9 @@ class PdfUploadTestController extends Controller
             }
 
             $pdfUploadTest->delete();
-            $document?->delete();
+            // For good: the files go with it, and a row left in the trash
+            // would point at nothing.
+            $document?->forceDelete();
         });
 
         $filesDeleted = true;

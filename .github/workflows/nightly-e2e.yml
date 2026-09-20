@@ -1,0 +1,76 @@
+name: Nightly browser suites
+
+# The Playwright suites drive a running site, so they need somewhere to run
+# against. Set the repository variable E2E_BASE_URL (a preview environment)
+# and the secrets E2E_ADMIN_EMAIL / E2E_ADMIN_PASSWORD (its QA admin); until
+# then the job says so and passes. The Signature suite is opt-in, as locally.
+on:
+  schedule:
+    - cron: '30 4 * * *'
+  workflow_dispatch:
+    inputs:
+      suites:
+        description: 'Suites to run (space separated)'
+        default: 'Text SourceText Draw Highlight Image Shapes MergeSplit Password Convert'
+
+permissions:
+  contents: read
+
+jobs:
+  suites:
+    name: Playwright suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      AUTOMATED_TEST_BASE_URL: ${{ vars.E2E_BASE_URL }}
+      AUTOMATED_TESTS_ADMIN_EMAIL: ${{ secrets.E2E_ADMIN_EMAIL }}
+      AUTOMATED_TESTS_ADMIN_PASSWORD: ${{ secrets.E2E_ADMIN_PASSWORD }}
+      SUITES: ${{ inputs.suites || 'Text SourceText Draw Highlight Image Shapes MergeSplit Password Convert' }}
+    steps:
+      - name: Is there a preview environment?
+        id: target
+        run: |
+          if [ -z "$AUTOMATED_TEST_BASE_URL" ]; then
+            echo "No E2E_BASE_URL variable: nothing to run against." >> "$GITHUB_STEP_SUMMARY"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.target.outputs.ready == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.target.outputs.ready == 'true'
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v5
+        if: steps.target.outputs.ready == 'true'
+        with:
+          python-version: '3.12'
+      - name: Install
+        if: steps.target.outputs.ready == 'true'
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          pip install --disable-pip-version-check pymupdf
+      - name: Run the suites
+        if: steps.target.outputs.ready == 'true'
+        run: |
+          failed=""
+          for suite in $SUITES; do
+            runner=$(ls tests/AutomatedTests/$suite/run_*_tests.cjs | head -n 1)
+            echo "::group::$suite"
+            node "$runner" > "result-$suite.json" || failed="$failed $suite"
+            node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); for (const t of r.results||[]) console.log(t.status.padEnd(8), t.id); if (!r.success) process.exitCode=1' "result-$suite.json" || failed="$failed $suite"
+            echo "::endgroup::"
+          done
+          echo "### Suites with failures:${failed:- none}" >> "$GITHUB_STEP_SUMMARY"
+          [ -z "$failed" ]
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.target.outputs.ready == 'true'
+        with:
+          name: e2e-results
+          path: |
+            result-*.json
+            tests/AutomatedTests/artifacts
+          retention-days: 14

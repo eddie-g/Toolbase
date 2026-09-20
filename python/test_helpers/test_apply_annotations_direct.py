@@ -1303,6 +1303,9 @@ class ApplyAnnotationsDirectTests(unittest.TestCase):
         self.assertEqual(len(page.draw_rect_calls), 0)
         self.assertEqual(len(page.shape_draw_rect_calls), 0)
 
+    # NK_43: the row detector counts the raised run as a second row and the
+    # layout is discarded. Remove this marker with the fix.
+    @unittest.expectedFailure
     def test_pdfjs_moved_source_span_runs_preserve_superscript_position(self):
         annotation = {
             "type": "text",

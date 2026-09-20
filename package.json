@@ -6,6 +6,7 @@
         "build": "vite build --emptyOutDir false && node scripts/check-bundle-budget.mjs",
         "check:bundle": "node scripts/check-bundle-budget.mjs",
         "dev": "vite",
+        "test:unit": "node --test resources/js/edit-new-pdfjs/*.test.mjs resources/js/edit-new/*/*.test.mjs",
         "test:pdf-image-export": "node --test resources/js/edit-new-pdfjs/image-export.test.mjs",
         "test:pdfa-export": "node --test resources/js/edit-new-pdfjs/pdfa-export.test.mjs",
         "test:word-export": "node --test resources/js/edit-new-pdfjs/converted-export.test.mjs",
