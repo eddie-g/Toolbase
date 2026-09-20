@@ -54,6 +54,10 @@ class ProductionConfig
             $problems[] = 'DB_CONNECTION must not be sqlite.';
         }
 
+        if (! config('security.admin_two_factor.required', true)) {
+            $problems[] = 'ADMIN_TWO_FACTOR_REQUIRED must not be false: admin accounts need a second factor.';
+        }
+
         $mailer = config('mail.default');
         if (in_array($mailer, ['log', 'array', null], true)) {
             $problems[] = 'MAIL_MAILER must be a real mailer: verification, password reset and sign-in codes are e-mailed.';
