@@ -88,4 +88,13 @@ class ProductionImageTest extends TestCase
             default => intdiv($number, 1024),
         };
     }
+
+    public function test_nginx_does_not_hand_out_annotation_assets_left_on_the_public_disk(): void
+    {
+        $site = (string) file_get_contents(base_path('docker/nginx/site.conf'));
+
+        $this->assertMatchesRegularExpression('#location \^~ /storage/annotation-assets/ \{\s+return 404;#', $site);
+        // Before the image rule, which would otherwise serve the file.
+        $this->assertLessThan(strpos($site, 'location ~* \\.(?:ico|png'), strpos($site, '/storage/annotation-assets/'));
+    }
 }

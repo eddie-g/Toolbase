@@ -58,6 +58,42 @@ Two directories hold state and must be the same files in `web` and `horizon`
 
 Everything else under `storage/` is per container and disposable.
 
+What is where, and who can read it:
+
+| Files | Disk | Served by |
+|---|---|---|
+| documents, originals, previews, exports, working files | private (`storage/app/private`) | the app, to whoever may open the document; finished exports through a signed link that expires in 15 minutes |
+| images and signatures placed on documents | private (`annotation-assets/`) | `documents.annotationAsset`, to the document's owner, `Cache-Control: private` |
+| generated logos, image previews, the admin stamp previews | public (`storage/app/public`, `/storage/...`) | nginx, to anyone with the URL |
+
+After deploying the release that moved annotation assets, run
+`php artisan documents:migrate-annotation-assets` once (it copies, checks,
+then deletes, and can be run again). nginx refuses `/storage/annotation-assets/`
+either way.
+
+Retention, by the `scheduler` role (each has `--dry-run`):
+
+| Command | When | Removes |
+|---|---|---|
+| `documents:cleanup-temp` | hourly | finished exports past their link, working files leaked by a killed process, temp files of deleted documents |
+| `documents:prune-guests` | daily | documents of visitors without an account, `PDF_GUEST_DOCUMENT_LIFETIME_DAYS` after their last visit |
+| `documents:prune` | daily | documents in the trash for `PDF_TRASH_RETENTION_DAYS` (30; the trash page says so), rows left behind by deleted documents, live-save renders after 7 days, admin stamp previews after 24 hours |
+
+The process umask is only relaxed inside the Sail development container.
+
+### Object storage: a decision still to make
+
+The working PDF of a document is edited in place by the Python tools (about
+150 places in the code hand a local path to a process), so documents stay on a
+shared volume for now, which is what lets several `web` and `horizon`
+containers serve the same documents. Moving them to object storage means
+download, edit, upload around every edit, plus a lock per document: a design
+of its own. What can move without that redesign, because it is written once
+and only read afterwards: finished exports, previews, database backups
+(`BACKUP_DISK`). On Azure the object store is Blob Storage, which is not
+S3-compatible: it needs a Blob adapter for Laravel's filesystem rather than
+the S3 one.
+
 ## Limits that belong together
 
 | Where | Setting | Value |
@@ -85,6 +121,15 @@ module: if a script starts using a package that is not in
 - Container health check: php-fpm answers a ping through nginx (`web`);
   `horizon:status` (`horizon`).
 - Load balancer: `GET /up` (Laravel).
+
+## Fonts
+
+The editor's 38 font families and the 12 typed-signature families are hosted by
+the app (`public/fonts/editor`, 14 MB, committed): the same woff2 files and
+`unicode-range` subsets Google Fonts serves, written by
+`node scripts/fetch-editor-fonts.mjs` from `resources/fonts/editor-fonts.json`.
+Run it again to add a family or pick up new versions. nginx serves
+`/fonts/editor/files/` as immutable. Licences: `public/fonts/editor/README.md`.
 
 ## Not in the image
 

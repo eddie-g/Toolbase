@@ -9,8 +9,17 @@ use Illuminate\Support\Str;
 
 class PdfAnnotationAssetService
 {
-    private const DISK = 'public';
-    private const BASE_DIR = 'annotation-assets/documents';
+    /**
+     * Images and signatures placed on a document are the owner's content: they
+     * live on the private disk and are only served through the authorised
+     * documents.annotationAsset route. They used to be written to the public
+     * disk, where /storage/annotation-assets/... answered to anyone holding
+     * the URL; files still there are read until
+     * `documents:migrate-annotation-assets` has moved them.
+     */
+    public const DISK = 'local';
+    public const LEGACY_DISK = 'public';
+    public const BASE_DIR = 'annotation-assets/documents';
 
     public function isImageBackedAnnotationType(mixed $type): bool
     {
@@ -80,6 +89,24 @@ class PdfAnnotationAssetService
         return $normalized;
     }
 
+    /**
+     * Store an image the editor uploads when it is inserted, before it is part
+     * of any saved state. Returns what the annotation should carry instead of
+     * the data, or null when the data is not an image this app stores.
+     *
+     * @return array{assetPath: string, src: string, mimeType: string, fileName: string}|null
+     */
+    public function storeUploadedImage(Document $document, string $annotationId, string $dataUrl, ?string $fileName = null, ?string $mimeType = null): ?array
+    {
+        $annotationId = preg_replace('/[^A-Za-z0-9_.:-]/', '_', trim($annotationId)) ?: '';
+        if ($annotationId === '' || ! $this->looksLikeDataUrl($dataUrl)) {
+            return null;
+        }
+        $stored = $this->storeDataUrl($document->id, $annotationId, $dataUrl, $fileName, $mimeType);
+
+        return $stored === null ? null : $stored + ['src' => $this->assetUrl($stored['assetPath'])];
+    }
+
     public function enrichForClient(array $annotation): array
     {
         if (!$this->isImageBackedAnnotationType($annotation['type'] ?? null)) {
@@ -129,7 +156,8 @@ class PdfAnnotationAssetService
             return route('documents.annotationAsset', $assetRouteParameters);
         }
 
-        return Storage::disk(self::DISK)->url(ltrim($assetPath, '/'));
+        // Not a document asset: nothing on the private disk has a public URL.
+        return Storage::disk(self::LEGACY_DISK)->url(ltrim($assetPath, '/'));
     }
 
     public function assetAbsolutePath(string $assetPath): ?string
@@ -139,9 +167,14 @@ class PdfAnnotationAssetService
             return null;
         }
 
-        $absolutePath = Storage::disk(self::DISK)->path($normalizedPath);
+        foreach ([self::DISK, self::LEGACY_DISK] as $disk) {
+            $absolutePath = Storage::disk($disk)->path($normalizedPath);
+            if (is_file($absolutePath)) {
+                return $absolutePath;
+            }
+        }
 
-        return is_file($absolutePath) ? $absolutePath : null;
+        return null;
     }
 
     private function extractDataUrl(array $annotation): ?string
@@ -322,7 +355,7 @@ class PdfAnnotationAssetService
 
     private function syncPathOwnershipWithDiskRoot(string $absolutePath): void
     {
-        $diskRoot = storage_path('app/public');
+        $diskRoot = Storage::disk(self::DISK)->path('');
         $owner = @fileowner($diskRoot);
 
         if (is_int($owner) && $owner >= 0) {

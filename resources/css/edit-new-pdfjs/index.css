@@ -5753,6 +5753,69 @@ body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underli
     cursor: pointer;
 }
 
+body.enpv-body .enpv-touch-dialog {
+    /* The editor's chrome is wider than a phone, so the fixed box (the layout
+       viewport) is wider than the screen: keep the notice to the screen. */
+    right: auto;
+    width: 100vw;
+    box-sizing: border-box;
+    padding: 16px;
+}
+body.enpv-body .enpv-touch-dialog__actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 4px;
+}
+body.enpv-body .enpv-touch-dialog__actions a,
+body.enpv-body .enpv-touch-dialog__actions button {
+    display: block;
+    width: 100%;
+    margin: 0;
+    box-sizing: border-box;
+    text-align: center;
+    text-decoration: none;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+}
+body.enpv-body .enpv-touch-dialog__secondary {
+    padding: 9px 14px;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+}
+
+.enpv-switch-banner {
+    position: fixed;
+    top: 84px;   /* below the top bar */
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 300400;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: min(720px, calc(100vw - 32px));
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: #78350f;
+    color: #fff;
+    font-size: 13px;
+    line-height: 1.4;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+.enpv-switch-banner button {
+    flex: none;
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: #fff;
+    color: #78350f;
+    font-weight: 600;
+    cursor: pointer;
+}
+
 .enpv-stale-banner button {
     flex: none;
     padding: 6px 14px;

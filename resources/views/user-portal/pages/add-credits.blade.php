@@ -247,7 +247,7 @@
                         <tbody>
                             @foreach($transactions as $tx)
                                 <tr>
-                                    <td class="nk-nowrap">{{ $tx->created_at->format('M j, Y g:ia') }}</td>
+                                    <td class="nk-nowrap">{{ $tx->created_at->timezone($timezone)->format('M j, Y g:ia') }}</td>
                                     <td>{{ $tx->description }}</td>
                                     <td class="nk-right nk-pos">+${{ number_format($tx->amount, 2) }}</td>
                                     <td class="nk-right">${{ number_format($tx->balance_after, 2) }}</td>

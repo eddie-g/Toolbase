@@ -51,16 +51,36 @@ class Security extends Page
             'phone' => 'required|string|max:20',
         ]);
 
-        $code = rand(100000, 999999);
+        // Three texts per ten minutes per account and per number: each one costs
+        // money, and an unlimited form is a way to text-bomb someone else.
+        foreach (['sms-verify-user:' . Auth::id(), 'sms-verify-phone:' . sha1($this->phone)] as $limiterKey) {
+            if (\Illuminate\Support\Facades\RateLimiter::tooManyAttempts($limiterKey, 3)) {
+                Notification::make()->title('Too many codes requested')->body('Wait a few minutes before asking for another.')->danger()->send();
+
+                return;
+            }
+            \Illuminate\Support\Facades\RateLimiter::hit($limiterKey, 600);
+        }
+
+        $code = random_int(100000, 999999);
         cache()->put('sms_verify_' . Auth::id(), $code, 300); // 5 minutes
 
-        $smsService->send($this->phone, "Your verification code is: {$code}");
+        if (! $smsService->send($this->phone, "Your Netkit verification code is {$code}")) {
+            cache()->forget('sms_verify_' . Auth::id());
+            Notification::make()
+                ->title('Text messages are not available right now')
+                ->body('Use an authenticator app instead.')
+                ->danger()
+                ->send();
+
+            return;
+        }
 
         $this->showSmsVerify = true;
-        
+
         Notification::make()
-            ->title('Verification Code Sent')
-            ->body('Check your log file for the code (simulated SMS).')
+            ->title('Verification code sent')
+            ->body('It is valid for five minutes.')
             ->success()
             ->send();
     }
@@ -73,7 +93,7 @@ class Security extends Page
 
         $cachedCode = cache()->get('sms_verify_' . Auth::id());
 
-        if ($cachedCode != $this->smsCode) {
+        if ($cachedCode === null || ! hash_equals((string) $cachedCode, trim((string) $this->smsCode))) {
              Notification::make()
                  ->title('Invalid Code')
                  ->danger()

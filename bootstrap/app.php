@@ -1,9 +1,13 @@
 <?php
 
-// Ensure files written by PHP (view cache, config cache, etc.) are always
-// world-writable. This prevents permission errors when artisan runs as root
-// (via `sail artisan`) and the sail web process later tries to overwrite them.
-umask(0000);
+// In the Sail development container only: files written by PHP (view cache,
+// config cache, etc.) are world-writable, which prevents permission errors
+// when artisan runs as root (via `sail artisan`) and the sail web process
+// later tries to overwrite them. Everywhere else the process umask stands:
+// production runs as one user, and documents must not be world-writable.
+if (getenv('LARAVEL_SAIL')) {
+    umask(0000);
+}
 
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
@@ -16,10 +20,10 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Production sits behind a load balancer or reverse proxy that terminates
-        // TLS; without this the app never sees https, secure cookies are not
-        // sent and every client shares the proxy's IP in rate limiters.
-        $middleware->trustProxies(at: '*');
+        // Which proxies are believed is config/trustedproxy.php (TRUSTED_PROXIES):
+        // the TrustProxies middleware reads it when nothing is set here. Not '*'
+        // ("believe whoever connects"): reached directly, a visitor's own
+        // X-Forwarded-For would be believed.
 
         $middleware->alias([
             'json.response' => \App\Http\Middleware\ForceJsonResponse::class,
@@ -40,6 +44,8 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Session\Middleware\AuthenticateSession::class,
             \App\Http\Middleware\SecurityHeaders::class,
             \App\Http\Middleware\ProtectAuthForms::class,
+            // Kill switches for the editor and the exports (config pdf_editor.switches).
+            \App\Http\Middleware\EditorKillSwitch::class,
             // Rate limits for the editor's routes, by route name (config/editor_limits.php).
             \App\Http\Middleware\ThrottleEditorRoutes::class,
         ]);

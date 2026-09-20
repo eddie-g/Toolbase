@@ -3,6 +3,8 @@ function cleanText(value, fallback = '') {
     return text || fallback;
 }
 
+import { editorFetch } from './editor-fetch.js';
+
 export function buildConvertedDownloadUrl(baseUrl, token) {
     const base = cleanText(baseUrl);
     const downloadToken = cleanText(token);
@@ -41,7 +43,7 @@ export async function readQueuedConversionResponse(response, conversionName = 'D
 }
 
 export async function waitForQueuedConversion(initial, conversionName = 'Document', {
-    fetchImpl = globalThis.fetch,
+    fetchImpl = editorFetch,
     pollIntervalMs = 1000,
     maxAttempts = 900,
     onProgress = null,

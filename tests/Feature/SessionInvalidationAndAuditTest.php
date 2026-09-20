@@ -7,7 +7,7 @@ use App\Models\Admin;
 use App\Models\AuthEvent;
 use App\Models\User;
 use App\Notifications\NewDeviceLogin;
-use App\UserPortal\Pages\Profile;
+use App\UserPortal\Pages\Settings;
 use Filament\Facades\Filament;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
 use Illuminate\Support\Facades\Gate;
@@ -82,14 +82,16 @@ class SessionInvalidationAndAuditTest extends TestCase
         Filament::setCurrentPanel(Filament::getPanel('user'));
 
         Livewire::actingAs($user)
-            ->test(Profile::class)
-            ->callAction('logoutOtherSessions', ['password' => 'not-the-password-at-all'])
-            ->assertHasActionErrors(['password']);
+            ->test(Settings::class)
+            ->set('logoutPassword', 'not-the-password-at-all')
+            ->call('logoutOtherDevices')
+            ->assertHasErrors(['logoutPassword']);
 
         Livewire::actingAs($user)
-            ->test(Profile::class)
-            ->callAction('logoutOtherSessions', ['password' => self::PASSWORD])
-            ->assertHasNoActionErrors();
+            ->test(Settings::class)
+            ->set('logoutPassword', self::PASSWORD)
+            ->call('logoutOtherDevices')
+            ->assertHasNoErrors();
 
         $user->refresh();
         $this->assertNotSame($before, $user->password, 'the password is re-hashed so other sessions no longer match');
@@ -103,17 +105,18 @@ class SessionInvalidationAndAuditTest extends TestCase
         Filament::setCurrentPanel(Filament::getPanel('user'));
 
         Livewire::actingAs($user)
-            ->test(Profile::class)
-            ->fillForm(['name' => $user->name, 'email' => 'changed-'.uniqid().'@example.com'])
-            ->call('save')
-            ->assertHasFormErrors(['current_password']);
+            ->test(Settings::class)
+            ->set('newEmail', 'changed-'.uniqid().'@example.com')
+            ->call('changeEmail')
+            ->assertHasErrors(['emailPassword']);
 
         $newEmail = 'changed-'.uniqid().'@example.com';
         Livewire::actingAs($user)
-            ->test(Profile::class)
-            ->fillForm(['name' => $user->name, 'email' => $newEmail, 'current_password' => self::PASSWORD])
-            ->call('save')
-            ->assertHasNoFormErrors();
+            ->test(Settings::class)
+            ->set('newEmail', $newEmail)
+            ->set('emailPassword', self::PASSWORD)
+            ->call('changeEmail')
+            ->assertHasNoErrors();
 
         $this->assertSame($newEmail, $user->refresh()->email);
     }

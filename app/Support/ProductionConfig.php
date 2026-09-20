@@ -54,6 +54,10 @@ class ProductionConfig
             $problems[] = 'DB_CONNECTION must not be sqlite.';
         }
 
+        if (! config('security.admin_two_factor.required', true)) {
+            $problems[] = 'ADMIN_TWO_FACTOR_REQUIRED must not be false: admin accounts need a second factor.';
+        }
+
         $mailer = config('mail.default');
         if (in_array($mailer, ['log', 'array', null], true)) {
             $problems[] = 'MAIL_MAILER must be a real mailer: verification, password reset and sign-in codes are e-mailed.';
@@ -67,6 +71,11 @@ class ProductionConfig
                     $problems[] = "{$variable} is missing (DOMAIN_LOOKUP=namecheap).";
                 }
             }
+        }
+
+        $proxies = array_map('trim', explode(',', (string) config('trustedproxy.proxies')));
+        if (array_intersect($proxies, ['*', '**']) !== []) {
+            $problems[] = 'TRUSTED_PROXIES must not be *: anyone who can reach the app without going through the load balancer could then choose their own address. Name the load balancer\'s subnet.';
         }
 
         $optional = (array) config('production.optional', []);

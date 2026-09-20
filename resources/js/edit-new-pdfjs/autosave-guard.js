@@ -108,11 +108,16 @@ function firstValidationMessage(body) {
 }
 
 /**
- * What a refused save means. kind: stale | throttled | too_large | invalid |
+ * What a refused save means. kind: resync | stale | throttled | too_large | invalid |
  * session | error. What happens next is planAfterSaveFailure() in save-resilience.js.
  */
 export function classifySaveFailure(status, body = {}, retryAfterHeader = '') {
     const code = cleanText(body?.code);
+    // A delta save the server could not apply to its rows: not a conflict,
+    // the editor just sends the whole state (delta-save.js).
+    if (code === 'delta_base_missing') {
+        return { kind: 'resync', message: 'Saving everything again…' };
+    }
     if (status === 409 || code === 'stale_state') {
         return {
             kind: 'stale',

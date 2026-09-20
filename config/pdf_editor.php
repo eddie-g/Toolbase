@@ -61,6 +61,29 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Retention
+    |--------------------------------------------------------------------------
+    |
+    | What `documents:prune` removes, so storage and the large tables stop
+    | growing without bound. Guests have their own lifetime above; working
+    | files and finished exports are handled hourly by documents:cleanup-temp.
+    |
+    */
+    'retention' => [
+        // Whether the scheduler runs documents:prune. On in production, off
+        // elsewhere unless asked for: a development database is somebody's
+        // test data. The command itself always works (and has --dry-run).
+        'prune' => (bool) env('PDF_RETENTION_PRUNE', env('APP_ENV', 'production') === 'production'),
+        // A document in the trash is deleted for good after this many days. The trash says so.
+        'trash_days' => (int) env('PDF_TRASH_RETENTION_DAYS', 30),
+        // Page renders kept for the live-save check; only the recent ones are ever read.
+        'live_save_preview_days' => 7,
+        // PDFs made by the admin stamp-preview tool. They sit on the public disk.
+        'debug_preview_hours' => 24,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Uploads
     |--------------------------------------------------------------------------
     |
@@ -126,6 +149,13 @@ return [
         'saves_per_minute' => (int) env('PDF_AUTOSAVE_SAVES_PER_MINUTE', 60),
         // Backstop for clients that drop their cookies to dodge the limit above.
         'saves_per_minute_per_ip' => (int) env('PDF_AUTOSAVE_SAVES_PER_MINUTE_PER_IP', 600),
+        // The editor sends what changed and the ids of the rest, and uploads
+        // images on their own (resources/js/edit-new-pdfjs/delta-save.js).
+        // false: every save carries the whole state again, as before.
+        'delta' => (bool) env('PDF_AUTOSAVE_DELTA', true),
+        // One image or signature, uploaded by the editor when it is inserted
+        // (documents.uploadAnnotationAsset) so it never travels inside the state.
+        'max_image_kb' => (int) env('PDF_AUTOSAVE_MAX_IMAGE_KB', 15360),
     ],
 
     /*
@@ -179,5 +209,39 @@ return [
         'max_pages' => (int) env('PDF_MERGE_MAX_PAGES', 1000),
         'max_file_pages' => (int) env('PDF_MERGE_MAX_FILE_PAGES', 100),
         'timeout_seconds' => (int) env('PDF_MERGE_TIMEOUT_SECONDS', 120),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Kill switches
+    |--------------------------------------------------------------------------
+    |
+    | Turn the editor or the exports off without a deploy. The value here is the
+    | default; `php artisan editor:switch editor off` overrides it at once for
+    | every container (the override lives in the cache) until `reset`.
+    |
+    | A switch covers the route classes of config/editor_limits.php plus the
+    | routes named here. While it is off those routes answer 503 with the
+    | message (JSON), or the "unavailable" page (the editor itself). The
+    | documents list, downloads of stored files, renaming and the trash keep
+    | working, and an open editor keeps its unsaved work in the browser.
+    |
+    */
+    'switches' => [
+        'editor' => [
+            'enabled' => (bool) env('PDF_EDITOR_ENABLED', true),
+            'classes' => ['upload', 'process', 'edit', 'render'],
+            'routes' => [
+                'documents.edit', 'documents.edit2', 'documents.editExtracted', 'documents.editNew', 'documents.editPdfjs',
+                'documents.saveAnnotationState', 'documents.processing.retry',
+            ],
+            'message' => 'The PDF editor is temporarily unavailable while we fix a problem. Your documents are safe. Please try again in a few minutes.',
+        ],
+        'export' => [
+            'enabled' => (bool) env('PDF_EXPORT_ENABLED', true),
+            'classes' => ['export'],
+            'routes' => [],
+            'message' => 'Downloads of edited PDFs and conversions are temporarily unavailable. Your changes are saved. Please try again in a few minutes.',
+        ],
     ],
 ];

@@ -18,9 +18,12 @@
                            <x-filament::button wire:click="enableTwoFactor">
                                Enable App 2FA
                            </x-filament::button>
-                           <x-filament::button color="gray" wire:click="setupSms">
-                               Enable SMS 2FA
-                           </x-filament::button>
+                           {{-- Offered only where text messages can really be sent (TWILIO_* set). --}}
+                           @if (app(\App\Services\SmsService::class)->isConfigured())
+                               <x-filament::button color="gray" wire:click="setupSms">
+                                   Enable SMS 2FA
+                               </x-filament::button>
+                           @endif
                        </div>
                    @elseif($this->user->two_factor_secret && ! $this->user->two_factor_confirmed_at)
                        {{-- Pending Setup State --}}
