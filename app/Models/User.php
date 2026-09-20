@@ -29,9 +29,22 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
         'google_id',
         'avatar',
         'phone',
+        'timezone',
         'two_factor_channel',
         'credit_balance',
     ];
+
+    /**
+     * The zone the user asked to see times in, falling back to the app's.
+     */
+    public function displayTimezone(): string
+    {
+        $zone = (string) ($this->timezone ?? '');
+
+        return $zone !== '' && in_array($zone, timezone_identifiers_list(), true)
+            ? $zone
+            : (string) config('app.timezone', 'UTC');
+    }
 
     /**
      * The attributes that should be hidden for serialization.

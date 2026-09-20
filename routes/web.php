@@ -265,6 +265,10 @@ Route::get('/generated-images/{logoRequest}/preview/{index}', GeneratedImagePrev
 Route::get('/generated-images/{logoRequest}/original/{index}', [GeneratedImagePreviewController::class, 'original'])->whereNumber('index')->middleware('auth:web,admin')->name('generatedImages.original');
 Route::post('/domain-search/save-processed-svg', [DomainSearchController::class, 'saveProcessedSvg'])->middleware('auth:web,admin')->name('domainSearch.saveProcessedSvg');
 
+// The portal's profile page became Settings; old links (verification mails,
+// bookmarks) still land somewhere useful.
+Route::redirect('/portal/profile', '/portal/settings');
+
 // Stripe Credits
 Route::post('/credits/checkout', [CreditController::class, 'createCheckout'])->middleware('auth')->name('credits.checkout');
 Route::get('/credits/checkout/success', [CreditController::class, 'checkoutSuccess'])->middleware('auth')->name('credits.checkout.success');
