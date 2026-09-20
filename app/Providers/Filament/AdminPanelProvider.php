@@ -27,6 +27,8 @@ class AdminPanelProvider extends PanelProvider
             ->path('admin')
             ->login(AdminLogin::class)
             ->authGuard('admin')
+            // The logo leads out to the site's home page, not back to the dashboard.
+            ->homeUrl('/')
             ->brandLogo(asset('images/netkit_logo_cube.svg'))
             ->darkModeBrandLogo(asset('images/netkit_logo_cube.svg'))
             ->brandLogoHeight('3rem')
