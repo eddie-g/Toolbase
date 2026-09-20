@@ -6,10 +6,12 @@ use App\Exceptions\InsufficientCreditBalanceException;
 use App\Exceptions\PythonServiceBusyException;
 use App\Jobs\ConvertDocumentExportJob;
 use App\Jobs\ExportAnnotatedPdfJob;
+use App\Jobs\GenerateDocumentPreviewJob;
 use App\Models\Admin;
 use App\Models\CreditTransaction;
 use App\Models\Document;
 use App\Services\DocumentAccess;
+use App\Services\DocumentPreviews;
 use App\Services\DocumentProcessing;
 use App\Services\PdfUploadProbe;
 use App\Services\UploadQuota;
@@ -52,6 +54,7 @@ use Illuminate\Validation\Rule;
 class DocumentController extends Controller
 {
     private const MONTHLY_ACTION_LIMIT = 1000;
+    private const DOCUMENTS_PER_PAGE = 24;
     private const PDF_ACRO_FORM_BASE_SESSION = '__document_acro_form__';
     private const SESSION_DOCUMENT_ACCESS_KEY = DocumentAccess::SESSION_KEY;
     private const DOCUMENT_NOTE_PIN_COLORS = [
@@ -544,18 +547,7 @@ class DocumentController extends Controller
             return;
         }
 
-        $timestamps = $document->timestamps;
-        try {
-            $document->timestamps = false;
-            $document->preview_image = null;
-            $document->preview_image_mime_type = null;
-            $document->preview_image_width = null;
-            $document->preview_image_height = null;
-            $document->preview_image_updated_at = null;
-            $document->saveQuietly();
-        } finally {
-            $document->timestamps = $timestamps;
-        }
+        app(DocumentPreviews::class)->clear($document);
     }
 
     private function generatePdfPreviewJpeg(string $fullPath, int $targetWidth = 320, int $quality = 58): ?array
@@ -713,18 +705,20 @@ class DocumentController extends Controller
             return;
         }
 
-        $timestamps = $document->timestamps;
-        try {
-            $document->timestamps = false;
-            $document->preview_image = base64_encode($preview['bytes']);
-            $document->preview_image_mime_type = $preview['mime_type'] ?? 'image/jpeg';
-            $document->preview_image_width = $preview['width'] ?? null;
-            $document->preview_image_height = $preview['height'] ?? null;
-            $document->preview_image_updated_at = now();
-            $document->saveQuietly();
-        } finally {
-            $document->timestamps = $timestamps;
-        }
+        // A file under previews/, not base64 in the row (App\Services\DocumentPreviews).
+        app(DocumentPreviews::class)->store(
+            $document,
+            $preview['bytes'],
+            $preview['mime_type'] ?? 'image/jpeg',
+            $preview['width'] ?? null,
+            $preview['height'] ?? null,
+        );
+    }
+
+    /** For GenerateDocumentPreviewJob: the documents page queues previews instead of rendering them. */
+    public function refreshDocumentPreview(Document $document): void
+    {
+        $this->refreshDocumentPreviewSnapshot($document);
     }
 
     /**
@@ -5337,15 +5331,33 @@ class DocumentController extends Controller
             $documentQuery->onlyTrashed();
         }
 
+        // One page of cards, and only the columns a card shows: never the
+        // preview image, which is served by documents.preview.
         $documents = $documentQuery
             ->latest($showTrash ? 'deleted_at' : 'created_at')
-            ->get();
+            ->latest('id')
+            ->select(array_merge(
+                ['id', 'user_id', 'admin_id', 'original_name', 'path', 'mime_type', 'size_bytes', 'mode', 'template_type', 'template_slug', 'created_at', 'updated_at', 'deleted_at'],
+                $this->hasDocumentPreviewColumns() ? DocumentPreviews::LIST_COLUMNS : []
+            ))
+            ->paginate(self::DOCUMENTS_PER_PAGE)
+            ->withQueryString();
 
+        // A missing preview is made by a queued job, never in this request.
+        // Asked for once per document every few hours, so one that cannot be
+        // rendered does not cost a job on every page view.
         if ($this->hasDocumentPreviewColumns()) {
-            foreach ($documents->take(8) as $document) {
-                if (empty($document->preview_image) && !empty($document->path)) {
-                    $this->refreshDocumentPreviewSnapshot($document);
-                    $document->refresh();
+            $previews = app(DocumentPreviews::class);
+            foreach ($documents as $document) {
+                if ($previews->has($document) || empty($document->path)) {
+                    continue;
+                }
+                if (Cache::add("document-preview-requested:{$document->id}", true, now()->addHours(6))) {
+                    try {
+                        GenerateDocumentPreviewJob::dispatch($document->id);
+                    } catch (\Throwable $exception) {
+                        Log::warning('Could not queue a document preview', ['document_id' => $document->id, 'error' => $exception->getMessage()]);
+                    }
                 }
             }
         }
@@ -5380,6 +5392,31 @@ class DocumentController extends Controller
         return Storage::download($document->path, $name, [
             'Content-Type' => 'application/pdf',
         ]);
+    }
+
+    /**
+     * The document's thumbnail. The URL carries the preview's timestamp
+     * (DocumentPreviews::url), so the browser may keep it for good: a new
+     * preview has a new URL.
+     */
+    public function preview(Request $request, Document $document, DocumentPreviews $previews)
+    {
+        $image = $previews->has($document) ? $previews->read($document) : null;
+        if ($image === null) {
+            abort(404);
+        }
+
+        $etag = '"'.md5($document->id.'|'.$document->preview_image_updated_at?->getTimestamp()).'"';
+        $headers = [
+            'Content-Type' => $image['mime_type'],
+            'Cache-Control' => 'private, max-age=31536000, immutable',
+            'ETag' => $etag,
+        ];
+        if (trim((string) $request->header('If-None-Match')) === $etag) {
+            return response('', 304, $headers);
+        }
+
+        return response($image['bytes'], 200, $headers);
     }
 
     /** Move to trash: the row and its files stay, the document disappears from every list. */

@@ -200,6 +200,7 @@ Route::middleware('auth:admin')
 
 Route::post('/documents/trash/empty', [DocumentController::class, 'emptyTrash'])->name('documents.emptyTrash');
 Route::get('/documents/{document}/download', [DocumentController::class, 'download'])->withTrashed()->name('documents.download');
+Route::get('/documents/{document}/preview', [DocumentController::class, 'preview'])->withTrashed()->name('documents.preview');
 Route::post('/documents/{document}/trash', [DocumentController::class, 'trash'])->name('documents.trash');
 Route::post('/documents/{document}/restore', [DocumentController::class, 'restore'])->withTrashed()->name('documents.restore');
 Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->withTrashed()->name('documents.destroy');

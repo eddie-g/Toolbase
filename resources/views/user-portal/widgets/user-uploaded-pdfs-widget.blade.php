@@ -321,9 +321,7 @@
             <div class="netkit-pdf-board">
                 @foreach ($records as $document)
                     @php
-                        $previewDataUrl = (!empty($document->preview_image) && !empty($document->preview_image_mime_type))
-                            ? ('data:' . $document->preview_image_mime_type . ';base64,' . $document->preview_image)
-                            : null;
+                        $previewDataUrl = app(\App\Services\DocumentPreviews::class)->url($document);
                         $sizeMb = (int) $document->size_bytes > 0 ? number_format(((int) $document->size_bytes) / (1024 * 1024), 1) : '0.0';
                         $updatedLabel = optional($document->updated_at)->diffForHumans() ?: 'just now';
                     @endphp
