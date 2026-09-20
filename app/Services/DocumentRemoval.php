@@ -25,12 +25,14 @@ class DocumentRemoval
         }
 
         // Images and signatures placed on its pages.
-        $assets = 'annotation-assets/documents/'.$document->id;
-        if (Storage::disk('public')->exists($assets)) {
-            foreach (Storage::disk('public')->allFiles($assets) as $file) {
-                $freed += (int) Storage::disk('public')->size($file);
+        $assets = PdfAnnotationAssetService::BASE_DIR.'/'.$document->id;
+        foreach ([PdfAnnotationAssetService::DISK, PdfAnnotationAssetService::LEGACY_DISK] as $disk) {
+            if (Storage::disk($disk)->exists($assets)) {
+                foreach (Storage::disk($disk)->allFiles($assets) as $file) {
+                    $freed += (int) Storage::disk($disk)->size($file);
+                }
+                Storage::disk($disk)->deleteDirectory($assets);
             }
-            Storage::disk('public')->deleteDirectory($assets);
         }
 
         // The cached clean copy the exporter works from.

@@ -7869,17 +7869,23 @@ class DocumentController extends Controller
             abort(404);
         }
 
-        $mimeType = Storage::disk('public')->mimeType($relativePath) ?: 'application/octet-stream';
+        $mimeType = \Illuminate\Support\Facades\File::mimeType($absolutePath) ?: 'application/octet-stream';
         $lastModified = @filemtime($absolutePath) ?: time();
         $etag = md5($relativePath . '|' . $lastModified . '|' . (@filesize($absolutePath) ?: 0));
 
-        return response()->file($absolutePath, [
+        $response = response()->file($absolutePath, [
             'Content-Type' => $mimeType,
             'Content-Disposition' => 'inline; filename="' . $filename . '"',
-            'Cache-Control' => 'public, max-age=31536000, immutable',
             'ETag' => $etag,
             'Last-Modified' => gmdate('D, d M Y H:i:s', $lastModified) . ' GMT',
         ]);
+        // The owner's browser may keep it; a shared cache must not. A file
+        // response marks itself public when it is built, so this comes after.
+        $response->setPrivate();
+        $response->setMaxAge(31536000);
+        $response->headers->addCacheControlDirective('immutable');
+
+        return $response;
     }
 
     public function originalFile(Request $request, Document $document)

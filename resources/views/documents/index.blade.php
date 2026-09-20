@@ -616,6 +616,13 @@
                                 <a href="{{ route('register') }}">Create a free account</a> to keep them and open them anywhere.
                             </div>
                         @endif
+
+                        {{-- The trash is emptied by documents:prune (config pdf_editor.retention). --}}
+                        @if ($showTrash)
+                            <div class="status-banner trash-retention">
+                                Documents in the trash are deleted for good after {{ config('pdf_editor.retention.trash_days', 30) }} days. Restore one to keep it.
+                            </div>
+                        @endif
                     </div>
 
                     <section class="upload-hero">

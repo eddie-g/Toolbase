@@ -39,3 +39,13 @@ Schedule::command('ops:horizon-watchdog')
 
 // Capture Horizon metrics/wait-time snapshots for the dashboard graphs.
 Schedule::command('horizon:snapshot')->everyFiveMinutes();
+
+// The retention policy (config pdf_editor.retention): old trash, rows and
+// files left by deleted documents, old previews. Like the guest prune it only
+// runs where it is switched on: this scheduler also runs on development machines.
+Schedule::command('documents:prune')
+    ->dailyAt('03:50')
+    ->when(fn () => (bool) config('pdf_editor.retention.prune'))
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->runInBackground();
