@@ -1,0 +1,33 @@
+; Rendered by docker/entrypoint.sh (envsubst) into /etc/php/$PHP_VERSION/fpm/pool.d/netkit.conf.
+;
+; Sizing: a worker settles around 60-90 MB. With 2 GiB for the web container,
+; 20 children leave room for nginx and for the Python processes a request may
+; start (PYTHON_MAX_CONCURRENT bounds those). Re-size from a load test.
+[netkit]
+user = www-data
+group = www-data
+listen = /run/php/php-fpm.sock
+listen.owner = www-data
+listen.group = www-data
+listen.backlog = 511
+
+pm = dynamic
+pm.max_children = ${PHP_FPM_MAX_CHILDREN}
+pm.start_servers = ${PHP_FPM_START_SERVERS}
+pm.min_spare_servers = ${PHP_FPM_MIN_SPARE}
+pm.max_spare_servers = ${PHP_FPM_MAX_SPARE}
+; Recycle workers so a slow leak never becomes an incident.
+pm.max_requests = 500
+
+; Above nginx's fastcgi_read_timeout (200 s): nginx gives up first and answers the client.
+request_terminate_timeout = 210s
+request_slowlog_timeout = 10s
+slowlog = /proc/self/fd/2
+
+pm.status_path = /fpm-status
+ping.path = /fpm-ping
+
+; The container's environment is the configuration.
+clear_env = no
+catch_workers_output = yes
+decorate_workers_output = no

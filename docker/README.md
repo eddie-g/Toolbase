@@ -1,0 +1,92 @@
+# The production image
+
+`docker/Dockerfile.prod` builds one image from tracked files only: nginx and
+php-fpm, the PDF toolchain, and the built front end. Development keeps using
+Sail (`compose.yaml`); nothing here reads `vendor/`.
+
+```
+docker build -f docker/Dockerfile.prod -t netkit:prod .
+```
+
+## Roles
+
+The same image runs every part of the deployment. The role is the container's
+command (`docker/entrypoint.sh`):
+
+| Command | What runs | Suggested size |
+|---|---|---|
+| `web` (default) | nginx on `:8080` in front of php-fpm | 1 vCPU, 2 GiB, 2 or more replicas |
+| `horizon` | `php artisan horizon` | 2 vCPU, 4 GiB |
+| `scheduler` | `php artisan schedule:work` | 0.25 vCPU, 0.5 GiB, exactly one |
+| `schedule-run` | `php artisan schedule:run`, then exits | for a platform cron job every minute, instead of `scheduler` |
+| `migrate` | `php artisan migrate --force`, then exits | run once per release, before the others start |
+
+On Azure Container Apps: `web` and `horizon` are apps, `migrate` and the
+scheduler are jobs. `compose.prod.yaml` is the same layout for one machine.
+
+Every long-lived role first runs `php artisan app:check-config` and stops with
+the list of what to fix if a setting is unsafe or a secret is missing. Then it
+caches config, routes, views and events: configuration comes from the
+container's environment, so the caches are built at start, not in the image.
+
+## Configuration
+
+Everything in `.env.example` is an environment variable of the container.
+There is no `.env` file in the image. Set by the image itself:
+
+- `APP_ENV=production`, `LOG_CHANNEL=stderr`
+- `PYTHON_BINARY=/opt/venv/bin/python` (what `PythonRunner` uses)
+- `PHP_FPM_MAX_CHILDREN=20`, `PHP_FPM_START_SERVERS=4`, `PHP_FPM_MIN_SPARE=2`,
+  `PHP_FPM_MAX_SPARE=8`: size these from a load test. A worker settles around
+  60 to 90 MB; leave room for the Python processes requests start
+  (`PYTHON_MAX_CONCURRENT`).
+
+The Python extractor connects to MySQL itself and reads `DB_HOST`,
+`DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`, `DB_PORT` and `MYSQL_ATTR_SSL_CA`
+from the environment.
+
+## Storage
+
+Two directories hold state and must be the same files in `web` and `horizon`
+(one shared volume each, Azure Files, until documents move to object storage):
+
+- `/var/www/html/storage/app`: documents, previews, exports, working files.
+- `/var/www/html/public/fonts/runtime-extracted`: the fonts embedded in each
+  uploaded PDF. The extractor writes them in `horizon`; nginx serves them to
+  the editor from `web`. Without the shared volume the editor falls back to
+  substitute fonts.
+
+Everything else under `storage/` is per container and disposable.
+
+## Limits that belong together
+
+| Where | Setting | Value |
+|---|---|---|
+| app | `PDF_UPLOAD_MAX_KB`, `PDF_AUTOSAVE_MAX_BODY_KB` | 20 MB |
+| `docker/php/php.ini` | `upload_max_filesize` / `post_max_size` | 25 MB / 32 MB |
+| `docker/nginx/site.conf` | `client_max_body_size` | 32 MB |
+| `config/python.php` | longest Python process in a request | 180 s |
+| `docker/nginx/site.conf` | `fastcgi_read_timeout` | 200 s |
+| `docker/php/fpm-pool.conf.template` | `request_terminate_timeout` | 210 s |
+| load balancer | idle / request timeout | at least 210 s |
+
+## Python packages
+
+The image installs `python/requirements-prod.txt`: what the scripts the PHP
+code calls need. `python/requirements.txt` adds the offline dictionary and
+training tools (torch, transformers, gensim), which no request or job runs.
+The build runs `docker/check-python-imports.py`, which finds every `python/*.py`
+the PHP code names, follows their local imports and imports each third-party
+module: if a script starts using a package that is not in
+`requirements-prod.txt`, the build fails.
+
+## Health
+
+- Container health check: php-fpm answers a ping through nginx (`web`);
+  `horizon:status` (`horizon`).
+- Load balancer: `GET /up` (Laravel).
+
+## Not in the image
+
+Node and Playwright (the QA suites and the admin test runner), xdebug, pcov,
+and the development tools Sail installs.

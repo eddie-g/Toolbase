@@ -2,7 +2,8 @@ services:
     laravel.test:
         build:
             context: '.'
-            dockerfile: './vendor/laravel/sail/runtimes/8.5/Dockerfile'
+            # Tracked copy of the Sail runtime with the PDF toolchain added (see the file's header).
+            dockerfile: './docker/Dockerfile.dev'
             args:
                 WWWGROUP: '${WWWGROUP:-1337}'
         image: 'sail-8.5/app'

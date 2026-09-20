@@ -1,0 +1,20 @@
+# What the running app needs: every script under python/ that the PHP code
+# calls (docker/check-python-imports.py verifies this list against them during
+# the image build). python/requirements.txt adds the offline dictionary and
+# training tools (torch, transformers, gensim, wordfreq), which no request or
+# job ever runs and which would add well over a gigabyte to the image.
+pdf2image==1.16.3
+pytesseract==0.3.10
+Pillow==10.2.0
+mysql-connector-python==8.3.0
+reportlab==4.1.0
+pdfminer.six==20231228
+PyMuPDF==1.26.7
+pikepdf==10.5.1
+weasyprint==68.1
+python-docx==1.1.2
+pdf2docx==0.5.13
+opencv-python-headless==4.11.0.86
+openpyxl==3.1.5
+requests==2.31.0
+numpy==1.26.4

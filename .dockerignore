@@ -1,0 +1,43 @@
+# Keep the build context to what the image needs.
+.git
+.github
+.env
+.env.*
+!.env.example
+node_modules
+vendor
+public/build
+public/hot
+public/storage
+# Fonts extracted from uploaded documents at run time: a shared volume in production.
+public/fonts/runtime-extracted
+# The image makes its own storage tree; the local one holds documents, caches
+# and directories owned by other users.
+storage
+bootstrap/cache/*.php
+tests
+documentation
+docs
+tmp
+tools
+**/__pycache__
+**/*.pyc
+python/venv
+.venv
+# Scratch files that pile up in the project root during debugging.
+/*.png
+/*.pdf
+/*.b64
+/*.json
+!/composer.json
+!/composer.lock
+!/package.json
+!/package-lock.json
+!/pdf-commandments.json
+!/pdfjs-source-edit-contract.json
+/tmp_*
+/*.cjs
+/*.php
+!/artisan
+compose.yaml
+compose.prod.yaml
