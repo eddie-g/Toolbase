@@ -70,6 +70,11 @@ var settings = [
   { name: 'require_secure_transport', value: 'ON' }
   { name: 'slow_query_log', value: 'ON' }
   { name: 'long_query_time', value: '1' }
+  // Azure's default omits NO_ENGINE_SUBSTITUTION; this is the dev box's (MySQL's own) default set.
+  {
+    name: 'sql_mode'
+    value: 'ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'
+  }
 ]
 
 // Server parameters cannot be changed in parallel.
