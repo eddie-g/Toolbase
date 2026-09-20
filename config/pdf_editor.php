@@ -41,6 +41,95 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Documents of visitors without an account
+    |--------------------------------------------------------------------------
+    |
+    | A guest owns documents through a token in an encrypted cookie
+    | (App\Services\GuestDocuments). The cookie and the documents live for
+    | lifetime_days after the visitor was last seen; documents:prune-guests
+    | then removes the documents and their files. Signing in claims them.
+    |
+    */
+    'guests' => [
+        'lifetime_days' => (int) env('PDF_GUEST_DOCUMENT_LIFETIME_DAYS', 7),
+        // Whether the scheduler runs documents:prune-guests. On in production,
+        // off elsewhere unless asked for; the command itself always works.
+        'prune' => (bool) env('PDF_GUEST_PRUNE', env('APP_ENV', 'production') === 'production'),
+        // A guest can open at most this many of their most recent documents.
+        'max_documents' => (int) env('PDF_GUEST_MAX_DOCUMENTS', 50),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Uploads
+    |--------------------------------------------------------------------------
+    |
+    | How many documents an account or a guest may create (App\Services\
+    | UploadQuota), and what a PDF must look like to be accepted at all
+    | (App\Services\PdfUploadProbe), checked before anything is stored or
+    | queued. The HTTP rate limits in config/editor_limits.php count attempts;
+    | these count documents.
+    |
+    */
+    'uploads' => [
+        'max_kb' => (int) env('PDF_UPLOAD_MAX_KB', 20480),
+        'max_pages' => (int) env('PDF_UPLOAD_MAX_PAGES', 500),
+        // Accounts without the PDF editor plan, per calendar month.
+        'monthly_limit' => (int) env('PDF_UPLOAD_MONTHLY_LIMIT', 100),
+        // Without an account: per session and address, and per address alone
+        // (several people behind one address; scripts that drop cookies).
+        // Local development is effectively unlimited: the QA suites upload a
+        // fixture per case as a guest.
+        'guest_daily_limit' => (int) env('PDF_UPLOAD_GUEST_DAILY_LIMIT', env('APP_ENV', 'production') === 'local' ? 5000 : 5),
+        'guest_daily_limit_per_ip' => (int) env('PDF_UPLOAD_GUEST_DAILY_LIMIT_PER_IP', env('APP_ENV', 'production') === 'local' ? 20000 : 20),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Upload processing (text extraction)
+    |--------------------------------------------------------------------------
+    |
+    | ProcessUploadedDocumentJob extracts a new document's text into editable
+    | paragraphs. It has its own queue and Horizon supervisor so a slow PDF
+    | never holds up mail or other jobs, and documents.processing_status tells
+    | the editor where it is (App\Services\DocumentProcessing).
+    |
+    */
+    'extraction' => [
+        'connection' => env('PDF_EXTRACTION_QUEUE_CONNECTION', 'redis'),
+        'queue' => env('PDF_EXTRACTION_QUEUE', 'pdf-extraction'),
+        // Whole-job budget; each Python step inside has its own shorter
+        // timeout (config/python.php), so a hung script reports cleanly first.
+        'job_timeout' => (int) env('PDF_EXTRACTION_JOB_TIMEOUT', 300),
+        // A document still "queued" after this long was never picked up (no
+        // worker, lost job): the editor is told it failed and offers a retry.
+        'stale_queued_seconds' => (int) env('PDF_EXTRACTION_STALE_QUEUED_SECONDS', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Autosave limits
+    |--------------------------------------------------------------------------
+    |
+    | The editor posts its whole annotation state a couple of seconds after
+    | every change. These bound one such request, so a runaway client or a
+    | crafted one cannot make the server decode and store an unbounded body.
+    | A refused save answers 413 or 422 with a message the editor shows.
+    |
+    */
+    'autosave' => [
+        'max_body_kb' => (int) env('PDF_AUTOSAVE_MAX_BODY_KB', 20480),
+        'max_annotations' => (int) env('PDF_AUTOSAVE_MAX_ANNOTATIONS', 3000),
+        // Characters of text in one annotation; rich-text HTML gets four times this.
+        'max_text_length' => (int) env('PDF_AUTOSAVE_MAX_TEXT_LENGTH', 50000),
+        // Saves per minute for one editor (account, or guest session) on one document.
+        'saves_per_minute' => (int) env('PDF_AUTOSAVE_SAVES_PER_MINUTE', 60),
+        // Backstop for clients that drop their cookies to dodge the limit above.
+        'saves_per_minute_per_ip' => (int) env('PDF_AUTOSAVE_SAVES_PER_MINUTE_PER_IP', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Split Paragraph Fully In Edit Mode
     |--------------------------------------------------------------------------
     |

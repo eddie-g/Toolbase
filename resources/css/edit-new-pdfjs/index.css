@@ -3920,6 +3920,40 @@ body.enpv-body.enpv-viewer-ready .enpv-loading-screen {
     letter-spacing: 0;
     white-space: nowrap;
 }
+.enpv-loading-card.is-failed {
+    flex-direction: column;
+    align-items: flex-start;
+    max-width: 440px;
+    padding: 20px 22px;
+    border-radius: 10px;
+    background: #24272a;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+.enpv-loading-card.is-failed .enpv-loading-spinner {
+    display: none;
+}
+.enpv-loading-card.is-failed .enpv-loading-title {
+    white-space: normal;
+    font-size: 15px;
+}
+.enpv-loading-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+.enpv-loading-actions p {
+    flex: 1 0 100%;
+    margin: 0 0 6px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: #c4c9cc;
+}
+.enpv-loading-actions a {
+    margin-left: auto;
+    font-size: 13px;
+    color: #c4c9cc;
+}
 @keyframes enpv-spin {
     to { transform: rotate(360deg); }
 }
@@ -5657,6 +5691,77 @@ body.enpv-shape-on .enpv-annotation-box.enpv-shape-box[data-guided-lease-underli
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
     max-width: 480px;
     font-size: 13px;
+}
+
+/* Another tab saved a newer state: this tab has stopped saving (main.js,
+ * enterStaleEditorState). Stays until the reload, unlike .enpv-error. */
+.enpv-stale-banner {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    max-width: min(760px, calc(100vw - 32px));
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: #92400e;
+    color: #fff;
+    font-size: 13px;
+    line-height: 1.4;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+
+/* A save failed and the changes are only in this browser (main.js,
+ * showUnsavedBanner). Stays until a save succeeds. */
+.enpv-unsaved-banner {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1090;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: min(720px, calc(100vw - 32px));
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: #7f1d1d;
+    color: #fff;
+    font-size: 13px;
+    line-height: 1.4;
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
+}
+.enpv-unsaved-banner a {
+    flex: none;
+    color: #fff;
+    font-weight: 600;
+}
+.enpv-unsaved-banner a[hidden] {
+    display: none;
+}
+.enpv-unsaved-banner button {
+    flex: none;
+    padding: 5px 12px;
+    border: 0;
+    border-radius: 6px;
+    background: #fff;
+    color: #7f1d1d;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.enpv-stale-banner button {
+    flex: none;
+    padding: 6px 14px;
+    border: 0;
+    border-radius: 6px;
+    background: #fff;
+    color: #92400e;
+    font-weight: 600;
+    cursor: pointer;
 }
 
 /* ---------------------------------------------------------------------

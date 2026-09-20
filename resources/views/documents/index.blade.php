@@ -102,6 +102,10 @@
 
         .status-stack { display: grid; gap: 10px; }
         .status-stack:empty { display: none; }
+        .docs-pagination { display: flex; align-items: center; justify-content: center; gap: 14px; margin-top: 22px; }
+        .docs-pagination .button-secondary { text-decoration: none; }
+        .docs-pagination .is-disabled { opacity: .45; pointer-events: none; }
+        .docs-pagination-status { font-size: 13px; color: var(--nk-muted, #6b7280); }
         .status-banner {
             padding: 12px 14px;
             border-radius: var(--nk-radius-sm);
@@ -604,6 +608,14 @@
                         @if ($errors->any())
                             <div class="status-banner error">{{ $errors->first() }}</div>
                         @endif
+
+                        {{-- Without an account, documents belong to this browser and are removed after a while (config pdf_editor.guests). --}}
+                        @if (!auth('web')->check() && !auth('admin')->check() && $documents->total() > 0 && !$showTrash)
+                            <div class="status-banner guest-retention">
+                                Your documents are kept in this browser for {{ config('pdf_editor.guests.lifetime_days', 7) }} days after your last visit.
+                                <a href="{{ route('register') }}">Create a free account</a> to keep them and open them anywhere.
+                            </div>
+                        @endif
                     </div>
 
                     <section class="upload-hero">
@@ -859,7 +871,7 @@
 
                     <section class="docs-section">
                         <div class="docs-section-header">
-                            <h2>{{ $showTrash ? 'Trash' : 'Your documents' }}<span class="docs-count">{{ $documents->count() }}</span></h2>
+                            <h2>{{ $showTrash ? 'Trash' : 'Your documents' }}<span class="docs-count">{{ $documents->total() }}</span></h2>
                             <div class="docs-section-actions">
                                 @if (!$showTrash && $documents->count() > 0)
                                     <label class="select-all-wrap" for="select-all-checkbox">
@@ -917,9 +929,8 @@
                                     $updatedLabel = optional($document->updated_at)->diffForHumans() ?: 'just now';
                                     $trashedLabel = optional($document->deleted_at)->diffForHumans() ?: 'just now';
                                     $paperClass = $document->mode === 'ai' ? 'ai-mode' : ($document->mode === 'guided' ? 'guided-mode' : '');
-                                    $previewDataUrl = (!empty($document->preview_image) && !empty($document->preview_image_mime_type))
-                                        ? ('data:' . $document->preview_image_mime_type . ';base64,' . $document->preview_image)
-                                        : null;
+                                    // A cacheable URL, not the image inlined as base64 (App\Services\DocumentPreviews).
+                                    $previewDataUrl = app(\App\Services\DocumentPreviews::class)->url($document);
                                 @endphp
                                 <div class="doc-card" x-data="{ menuOpen: false }" :class="{ 'is-menu-open': menuOpen }" @keydown.escape.window="menuOpen = false">
                                     @unless ($showTrash)
@@ -998,6 +1009,10 @@
                                                     src="{{ $previewDataUrl }}"
                                                     alt="Preview of {{ $document->original_name }}"
                                                     loading="lazy"
+                                                    decoding="async"
+                                                    @if ($document->preview_image_width && $document->preview_image_height)
+                                                        width="{{ $document->preview_image_width }}" height="{{ $document->preview_image_height }}"
+                                                    @endif
                                                 >
                                             </div>
                                         @else
@@ -1035,6 +1050,22 @@
                                 </div>
                             @endforelse
                         </div>
+
+                        @if ($documents->hasPages())
+                            <nav class="docs-pagination" aria-label="Pages of documents">
+                                @if ($documents->onFirstPage())
+                                    <span class="button-secondary is-disabled" aria-disabled="true">Previous</span>
+                                @else
+                                    <a class="button-secondary" href="{{ $documents->previousPageUrl() }}" rel="prev">Previous</a>
+                                @endif
+                                <span class="docs-pagination-status">Page {{ $documents->currentPage() }} of {{ $documents->lastPage() }}</span>
+                                @if ($documents->hasMorePages())
+                                    <a class="button-secondary" href="{{ $documents->nextPageUrl() }}" rel="next">Next</a>
+                                @else
+                                    <span class="button-secondary is-disabled" aria-disabled="true">Next</span>
+                                @endif
+                            </nav>
+                        @endif
                     </section>
                 </div>
             </div>

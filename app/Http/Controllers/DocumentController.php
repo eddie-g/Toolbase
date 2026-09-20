@@ -3,13 +3,19 @@
 namespace App\Http\Controllers;
 
 use App\Exceptions\InsufficientCreditBalanceException;
+use App\Exceptions\PythonServiceBusyException;
 use App\Jobs\ConvertDocumentExportJob;
 use App\Jobs\ExportAnnotatedPdfJob;
-use App\Jobs\ProcessUploadedDocumentJob;
+use App\Jobs\GenerateDocumentPreviewJob;
 use App\Models\Admin;
 use App\Models\CreditTransaction;
 use App\Models\Document;
 use App\Services\DocumentAccess;
+use App\Services\DocumentPreviews;
+use App\Services\DocumentProcessing;
+use App\Services\PdfUploadProbe;
+use App\Services\UploadQuota;
+use App\Support\BlankPdf;
 use App\Services\PythonRunner;
 use App\Models\DocumentConversion;
 use App\Models\DocumentConversionSetting;
@@ -47,8 +53,8 @@ use Illuminate\Validation\Rule;
 
 class DocumentController extends Controller
 {
-    private const MONTHLY_UPLOAD_LIMIT = 100;
     private const MONTHLY_ACTION_LIMIT = 1000;
+    private const DOCUMENTS_PER_PAGE = 24;
     private const PDF_ACRO_FORM_BASE_SESSION = '__document_acro_form__';
     private const SESSION_DOCUMENT_ACCESS_KEY = DocumentAccess::SESSION_KEY;
     private const DOCUMENT_NOTE_PIN_COLORS = [
@@ -541,18 +547,7 @@ class DocumentController extends Controller
             return;
         }
 
-        $timestamps = $document->timestamps;
-        try {
-            $document->timestamps = false;
-            $document->preview_image = null;
-            $document->preview_image_mime_type = null;
-            $document->preview_image_width = null;
-            $document->preview_image_height = null;
-            $document->preview_image_updated_at = null;
-            $document->saveQuietly();
-        } finally {
-            $document->timestamps = $timestamps;
-        }
+        app(DocumentPreviews::class)->clear($document);
     }
 
     private function generatePdfPreviewJpeg(string $fullPath, int $targetWidth = 320, int $quality = 58): ?array
@@ -710,28 +705,39 @@ class DocumentController extends Controller
             return;
         }
 
-        $timestamps = $document->timestamps;
-        try {
-            $document->timestamps = false;
-            $document->preview_image = base64_encode($preview['bytes']);
-            $document->preview_image_mime_type = $preview['mime_type'] ?? 'image/jpeg';
-            $document->preview_image_width = $preview['width'] ?? null;
-            $document->preview_image_height = $preview['height'] ?? null;
-            $document->preview_image_updated_at = now();
-            $document->saveQuietly();
-        } finally {
-            $document->timestamps = $timestamps;
-        }
+        // A file under previews/, not base64 in the row (App\Services\DocumentPreviews).
+        app(DocumentPreviews::class)->store(
+            $document,
+            $preview['bytes'],
+            $preview['mime_type'] ?? 'image/jpeg',
+            $preview['width'] ?? null,
+            $preview['height'] ?? null,
+        );
     }
 
-    public function processUploadedDocument(int $documentId, ?string $userEmail = null, ?string $sessionId = null): void
+    /** For GenerateDocumentPreviewJob: the documents page queues previews instead of rendering them. */
+    public function refreshDocumentPreview(Document $document): void
+    {
+        $this->refreshDocumentPreviewSnapshot($document);
+    }
+
+    /**
+     * The work of ProcessUploadedDocumentJob. Returns ['success' => true] or
+     * ['success' => false, 'code' => ...]: the job turns that into the
+     * document's processing_status, which is what the editor waits on. A
+     * failed extraction used to be logged and swallowed here, leaving an
+     * editor that never filled.
+     *
+     * @return array{success: bool, code?: string}
+     */
+    public function processUploadedDocument(int $documentId, ?string $userEmail = null, ?string $sessionId = null): array
     {
         $document = Document::find($documentId);
         if (!$document) {
             Log::warning('Queued upload processing skipped missing document', [
                 'document_id' => $documentId,
             ]);
-            return;
+            return ['success' => false, 'code' => 'file_missing'];
         }
 
         $fullPath = Storage::path($document->path);
@@ -740,7 +746,7 @@ class DocumentController extends Controller
                 'document_id' => $document->id,
                 'path' => $document->path,
             ]);
-            return;
+            return ['success' => false, 'code' => 'file_missing'];
         }
 
         $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
@@ -774,7 +780,7 @@ class DocumentController extends Controller
                 ]);
             }
         } else {
-            Log::warning('Queued upload-time Fitz extraction failed; overlay prep will retry', [
+            Log::warning('Queued upload-time Fitz extraction failed', [
                 'document_id' => $document->id,
                 'python_binary' => $pythonBinary,
                 'return_code' => $extractionReturnCode,
@@ -787,7 +793,22 @@ class DocumentController extends Controller
             'materialized_count' => $materializedAcroFormCount,
         ]);
 
-        $this->refreshDocumentPreviewSnapshot($document);
+        // The preview is a nicety of the documents list; it never decides
+        // whether the editor can open.
+        try {
+            $this->refreshDocumentPreviewSnapshot($document);
+        } catch (PythonServiceBusyException $exception) {
+            Log::info('Preview snapshot skipped: PDF service busy', ['document_id' => $document->id]);
+        }
+
+        if ($extractionReturnCode === 0) {
+            return ['success' => true];
+        }
+
+        return [
+            'success' => false,
+            'code' => $extractionReturnCode === PythonRunner::TIMEOUT_EXIT_CODE ? 'extraction_timeout' : 'extraction_failed',
+        ];
     }
 
     private function normalizeDocumentOriginalName(Document $document, string $value): string
@@ -1496,7 +1517,12 @@ class DocumentController extends Controller
             $normalizedAnnotations
         )));
 
-        DB::transaction(function () use ($document, $sessionId, $normalizedAnnotations, $annotationIds, $state, $ownership) {
+        // An autosave carries the whole state but usually changes one
+        // annotation. Rows whose content and ownership already match are left
+        // alone; the changed ones go in one upsert and the new ones in one
+        // insert, so a 500-annotation save is a handful of statements rather
+        // than one UPDATE per annotation.
+        DB::transaction(function () use ($document, $sessionId, $normalizedAnnotations, $state, $ownership) {
             $existingRowsQuery = PdfState::query()
                 ->where('document_id', $document->id)
                 ->where('state', '!=', 'deleted')
@@ -1506,6 +1532,11 @@ class DocumentController extends Controller
                 ->get()
                 ->keyBy(fn (PdfState $record) => $this->durablePdfStateIdentityKeyFromRecord($record));
 
+            $now = now();
+            $hasOwner = $ownership['user_id'] !== null || $ownership['admin_id'] !== null;
+            $newRowOwnership = $this->pdfStateOwnershipPayload($document, $sessionId);
+            $changedRows = [];
+            $newRows = [];
             $seenIds = [];
             foreach ($normalizedAnnotations as $annotation) {
                 $annotationId = $this->durablePdfStateIdentityKeyFromAnnotation($annotation);
@@ -1516,32 +1547,58 @@ class DocumentController extends Controller
                 $pageIndex = isset($annotation['pageIndex']) && is_numeric($annotation['pageIndex'])
                     ? (int) $annotation['pageIndex']
                     : null;
+                $encoded = json_encode($annotation, JSON_INVALID_UTF8_SUBSTITUTE);
 
                 /** @var PdfState|null $existing */
                 $existing = $existingRows->get($annotationId);
                 if ($existing) {
-                    $existing->update([
-                        'annotation_data' => $annotation,
-                        'page_number' => $pageIndex,
-                        'session_id' => $sessionId,
-                        'user_id' => $ownership['user_id'],
-                        'admin_id' => $ownership['admin_id'],
-                        'user_email' => ($ownership['user_id'] !== null || $ownership['admin_id'] !== null)
-                            ? null
-                            : $existing->user_email,
-                        'state' => $state,
-                    ]);
+                    $userEmail = $hasOwner ? null : $existing->user_email;
+                    $unchanged = $existing->state === $state
+                        && $existing->session_id === $sessionId
+                        && $existing->page_number === $pageIndex
+                        && $existing->user_id === $ownership['user_id']
+                        && $existing->admin_id === $ownership['admin_id']
+                        && $existing->user_email === $userEmail
+                        && $this->sameAnnotationContent($existing->annotation_data, $annotation);
+                    if (!$unchanged) {
+                        $changedRows[] = [
+                            'id' => $existing->id,
+                            'document_id' => $document->id,
+                            'page_number' => $pageIndex,
+                            'annotation_data' => $encoded,
+                            'session_id' => $sessionId,
+                            'user_id' => $ownership['user_id'],
+                            'admin_id' => $ownership['admin_id'],
+                            'user_email' => $userEmail,
+                            'state' => $state,
+                        ];
+                    }
                 } else {
-                    PdfState::create([
+                    // Two payload entries with one identity: the later one wins.
+                    $newRows[$annotationId] = [
                         'document_id' => $document->id,
                         'page_number' => $pageIndex,
-                        'annotation_data' => $annotation,
+                        'annotation_data' => $encoded,
                         'state' => $state,
-                        ...$this->pdfStateOwnershipPayload($document, $sessionId),
-                    ]);
+                        ...$newRowOwnership,
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ];
                 }
 
                 $seenIds[$annotationId] = true;
+            }
+
+            // Keyed on the primary key, so this only ever updates.
+            foreach (array_chunk($changedRows, 200) as $chunk) {
+                PdfState::query()->upsert(
+                    $chunk,
+                    ['id'],
+                    ['page_number', 'annotation_data', 'session_id', 'user_id', 'admin_id', 'user_email', 'state']
+                );
+            }
+            foreach (array_chunk(array_values($newRows), 200) as $chunk) {
+                PdfState::query()->insert($chunk);
             }
 
             $staleIds = [];
@@ -1565,6 +1622,34 @@ class DocumentController extends Controller
         });
 
         return count($annotationIds);
+    }
+
+    /**
+     * Whether a stored annotation and an incoming one carry the same content.
+     * MySQL's JSON type reorders object keys, so the comparison is on a
+     * key-sorted form. A false "different" only costs one redundant write.
+     */
+    private function sameAnnotationContent(mixed $stored, array $incoming): bool
+    {
+        if (!is_array($stored)) {
+            return false;
+        }
+
+        $canonical = static function (array $value) use (&$canonical): array {
+            if (!array_is_list($value)) {
+                ksort($value);
+            }
+            foreach ($value as $key => $item) {
+                if (is_array($item)) {
+                    $value[$key] = $canonical($item);
+                }
+            }
+
+            return $value;
+        };
+
+        return json_encode($canonical($stored), JSON_INVALID_UTF8_SUBSTITUTE)
+            === json_encode($canonical($incoming), JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
     private function normalizeAcroFormEntriesForPersistence(array $entries): array
@@ -5246,15 +5331,33 @@ class DocumentController extends Controller
             $documentQuery->onlyTrashed();
         }
 
+        // One page of cards, and only the columns a card shows: never the
+        // preview image, which is served by documents.preview.
         $documents = $documentQuery
             ->latest($showTrash ? 'deleted_at' : 'created_at')
-            ->get();
+            ->latest('id')
+            ->select(array_merge(
+                ['id', 'user_id', 'admin_id', 'original_name', 'path', 'mime_type', 'size_bytes', 'mode', 'template_type', 'template_slug', 'created_at', 'updated_at', 'deleted_at'],
+                $this->hasDocumentPreviewColumns() ? DocumentPreviews::LIST_COLUMNS : []
+            ))
+            ->paginate(self::DOCUMENTS_PER_PAGE)
+            ->withQueryString();
 
+        // A missing preview is made by a queued job, never in this request.
+        // Asked for once per document every few hours, so one that cannot be
+        // rendered does not cost a job on every page view.
         if ($this->hasDocumentPreviewColumns()) {
-            foreach ($documents->take(8) as $document) {
-                if (empty($document->preview_image) && !empty($document->path)) {
-                    $this->refreshDocumentPreviewSnapshot($document);
-                    $document->refresh();
+            $previews = app(DocumentPreviews::class);
+            foreach ($documents as $document) {
+                if ($previews->has($document) || empty($document->path)) {
+                    continue;
+                }
+                if (Cache::add("document-preview-requested:{$document->id}", true, now()->addHours(6))) {
+                    try {
+                        GenerateDocumentPreviewJob::dispatch($document->id);
+                    } catch (\Throwable $exception) {
+                        Log::warning('Could not queue a document preview', ['document_id' => $document->id, 'error' => $exception->getMessage()]);
+                    }
                 }
             }
         }
@@ -5289,6 +5392,31 @@ class DocumentController extends Controller
         return Storage::download($document->path, $name, [
             'Content-Type' => 'application/pdf',
         ]);
+    }
+
+    /**
+     * The document's thumbnail. The URL carries the preview's timestamp
+     * (DocumentPreviews::url), so the browser may keep it for good: a new
+     * preview has a new URL.
+     */
+    public function preview(Request $request, Document $document, DocumentPreviews $previews)
+    {
+        $image = $previews->has($document) ? $previews->read($document) : null;
+        if ($image === null) {
+            abort(404);
+        }
+
+        $etag = '"'.md5($document->id.'|'.$document->preview_image_updated_at?->getTimestamp()).'"';
+        $headers = [
+            'Content-Type' => $image['mime_type'],
+            'Cache-Control' => 'private, max-age=31536000, immutable',
+            'ETag' => $etag,
+        ];
+        if (trim((string) $request->header('If-None-Match')) === $etag) {
+            return response('', 304, $headers);
+        }
+
+        return response($image['bytes'], 200, $headers);
     }
 
     /** Move to trash: the row and its files stay, the document disappears from every list. */
@@ -5332,17 +5460,9 @@ class DocumentController extends Controller
 
     private function deleteDocumentPermanently(Document $document): void
     {
-        DB::table('pdf_extractions_fitz')
-            ->where('document_id', $document->id)
-            ->delete();
-
-        if ($document->path) {
-            Storage::delete($document->path);
-        }
-        if ($document->original_backup_path) {
-            Storage::delete($document->original_backup_path);
-        }
-        $document->forceDelete();
+        // The row and every file made for it (App\Services\DocumentRemoval),
+        // the same routine documents:prune-guests uses.
+        app(\App\Services\DocumentRemoval::class)->purge($document);
     }
 
     private function normalizeUploadedDocumentName(string $value): string
@@ -5375,15 +5495,11 @@ class DocumentController extends Controller
     public function store(Request $request)
     {
         $validated = $request->validate([
-            'document' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'document' => ['required', 'file', 'mimes:pdf', 'max:' . max(1, (int) config('pdf_editor.uploads.max_kb', 20480))],
             'document_mode' => ['nullable', 'string', 'in:editor,regression'],
             'rename_to' => ['nullable', 'string', 'max:240'],
             'allow_duplicate_name' => ['nullable', 'boolean'],
         ]);
-
-        if ($response = $this->consumeMonthlyUploadQuota($request)) {
-            return $response;
-        }
 
         $file = $validated['document'];
 
@@ -5425,12 +5541,28 @@ class DocumentController extends Controller
             }
         }
 
+        // Is it a PDF the editor can work with? Asked before the file is
+        // stored and before any quota is spent: a damaged file, one that needs
+        // a password or one with thousands of pages is refused here, with a
+        // reason, instead of failing in the extraction queue minutes later.
+        if ($refusal = app(PdfUploadProbe::class)->check($file->getRealPath())) {
+            return $this->uploadRefusedResponse($request, $refusal, 422);
+        }
+
+        // Counted last, and only for an upload that is going ahead: the
+        // duplicate-name prompt and a refused file used to cost an upload each.
+        $quota = app(UploadQuota::class);
+        if ($refusal = $quota->consume($request)) {
+            return $this->uploadRefusedResponse($request, $refusal, 429);
+        }
+
         Storage::makeDirectory('documents');
         $storedPath = $file->storeAs(
             'documents',
             Str::uuid()->toString() . '.pdf'
         );
         if (!$storedPath || !Storage::exists($storedPath)) {
+            $quota->refund();
             Log::error('Failed to persist uploaded PDF before document creation', [
                 'original_name' => $file->getClientOriginalName(),
                 'mime_type' => $file->getClientMimeType(),
@@ -5458,17 +5590,9 @@ class DocumentController extends Controller
         $userEmail = $this->resolveEditorEmail();
         $sessionId = $request->session()->getId();
         $this->rememberSessionAccessibleDocument($request, $document);
-        Cache::put(
-            ProcessUploadedDocumentJob::processingCacheKey($document->id),
-            true,
-            now()->addMinutes(10)
-        );
-        try {
-            ProcessUploadedDocumentJob::dispatch($document->id, $userEmail, $sessionId);
-        } catch (\Throwable $exception) {
-            Cache::forget(ProcessUploadedDocumentJob::processingCacheKey($document->id));
-            throw $exception;
-        }
+        // If the queue refuses the job the document is marked failed and the
+        // editor offers a retry, rather than the upload itself failing.
+        app(DocumentProcessing::class)->queue($document, $userEmail, $sessionId);
 
         return redirect()
             ->route('documents.editPdfjs', $document)
@@ -5509,24 +5633,12 @@ class DocumentController extends Controller
 
         Storage::makeDirectory('documents');
 
-        $pythonBinary = $this->resolvePythonBinaryForPdfEditor('fitz');
-
-        $output = [];
-        $exitCode = 0;
-        $this->python()->exec(sprintf(
-            '%s %s %s %s %s 2>&1',
-            escapeshellarg($pythonBinary),
-            escapeshellarg(base_path('python/pdf-editor/create_blank_pdf.py')),
-            escapeshellarg($storedFull),
-            escapeshellarg((string) (float) $width),
-            escapeshellarg((string) (float) $height)
-        ), $output, $exitCode);
-
-        if ($exitCode !== 0 || !file_exists($storedFull)) {
-            Log::error('Blank PDF creation failed', [
-                'output' => implode("\n", $output),
-                'exit_code' => $exitCode,
-            ]);
+        // Written directly (App\Support\BlankPdf): this used to fork Python
+        // inside the request, twice, for an empty page and its preview. The
+        // preview is made when the documents page first needs it.
+        if (!Storage::put($storedRelative, BlankPdf::make((float) $width, (float) $height)) || !file_exists($storedFull)) {
+            app(UploadQuota::class)->refund();
+            Log::error('Blank PDF creation failed', ['path' => $storedRelative]);
             return redirect()
                 ->route('documents.index')
                 ->withErrors('Failed to create blank PDF. Please try again.');
@@ -5541,7 +5653,6 @@ class DocumentController extends Controller
             'size_bytes' => filesize($storedFull),
         ]);
 
-        $this->refreshDocumentPreviewSnapshot($document);
         $this->rememberSessionAccessibleDocument($request, $document);
 
         return redirect()
@@ -5556,6 +5667,10 @@ class DocumentController extends Controller
         $validated = $request->validate([
             'template' => ['required', 'string', 'in:clean_modern,bold_red,classic_blue'],
         ]);
+
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
+        }
 
         $templateNames = [
             'clean_modern' => 'Invoice - Clean Modern.pdf',
@@ -5661,17 +5776,9 @@ class DocumentController extends Controller
 
         $userEmail = $this->resolveEditorEmail();
         $sessionId = $request->session()->getId();
-        Cache::put(
-            ProcessUploadedDocumentJob::processingCacheKey($document->id),
-            true,
-            now()->addMinutes(10)
-        );
-        try {
-            ProcessUploadedDocumentJob::dispatch($document->id, $userEmail, $sessionId);
-        } catch (\Throwable $exception) {
-            Cache::forget(ProcessUploadedDocumentJob::processingCacheKey($document->id));
-            throw $exception;
-        }
+        // If the queue refuses the job the document is marked failed and the
+        // editor offers a retry, rather than the upload itself failing.
+        app(DocumentProcessing::class)->queue($document, $userEmail, $sessionId);
 
         return redirect()
             ->route('documents.editPdfjs', $document)
@@ -5699,6 +5806,10 @@ class DocumentController extends Controller
             'terms'            => ['nullable', 'string', 'max:2000'],
             'style'            => ['nullable', 'string', 'in:default,bold_red'],
         ]);
+
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
+        }
 
         $style = $validated['style'] ?? 'default';
         $template = GuidedTemplate::where('type', 'invoice')
@@ -5820,6 +5931,10 @@ class DocumentController extends Controller
             return redirect()
                 ->route('documents.guided', ['document' => $existing, 'template_type' => $templateType, 'template_slug' => $templateSlug])
                 ->with('status', 'You already have this guided template. Editing existing one.');
+        }
+
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
         }
 
         $uuid = Str::uuid()->toString();
@@ -12221,38 +12336,105 @@ class DocumentController extends Controller
      * Upsert all current annotations to PdfState DB without stamping the PDF.
      * Called by the "Save" button — shapes stay editable in the editor.
      */
+    /**
+     * Where the upload's extraction is: queued, extracting, ready or failed.
+     * The editor polls this while it waits, instead of the much heavier
+     * document-info request.
+     */
+    public function processingStatus(Request $request, Document $document, DocumentProcessing $processing)
+    {
+        return response()->json($this->processingStatusPayload($document, $processing));
+    }
+
+    /**
+     * "Try again" on a failed extraction. Only a failed (or lost) run can be
+     * retried, and the job is unique per document, so repeated clicks queue
+     * at most one.
+     */
+    public function retryProcessing(Request $request, Document $document, DocumentProcessing $processing)
+    {
+        $status = $processing->status($document);
+        if ($status['can_retry']) {
+            $processing->queue($document, $this->resolveEditorEmail(), $request->session()->getId());
+        }
+
+        return response()->json($this->processingStatusPayload($document, $processing), $status['can_retry'] ? 202 : 200);
+    }
+
+    private function processingStatusPayload(Document $document, DocumentProcessing $processing): array
+    {
+        $status = $processing->status($document);
+
+        return [
+            'success' => true,
+            'status' => $status['status'],
+            'pending' => $status['pending'],
+            'can_retry' => $status['can_retry'],
+            'error_code' => $status['error_code'],
+            'message' => $status['message'],
+            'waited_seconds' => $status['waited_seconds'],
+            'retry_url' => $status['can_retry'] ? route('documents.processing.retry', $document) : null,
+        ];
+    }
+
+    /**
+     * The editor's autosave: the whole annotation state of one editing
+     * session, a couple of seconds after every change. Bounded (body size,
+     * annotation count, text length), guarded against a second tab
+     * (base_version), and written as a diff (upsertPdfStateSessionSnapshot).
+     */
     public function saveAnnotationState(Request $request, Document $document)
     {
+        $limits = (array) config('pdf_editor.autosave', []);
+        $maxBodyBytes = max(1, (int) ($limits['max_body_kb'] ?? 20480)) * 1024;
+        $bodyBytes = max((int) $request->header('Content-Length', 0), strlen((string) $request->getContent()));
+        if ($bodyBytes > $maxBodyBytes) {
+            return response()->json([
+                'success' => false,
+                'code' => 'payload_too_large',
+                'message' => sprintf(
+                    'This document has too much edited content to save at once (%s MB, the limit is %s MB). Remove very large images and try again.',
+                    number_format($bodyBytes / 1048576, 1),
+                    number_format($maxBodyBytes / 1048576, 0)
+                ),
+            ], 413);
+        }
+
+        $maxAnnotations = max(1, (int) ($limits['max_annotations'] ?? 3000));
         $validated = $request->validate([
-            'annotations' => 'nullable|array',
-            'annotations.*.type' => 'required_with:annotations|string',
-            'annotations.*.pageIndex' => 'required_with:annotations',
-            'session_annotations' => 'nullable|array',
-            'session_annotations.*.type' => 'required_with:session_annotations|string',
-            'session_annotations.*.pageIndex' => 'required_with:session_annotations',
-            'acro_form_entries' => 'nullable|array',
-            'deleted_annotation_ids' => 'nullable|array',
+            'annotations' => "nullable|array|max:{$maxAnnotations}",
+            'session_annotations' => "nullable|array|max:{$maxAnnotations}",
+            'acro_form_entries' => "nullable|array|max:{$maxAnnotations}",
+            'deleted_annotation_ids' => "nullable|array|max:{$maxAnnotations}",
             'deleted_annotation_ids.*' => 'string',
-            'deleted_promoted_source_keys' => 'nullable|array',
+            'deleted_promoted_source_keys' => "nullable|array|max:{$maxAnnotations}",
             'deleted_promoted_source_keys.*' => 'string',
-            'session_id' => 'nullable|string',
+            'session_id' => 'nullable|string|max:191',
+            'base_version' => 'nullable|integer|min:0',
+        ], [
+            'annotations.max' => "A document can hold at most {$maxAnnotations} edited items. Remove some and save again.",
+            'session_annotations.max' => "A document can hold at most {$maxAnnotations} edited items. Remove some and save again.",
         ]);
 
-        $annotationsPayload = $request->input('annotations', []);
-        if (!is_array($annotationsPayload)) {
+        // The editor sends one list; older clients and the QA tools send the
+        // same list under both keys. Only the one that is stored is checked
+        // and normalised.
+        $listKey = $request->exists('session_annotations') ? 'session_annotations' : 'annotations';
+        $incomingAnnotations = $request->input($listKey, []);
+        if (!is_array($incomingAnnotations)) {
             return response()->json(['success' => false, 'message' => 'Invalid annotations payload.'], 422);
         }
+        $this->validateAnnotationList($incomingAnnotations, $listKey, max(1, (int) ($limits['max_text_length'] ?? 50000)));
 
-        $annotationsPayload = $this->normalizeAnnotationsForPersistence($document, $annotationsPayload);
-        $sessionAnnotationsPayload = $request->input('session_annotations', null);
-        if ($request->exists('session_annotations')) {
-            if (!is_array($sessionAnnotationsPayload)) {
-                return response()->json(['success' => false, 'message' => 'Invalid session annotations payload.'], 422);
+        $annotationAssets = $this->annotationAssets();
+        $inlineImageIds = [];
+        foreach ($incomingAnnotations as $annotation) {
+            if (is_array($annotation) && is_string($annotation['id'] ?? null) && $annotationAssets->hasBlobPayload($annotation)) {
+                $inlineImageIds[trim($annotation['id'])] = true;
             }
-            $sessionAnnotationsPayload = $this->normalizeAnnotationsForPersistence($document, $sessionAnnotationsPayload);
-        } else {
-            $sessionAnnotationsPayload = $annotationsPayload;
         }
+
+        $sessionAnnotationsPayload = $this->normalizeAnnotationsForPersistence($document, $incomingAnnotations);
         $acroFormEntries = $this->normalizeAcroFormEntriesForPersistence(
             is_array($validated['acro_form_entries'] ?? null) ? $validated['acro_form_entries'] : []
         );
@@ -12260,62 +12442,158 @@ class DocumentController extends Controller
         $sessionId = is_string($validated['session_id'] ?? null)
             ? trim((string) $validated['session_id'])
             : '';
+        $baseVersion = isset($validated['base_version']) ? (int) $validated['base_version'] : null;
 
-        // Apply pending deletions (annotation ids + promoted source keys) inline
-        // so the frontend only needs a single round-trip to persist a save that
-        // also removed annotations. The helper performs the same PdfState marking
-        // that the dedicated deleteAnnotations endpoint does; suppression-record
-        // bookkeeping is handled below by syncDeletedPromotedSourceKeysForSession.
-        $explicitDeletedKeys = is_array($validated['deleted_promoted_source_keys'] ?? null)
-            ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
-            : [];
-        $deletedAnnotationIds = is_array($validated['deleted_annotation_ids'] ?? null)
-            ? $validated['deleted_annotation_ids']
-            : [];
-        $combinedDeletedKeys = $explicitDeletedKeys;
-        if (!empty($deletedAnnotationIds) || !empty($explicitDeletedKeys)) {
-            $combinedDeletedKeys = $this->applyAnnotationDeletions(
+        $stateVersion = DB::transaction(function () use (
+            $document,
+            $validated,
+            $sessionId,
+            $baseVersion,
+            $sessionAnnotationsPayload,
+            $acroFormEntries
+        ) {
+            // Compare-and-swap on the document's state version: the save only
+            // goes ahead if nobody saved since this editor loaded. Clients
+            // that send no version (QA tools, replay scripts) are not checked.
+            // The query builder is used so documents.updated_at is not touched.
+            $versionRow = DB::table('documents')->where('id', $document->id);
+            if ($baseVersion !== null) {
+                $claimed = (clone $versionRow)
+                    ->where('editor_state_version', $baseVersion)
+                    ->update(['editor_state_version' => $baseVersion + 1]);
+                if ($claimed !== 1) {
+                    return null;
+                }
+            } else {
+                (clone $versionRow)->increment('editor_state_version');
+            }
+
+            // Apply pending deletions (annotation ids + promoted source keys) inline
+            // so the frontend only needs a single round-trip to persist a save that
+            // also removed annotations. The helper performs the same PdfState marking
+            // that the dedicated deleteAnnotations endpoint does; suppression-record
+            // bookkeeping is handled below by syncDeletedPromotedSourceKeysForSession.
+            $explicitDeletedKeys = is_array($validated['deleted_promoted_source_keys'] ?? null)
+                ? array_values(array_filter($validated['deleted_promoted_source_keys'], 'is_string'))
+                : [];
+            $deletedAnnotationIds = is_array($validated['deleted_annotation_ids'] ?? null)
+                ? $validated['deleted_annotation_ids']
+                : [];
+            $combinedDeletedKeys = $explicitDeletedKeys;
+            if (!empty($deletedAnnotationIds) || !empty($explicitDeletedKeys)) {
+                $combinedDeletedKeys = $this->applyAnnotationDeletions(
+                    $document,
+                    $sessionId,
+                    $deletedAnnotationIds,
+                    $explicitDeletedKeys
+                );
+            }
+
+            $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
                 $document,
                 $sessionId,
-                $deletedAnnotationIds,
-                $explicitDeletedKeys
+                $combinedDeletedKeys,
+                $sessionAnnotationsPayload
             );
+            if ($sessionId !== '') {
+                $this->upsertPdfStateSessionSnapshot(
+                    $document,
+                    $sessionId,
+                    $sessionAnnotationsPayload,
+                    'saved'
+                );
+                $this->syncDeletedPromotedSourceKeysForSession(
+                    $document,
+                    $sessionId,
+                    $deletedPromotedSourceKeys
+                );
+
+                $this->upsertPdfAcroFormSessionState(
+                    $document,
+                    $sessionId,
+                    $acroFormEntries,
+                    $this->resolvePdfStateOwnership($document),
+                    'saved'
+                );
+            }
+
+            return (int) (clone $versionRow)->value('editor_state_version');
+        });
+
+        if ($stateVersion === null) {
+            return response()->json([
+                'success' => false,
+                'code' => 'stale_state',
+                'message' => 'This document was changed in another tab or window. Reload to get the latest version before editing here.',
+                'state_version' => (int) DB::table('documents')->where('id', $document->id)->value('editor_state_version'),
+            ], 409);
         }
 
-        $deletedPromotedSourceKeys = $this->mergeDeletedPromotedSourceKeys(
-            $document,
-            $sessionId,
-            $combinedDeletedKeys,
-            $sessionAnnotationsPayload
-        );
-
-        if ($sessionId !== '') {
-            $this->upsertPdfStateSessionSnapshot(
-                $document,
-                $sessionId,
-                $sessionAnnotationsPayload,
-                'saved'
-            );
-            $this->syncDeletedPromotedSourceKeysForSession(
-                $document,
-                $sessionId,
-                $deletedPromotedSourceKeys
-            );
-
-            $this->upsertPdfAcroFormSessionState(
-                $document,
-                $sessionId,
-                $acroFormEntries,
-                $this->resolvePdfStateOwnership($document),
-                'saved'
-            );
+        // Inline images are stored as files on the first save that carries
+        // them. Telling the editor where lets it send the reference instead
+        // of the base64 data on every later save.
+        $storedAssets = [];
+        foreach ($sessionAnnotationsPayload as $annotation) {
+            $annotationId = is_array($annotation) && is_string($annotation['id'] ?? null) ? trim($annotation['id']) : '';
+            $assetPath = is_array($annotation) && is_string($annotation['assetPath'] ?? null) ? $annotation['assetPath'] : '';
+            if ($annotationId !== '' && $assetPath !== '' && isset($inlineImageIds[$annotationId])) {
+                $storedAssets[$annotationId] = [
+                    'assetPath' => $assetPath,
+                    'src' => $annotationAssets->assetUrl($assetPath),
+                    // Stored with the reference; sent back so the editor's
+                    // next payload matches the row and rewrites nothing.
+                    'mimeType' => $annotation['mimeType'] ?? null,
+                    'fileName' => $annotation['fileName'] ?? null,
+                ];
+            }
         }
 
         return response()->json([
             'success' => true,
             'message' => 'Annotation state saved.',
             'session_id' => $sessionId !== '' ? $sessionId : null,
+            'state_version' => $stateVersion,
+            'assets' => (object) $storedAssets,
         ]);
+    }
+
+    /**
+     * The per-annotation checks of a save: a type, a page, and bounded text.
+     * A plain loop on purpose: the validator's wildcard rules took ~80 ms on a
+     * 500-annotation save, this takes a fraction of one. Errors keep the
+     * validator's shape ("annotations.3.type").
+     */
+    private function validateAnnotationList(array $annotations, string $key, int $maxTextLength): void
+    {
+        $errors = [];
+        foreach ($annotations as $index => $annotation) {
+            if (!is_array($annotation)) {
+                $errors["{$key}.{$index}"][] = 'Each annotation must be an object.';
+            } else {
+                if (!is_string($annotation['type'] ?? null) || trim($annotation['type']) === '') {
+                    $errors["{$key}.{$index}.type"][] = 'The annotation type is required.';
+                }
+                if (!isset($annotation['pageIndex']) || $annotation['pageIndex'] === '') {
+                    $errors["{$key}.{$index}.pageIndex"][] = 'The annotation page is required.';
+                }
+                foreach (['text' => 1, 'richTextHtml' => 4] as $field => $factor) {
+                    if (is_string($annotation[$field] ?? null) && mb_strlen($annotation[$field]) > $maxTextLength * $factor) {
+                        $errors["{$key}.{$index}.{$field}"][] = sprintf(
+                            'One text box on page %s is too long to save (the limit is %s characters). Split it into smaller boxes.',
+                            is_numeric($annotation['pageIndex'] ?? null) ? ((int) $annotation['pageIndex'] + 1) : '?',
+                            number_format($maxTextLength * $factor)
+                        );
+                    }
+                }
+            }
+            if (count($errors) >= 20) {
+                break;
+            }
+        }
+
+        if ($errors !== []) {
+            throw \Illuminate\Validation\ValidationException::withMessages($errors);
+        }
     }
 
     public function saveAcroFormState(Request $request, Document $document)
@@ -14686,19 +14964,11 @@ class DocumentController extends Controller
                 $tokenOutputPath = null;
                 $this->rememberSessionAccessibleDocument($request, $splitDocument);
 
-                try {
-                    ProcessUploadedDocumentJob::dispatch(
-                        $splitDocument->id,
-                        $this->resolveEditorEmail(),
-                        $request->session()->getId(),
-                    );
-                } catch (\Throwable $error) {
-                    Log::warning('Split PDF background processing could not be queued', [
-                        'document_id' => $splitDocument->id,
-                        'source_document_id' => $document->id,
-                        'error' => $error->getMessage(),
-                    ]);
-                }
+                app(DocumentProcessing::class)->queue(
+                    $splitDocument,
+                    $this->resolveEditorEmail(),
+                    $request->session()->getId(),
+                );
 
                 if (Auth::check()) {
                     UserActivity::create([
@@ -14856,24 +15126,31 @@ class DocumentController extends Controller
         ])->deleteFileAfterSend(true);
     }
 
+    /**
+     * The document allowance for every way of creating one (upload, blank,
+     * templates, forms): App\Services\UploadQuota. Returns the refusal
+     * response, or null when the document may be created.
+     */
     private function consumeMonthlyUploadQuota(Request $request)
     {
-        $user = $this->resolveQuotaUser();
-        if (!$user) {
-            return null;
+        $refusal = app(UploadQuota::class)->consume($request);
+
+        return $refusal ? $this->uploadRefusedResponse($request, $refusal, 429) : null;
+    }
+
+    /** JSON for the XHR upload and the editor, the page's error banner for a plain form post. */
+    private function uploadRefusedResponse(Request $request, array $refusal, int $status)
+    {
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => false,
+                'code' => $refusal['code'],
+                'message' => $refusal['message'],
+                'errors' => ['document' => [$refusal['message']]],
+            ], $status);
         }
 
-        $usage = $this->resolveMonthlyUsage($user);
-        if ($usage->uploads_count >= self::MONTHLY_UPLOAD_LIMIT) {
-            return redirect()
-                ->back()
-                ->withErrors("Monthly PDF upload limit reached (".self::MONTHLY_UPLOAD_LIMIT.").");
-        }
-
-        $usage->uploads_count = (int) $usage->uploads_count + 1;
-        $usage->save();
-
-        return null;
+        return redirect()->back()->withErrors(['document' => $refusal['message']]);
     }
 
     private function consumeMonthlyActionQuota(Request $request)

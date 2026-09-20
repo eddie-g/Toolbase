@@ -91,7 +91,13 @@ Route::post('/documents/{document}/annotation-debug', [DocumentController::class
 Route::post('/documents/{document}/apply-annotations-direct', [DocumentController::class, 'applyAnnotationsDirect'])->name('documents.applyAnnotationsDirect');
 Route::post('/documents/overwrite-annotation-text', [DocumentController::class, 'overwriteAnnotationText'])->name('documents.overwriteAnnotationText');
 Route::post('/documents/{document}/save-acro-form-state', [DocumentController::class, 'saveAcroFormState'])->name('documents.saveAcroFormState');
-Route::post('/documents/{document}/save-annotation-state', [DocumentController::class, 'saveAnnotationState'])->name('documents.saveAnnotationState');
+Route::get('/documents/{document}/processing-status', [DocumentController::class, 'processingStatus'])->name('documents.processing.status');
+Route::post('/documents/{document}/processing-retry', [DocumentController::class, 'retryProcessing'])
+    ->middleware('throttle:6,1')
+    ->name('documents.processing.retry');
+Route::post('/documents/{document}/save-annotation-state', [DocumentController::class, 'saveAnnotationState'])
+    ->middleware('throttle:editor-autosave')
+    ->name('documents.saveAnnotationState');
 Route::post('/documents/{document}/download-annotated-pdf', [DocumentController::class, 'downloadAnnotatedPdf'])->name('documents.downloadAnnotatedPdf');
 Route::get('/documents/{document}/exports/{export}', [DocumentController::class, 'exportStatus'])->name('documents.exports.status');
 Route::get('/documents/{document}/exports/{export}/download', [DocumentController::class, 'downloadExport'])
@@ -194,6 +200,7 @@ Route::middleware('auth:admin')
 
 Route::post('/documents/trash/empty', [DocumentController::class, 'emptyTrash'])->name('documents.emptyTrash');
 Route::get('/documents/{document}/download', [DocumentController::class, 'download'])->withTrashed()->name('documents.download');
+Route::get('/documents/{document}/preview', [DocumentController::class, 'preview'])->withTrashed()->name('documents.preview');
 Route::post('/documents/{document}/trash', [DocumentController::class, 'trash'])->name('documents.trash');
 Route::post('/documents/{document}/restore', [DocumentController::class, 'restore'])->withTrashed()->name('documents.restore');
 Route::delete('/documents/{document}', [DocumentController::class, 'destroy'])->withTrashed()->name('documents.destroy');
