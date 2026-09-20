@@ -26,7 +26,6 @@ import {
     PDFLinkService,
     PDFFindController,
 } from 'pdfjs-dist/web/pdf_viewer.mjs';
-import html2canvas from 'html2canvas';
 import { generateUuidV4 } from '../edit-new/util/uuid.js';
 import { sliderValueToFontPt, fontPtToSliderValue } from '../edit-new/text/font-slider.js';
 import { composeTextDecorationLine, decorationTokensFromValue } from '../edit-new/text/decoration.js';
@@ -2726,6 +2725,8 @@ async function captureFlatPageRotationSnapshot(pageIndex) {
     } catch (error) {
         captureMethod = 'html2canvas';
         console.warn('Exact rotated-page snapshot failed; using the DOM fallback.', error);
+        // Only the page-snapshot path needs it, so it is not part of the first load.
+        const { default: html2canvas } = await import('html2canvas');
         canvas = await html2canvas(pageDiv, {
             backgroundColor: '#ffffff',
             width,

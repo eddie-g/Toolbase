@@ -3,7 +3,8 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "build": "vite build --emptyOutDir false",
+        "build": "vite build --emptyOutDir false && node scripts/check-bundle-budget.mjs",
+        "check:bundle": "node scripts/check-bundle-budget.mjs",
         "dev": "vite",
         "test:pdf-image-export": "node --test resources/js/edit-new-pdfjs/image-export.test.mjs",
         "test:pdfa-export": "node --test resources/js/edit-new-pdfjs/pdfa-export.test.mjs",
