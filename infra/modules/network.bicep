@@ -45,6 +45,7 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   tags: tags
   properties: {
     addressSpace: { addressPrefixes: ['${addressPrefix}.0.0/16'] }
+    privateEndpointVNetPolicies: 'Disabled'
     subnets: [
       {
         name: 'apps'
@@ -81,13 +82,13 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
 
 // Zones the later stories register into: MySQL (story 4) and Redis (story 5).
 var privateZones = [
-  'netkit-${env}.private.mysql.database.azure.com'
-  'privatelink.redis.cache.windows.net'
+  { name: 'netkit-${env}.private.mysql.database.azure.com', privateLink: false }
+  { name: 'privatelink.redis.cache.windows.net', privateLink: true }
 ]
 
 resource zones 'Microsoft.Network/privateDnsZones@2024-06-01' = [
   for zone in privateZones: {
-    name: zone
+    name: zone.name
     location: 'global'
     tags: tags
   }
@@ -98,10 +99,14 @@ resource zoneLinks 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2024-0
     parent: zones[i]
     name: 'vnet-netkit-${env}'
     location: 'global'
-    properties: {
-      registrationEnabled: false
-      virtualNetwork: { id: vnet.id }
-    }
+    properties: union(
+      {
+        registrationEnabled: false
+        virtualNetwork: { id: vnet.id }
+      },
+      // Only private-link zones carry a resolution policy.
+      zone.privateLink ? { resolutionPolicy: 'Default' } : {}
+    )
   }
 ]
 
