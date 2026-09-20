@@ -71,6 +71,7 @@ Route::get('/documents/{document}/fullscreen', [DocumentController::class, 'full
 Route::get('/documents/{document}/edit-extracted', [DocumentController::class, 'editExtractedText'])->name('documents.editExtracted');
 Route::get('/documents/{document}/file', [DocumentController::class, 'file'])->name('documents.file');
 Route::get('/documents/{document}/annotation-assets/{filename}', [DocumentController::class, 'annotationAsset'])->name('documents.annotationAsset');
+Route::post('/documents/{document}/annotation-assets', [DocumentController::class, 'uploadAnnotationAsset'])->name('documents.uploadAnnotationAsset');
 Route::get('/documents/{document}/original-file', [DocumentController::class, 'originalFile'])->name('documents.originalFile');
 Route::post('/documents/{document}/save', [DocumentController::class, 'save'])->name('documents.save');
 Route::post('/documents/{document}/rename', [DocumentController::class, 'rename'])->name('documents.rename');

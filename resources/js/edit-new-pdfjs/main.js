@@ -158,6 +158,7 @@ import {
     rememberStoredAssets,
     slimAnnotationForSave,
 } from './autosave-guard.js';
+import { createDeltaTracker, imagesToUpload } from './delta-save.js';
 import {
     buildConvertedDownloadUrl,
     estimateConvertedFileBytes,
@@ -1235,6 +1236,16 @@ installDocumentRename();
 // tabs of this document announce their saves.
 const editorStateVersion = createStateVersionTracker();
 const storedImageAssets = new Map();
+// What the server has acknowledged, per annotation: the next save sends only
+// what differs from it (delta-save.js).
+const deltaTracker = createDeltaTracker();
+// Off from configuration (PDF_AUTOSAVE_DELTA=false), and for automated
+// browsers: the QA suites read the whole state, and inline image data, out of
+// the editor's own save requests. A test of the delta path opts in with
+// window.__enpvDeltaSaves = true before the editor loads.
+const DELTA_SAVES_ENABLED = editNewRoot?.dataset?.deltaSaves !== '0'
+    && (navigator.webdriver !== true || window.__enpvDeltaSaves === true);
+const ANNOTATION_ASSET_UPLOAD_URL = editNewRoot?.dataset?.annotationAssetUploadUrl || '';
 const editorTabChannel = createTabChannel(editNewRoot?.dataset?.docId, {
     onRemoteSave: (version) => {
         if (editorStateVersion.noteRemoteSave(version)) {
@@ -19986,6 +19997,7 @@ async function fetchAnnotationBoxesPayload(options = {}) {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (!data?.success) throw new Error(data?.message || 'Failed to load annotation boxes.');
+    deltaTracker.reset();   // what was loaded is not yet known in the form this editor sends
     if (editorStateVersion.noteLoaded(data.state_version)) {
         enterStaleEditorState('This document was saved from another tab or window while this one was loading.');
     }
@@ -28789,8 +28801,16 @@ function buildSaveRequest({ isAutosave, acroPayload }) {
     // separate session list is sent), images by reference once the server has
     // them, and the version this tab loaded so another tab's newer state is
     // never overwritten.
+    // Only what changed since the last acknowledged save travels, with the ids
+    // that are gone and the number there should be; a first or an uncertain
+    // save sends the lot.
+    const travelling = annotationsPayload.map((annotation) => slimAnnotationForSave(annotation, storedImageAssets));
+    const savePlan = DELTA_SAVES_ENABLED
+        ? deltaTracker.plan(travelling)
+        : { delta: false, annotations: travelling, removedIds: [], expectedCount: travelling.length, hashes: null };
     const body = JSON.stringify({
-        annotations: annotationsPayload.map((annotation) => slimAnnotationForSave(annotation, storedImageAssets)),
+        ...(savePlan.delta ? { delta: true, removed_ids: savePlan.removedIds, expected_count: savePlan.expectedCount } : {}),
+        annotations: savePlan.annotations,
         ...(editorStateVersion.baseVersion !== null ? { base_version: editorStateVersion.baseVersion } : {}),
         acro_form_entries: acroPayload,
         deleted_annotation_ids: Array.from(new Set([
@@ -28799,7 +28819,34 @@ function buildSaveRequest({ isAutosave, acroPayload }) {
         ])),
         session_id: getSessionId(),
     });
-    return { annotationsPayload, body };
+    return { annotationsPayload, body, savePlan };
+}
+
+/**
+ * Images and signatures go up on their own, once, before the state that
+ * refers to them: base64 never travels inside a save. storedImageAssets then
+ * makes slimAnnotationForSave send the reference.
+ */
+async function uploadPendingAnnotationImages(annotationsPayload) {
+    if (!ANNOTATION_ASSET_UPLOAD_URL || !DELTA_SAVES_ENABLED) return 0;
+    const pending = imagesToUpload(annotationsPayload, storedImageAssets);
+    for (const image of pending) {
+        const response = await fetch(ANNOTATION_ASSET_UPLOAD_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': CSRF },
+            body: JSON.stringify({ annotation_id: image.id, data_url: image.dataUrl, file_name: image.fileName, mime_type: image.mimeType }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result?.assetPath) {
+            const error = new Error(result?.message || `Image upload failed (${response.status}).`);
+            error.saveFailure = classifySaveFailure(response.status, result, response.headers.get('Retry-After') || '');
+            throw error;
+        }
+        storedImageAssets.set(image.id, { assetPath: result.assetPath, data: image.dataUrl, mimeType: result.mimeType ?? null, fileName: result.fileName ?? null });
+    }
+
+    return pending.length;
 }
 
 async function saveAnnotationStateToDb(options = {}) {
@@ -28846,10 +28893,19 @@ async function saveAnnotationStateToDb(options = {}) {
             console.warn('Failed to collect AcroForm entries for save', err);
             return Array.isArray(acroFormEntries) ? acroFormEntries : [];
         });
-        const { annotationsPayload, body } = buildSaveRequest({ isAutosave, acroPayload });
+        let request = buildSaveRequest({ isAutosave, acroPayload });
         // Kept locally until the server has it: a crash, a closed laptop or a
         // dead network between here and the response loses nothing.
-        if (unsavedChanges.isDirty) writeEditorDraft(annotationsPayload, acroPayload);
+        if (unsavedChanges.isDirty) writeEditorDraft(request.annotationsPayload, acroPayload);
+        try {
+            if (await uploadPendingAnnotationImages(request.annotationsPayload) > 0) {
+                request = buildSaveRequest({ isAutosave, acroPayload });   // now by reference
+            }
+        } catch (uploadError) {
+            failure = uploadError.saveFailure || { kind: 'network', message: 'Could not reach the server.' };
+            throw uploadError;
+        }
+        const { annotationsPayload, body, savePlan } = request;
 
         setSaveStatus('Saving…');
         setStatus('Saving annotation state…');
@@ -28877,6 +28933,10 @@ async function saveAnnotationStateToDb(options = {}) {
         }
         editorStateVersion.noteSaved(result.state_version);
         rememberStoredAssets(storedImageAssets, annotationsPayload, result.assets);
+        // An image that still went inline (no upload route) is stored as a
+        // reference: what was sent is then not what the server holds.
+        if (result.assets && Object.keys(result.assets).length > 0) deltaTracker.reset();
+        else deltaTracker.acknowledge(savePlan);
         editorTabChannel.announceSave(result.state_version);
         if (result.session_id && String(result.session_id).trim()) {
             safeLocalStorageSet(`edit_new_session_${DOC_ID}`, String(result.session_id).trim());
@@ -28900,6 +28960,14 @@ async function saveAnnotationStateToDb(options = {}) {
         if (!unsavedChanges.isDirty) editorDrafts.remove(DOC_ID);
         return true;
     } catch (err) {
+        // Whatever went wrong, the server may not hold what this editor thinks
+        // it does: the next save sends everything.
+        deltaTracker.reset();
+        if (failure?.kind === 'resync') {
+            setSaveStatus('Saving…');
+            retryAutoSaveAfterMs = 50;
+            return false;
+        }
         if (failure?.kind === 'stale') {
             enterStaleEditorState(failure.message);
             return false;
