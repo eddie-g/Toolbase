@@ -10,5 +10,10 @@ param suffix = 'iedp'
 param mysqlSku = 'Standard_B1ms'
 param mysqlStorageGb = 20
 param mysqlBackupDays = 7
+param redisSku = 'Basic'
+param redisCapacity = 0
+param appShareQuotaGb = 50
+param fontsShareQuotaGb = 5
+
 // Set MYSQL_ADMIN_PASSWORD only for the deployment that first creates the server.
 param mysqlAdminPassword = readEnvironmentVariable('MYSQL_ADMIN_PASSWORD', '')

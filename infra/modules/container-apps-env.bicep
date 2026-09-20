@@ -48,6 +48,7 @@ resource environment 'Microsoft.App/managedEnvironments@2024-03-01' = {
 }
 
 output environmentId string = environment.id
+output environmentName string = environment.name
 output defaultDomain string = environment.properties.defaultDomain
 output staticIp string = environment.properties.staticIp
 output logWorkspaceId string = logs.id

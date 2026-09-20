@@ -11,8 +11,10 @@ different parameter file; each deploys into its own resource group
 | `modules/container-apps-env.bicep` | Log Analytics workspace (daily cap) and the Container Apps environment |
 | `modules/key-vault.bicep` | Key Vault (RBAC, purge protection) |
 | `modules/mysql.bicep` | MySQL Flexible Server 8.4 inside the VNet (no public endpoint), database `netkit`, slow query log, admin password stored in Key Vault |
-| `params/stage.bicepparam` | `10.20.0.0/16`, no NAT gateway, 1 GB/day log cap, MySQL B1ms / 20 GB / 7-day backups |
-| `params/prod.bicepparam` | `10.30.0.0/16`, NAT gateway (Namecheap whitelist), 2 GB/day log cap, MySQL B2ms / 64 GB / 14-day backups |
+| `modules/redis.bicep` | Azure Cache for Redis (TLS only, `noeviction`), private endpoint, access key stored in Key Vault as `redis-password` |
+| `modules/storage.bicep` | Storage account open to the apps subnet only, file shares `app` and `fonts`, and the environment mounts `app-files` / `fonts-files` |
+| `params/stage.bicepparam` | `10.20.0.0/16`, no NAT gateway, 1 GB/day log cap, MySQL B1ms / 20 GB / 7-day backups, Redis Basic C0, shares 50 + 5 GB |
+| `params/prod.bicepparam` | `10.30.0.0/16`, NAT gateway (Namecheap whitelist), 2 GB/day log cap, MySQL B2ms / 64 GB / 14-day backups, Redis Basic C1, shares 200 + 20 GB |
 
 ## Deploy
 
@@ -52,6 +54,9 @@ own least-privilege users.
   Production only.
 - MySQL B1ms is about $13 a month plus storage (about $2 for 20 GB); B2ms about $63 with a 1-year
   reservation. A stopped server bills storage only and restarts by itself after 30 days.
+- Redis Basic C0 (250 MB) is about $16 a month, C1 (1 GB) about $41; its private endpoint about $7.
+- Standard file shares bill for the GB actually stored (about $0.06 per GB) plus transactions; the
+  quota is only a ceiling.
 - Log Analytics bills per GB ingested (the first 5 GB a month are free); the
   daily cap stops a log storm from running up the bill.
 

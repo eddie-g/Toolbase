@@ -26,6 +26,13 @@ param mysqlSku string
 param mysqlStorageGb int
 param mysqlBackupDays int
 
+@allowed(['Basic', 'Standard'])
+param redisSku string
+param redisCapacity int
+
+param appShareQuotaGb int
+param fontsShareQuotaGb int
+
 @description('Only for the deployment that first creates the MySQL server. Leave empty afterwards.')
 @secure()
 param mysqlAdminPassword string = ''
@@ -85,6 +92,35 @@ module mysql 'modules/mysql.bicep' = {
   }
 }
 
+module redis 'modules/redis.bicep' = {
+  name: 'redis'
+  params: {
+    location: location
+    env: env
+    suffix: suffix
+    tags: tags
+    privateSubnetId: network.outputs.privateSubnetId
+    privateDnsZoneId: network.outputs.redisZoneId
+    keyVaultName: vault.outputs.name
+    skuName: redisSku
+    capacity: redisCapacity
+  }
+}
+
+module storage 'modules/storage.bicep' = {
+  name: 'storage'
+  params: {
+    location: location
+    env: env
+    suffix: suffix
+    tags: tags
+    appsSubnetId: network.outputs.appsSubnetId
+    environmentName: apps.outputs.environmentName
+    appShareQuotaGb: appShareQuotaGb
+    fontsShareQuotaGb: fontsShareQuotaGb
+  }
+}
+
 output environmentId string = apps.outputs.environmentId
 output defaultDomain string = apps.outputs.defaultDomain
 output ingressIp string = apps.outputs.staticIp
@@ -96,3 +132,7 @@ output redisZoneId string = network.outputs.redisZoneId
 output keyVaultName string = vault.outputs.name
 output mysqlHost string = mysql.outputs.host
 output mysqlDatabase string = mysql.outputs.database
+output redisHost string = redis.outputs.host
+output redisPort int = redis.outputs.sslPort
+output storageAccount string = storage.outputs.accountName
+output storageMounts array = storage.outputs.mountNames
