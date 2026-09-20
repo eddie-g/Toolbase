@@ -19,6 +19,7 @@ class MonthlyPlan extends Model
         'billing_type',
         'duration_days',
         'unlocks_all_products',
+        'included_credits',
         'stripe_price_id',
         'features',
         'active',
@@ -28,6 +29,7 @@ class MonthlyPlan extends Model
         'price' => 'decimal:2',
         'duration_days' => 'integer',
         'unlocks_all_products' => 'boolean',
+        'included_credits' => 'decimal:2',
         'features' => 'array',
         'active' => 'boolean',
     ];

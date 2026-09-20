@@ -395,10 +395,29 @@ class CreditController extends Controller
             ],
         );
 
+        // The plan's included credits land with the activation. The duplicate
+        // check above (session id) is what keeps this from paying out twice.
+        $includedCredits = (float) ($plan->included_credits ?? 0);
+        if ($includedCredits > 0) {
+            CreditTransaction::topup(
+                userId: (int) $userId,
+                amount: $includedCredits,
+                description: "Included with {$plan->name} (session: {$session->id})",
+                metadata: [
+                    'stripe_session_id' => $session->id ?? null,
+                    'plan_id' => $plan->id,
+                    'product_key' => $plan->product_key,
+                    'amount_usd' => $includedCredits,
+                    'handled_by' => $handledBy,
+                ],
+            );
+        }
+
         \Log::info('Stripe plan checkout: plan activated', [
             'user_id' => $userId,
             'plan' => $plan->product_key,
             'period_end' => $periodEnd->toIso8601String(),
+            'included_credits' => $includedCredits,
             'stripe_subscription_id' => $stripeSubscriptionId,
             'handled_by' => $handledBy,
         ]);
