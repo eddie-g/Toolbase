@@ -34,7 +34,15 @@ class HorizonServiceProvider extends HorizonApplicationServiceProvider
         Gate::define('viewHorizon', function ($user = null) {
             $admin = $user instanceof Admin ? $user : Auth::guard('admin')->user();
 
-            return $admin instanceof Admin && $admin->isOperator();
+            if (! $admin instanceof Admin || ! $admin->isOperator()) {
+                return false;
+            }
+
+            // A password alone does not open Horizon either (App\Auth\AdminTwoFactor).
+            $twoFactor = app(\App\Auth\AdminTwoFactor::class);
+
+            return ! $twoFactor->isRequired()
+                || ($twoFactor->isEnrolled($admin) && $twoFactor->isVerified(request(), $admin));
         });
     }
 }

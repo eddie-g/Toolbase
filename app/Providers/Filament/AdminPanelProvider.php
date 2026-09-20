@@ -14,6 +14,7 @@ use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 use Illuminate\Routing\Middleware\SubstituteBindings;
 use Illuminate\Session\Middleware\AuthenticateSession;
 use Illuminate\Session\Middleware\StartSession;
+use Illuminate\Support\Facades\Route;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 use Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful;
 
@@ -50,8 +51,14 @@ class AdminPanelProvider extends PanelProvider
                 DisableBladeIconComponents::class,
                 DispatchServingFilamentEvent::class,
             ])
+            // After the password: the second factor (App\Auth\AdminTwoFactor).
+            ->authenticatedRoutes(function (): void {
+                Route::get('/two-factor', \App\Auth\AdminTwoFactorChallenge::class)->name('two-factor.challenge');
+                Route::get('/two-factor/setup', \App\Auth\AdminTwoFactorSetup::class)->name('two-factor.setup');
+            })
             ->authMiddleware([
                 Authenticate::class,
-            ]);
+                \App\Http\Middleware\RequireAdminTwoFactor::class,
+            ], isPersistent: true);
     }
 }

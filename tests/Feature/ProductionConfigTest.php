@@ -144,6 +144,7 @@ class ProductionConfigTest extends TestCase
             'SESSION_SECURE_COOKIE' => ['session.secure' => null],
             'QUEUE_CONNECTION' => ['queue.default' => 'sync'],
             'DB_CONNECTION' => ['database.default' => 'sqlite'],
+            'ADMIN_TWO_FACTOR_REQUIRED' => ['security.admin_two_factor.required' => false],
             'MAIL_MAILER' => ['mail.default' => 'log'],
             'RESEND_API_KEY' => ['services.resend.key' => ''],
             'STRIPE_WEBHOOK_SECRET' => ['services.stripe.webhook_secret' => null],
@@ -279,6 +280,7 @@ class ProductionConfigTest extends TestCase
             'services.resend.key' => 're_test',
             'services.domain_lookup' => 'whois',
             'production.optional' => [],
+            'security.admin_two_factor.required' => true,
         ]);
         foreach (array_keys(config('production.required')) as $key) {
             if ($key !== 'app.key') {

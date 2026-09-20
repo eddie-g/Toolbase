@@ -166,7 +166,7 @@ Route::post('/saved-signatures', [SavedSignatureController::class, 'store'])->na
 Route::patch('/saved-signatures/{savedSignature}', [SavedSignatureController::class, 'update'])->name('savedSignatures.update');
 Route::delete('/saved-signatures/{savedSignature}', [SavedSignatureController::class, 'destroy'])->name('savedSignatures.destroy');
 
-Route::middleware('auth:admin')
+Route::middleware(['auth:admin', \App\Http\Middleware\RequireAdminTwoFactor::class])
     ->prefix('/automated-tests')
     ->name('automatedTests.')
     ->group(function () {
@@ -184,7 +184,7 @@ Route::get('/pdf-tests/document/{document}/annotation-debug', [PdfTestController
 Route::post('/pdf-tests/document/{document}/flag-annotation', [PdfTestController::class, 'flagAnnotation'])->name('pdfTests.flagAnnotation');
 Route::post('/pdf-tests/document/{document}/render-annotations', [PdfTestController::class, 'renderAnnotations'])->name('pdfTests.renderAnnotations');
 
-Route::middleware('auth:admin')
+Route::middleware(['auth:admin', \App\Http\Middleware\RequireAdminTwoFactor::class])
     ->prefix('/pdf-tests/upload-tests')
     ->name('pdfTests.uploadTests.')
     ->group(function () {
