@@ -71,6 +71,7 @@ Route::get('/documents/{document}/fullscreen', [DocumentController::class, 'full
 Route::get('/documents/{document}/edit-extracted', [DocumentController::class, 'editExtractedText'])->name('documents.editExtracted');
 Route::get('/documents/{document}/file', [DocumentController::class, 'file'])->name('documents.file');
 Route::get('/documents/{document}/annotation-assets/{filename}', [DocumentController::class, 'annotationAsset'])->name('documents.annotationAsset');
+Route::post('/documents/{document}/annotation-assets', [DocumentController::class, 'uploadAnnotationAsset'])->name('documents.uploadAnnotationAsset');
 Route::get('/documents/{document}/original-file', [DocumentController::class, 'originalFile'])->name('documents.originalFile');
 Route::post('/documents/{document}/save', [DocumentController::class, 'save'])->name('documents.save');
 Route::post('/documents/{document}/rename', [DocumentController::class, 'rename'])->name('documents.rename');
@@ -166,7 +167,7 @@ Route::post('/saved-signatures', [SavedSignatureController::class, 'store'])->na
 Route::patch('/saved-signatures/{savedSignature}', [SavedSignatureController::class, 'update'])->name('savedSignatures.update');
 Route::delete('/saved-signatures/{savedSignature}', [SavedSignatureController::class, 'destroy'])->name('savedSignatures.destroy');
 
-Route::middleware('auth:admin')
+Route::middleware(['auth:admin', \App\Http\Middleware\RequireAdminTwoFactor::class])
     ->prefix('/automated-tests')
     ->name('automatedTests.')
     ->group(function () {
@@ -184,7 +185,7 @@ Route::get('/pdf-tests/document/{document}/annotation-debug', [PdfTestController
 Route::post('/pdf-tests/document/{document}/flag-annotation', [PdfTestController::class, 'flagAnnotation'])->name('pdfTests.flagAnnotation');
 Route::post('/pdf-tests/document/{document}/render-annotations', [PdfTestController::class, 'renderAnnotations'])->name('pdfTests.renderAnnotations');
 
-Route::middleware('auth:admin')
+Route::middleware(['auth:admin', \App\Http\Middleware\RequireAdminTwoFactor::class])
     ->prefix('/pdf-tests/upload-tests')
     ->name('pdfTests.uploadTests.')
     ->group(function () {
@@ -263,6 +264,10 @@ Route::get('/domain-search/user-logos', [DomainSearchController::class, 'userLog
 Route::get('/generated-images/{logoRequest}/preview/{index}', GeneratedImagePreviewController::class)->whereNumber('index')->middleware('auth:web,admin')->name('generatedImages.preview');
 Route::get('/generated-images/{logoRequest}/original/{index}', [GeneratedImagePreviewController::class, 'original'])->whereNumber('index')->middleware('auth:web,admin')->name('generatedImages.original');
 Route::post('/domain-search/save-processed-svg', [DomainSearchController::class, 'saveProcessedSvg'])->middleware('auth:web,admin')->name('domainSearch.saveProcessedSvg');
+
+// The portal's profile page became Settings; old links (verification mails,
+// bookmarks) still land somewhere useful.
+Route::redirect('/portal/profile', '/portal/settings');
 
 // Stripe Credits
 Route::post('/credits/checkout', [CreditController::class, 'createCheckout'])->middleware('auth')->name('credits.checkout');

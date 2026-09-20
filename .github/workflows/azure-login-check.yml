@@ -1,0 +1,31 @@
+# One-off proof that GitHub Actions can sign in to Azure with workload identity
+# federation (no stored secret). Runs once when this file lands on dev; delete it
+# after the run is green. See Asana "[Cloud] 1. Azure foundation", subtask 1.7.
+name: azure-login-check
+
+on:
+  push:
+    branches: [dev]
+    paths: ['.github/workflows/azure-login-check.yml']
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: stage
+    steps:
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: The stage identity must see stage and shared, never production
+        run: |
+          groups=$(az group list --query "[].name" -o tsv | sort | tr '\n' ' ')
+          echo "visible resource groups: $groups"
+          case " $groups " in *" netkit-prod "*) echo "::error::stage identity can see netkit-prod"; exit 1;; esac
+          case " $groups " in *" netkit-stage "*) ;; *) echo "::error::netkit-stage not visible"; exit 1;; esac

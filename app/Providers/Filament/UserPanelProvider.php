@@ -8,11 +8,11 @@ use App\UserPortal\Pages\Domains;
 use App\UserPortal\Pages\ImageGenerator;
 use App\UserPortal\Pages\PdfGenerator;
 use App\UserPortal\Pages\AddCredits;
-use App\UserPortal\Pages\Profile;
+use App\UserPortal\Pages\Settings;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\DisableBladeIconComponents;
 use Filament\Http\Middleware\DispatchServingFilamentEvent;
-use Filament\Navigation\NavigationItem;
+use Filament\Navigation\MenuItem;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
@@ -35,7 +35,6 @@ class UserPanelProvider extends PanelProvider
             ->id('user')
             ->path('portal')
             ->login(Login::class)   // redirects unauthenticated users to /login (Fortify)
-            ->profile(Profile::class, isSimple: false)
             ->authGuard('web')
             ->brandLogo(asset('images/netkit_logo_cube.svg'))
             ->darkModeBrandLogo(asset('images/netkit_logo_cube.svg'))
@@ -54,14 +53,15 @@ class UserPanelProvider extends PanelProvider
                 ImageGenerator::class,
                 PdfGenerator::class,
                 AddCredits::class,
+                Settings::class,
             ])
-            ->navigationItems([
-                NavigationItem::make('Settings')
+            ->userMenuItems([
+                // Stands in for Filament's profile page: the same avatar-menu
+                // entry, pointing at the portal's own Settings page.
+                'profile' => MenuItem::make()
+                    ->label('Settings')
                     ->icon('heroicon-o-cog-6-tooth')
-                    ->activeIcon('heroicon-s-cog-6-tooth')
-                    ->url(fn (): string => Profile::getUrl(panel: 'user'))
-                    ->isActiveWhen(fn (): bool => request()->routeIs('filament.user.auth.profile'))
-                    ->sort(99),
+                    ->url(fn (): string => Settings::getUrl(panel: 'user')),
             ])
             ->discoverWidgets(in: app_path('Filament/User/Widgets'), for: 'App\\Filament\\User\\Widgets')
             ->widgets([])

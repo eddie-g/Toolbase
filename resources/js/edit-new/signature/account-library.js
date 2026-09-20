@@ -9,6 +9,8 @@
  * browser they sign in on. Both are shown in the Saved tab.
  */
 
+import { editorFetch } from '../../edit-new-pdfjs/editor-fetch.js';
+
 import { escapeHtml } from '../util/html.js';
 import { signatureModeLabel } from '../annotations/types.js';
 
@@ -37,7 +39,7 @@ function csrfToken() {
 }
 
 async function request(url, options = {}) {
-    const response = await fetch(url, {
+    const response = await editorFetch(url, {
         credentials: 'same-origin',
         headers: {
             Accept: 'application/json',

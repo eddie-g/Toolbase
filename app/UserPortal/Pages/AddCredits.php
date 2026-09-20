@@ -25,6 +25,7 @@ class AddCredits extends Page
 
         return [
             'balance' => number_format((float) $user->credit_balance, 2),
+            'timezone' => $user->displayTimezone(),
             'amounts' => [5, 10, 20, 50, 100],
             'plans' => MonthlyPlan::active()->allAccess()->get(),
             'activePlan' => $activePlan,

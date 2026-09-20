@@ -11,6 +11,7 @@
         "test:word-export": "node --test resources/js/edit-new-pdfjs/converted-export.test.mjs",
         "test:excel-export": "node --test resources/js/edit-new-pdfjs/converted-export.test.mjs",
         "test:pdf-queued-export": "node --test resources/js/edit-new-pdfjs/queued-pdf-export.test.mjs",
+        "test:pdf-delta-save": "node --test resources/js/edit-new-pdfjs/delta-save.test.mjs",
         "test:pdf-autosave-guard": "node --test resources/js/edit-new-pdfjs/autosave-guard.test.mjs",
         "test:pdf-extraction-wait": "node --test resources/js/edit-new-pdfjs/extraction-wait.test.mjs",
         "test:pdf-save-resilience": "node --test resources/js/edit-new-pdfjs/save-resilience.test.mjs",

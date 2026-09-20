@@ -68,6 +68,22 @@ return [
         'honeypot_field' => 'website',
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Second factor for admin accounts
+    |--------------------------------------------------------------------------
+    |
+    | When required, an admin who has signed in with a password must give a
+    | code from an authenticator app before any page of the panel opens, and an
+    | account without one is sent to set it up first. Required in production;
+    | off elsewhere by default so the Playwright suites can sign in as the QA
+    | admin through the real form.
+    |
+    */
+    'admin_two_factor' => [
+        'required' => (bool) env('ADMIN_TWO_FACTOR_REQUIRED', env('APP_ENV', 'production') === 'production'),
+    ],
+
     'turnstile' => [
         'site_key' => env('TURNSTILE_SITE_KEY'),
         'secret_key' => env('TURNSTILE_SECRET_KEY'),

@@ -78,10 +78,8 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
-        \Illuminate\Support\Facades\Event::listen(
-            \Laravel\Fortify\Events\TwoFactorAuthenticationChallenged::class,
-            \App\Listeners\SendTwoFactorCodeListener::class
-        );
+        // SendTwoFactorCodeListener is found by event discovery (app/Listeners).
+        // Registering it here as well sent every SMS code twice.
 
         // Every sign-in, sign-out, failure, lockout and password reset on
         // either guard lands in auth_events (and last_login_* on the account).

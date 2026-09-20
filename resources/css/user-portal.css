@@ -242,6 +242,59 @@
 .dark .nk-features svg { color: rgb(var(--gray-500)); }
 .nk-plan-actions { margin-top: auto; padding-top: 1.25rem; }
 
+/* Settings: description on the left, form on the right (stacked on phones). */
+.nk-settings { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem 2.5rem; }
+@media (min-width: 900px) { .nk-settings { grid-template-columns: 17rem minmax(0, 1fr); } }
+.nk-settings-intro { min-width: 0; }
+.nk-ml-2 { margin-left: 0.5rem; }
+.nk-facts { margin: 0; display: flex; flex-direction: column; gap: 0.375rem; }
+.nk-facts div { display: flex; justify-content: space-between; gap: 1rem; font-size: 0.8125rem; }
+.nk-facts dt { color: rgb(var(--gray-500)); }
+.nk-facts dd { margin: 0; color: rgb(var(--gray-700)); font-variant-numeric: tabular-nums; }
+.dark .nk-facts dt { color: rgb(var(--gray-400)); }
+.dark .nk-facts dd { color: rgb(var(--gray-200)); }
+
+.nk-form { display: flex; flex-direction: column; gap: 1rem; max-width: 30rem; min-width: 0; }
+.nk-field { display: flex; flex-direction: column; gap: 0.375rem; }
+.nk-label { font-size: 0.875rem; font-weight: 500; color: rgb(var(--gray-800)); }
+.dark .nk-label { color: #fff; }
+.nk-input {
+    width: 100%;
+    height: 2.5rem;
+    padding: 0 0.75rem;
+    border: 1px solid rgb(var(--gray-200));
+    border-radius: 0.5rem;
+    background: #fff;
+    color: rgb(var(--gray-800));
+    font-size: 0.875rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.nk-input::placeholder { color: rgb(var(--gray-400)); }
+.nk-input:focus { outline: none; border-color: rgb(var(--gray-400)); box-shadow: 0 0 0 3px rgba(var(--gray-800), 0.12); }
+.dark .nk-input { background: rgb(var(--gray-700)); border-color: rgb(var(--gray-600)); color: #fff; box-shadow: none; }
+.dark .nk-input:focus { border-color: rgb(var(--gray-400)); box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.12); }
+.nk-select { padding-right: 2.25rem; appearance: none; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%2371717a'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z' clip-rule='evenodd'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 0.625rem center; background-size: 1.25rem; }
+.nk-error { font-size: 0.75rem; line-height: 1rem; color: #b91c1c; }
+.dark .nk-error { color: #fca5a5; }
+.nk-help { font-size: 0.75rem; line-height: 1rem; color: rgb(var(--gray-500)); }
+.dark .nk-help { color: rgb(var(--gray-400)); }
+.nk-form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.75rem; }
+.nk-btn-auto { width: auto; }
+.nk-btn-icon { width: 1rem; height: 1rem; }
+
+.nk-btn-danger-solid { background: #dc2626; color: #fff; }
+.nk-btn-danger-solid:hover:not(:disabled) { background: #b91c1c; }
+.nk-btn-danger-solid:focus-visible { outline-color: rgba(220, 38, 38, 0.5); }
+.dark .nk-btn-danger-solid { background: #ef4444; }
+.dark .nk-btn-danger-solid:hover:not(:disabled) { background: #f87171; color: #450a0a; }
+.nk-card-danger { border-color: #fecaca; }
+.dark .nk-card-danger { border-color: rgba(239, 68, 68, 0.4); }
+.nk-heading-danger { color: #b91c1c; }
+.dark .nk-heading-danger { color: #fca5a5; }
+.nk-badge-amber { background: rgba(245, 158, 11, 0.18); color: #92400e; }
+.dark .nk-badge-amber { background: rgba(245, 158, 11, 0.3); color: #fde68a; }
+
 /* Deposits table */
 .nk-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
 .nk-table th {

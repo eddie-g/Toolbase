@@ -27,6 +27,9 @@ import {
     PDFFindController,
 } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import { generateUuidV4 } from '../edit-new/util/uuid.js';
+import { configureEditorFetch, editorFetch } from './editor-fetch.js';
+import { parseInertHtml, plainTextFromHtml } from './inert-html.js';
+import { installTouchGuard } from './touch-guard.js';
 import { sliderValueToFontPt, fontPtToSliderValue } from '../edit-new/text/font-slider.js';
 import { composeTextDecorationLine, decorationTokensFromValue } from '../edit-new/text/decoration.js';
 import {
@@ -158,6 +161,7 @@ import {
     rememberStoredAssets,
     slimAnnotationForSave,
 } from './autosave-guard.js';
+import { createDeltaTracker, imagesToUpload } from './delta-save.js';
 import {
     buildConvertedDownloadUrl,
     estimateConvertedFileBytes,
@@ -628,25 +632,21 @@ document.addEventListener('visibilitychange', () => {
 });
 
 // Header objects are built at call time from the CSRF variable, so after
-// a refresh new requests are already correct. This wrapper catches the
-// losing race — a request fired with the stale token just before the
-// refresh landed — by answering its 419 with one refresh-and-replay.
-{
-    const nativeFetch = window.fetch.bind(window);
-    window.fetch = async function csrfRetryingFetch(input, init) {
-        const resp = await nativeFetch(input, init);
-        if (resp.status !== 419 || !init || !init.headers) return resp;
-        const headers = new Headers(init.headers);
-        if (!headers.has('X-CSRF-TOKEN')) return resp;
-        try {
-            await refreshCsrfToken();
-        } catch (_e) {
-            return resp;
-        }
-        headers.set('X-CSRF-TOKEN', CSRF);
-        return nativeFetch(input, { ...init, headers });
-    };
-}
+// a refresh new requests are already correct. editorFetch catches the
+// losing race (a request fired with the stale token just before the
+// refresh landed) by answering its 419 with one refresh-and-replay. It is
+// the editor's own fetch: window.fetch is no longer patched for every
+// script on the page.
+configureEditorFetch({
+    getCsrf: () => CSRF,
+    refreshCsrf: refreshCsrfToken,
+    onUnavailable: (code, message) => showEditorSwitchedOffNotice(code, message),
+});
+// Phones and small touch screens: say what works here before anything else.
+installTouchGuard({
+    dialog: document.getElementById('enpv-touch-dialog'),
+    continueButton: document.getElementById('enpv-touch-dialog-continue'),
+});
 const IS_UPLOAD_TEST_REVIEW = root.dataset.uploadTestReview === '1';
 const UPLOAD_TEST_SAVE_URL = root.dataset.uploadTestSaveUrl || '';
 const INFO_URL = editNewRoot?.dataset?.infoUrl;
@@ -830,7 +830,7 @@ function installUploadTestReviewMode() {
         }
         setStatusMessage('Saving test…');
         try {
-            const response = await fetch(UPLOAD_TEST_SAVE_URL, {
+            const response = await editorFetch(UPLOAD_TEST_SAVE_URL, {
                 method: 'PATCH',
                 credentials: 'same-origin',
                 headers: {
@@ -915,7 +915,7 @@ function installDocumentRename() {
         saving = true;
         setSaveStatus('Renaming...');
         try {
-            const response = await fetch(renameUrl, {
+            const response = await editorFetch(renameUrl, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -1235,6 +1235,16 @@ installDocumentRename();
 // tabs of this document announce their saves.
 const editorStateVersion = createStateVersionTracker();
 const storedImageAssets = new Map();
+// What the server has acknowledged, per annotation: the next save sends only
+// what differs from it (delta-save.js).
+const deltaTracker = createDeltaTracker();
+// Off from configuration (PDF_AUTOSAVE_DELTA=false), and for automated
+// browsers: the QA suites read the whole state, and inline image data, out of
+// the editor's own save requests. A test of the delta path opts in with
+// window.__enpvDeltaSaves = true before the editor loads.
+const DELTA_SAVES_ENABLED = editNewRoot?.dataset?.deltaSaves !== '0'
+    && (navigator.webdriver !== true || window.__enpvDeltaSaves === true);
+const ANNOTATION_ASSET_UPLOAD_URL = editNewRoot?.dataset?.annotationAssetUploadUrl || '';
 const editorTabChannel = createTabChannel(editNewRoot?.dataset?.docId, {
     onRemoteSave: (version) => {
         if (editorStateVersion.noteRemoteSave(version)) {
@@ -1333,7 +1343,7 @@ function flushUnsavedChangesOnExit() {
         });
         writeEditorDraft(annotationsPayload, latestAcroFormEntriesSnapshot);
         if (autosaveHalted || waitingForSignIn || !fitsKeepalive(body)) return;
-        fetch(SAVE_URL, {
+        editorFetch(SAVE_URL, {
             method: 'POST',
             credentials: 'same-origin',
             keepalive: true,
@@ -1426,6 +1436,32 @@ function showUnsavedBanner(plan) {
     }
     banner.querySelector('span').textContent = plan.message;
     banner.querySelector('a').hidden = plan.action !== 'session';
+}
+
+/**
+ * The editor's kill switch is off (the server answered 503 with
+ * editor_disabled): say what the server says, once, until it is dismissed.
+ */
+function showEditorSwitchedOffNotice(code, message) {
+    // A blocked download already shows the server's message in the export's
+    // own error toast. The editor switch can hit any action, so it gets a notice.
+    if (code !== 'editor_disabled') return;
+    let banner = document.querySelector('.enpv-switch-banner');
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.className = 'enpv-switch-banner';
+        banner.setAttribute('role', 'alert');
+        banner.append(document.createElement('span'));
+        const dismiss = document.createElement('button');
+        dismiss.type = 'button';
+        dismiss.textContent = 'OK';
+        dismiss.addEventListener('click', () => banner.remove());
+        banner.append(dismiss);
+        document.body.appendChild(banner);
+    }
+    banner.dataset.code = code;
+    const kept = code === 'editor_disabled' ? ' Changes you make now are kept in this browser until saving works again.' : '';
+    banner.querySelector('span').textContent = (message || 'This is temporarily unavailable.') + kept;
 }
 
 function clearUnsavedBanner() {
@@ -2545,7 +2581,7 @@ function renderPageManagerGrid() {
 
 async function pageManagerJsonRequest(url, payload) {
     if (!url) throw new Error('Page manager endpoint is not configured.');
-    const response = await fetch(url, {
+    const response = await editorFetch(url, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -3453,7 +3489,7 @@ async function submitPdfMerge() {
         formData.append('order', JSON.stringify(mergeItems.map((item) => item.id)));
         formData.append('session_id', getSessionId());
 
-        const response = await fetch(MERGE_PDF_URL, {
+        const response = await editorFetch(MERGE_PDF_URL, {
             method: 'POST',
             credentials: 'same-origin',
             headers: { Accept: 'application/json', 'X-CSRF-TOKEN': CSRF },
@@ -3550,7 +3586,7 @@ async function submitSelectedPageSplit(destination = 'download') {
         formData.append('session_id', getSessionId());
         formData.append('pdf', blob, 'current-edited.pdf');
 
-        const response = await fetch(SPLIT_PDF_URL, {
+        const response = await editorFetch(SPLIT_PDF_URL, {
             method: 'POST',
             credentials: 'same-origin',
             headers: { Accept: 'application/json', 'X-CSRF-TOKEN': CSRF },
@@ -3849,7 +3885,7 @@ async function fetchPasswordResultBlob(data) {
         throw new Error('The password-protected download is unavailable.');
     }
     const downloadUrl = buildConvertedDownloadUrl(DOWNLOAD_CONVERTED_URL, data.download_token);
-    const response = await fetch(downloadUrl, {
+    const response = await editorFetch(downloadUrl, {
         method: 'GET',
         credentials: 'same-origin',
         headers: { Accept: 'application/pdf' },
@@ -3874,7 +3910,7 @@ async function encryptEditedPdfBlob(blob) {
     formData.append('password_confirmation', activeDocumentPassword);
     formData.append('pdf', blob, 'edited.pdf');
 
-    const response = await fetch(PASSWORD_PDF_URL, {
+    const response = await editorFetch(PASSWORD_PDF_URL, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -3907,7 +3943,7 @@ async function submitPasswordAction() {
         setPasswordBusy(true, 'Checking password…');
         try {
             const enteredPassword = String(passwordUnlockInput?.value || '');
-            const response = await fetch(PASSWORD_UNLOCK_URL, {
+            const response = await editorFetch(PASSWORD_UNLOCK_URL, {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: {
@@ -3976,7 +4012,7 @@ async function submitPasswordAction() {
         }
 
         setPasswordStatus(action === 'remove' ? 'Removing password…' : 'Saving password protection…');
-        const response = await fetch(PASSWORD_PDF_URL, {
+        const response = await editorFetch(PASSWORD_PDF_URL, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -4505,8 +4541,7 @@ function richTextHtmlForBox(box) {
         preserveLineBreaks: /\r|\n/.test(textContentForBox(box)),
     });
     if (!html) return '';
-    const probe = document.createElement('div');
-    probe.innerHTML = html;
+    const probe = parseInertHtml(html);
     const hasInlineFormatting = Boolean(probe.querySelector('[style],a[href],b,strong,i,em,u'));
     return hasInlineFormatting ? html : '';
 }
@@ -11153,9 +11188,9 @@ function plainTextFromClipboardData(clipboardData) {
     if (text) return text.replace(/\r\n?/g, '\n');
     const html = clipboardData?.getData?.('text/html') || '';
     if (!html) return '';
-    const div = document.createElement('div');
-    div.innerHTML = html;
-    return String(div.innerText || div.textContent || '').replace(/\r\n?/g, '\n');
+    // Never innerHTML in the live document: an <img onerror> in pasted markup
+    // would run even though only the text is read (inert-html.js).
+    return plainTextFromHtml(html).replace(/\r\n?/g, '\n');
 }
 
 function ensureSelectionInsideContentEditable(target) {
@@ -14858,7 +14893,7 @@ function notePayloadFromNote(note, body, overrides = {}) {
 
 async function requestNoteJson(url, options = {}) {
     const method = String(options.method || 'GET').toUpperCase();
-    const response = await fetch(url, {
+    const response = await editorFetch(url, {
         credentials: 'same-origin',
         headers: {
             Accept: 'application/json',
@@ -15510,7 +15545,7 @@ function closeConvertModal() {
 
 function logImageExportActivity(status, details) {
     if (!EDITOR_AUTHENTICATED || !LOG_EXPORT_URL) return;
-    fetch(LOG_EXPORT_URL, {
+    editorFetch(LOG_EXPORT_URL, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -15751,7 +15786,7 @@ async function convertEditedPdfToPdfA() {
         const baseName = normalizeImageExportBaseName(root.dataset.documentName || docNameDisplay?.textContent || 'document.pdf');
         formData.append('pdf', blob, `${baseName}.pdf`);
 
-        const response = await fetch(CONVERT_TO_PDFA_URL, {
+        const response = await editorFetch(CONVERT_TO_PDFA_URL, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -15826,7 +15861,7 @@ async function convertEditedPdfToWord() {
         const baseName = normalizeImageExportBaseName(root.dataset.documentName || docNameDisplay?.textContent || 'document.pdf');
         formData.append('pdf', blob, `${baseName}.pdf`);
 
-        const response = await fetch(CONVERT_TO_WORD_URL, {
+        const response = await editorFetch(CONVERT_TO_WORD_URL, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -15902,7 +15937,7 @@ async function convertEditedPdfToExcel() {
         const baseName = normalizeImageExportBaseName(root.dataset.documentName || docNameDisplay?.textContent || 'document.pdf');
         formData.append('pdf', blob, `${baseName}.pdf`);
 
-        const response = await fetch(CONVERT_TO_EXCEL_URL, {
+        const response = await editorFetch(CONVERT_TO_EXCEL_URL, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -16080,7 +16115,7 @@ async function hydrateSavedDebugForAnnotationBox(box, annotation) {
     if (Number.isFinite(pageIndex) && pageIndex >= 0) {
         url.searchParams.set('page', String(pageIndex + 1));
     }
-    const response = await fetch(url.toString(), {
+    const response = await editorFetch(url.toString(), {
         headers: { Accept: 'application/json' },
         credentials: 'same-origin',
     });
@@ -16507,7 +16542,7 @@ async function saveAnnotationDebugFromPanel() {
     setDebugPanelStatus('Saving debug data...');
     if (debugSaveButton) debugSaveButton.disabled = true;
     try {
-        const response = await fetch(ANNOTATION_DEBUG_URL, {
+        const response = await editorFetch(ANNOTATION_DEBUG_URL, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -19979,13 +20014,14 @@ function annotationBoxesUrl(options = {}) {
 }
 
 async function fetchAnnotationBoxesPayload(options = {}) {
-    const response = await fetch(annotationBoxesUrl(options).toString(), {
+    const response = await editorFetch(annotationBoxesUrl(options).toString(), {
         headers: { Accept: 'application/json' },
         credentials: 'same-origin',
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (!data?.success) throw new Error(data?.message || 'Failed to load annotation boxes.');
+    deltaTracker.reset();   // what was loaded is not yet known in the form this editor sends
     if (editorStateVersion.noteLoaded(data.state_version)) {
         enterStaleEditorState('This document was saved from another tab or window while this one was loading.');
     }
@@ -20907,7 +20943,7 @@ async function persistAcroFormStateOnly(options = {}) {
 
     acroFormSaveInFlight = true;
     try {
-        const response = await fetch(SAVE_ACRO_FORM_URL, {
+        const response = await editorFetch(SAVE_ACRO_FORM_URL, {
             method: 'POST',
             credentials: 'same-origin',
             keepalive: options.keepalive === true,
@@ -21135,7 +21171,7 @@ async function addGuidedInvoiceRow() {
     setStatus('Adding invoice row...');
     setSaveStatus('Regenerating...');
 
-    const response = await fetch(REGENERATE_INVOICE_URL, {
+    const response = await editorFetch(REGENERATE_INVOICE_URL, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -21433,7 +21469,7 @@ async function addSecurityDepositRow() {
     setStatus('Adding deduction row...');
     setSaveStatus('Regenerating...');
 
-    const response = await fetch(REGENERATE_TEMPLATE_URL, {
+    const response = await editorFetch(REGENERATE_TEMPLATE_URL, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -21469,7 +21505,7 @@ async function addSecurityDepositPropertyRow() {
     setStatus('Adding property row...');
     setSaveStatus('Regenerating...');
 
-    const response = await fetch(REGENERATE_TEMPLATE_URL, {
+    const response = await editorFetch(REGENERATE_TEMPLATE_URL, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -23902,7 +23938,7 @@ async function loadEmbeddedFontsForDocument() {
     embeddedFontsLoadPromise = (async () => {
         if (!FONTS_URL || !afbFont) return [];
         try {
-            const response = await fetch(FONTS_URL, {
+            const response = await editorFetch(FONTS_URL, {
                 headers: { Accept: 'application/json' },
                 credentials: 'same-origin',
             });
@@ -25364,7 +25400,7 @@ async function burnAnnotationLayer(annotation, box = null) {
         if (currentPdfBytes) {
             formData.append('pdf', new Blob([currentPdfBytes], { type: 'application/pdf' }), 'current.pdf');
         }
-        const response = await fetch(BURN_URL, {
+        const response = await editorFetch(BURN_URL, {
             method: 'POST',
             credentials: 'same-origin',
             headers: {
@@ -27217,13 +27253,13 @@ async function postReflow(req, box) {
             const fd = new FormData();
             fd.append('pdf', new Blob([currentPdfBytes], { type: 'application/pdf' }), 'current.pdf');
             fd.append('reflows', JSON.stringify(reflows));
-            r = await fetch(REFLOW_URL, {
+            r = await editorFetch(REFLOW_URL, {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'X-CSRF-TOKEN': CSRF, Accept: 'application/pdf' },
                 body: fd,
             });
         } else {
-            r = await fetch(REFLOW_URL, {
+            r = await editorFetch(REFLOW_URL, {
                 method: 'POST', credentials: 'same-origin',
                 headers: {
                     'Content-Type': 'application/json',
@@ -28342,14 +28378,14 @@ async function postPdfjsTextRewrite(edits) {
         const fd = new FormData();
         fd.append('pdf', new Blob([currentPdfBytes], { type: 'application/pdf' }), 'current.pdf');
         fd.append('edits', JSON.stringify(edits));
-        return fetch(REWRITE_URL, {
+        return editorFetch(REWRITE_URL, {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'X-CSRF-TOKEN': CSRF, Accept: 'application/pdf' },
             body: fd,
         });
     }
-    return fetch(REWRITE_URL, {
+    return editorFetch(REWRITE_URL, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -28367,14 +28403,14 @@ async function postPdfjsSourceRedaction(edits) {
         const fd = new FormData();
         fd.append('pdf', new Blob([currentPdfBytes], { type: 'application/pdf' }), 'current.pdf');
         fd.append('edits', JSON.stringify(edits));
-        return fetch(REDACT_URL, {
+        return editorFetch(REDACT_URL, {
             method: 'POST',
             credentials: 'same-origin',
             headers: { 'X-CSRF-TOKEN': CSRF, Accept: 'application/pdf' },
             body: fd,
         });
     }
-    return fetch(REDACT_URL, {
+    return editorFetch(REDACT_URL, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -28431,7 +28467,7 @@ async function rewriteSourceAnnotationBoxText(annotationId, edit) {
 
 async function overwritePromotedAnnotationText(annotation, newText, originalTextHint = '') {
     if (!annotation?.id || !OVERWRITE_TEXT_URL) return false;
-    const response = await fetch(OVERWRITE_TEXT_URL, {
+    const response = await editorFetch(OVERWRITE_TEXT_URL, {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -28789,8 +28825,16 @@ function buildSaveRequest({ isAutosave, acroPayload }) {
     // separate session list is sent), images by reference once the server has
     // them, and the version this tab loaded so another tab's newer state is
     // never overwritten.
+    // Only what changed since the last acknowledged save travels, with the ids
+    // that are gone and the number there should be; a first or an uncertain
+    // save sends the lot.
+    const travelling = annotationsPayload.map((annotation) => slimAnnotationForSave(annotation, storedImageAssets));
+    const savePlan = DELTA_SAVES_ENABLED
+        ? deltaTracker.plan(travelling)
+        : { delta: false, annotations: travelling, removedIds: [], expectedCount: travelling.length, hashes: null };
     const body = JSON.stringify({
-        annotations: annotationsPayload.map((annotation) => slimAnnotationForSave(annotation, storedImageAssets)),
+        ...(savePlan.delta ? { delta: true, removed_ids: savePlan.removedIds, expected_count: savePlan.expectedCount } : {}),
+        annotations: savePlan.annotations,
         ...(editorStateVersion.baseVersion !== null ? { base_version: editorStateVersion.baseVersion } : {}),
         acro_form_entries: acroPayload,
         deleted_annotation_ids: Array.from(new Set([
@@ -28799,7 +28843,34 @@ function buildSaveRequest({ isAutosave, acroPayload }) {
         ])),
         session_id: getSessionId(),
     });
-    return { annotationsPayload, body };
+    return { annotationsPayload, body, savePlan };
+}
+
+/**
+ * Images and signatures go up on their own, once, before the state that
+ * refers to them: base64 never travels inside a save. storedImageAssets then
+ * makes slimAnnotationForSave send the reference.
+ */
+async function uploadPendingAnnotationImages(annotationsPayload) {
+    if (!ANNOTATION_ASSET_UPLOAD_URL || !DELTA_SAVES_ENABLED) return 0;
+    const pending = imagesToUpload(annotationsPayload, storedImageAssets);
+    for (const image of pending) {
+        const response = await fetch(ANNOTATION_ASSET_UPLOAD_URL, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'X-CSRF-TOKEN': CSRF },
+            body: JSON.stringify({ annotation_id: image.id, data_url: image.dataUrl, file_name: image.fileName, mime_type: image.mimeType }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result?.assetPath) {
+            const error = new Error(result?.message || `Image upload failed (${response.status}).`);
+            error.saveFailure = classifySaveFailure(response.status, result, response.headers.get('Retry-After') || '');
+            throw error;
+        }
+        storedImageAssets.set(image.id, { assetPath: result.assetPath, data: image.dataUrl, mimeType: result.mimeType ?? null, fileName: result.fileName ?? null });
+    }
+
+    return pending.length;
 }
 
 async function saveAnnotationStateToDb(options = {}) {
@@ -28846,17 +28917,26 @@ async function saveAnnotationStateToDb(options = {}) {
             console.warn('Failed to collect AcroForm entries for save', err);
             return Array.isArray(acroFormEntries) ? acroFormEntries : [];
         });
-        const { annotationsPayload, body } = buildSaveRequest({ isAutosave, acroPayload });
+        let request = buildSaveRequest({ isAutosave, acroPayload });
         // Kept locally until the server has it: a crash, a closed laptop or a
         // dead network between here and the response loses nothing.
-        if (unsavedChanges.isDirty) writeEditorDraft(annotationsPayload, acroPayload);
+        if (unsavedChanges.isDirty) writeEditorDraft(request.annotationsPayload, acroPayload);
+        try {
+            if (await uploadPendingAnnotationImages(request.annotationsPayload) > 0) {
+                request = buildSaveRequest({ isAutosave, acroPayload });   // now by reference
+            }
+        } catch (uploadError) {
+            failure = uploadError.saveFailure || { kind: 'network', message: 'Could not reach the server.' };
+            throw uploadError;
+        }
+        const { annotationsPayload, body, savePlan } = request;
 
         setSaveStatus('Saving…');
         setStatus('Saving annotation state…');
         if (saveButton) saveButton.disabled = true;
         let response;
         try {
-            response = await fetch(SAVE_URL, {
+            response = await editorFetch(SAVE_URL, {
                 method: 'POST',
                 credentials: 'same-origin',
                 headers: {
@@ -28877,6 +28957,10 @@ async function saveAnnotationStateToDb(options = {}) {
         }
         editorStateVersion.noteSaved(result.state_version);
         rememberStoredAssets(storedImageAssets, annotationsPayload, result.assets);
+        // An image that still went inline (no upload route) is stored as a
+        // reference: what was sent is then not what the server holds.
+        if (result.assets && Object.keys(result.assets).length > 0) deltaTracker.reset();
+        else deltaTracker.acknowledge(savePlan);
         editorTabChannel.announceSave(result.state_version);
         if (result.session_id && String(result.session_id).trim()) {
             safeLocalStorageSet(`edit_new_session_${DOC_ID}`, String(result.session_id).trim());
@@ -28900,6 +28984,14 @@ async function saveAnnotationStateToDb(options = {}) {
         if (!unsavedChanges.isDirty) editorDrafts.remove(DOC_ID);
         return true;
     } catch (err) {
+        // Whatever went wrong, the server may not hold what this editor thinks
+        // it does: the next save sends everything.
+        deltaTracker.reset();
+        if (failure?.kind === 'resync') {
+            setSaveStatus('Saving…');
+            retryAutoSaveAfterMs = 50;
+            return false;
+        }
         if (failure?.kind === 'stale') {
             enterStaleEditorState(failure.message);
             return false;
@@ -29885,7 +29977,7 @@ if (floatingGuidedConvertButton) {
         setStatus('Converting form fields to editable text...');
         try {
             const acroPayload = await collectAcroFormEntriesForSave();
-            const response = await fetch(GUIDED_CONVERT_URL, {
+            const response = await editorFetch(GUIDED_CONVERT_URL, {
                 method: 'POST',
                 headers: {
                     'Accept': 'application/json',
@@ -30276,7 +30368,7 @@ async function loadImageImportLogos(options = {}) {
     imageImportLogoRefresh?.setAttribute('disabled', 'disabled');
     setImageImportLogoStatus('Loading logos...');
     try {
-        const response = await fetch(USER_LOGOS_URL, {
+        const response = await editorFetch(USER_LOGOS_URL, {
             headers: {
                 Accept: 'application/json',
                 'X-CSRF-TOKEN': CSRF || '',
@@ -30310,7 +30402,7 @@ async function selectImageImportLogo(logo) {
     try {
         const sourceUrl = logo.original_url || logo.url || logo.preview_url || '';
         if (!sourceUrl) throw new Error('Logo file is missing.');
-        const response = await fetch(sourceUrl, {
+        const response = await editorFetch(sourceUrl, {
             headers: { Accept: 'image/*,*/*' },
             credentials: 'same-origin',
         });

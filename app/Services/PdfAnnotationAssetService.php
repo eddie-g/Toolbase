@@ -89,6 +89,24 @@ class PdfAnnotationAssetService
         return $normalized;
     }
 
+    /**
+     * Store an image the editor uploads when it is inserted, before it is part
+     * of any saved state. Returns what the annotation should carry instead of
+     * the data, or null when the data is not an image this app stores.
+     *
+     * @return array{assetPath: string, src: string, mimeType: string, fileName: string}|null
+     */
+    public function storeUploadedImage(Document $document, string $annotationId, string $dataUrl, ?string $fileName = null, ?string $mimeType = null): ?array
+    {
+        $annotationId = preg_replace('/[^A-Za-z0-9_.:-]/', '_', trim($annotationId)) ?: '';
+        if ($annotationId === '' || ! $this->looksLikeDataUrl($dataUrl)) {
+            return null;
+        }
+        $stored = $this->storeDataUrl($document->id, $annotationId, $dataUrl, $fileName, $mimeType);
+
+        return $stored === null ? null : $stored + ['src' => $this->assetUrl($stored['assetPath'])];
+    }
+
     public function enrichForClient(array $annotation): array
     {
         if (!$this->isImageBackedAnnotationType($annotation['type'] ?? null)) {
