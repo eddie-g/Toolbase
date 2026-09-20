@@ -75,12 +75,31 @@ class User extends Authenticatable implements FilamentUser, MustVerifyEmail
 
     /**
      * Check if user has an active subscription for a given product.
+     *
+     * A plan that unlocks all products counts for every key. A subscription
+     * past its period end (a lapsed week pass) no longer counts.
      */
     public function hasActiveSubscription(string $productKey): bool
     {
         return $this->subscriptions()
-            ->whereHas('plan', fn ($q) => $q->where('product_key', $productKey))
-            ->where('status', 'active')
+            ->current()
+            ->whereHas('plan', fn ($q) => $q
+                ->where('product_key', $productKey)
+                ->orWhere('unlocks_all_products', true))
             ->exists();
+    }
+
+    /**
+     * The user's current all-access plan row, if any (cheapest plan first).
+     */
+    public function currentAllAccessSubscription(): ?UserSubscription
+    {
+        return $this->subscriptions()
+            ->current()
+            ->whereHas('plan', fn ($q) => $q->where('unlocks_all_products', true))
+            ->with('plan')
+            ->get()
+            ->sortBy(fn (UserSubscription $sub) => (float) $sub->plan->price)
+            ->first();
     }
 }

@@ -2,7 +2,7 @@
 
 namespace App\UserPortal\Pages;
 
-use App\Models\CreditTransaction;
+use App\Models\MonthlyPlan;
 use Filament\Pages\Page;
 use Illuminate\Support\Facades\Auth;
 
@@ -21,10 +21,14 @@ class AddCredits extends Page
     public function getViewData(): array
     {
         $user = Auth::user();
+        $activePlan = $user->currentAllAccessSubscription();
 
         return [
             'balance' => number_format((float) $user->credit_balance, 2),
             'amounts' => [3, 5, 10, 20, 50, 100],
+            'plans' => MonthlyPlan::active()->allAccess()->get(),
+            'activePlan' => $activePlan,
+            'activePlanKey' => $activePlan?->plan?->product_key,
             'transactions' => $user->creditTransactions()
                 ->where('service', 'topup')
                 ->orderByDesc('created_at')

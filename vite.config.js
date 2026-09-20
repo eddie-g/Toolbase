@@ -7,6 +7,7 @@ export default defineConfig({
         laravel({
             input: [
                 'resources/css/app.css',
+                'resources/css/user-portal.css',
                 'resources/js/app.js',
                 'resources/css/edit-new/index.css',
                 'resources/js/edit-new/main.js',

@@ -16,6 +16,8 @@ use Filament\Navigation\NavigationItem;
 use Filament\Panel;
 use Filament\PanelProvider;
 use Filament\Support\Colors\Color;
+use Filament\View\PanelsRenderHook;
+use Illuminate\Support\Facades\Vite;
 use Illuminate\Auth\Middleware\EnsureEmailIsVerified;
 use Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse;
 use Illuminate\Cookie\Middleware\EncryptCookies;
@@ -41,6 +43,8 @@ class UserPanelProvider extends PanelProvider
             ->favicon(asset('images/netkit_logo_cube.svg'))
             ->colors([
                 'primary' => Color::Blue,
+                // Zinc neutrals give the portal the Flux UI look without the package.
+                'gray' => Color::Zinc,
             ])
             ->discoverResources(in: app_path('Filament/User/Resources'), for: 'App\\Filament\\User\\Resources')
             ->discoverPages(in: app_path('Filament/User/Pages'), for: 'App\\Filament\\User\\Pages')
@@ -61,6 +65,13 @@ class UserPanelProvider extends PanelProvider
             ])
             ->discoverWidgets(in: app_path('Filament/User/Widgets'), for: 'App\\Filament\\User\\Widgets')
             ->widgets([])
+            // Portal page styles (nk-* classes). Filament's compiled CSS only
+            // carries what its own views use, and the site's Tailwind build
+            // fights it, so the pages get their own small stylesheet.
+            ->renderHook(
+                PanelsRenderHook::HEAD_END,
+                fn (): string => Vite::withEntryPoints(['resources/css/user-portal.css'])->toHtml(),
+            )
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,
