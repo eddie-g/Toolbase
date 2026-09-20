@@ -104,6 +104,23 @@ class CreditController extends Controller
             return redirect($basePath . '?status=verification_failed');
         }
 
+        // A plan purchase (monthly or week pass) returns here from the portal.
+        if (!empty($session->metadata->plan_id)) {
+            $result = $this->processPlanCheckoutSession($session, $user->id, 'checkout_return');
+
+            if (in_array($result['status'], ['activated', 'already_processed'], true)) {
+                return redirect($basePath . '?status=subscribed&plan=' . $result['plan']);
+            }
+
+            \Log::warning('Stripe checkout return: plan session was not activated', [
+                'session_id' => $session->id ?? null,
+                'status' => $result['status'],
+                'reason' => $result['reason'] ?? null,
+            ]);
+
+            return redirect($basePath . '?status=verification_failed');
+        }
+
         $result = $this->processCreditCheckoutSession($session, $user->id, 'checkout_return');
 
         if ($result['status'] === 'credited' || $result['status'] === 'already_processed') {
@@ -141,9 +158,10 @@ class CreditController extends Controller
         if ($event->type === 'checkout.session.completed') {
             $session = $event->data->object;
 
-            // Handle subscription checkout vs one-time credit purchase
-            if (($session->mode ?? null) === 'subscription') {
-                $this->handleSubscriptionCheckoutCompleted($session);
+            // Plan purchases: a recurring subscription or a one-time pass.
+            // Both carry plan_id; credit top-ups never do.
+            if (($session->mode ?? null) === 'subscription' || !empty($session->metadata->plan_id)) {
+                $this->processPlanCheckoutSession($session, null, 'webhook');
                 return response('OK', 200);
             }
 
@@ -295,9 +313,15 @@ class CreditController extends Controller
     }
 
     /**
-     * Handle a completed subscription checkout session.
+     * Activate a plan from a completed checkout session.
+     *
+     * Runs from the webhook and from the checkout return URL, whichever
+     * arrives first; the second call is a no-op. A recurring plan needs the
+     * Stripe subscription id; a one-time pass needs the session to be paid and
+     * extends an existing pass rather than creating a second row (user + plan
+     * is unique).
      */
-    private function handleSubscriptionCheckoutCompleted($session): void
+    private function processPlanCheckoutSession($session, ?int $expectedUserId = null, string $handledBy = 'webhook'): array
     {
         $userId = $session->metadata->user_id ?? $session->client_reference_id ?? null;
         $planId = $session->metadata->plan_id ?? null;
@@ -305,42 +329,81 @@ class CreditController extends Controller
         $stripeCustomerId = $session->customer ?? null;
 
         if (!$userId || !$planId) {
-            \Log::warning('Stripe webhook: subscription missing metadata', [
-                'session_id' => $session->id,
+            \Log::warning('Stripe plan checkout: missing user_id or plan_id', [
+                'session_id' => $session->id ?? null,
+                'handled_by' => $handledBy,
             ]);
-            return;
+
+            return ['status' => 'missing_metadata'];
+        }
+
+        if ($expectedUserId !== null && (int) $userId !== $expectedUserId) {
+            return ['status' => 'wrong_user', 'reason' => 'metadata_user_mismatch'];
         }
 
         $plan = MonthlyPlan::find($planId);
         if (!$plan) {
-            \Log::warning('Stripe webhook: plan not found', ['plan_id' => $planId]);
-            return;
+            \Log::warning('Stripe plan checkout: plan not found', ['plan_id' => $planId]);
+
+            return ['status' => 'plan_not_found'];
         }
 
-        // Prevent duplicate
-        $existing = UserSubscription::where('stripe_subscription_id', $stripeSubscriptionId)->first();
-        if ($existing) {
-            \Log::info('Stripe webhook: subscription already exists', [
-                'stripe_subscription_id' => $stripeSubscriptionId,
+        if ($plan->isOneTime()) {
+            if (($session->payment_status ?? null) !== 'paid') {
+                return ['status' => 'not_paid', 'reason' => 'payment_status_not_paid', 'plan' => $plan->product_key];
+            }
+        } elseif (!$stripeSubscriptionId) {
+            return ['status' => 'not_subscribed', 'reason' => 'session_has_no_subscription', 'plan' => $plan->product_key];
+        }
+
+        $alreadyProcessed = UserSubscription::where('stripe_checkout_session_id', $session->id)
+            ->when($stripeSubscriptionId, fn ($q) => $q->orWhere('stripe_subscription_id', $stripeSubscriptionId))
+            ->exists();
+        if ($alreadyProcessed) {
+            \Log::info('Stripe plan checkout: duplicate session, skipping', [
+                'session_id' => $session->id,
+                'handled_by' => $handledBy,
             ]);
-            return;
+
+            return ['status' => 'already_processed', 'plan' => $plan->product_key];
         }
 
-        UserSubscription::create([
-            'user_id' => $userId,
-            'monthly_plan_id' => $plan->id,
-            'stripe_subscription_id' => $stripeSubscriptionId,
-            'stripe_customer_id' => $stripeCustomerId,
-            'status' => 'active',
-            'current_period_start' => now(),
-            'current_period_end' => now()->addMonth(),
-        ]);
+        $existing = UserSubscription::where('user_id', $userId)
+            ->where('monthly_plan_id', $plan->id)
+            ->first();
 
-        \Log::info('Stripe webhook: subscription created', [
+        if ($plan->isOneTime()) {
+            // Buying another pass while one is running adds to the end of it.
+            $startsFrom = ($existing && $existing->isActive()) ? $existing->current_period_end : now();
+            $periodStart = ($existing && $existing->isActive()) ? $existing->current_period_start : now();
+            $periodEnd = $startsFrom->copy()->addDays((int) ($plan->duration_days ?: 7));
+        } else {
+            $periodStart = now();
+            $periodEnd = now()->addMonth();
+        }
+
+        UserSubscription::updateOrCreate(
+            ['user_id' => $userId, 'monthly_plan_id' => $plan->id],
+            [
+                'stripe_subscription_id' => $stripeSubscriptionId,
+                'stripe_customer_id' => $stripeCustomerId,
+                'stripe_checkout_session_id' => $session->id ?? null,
+                'status' => 'active',
+                'current_period_start' => $periodStart,
+                'current_period_end' => $periodEnd,
+                'cancelled_at' => null,
+            ],
+        );
+
+        \Log::info('Stripe plan checkout: plan activated', [
             'user_id' => $userId,
             'plan' => $plan->product_key,
+            'period_end' => $periodEnd->toIso8601String(),
             'stripe_subscription_id' => $stripeSubscriptionId,
+            'handled_by' => $handledBy,
         ]);
+
+        return ['status' => 'activated', 'plan' => $plan->product_key];
     }
 
     /**
@@ -372,22 +435,27 @@ class CreditController extends Controller
 
         $request->validate([
             'plan_id' => ['required', 'integer', 'exists:monthly_plans,id'],
+            'source' => ['nullable', 'in:admin,portal'],
         ]);
 
         $plan = MonthlyPlan::where('active', true)->findOrFail($request->input('plan_id'));
+        $source = $request->input('source') === 'portal' ? 'portal' : 'admin';
 
-        // Check if user already has an active subscription for this plan
-        $existing = UserSubscription::where('user_id', $user->id)
-            ->where('monthly_plan_id', $plan->id)
-            ->where('status', 'active')
-            ->first();
+        // A running recurring plan cannot be bought twice; a week pass can be
+        // stacked, the checkout handler extends it.
+        if (!$plan->isOneTime()) {
+            $existing = UserSubscription::where('user_id', $user->id)
+                ->where('monthly_plan_id', $plan->id)
+                ->current()
+                ->first();
 
-        if ($existing) {
-            return response()->json(['error' => 'You already have an active subscription for this product.'], 409);
-        }
+            if ($existing) {
+                return response()->json(['error' => 'You already have an active subscription for this product.'], 409);
+            }
 
-        if (!$plan->stripe_price_id) {
-            return response()->json(['error' => 'This plan is not yet available for purchase. Stripe price ID not configured.'], 422);
+            if (!$plan->stripe_price_id) {
+                return response()->json(['error' => 'This plan is not yet available for purchase. Stripe price ID not configured.'], 422);
+            }
         }
 
         Stripe::setApiKey(config('services.stripe.secret'));
@@ -395,30 +463,56 @@ class CreditController extends Controller
         // Get or create Stripe customer
         $stripeCustomerId = $this->getOrCreateStripeCustomer($user);
 
-        $session = StripeSession::create([
+        $metadata = [
+            'user_id' => $user->id,
+            'plan_id' => $plan->id,
+            'product_key' => $plan->product_key,
+            'source' => $source,
+        ];
+
+        if ($source === 'portal') {
+            // The portal verifies the session on return, so a purchase shows up
+            // even before the webhook lands (and on local setups without one).
+            $successUrl = url('/credits/checkout/success') . '?source=portal&session_id={CHECKOUT_SESSION_ID}';
+            $cancelUrl = url('/portal/add-credits') . '?status=cancelled';
+        } else {
+            $successUrl = url('/admin/subscriptions') . '?status=success&plan=' . $plan->product_key;
+            $cancelUrl = url('/admin/subscriptions') . '?status=cancelled';
+        }
+
+        $params = [
             'payment_method_types' => ['card'],
             'customer' => $stripeCustomerId,
-            'line_items' => [[
+            'success_url' => $successUrl,
+            'cancel_url' => $cancelUrl,
+            'client_reference_id' => (string) $user->id,
+            'metadata' => $metadata,
+        ];
+
+        if ($plan->isOneTime()) {
+            $days = (int) ($plan->duration_days ?: 7);
+            $params['mode'] = 'payment';
+            $params['line_items'] = [[
+                'price_data' => [
+                    'currency' => 'usd',
+                    'product_data' => [
+                        'name' => "Netkit {$plan->name}",
+                        'description' => "{$days} days of every premium tool. One payment, no renewal.",
+                    ],
+                    'unit_amount' => $plan->priceInCents(),
+                ],
+                'quantity' => 1,
+            ]];
+        } else {
+            $params['mode'] = 'subscription';
+            $params['line_items'] = [[
                 'price' => $plan->stripe_price_id,
                 'quantity' => 1,
-            ]],
-            'mode' => 'subscription',
-            'success_url' => url('/admin/subscriptions') . '?status=success&plan=' . $plan->product_key,
-            'cancel_url' => url('/admin/subscriptions') . '?status=cancelled',
-            'client_reference_id' => (string) $user->id,
-            'metadata' => [
-                'user_id' => $user->id,
-                'plan_id' => $plan->id,
-                'product_key' => $plan->product_key,
-            ],
-            'subscription_data' => [
-                'metadata' => [
-                    'user_id' => $user->id,
-                    'plan_id' => $plan->id,
-                    'product_key' => $plan->product_key,
-                ],
-            ],
-        ]);
+            ]];
+            $params['subscription_data'] = ['metadata' => $metadata];
+        }
+
+        $session = StripeSession::create($params);
 
         return response()->json([
             'checkout_url' => $session->url,

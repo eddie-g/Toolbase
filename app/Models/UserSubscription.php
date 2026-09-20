@@ -12,6 +12,7 @@ class UserSubscription extends Model
         'monthly_plan_id',
         'stripe_subscription_id',
         'stripe_customer_id',
+        'stripe_checkout_session_id',
         'status',
         'current_period_start',
         'current_period_end',
@@ -49,5 +50,18 @@ class UserSubscription extends Model
     public function scopeActive($query)
     {
         return $query->where('status', 'active');
+    }
+
+    /**
+     * Active and not past its period end: the query form of isActive(), so a
+     * lapsed week pass stops unlocking without a webhook having to cancel it.
+     */
+    public function scopeCurrent($query)
+    {
+        return $query->where('status', 'active')
+            ->where(function ($q) {
+                $q->whereNull('current_period_end')
+                    ->orWhere('current_period_end', '>', now());
+            });
     }
 }

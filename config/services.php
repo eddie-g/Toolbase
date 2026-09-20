@@ -98,6 +98,9 @@ return [
         'key' => env('STRIPE_KEY'),
         'secret' => env('STRIPE_SECRET'),
         'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+        // Recurring price for the all-access monthly plan ($5.99/month). The
+        // week pass is a one-time payment and needs no price object.
+        'all_access_month_price_id' => env('STRIPE_ALL_ACCESS_MONTH_PRICE_ID'),
     ],
 
     'namecheap' => [
