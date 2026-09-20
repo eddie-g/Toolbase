@@ -21,7 +21,7 @@ return new class extends Migration
             'description' => 'Every premium tool for seven days, with $2.00 in credits to spend. One payment, nothing renews.',
             'features' => json_encode([
                 '$2.00 in credits included',
-                'PDF editor without limits',
+                'Access to all premium PDF tools',
                 'Logo generator pro mode',
                 'Premium domain tools',
                 'Ends after 7 days, no renewal',
@@ -37,7 +37,7 @@ return new class extends Migration
                 '$2.00 in credits every month',
                 '50% of your unused credits roll over each month',
                 'Live support during business hours',
-                'PDF editor without limits',
+                'Access to all premium PDF tools',
                 'Logo generator pro mode',
                 'Premium domain tools',
                 'Renews every month, cancel anytime',

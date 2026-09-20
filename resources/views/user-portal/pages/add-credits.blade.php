@@ -141,7 +141,7 @@
             <div class="nk-checkout-row nk-mt-4" x-show="selectedAmount !== null" x-cloak>
                 <p class="nk-muted">Adding <strong class="nk-strong" x-text="'$' + selectedAmount + '.00'"></strong> to your balance.</p>
                 <button type="button" class="nk-btn nk-btn-green" @click="checkout(selectedAmount)" :disabled="loading !== null">
-                    <span x-show="!(loading && loading.startsWith('amount:'))">Checkout</span>
+                    <span x-show="!(loading && loading.startsWith('amount:'))" x-text="'Buy $' + selectedAmount + ' now'"></span>
                     <span x-show="loading && loading.startsWith('amount:')" x-cloak>Redirecting…</span>
                 </button>
             </div>
