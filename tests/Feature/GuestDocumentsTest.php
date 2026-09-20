@@ -152,6 +152,18 @@ class GuestDocumentsTest extends TestCase
         $this->assertSame(1, DB::table('guest_documents')->count(), 'expired links go too');
     }
 
+    public function test_the_scheduler_only_prunes_where_it_is_switched_on(): void
+    {
+        $event = collect(app(\Illuminate\Console\Scheduling\Schedule::class)->events())
+            ->first(fn ($event) => str_contains((string) $event->command, 'documents:prune-guests'));
+        $this->assertNotNull($event);
+
+        config(['pdf_editor.guests.prune' => false]);
+        $this->assertFalse($event->filtersPass($this->app), 'a development box keeps its ownerless documents');
+        config(['pdf_editor.guests.prune' => true]);
+        $this->assertTrue($event->filtersPass($this->app));
+    }
+
     public function test_the_documents_page_tells_a_guest_how_long_their_files_are_kept(): void
     {
         $token = str_repeat('n', 40);
