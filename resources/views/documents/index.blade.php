@@ -608,6 +608,14 @@
                         @if ($errors->any())
                             <div class="status-banner error">{{ $errors->first() }}</div>
                         @endif
+
+                        {{-- Without an account, documents belong to this browser and are removed after a while (config pdf_editor.guests). --}}
+                        @if (!auth('web')->check() && !auth('admin')->check() && $documents->total() > 0 && !$showTrash)
+                            <div class="status-banner guest-retention">
+                                Your documents are kept in this browser for {{ config('pdf_editor.guests.lifetime_days', 7) }} days after your last visit.
+                                <a href="{{ route('register') }}">Create a free account</a> to keep them and open them anywhere.
+                            </div>
+                        @endif
                     </div>
 
                     <section class="upload-hero">

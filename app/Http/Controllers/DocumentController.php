@@ -5460,17 +5460,9 @@ class DocumentController extends Controller
 
     private function deleteDocumentPermanently(Document $document): void
     {
-        DB::table('pdf_extractions_fitz')
-            ->where('document_id', $document->id)
-            ->delete();
-
-        if ($document->path) {
-            Storage::delete($document->path);
-        }
-        if ($document->original_backup_path) {
-            Storage::delete($document->original_backup_path);
-        }
-        $document->forceDelete();
+        // The row and every file made for it (App\Services\DocumentRemoval),
+        // the same routine documents:prune-guests uses.
+        app(\App\Services\DocumentRemoval::class)->purge($document);
     }
 
     private function normalizeUploadedDocumentName(string $value): string

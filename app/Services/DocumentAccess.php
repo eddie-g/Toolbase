@@ -16,17 +16,37 @@ use Illuminate\Support\Facades\Schema;
  *
  *  - a document with an owner is only open to that user (web guard) or
  *    that admin (admin guard);
- *  - an unowned document belongs to the browser session that created it,
- *    remembered as a list of ids in the session; signing in claims those
- *    documents for the account.
+ *  - an unowned document belongs to the visitor who created it, known by
+ *    the guest token in their cookie (GuestDocuments); signing in claims
+ *    those documents for the account. Lists of ids kept in the session by
+ *    earlier versions are still honoured and carried over.
  *
- * Bound as a scoped singleton so the claim runs once per request.
+ * The claim runs once per request. What a request learned is kept per
+ * Request object, so it cannot carry over to the next one.
  */
 class DocumentAccess
 {
     public const SESSION_KEY = 'pdf_editor_accessible_document_ids';
 
-    private bool $claimed = false;
+    private ?bool $hasGuestTable = null;
+
+    /**
+     * Per request: whether the claim has run, and the documents it took over
+     * (the model bound to the route still looks unowned on that request).
+     *
+     * @var \WeakMap<Request, object{claimed: bool, claimedNow: int[]}>
+     */
+    private \WeakMap $perRequest;
+
+    public function __construct(private GuestDocuments $guests)
+    {
+        $this->perRequest = new \WeakMap();
+    }
+
+    private function state(Request $request): object
+    {
+        return $this->perRequest[$request] ??= (object) ['claimed' => false, 'claimedNow' => []];
+    }
 
     public function webUserId(): ?int
     {
@@ -60,8 +80,46 @@ class DocumentAccess
         return $document->user_id !== null || $document->admin_id !== null;
     }
 
-    /** @return int[] */
+    /** @return int[] the unowned documents this visitor may open */
     public function sessionDocumentIds(Request $request): array
+    {
+        $legacy = $this->legacySessionIds($request);
+        if (! $this->guestTableExists()) {
+            return $legacy;
+        }
+
+        // A list left in the session by an earlier version moves to the
+        // guest token, where it is bounded and outlives the session.
+        if ($legacy !== []) {
+            foreach ($legacy as $id) {
+                $this->guests->remember($request, $id);
+            }
+            $request->session()->forget(self::SESSION_KEY);
+        }
+
+        return $this->guests->ids($request);
+    }
+
+    public function remember(Request $request, Document $document): void
+    {
+        if ($document->id <= 0 || $this->hasPersistentOwner($document)) {
+            return;
+        }
+
+        if ($this->guestTableExists()) {
+            $this->guests->remember($request, (int) $document->id);
+
+            return;
+        }
+
+        if ($request->hasSession()) {
+            $ids = collect($this->legacySessionIds($request))->push((int) $document->id)->unique()->values()->all();
+            $request->session()->put(self::SESSION_KEY, $ids);
+        }
+    }
+
+    /** @return int[] */
+    private function legacySessionIds(Request $request): array
     {
         if (! $request->hasSession()) {
             return [];
@@ -71,23 +129,15 @@ class DocumentAccess
             ->map(static fn ($value) => (int) $value)
             ->filter(static fn (int $value) => $value > 0)
             ->unique()
+            ->take(-200)
             ->values()
             ->all();
     }
 
-    public function remember(Request $request, Document $document): void
+    /** Test suites that build their own schema by hand have no guest_documents table. */
+    private function guestTableExists(): bool
     {
-        if ($document->id <= 0 || $this->hasPersistentOwner($document) || ! $request->hasSession()) {
-            return;
-        }
-
-        $ids = collect($this->sessionDocumentIds($request))
-            ->push((int) $document->id)
-            ->unique()
-            ->values()
-            ->all();
-
-        $request->session()->put(self::SESSION_KEY, $ids);
+        return $this->hasGuestTable ??= Schema::hasTable('guest_documents');
     }
 
     /**
@@ -96,10 +146,11 @@ class DocumentAccess
      */
     public function claim(Request $request): void
     {
-        if ($this->claimed) {
+        $state = $this->state($request);
+        if ($state->claimed) {
             return;
         }
-        $this->claimed = true;
+        $state->claimed = true;
 
         $ownership = $this->ownership();
         if ($ownership['user_id'] === null && $ownership['admin_id'] === null) {
@@ -139,6 +190,11 @@ class DocumentAccess
                 ->whereNull('admin_id')
                 ->update($ownership);
         }
+
+        $state->claimedNow = $unowned;
+        if ($this->guestTableExists()) {
+            $this->guests->forget($request, $unowned);
+        }
     }
 
     public function canAccess(Request $request, Document $document): bool
@@ -152,6 +208,10 @@ class DocumentAccess
 
         $adminId = $this->adminId();
         if ($adminId !== null && (int) $document->admin_id === $adminId) {
+            return true;
+        }
+
+        if (in_array((int) $document->id, $this->state($request)->claimedNow, true)) {
             return true;
         }
 

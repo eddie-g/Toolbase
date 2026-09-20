@@ -10,6 +10,14 @@ Artisan::command('inspire', function () {
 
 Schedule::command('logos:redact-base64')->dailyAt('23:55');
 
+// Documents of visitors without an account, once their lifetime is over and
+// nobody can open them any more (config pdf_editor.guests).
+Schedule::command('documents:prune-guests')
+    ->dailyAt('03:30')
+    ->withoutOverlapping()
+    ->onOneServer()
+    ->runInBackground();
+
 // Expired queued exports, working files leaked by a fatal or a killed worker,
 // and temp artefacts of deleted documents. onOneServer needs a shared cache.
 Schedule::command('documents:cleanup-temp')

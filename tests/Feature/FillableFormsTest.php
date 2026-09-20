@@ -95,11 +95,17 @@ class FillableFormsTest extends TestCase
         Storage::fake('local');
         Bus::fake();
 
-        $this->post(route('forms.fill', 'irs-form-w9'));
+        $filled = $this->post(route('forms.fill', 'irs-form-w9'));
         $document = Document::query()->latest('id')->first();
 
-        $this->followingRedirects()->get(route('documents.editPdfjs', $document))->assertOk();
+        // A guest owns a document through the guest cookie the response set
+        // (App\Services\GuestDocuments); the test client does not keep cookies by itself.
+        $guest = $filled->getCookie(\App\Services\GuestDocuments::COOKIE, decrypt: true)->getValue();
+        $this->withCookie(\App\Services\GuestDocuments::COOKIE, $guest)
+            ->followingRedirects()->get(route('documents.editPdfjs', $document))->assertOk();
+
         $this->flushSession();
+        $this->defaultCookies = [];
         $this->followingRedirects()->get(route('documents.editPdfjs', $document))->assertNotFound();
     }
 }

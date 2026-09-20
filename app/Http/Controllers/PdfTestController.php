@@ -683,14 +683,7 @@ class PdfTestController extends Controller
         // that navigating to /documents/{id}/edit is authorised. The fetch is
         // made same-origin (credentials: 'same-origin') so the session cookie
         // is shared with the browser navigation that follows.
-        $sessionKey = 'pdf_editor_accessible_document_ids';
-        $existingIds = collect($request->session()->get($sessionKey, []))
-            ->map(fn ($v) => (int) $v)
-            ->filter(fn ($v) => $v > 0);
-        $request->session()->put(
-            $sessionKey,
-            $existingIds->push($document->id)->unique()->values()->all()
-        );
+        app(\App\Services\DocumentAccess::class)->remember($request, $document);
 
         return response()->json([
             'success' => true,

@@ -21,6 +21,8 @@ class AppServiceProvider extends ServiceProvider
     {
         // One instance per request: the guest-document claim runs once.
         $this->app->scoped(\App\Services\DocumentAccess::class);
+        // One per request: the token issued for a first upload is reused until the cookie has gone out.
+        $this->app->scoped(\App\Services\GuestDocuments::class);
 
         // One per request: refund() undoes what consume() took earlier in the same request.
         $this->app->scoped(\App\Services\UploadQuota::class);

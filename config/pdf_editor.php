@@ -41,6 +41,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Documents of visitors without an account
+    |--------------------------------------------------------------------------
+    |
+    | A guest owns documents through a token in an encrypted cookie
+    | (App\Services\GuestDocuments). The cookie and the documents live for
+    | lifetime_days after the visitor was last seen; documents:prune-guests
+    | then removes the documents and their files. Signing in claims them.
+    |
+    */
+    'guests' => [
+        'lifetime_days' => (int) env('PDF_GUEST_DOCUMENT_LIFETIME_DAYS', 7),
+        // A guest can open at most this many of their most recent documents.
+        'max_documents' => (int) env('PDF_GUEST_MAX_DOCUMENTS', 50),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Uploads
     |--------------------------------------------------------------------------
     |
