@@ -80,11 +80,59 @@ the PHP code names, follows their local imports and imports each third-party
 module: if a script starts using a package that is not in
 `requirements-prod.txt`, the build fails.
 
-## Health
+## Health, errors and logs
 
 - Container health check: php-fpm answers a ping through nginx (`web`);
   `horizon:status` (`horizon`).
-- Load balancer: `GET /up` (Laravel).
+- Load balancer: `GET /up` (Laravel). It only proves PHP answers, on purpose:
+  a replica should not leave rotation because Horizon, elsewhere, is down.
+- Monitor: `GET /health/deep` with `Authorization: Bearer $HEALTH_CHECK_TOKEN`.
+  200, or 503 naming the check that failed: MySQL, every Redis connection,
+  Horizon running and not paused, Python importing PyMuPDF, a write to
+  storage, and (with `BACKUP_ENABLED`) a backup from the last 26 hours. The
+  same from a shell: `php artisan app:health`.
+- Errors: set `SENTRY_LARAVEL_DSN`. Exceptions, failed jobs and the editor's
+  browser errors (`POST /client-errors`) arrive tagged with the release, the
+  request id, the route or job and the document id. No IPs, cookies, bodies or
+  e-mail addresses are sent, and API keys are redacted from messages.
+  Build with `--build-arg APP_RELEASE=$(git rev-parse --short HEAD)`.
+- Logs: JSON lines on stderr at `warning`. Every line of a request, and of the
+  jobs it queued, has the same `extra.request_id`; the response has it as
+  `X-Request-Id`, and JSON error responses carry it as `request_id` in place of
+  Python output and traces. Requests over `SLOW_REQUEST_MS` are logged as
+  `Slow request` with their route.
+
+Alerts to set up on the platform (none of this is in the app):
+
+| Signal | Alert when |
+|---|---|
+| `GET /health/deep` every minute | not 200 twice in a row |
+| `GET /up` from outside | not 200, or slower than 2 s |
+| `GET /login`, `GET /pdf-editor` from outside | not 200, or p95 over 2 s for 5 minutes |
+| log lines `Slow request` with route `documents.saveAnnotationState` or `documents.downloadAnnotatedPdf` | more than 20 in 5 minutes |
+| log lines `Queued job failed`, `Client error` | a jump over the usual rate |
+| Sentry | new issue, or an issue over 50 events an hour |
+
+## Backups
+
+`php artisan db:backup` writes a compressed dump and a manifest (checksum,
+tables, row counts) to `BACKUP_DISK` and removes dumps older than
+`BACKUP_KEEP_DAYS`, always keeping the newest three.
+`php artisan db:restore-drill` restores the newest dump into
+`<DB_DATABASE>_restore_drill`, compares tables and row counts with the
+manifest, and drops it again; it exits 1 and logs an error if the backup
+does not restore. With `BACKUP_ENABLED=true` the `scheduler` role runs the
+backup nightly at 02:15 UTC and the drill on Sundays at 03:15.
+
+- The database user needs `CREATE`, `DROP` and the usual rights on the drill
+  database: `GRANT ALL ON <db>_restore_drill.* TO '<user>'@'%';`
+- Use a disk that is not the app's volume (`BACKUP_DISK=s3`).
+- On Azure Flexible Server keep the service's point-in-time restore on as the
+  first line; this dump is the copy that survives losing the server.
+- To restore for real: `gunzip -c db-….sql.gz | mysql <database>` into an
+  empty database, point `DB_DATABASE` at it, run the `migrate` role.
+- Measured on the development database (2,500 documents, 108,000 state rows,
+  257 MB compressed): 38 s to dump, 128 s to restore and verify.
 
 ## Not in the image
 

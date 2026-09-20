@@ -163,6 +163,8 @@
      so the absolute child fills the available space). --}}
 <div id="enpv-root"
      data-doc-id="{{ $document->id }}"
+     data-client-errors-url="{{ config('observability.client_errors.enabled') ? route('clientErrors.store') : '' }}"
+     data-build="{{ config('observability.release') }}"
      data-csrf-url="{{ route('csrf.token') }}"
      data-password-protected="{{ !$isUploadTestReview && filled($document->pdf_password_hash) ? '1' : '0' }}"
      data-password-unlock-url="{{ route('documents.unlockPdfPassword', $document) }}"

@@ -21,6 +21,10 @@ return Application::configure(basePath: dirname(__DIR__))
         // sent and every client shares the proxy's IP in rate limiters.
         $middleware->trustProxies(at: '*');
 
+        // First in, last out: a request id for the logs, the error report and
+        // the response, and a warning when the request was slow.
+        $middleware->prepend(\App\Http\Middleware\RequestContext::class);
+
         $middleware->alias([
             'json.response' => \App\Http\Middleware\ForceJsonResponse::class,
             'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
@@ -42,9 +46,20 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\ProtectAuthForms::class,
             // Rate limits for the editor's routes, by route name (config/editor_limits.php).
             \App\Http\Middleware\ThrottleEditorRoutes::class,
+            // With APP_DEBUG off, Python output and traces leave JSON error
+            // responses and a request_id goes in.
+            \App\Http\Middleware\ScrubErrorDetails::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // Which document, account, route or job: on the log line of every
+        // reported exception, and on the Sentry event (tagged first, then sent).
+        $exceptions->context(fn () => \App\Observability\ErrorContext::current());
+        $exceptions->reportable(function (\Throwable $e): void {
+            \App\Observability\ErrorContext::tagSentryScope();
+        });
+        \Sentry\Laravel\Integration::handles($exceptions);
+
         // Every Python slot taken: tell the client to retry rather than
         // queueing another process behind the ones already running.
         $exceptions->render(function (\App\Exceptions\PythonServiceBusyException $e, \Illuminate\Http\Request $request) {

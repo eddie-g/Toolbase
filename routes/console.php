@@ -39,3 +39,17 @@ Schedule::command('ops:horizon-watchdog')
 
 // Capture Horizon metrics/wait-time snapshots for the dashboard graphs.
 Schedule::command('horizon:snapshot')->everyFiveMinutes();
+
+// Database backups (config/backup.php): a dump every night, and once a week
+// the newest one is restored into a scratch database to prove it can be.
+// Off unless BACKUP_ENABLED is true, so a development machine never starts one.
+Schedule::command('db:backup')
+    ->dailyAt((string) config('backup.at', '02:15'))
+    ->when(fn () => (bool) config('backup.enabled'))
+    ->onOneServer()
+    ->withoutOverlapping(120);
+Schedule::command('db:restore-drill')
+    ->weeklyOn(0, (string) config('backup.drill_at', '03:15'))
+    ->when(fn () => (bool) config('backup.enabled'))
+    ->onOneServer()
+    ->withoutOverlapping(120);

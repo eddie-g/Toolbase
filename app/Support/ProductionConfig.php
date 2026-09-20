@@ -79,6 +79,37 @@ class ProductionConfig
         return $problems;
     }
 
+    /**
+     * What does not stop the app but leaves it blind or unprotected. Printed
+     * by app:check-config; never a reason to refuse traffic.
+     *
+     * @return string[]
+     */
+    public static function warnings(): array
+    {
+        $warnings = [];
+
+        if (blank(config('sentry.dsn'))) {
+            $warnings[] = 'SENTRY_LARAVEL_DSN is not set: server and editor errors are only in the log.';
+        }
+        if (config('logging.channels.'.config('logging.default').'.level') === 'debug') {
+            $warnings[] = 'LOG_LEVEL is debug: use warning (or info) in production.';
+        }
+        if (blank(config('horizon.alert_email'))) {
+            $warnings[] = 'HORIZON_ALERT_EMAIL is not set: nobody is told when a job fails for good or a queue backs up.';
+        }
+        if (blank(config('observability.health.token'))) {
+            $warnings[] = 'HEALTH_CHECK_TOKEN is not set: a monitor cannot call /health/deep.';
+        }
+        if (! config('backup.enabled')) {
+            $warnings[] = 'BACKUP_ENABLED is off: make sure the database service takes its own backups and that a restore has been tried.';
+        } elseif (config('backup.disk') === 'local') {
+            $warnings[] = 'BACKUP_DISK is local: the backups sit on the same volume as the documents. Use s3.';
+        }
+
+        return $warnings;
+    }
+
     /** True for web requests and for the workers and scheduler, false for every other artisan command. */
     public static function appliesTo(bool $runningInConsole, ?string $command): bool
     {

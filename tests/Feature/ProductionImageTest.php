@@ -88,4 +88,20 @@ class ProductionImageTest extends TestCase
             default => intdiv($number, 1024),
         };
     }
+
+    public function test_the_image_logs_json_to_stderr_at_warning_and_can_be_tagged_with_a_release(): void
+    {
+        $dockerfile = (string) file_get_contents(base_path('docker/Dockerfile.prod'));
+
+        $this->assertMatchesRegularExpression('/^ARG APP_RELEASE=/m', $dockerfile);
+        foreach (['APP_RELEASE=${APP_RELEASE}', 'LOG_CHANNEL=stderr', 'LOG_LEVEL=warning', 'LOG_STDERR_FORMATTER=Monolog\\\\Formatter\\\\JsonFormatter'] as $setting) {
+            $this->assertStringContainsString($setting, $dockerfile);
+        }
+        // The backup commands need the MySQL client tools.
+        $this->assertStringContainsString('default-mysql-client', $dockerfile);
+        // php-fpm passes what the workers write to stderr on, untouched.
+        $pool = (string) file_get_contents(base_path('docker/php/fpm-pool.conf.template'));
+        $this->assertStringContainsString('catch_workers_output = yes', $pool);
+        $this->assertStringContainsString('decorate_workers_output = no', $pool);
+    }
 }

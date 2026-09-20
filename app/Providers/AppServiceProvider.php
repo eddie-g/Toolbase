@@ -78,6 +78,19 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        // Errors in a job are reported with the job's name and document.
+        \Illuminate\Support\Facades\Queue::before([\App\Observability\ErrorContext::class, 'rememberJob']);
+
+        RateLimiter::for('client-errors', function (Request $request) {
+            $limits = (array) config('observability.client_errors');
+            $visitor = $request->hasSession() ? $request->session()->getId() : 'no-session';
+
+            return [
+                Limit::perMinute(max(1, (int) ($limits['per_minute'] ?? 20)))->by('client-errors|'.$visitor.'|'.$request->ip()),
+                Limit::perMinute(max(1, (int) ($limits['per_minute_per_ip'] ?? 120)))->by('client-errors-ip|'.$request->ip()),
+            ];
+        });
+
         \Illuminate\Support\Facades\Event::listen(
             \Laravel\Fortify\Events\TwoFactorAuthenticationChallenged::class,
             \App\Listeners\SendTwoFactorCodeListener::class
