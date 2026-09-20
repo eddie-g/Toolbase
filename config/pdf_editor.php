@@ -52,6 +52,9 @@ return [
     */
     'guests' => [
         'lifetime_days' => (int) env('PDF_GUEST_DOCUMENT_LIFETIME_DAYS', 7),
+        // Whether the scheduler runs documents:prune-guests. On in production,
+        // off elsewhere unless asked for; the command itself always works.
+        'prune' => (bool) env('PDF_GUEST_PRUNE', env('APP_ENV', 'production') === 'production'),
         // A guest can open at most this many of their most recent documents.
         'max_documents' => (int) env('PDF_GUEST_MAX_DOCUMENTS', 50),
     ],
