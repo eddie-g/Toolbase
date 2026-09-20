@@ -19,12 +19,18 @@ class RefreshSavedDomainAvailabilityJob implements ShouldQueue
 
     public int $timeout = 120;
 
+    public int $tries = 2;
+
+    /** @var int[] */
+    public array $backoff = [30, 120];
+
     /**
      * @param int|null $userId  Null = refresh ALL users' saved domains
      */
     public function __construct(public readonly ?int $userId = null)
     {
-        $this->onQueue('default');
+        // Two minutes of work: on "default" it would hold a worker that mail is waiting for.
+        $this->onQueue('domain-generation');
     }
 
     public function handle(NamecheapClient $namecheap): void

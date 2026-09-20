@@ -27,7 +27,11 @@ class ImportCategoryWordsJob implements ShouldQueue
 
     private const CHUNK_SIZE = 500;
 
-    public function __construct(public readonly string $category) {}
+    public function __construct(public readonly string $category)
+    {
+        // Five minutes of work: on "default" it would hold a worker that mail is waiting for.
+        $this->onQueue('maintenance');
+    }
 
     public function handle(): void
     {
