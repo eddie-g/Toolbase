@@ -27,6 +27,7 @@ import {
     PDFFindController,
 } from 'pdfjs-dist/web/pdf_viewer.mjs';
 import { generateUuidV4 } from '../edit-new/util/uuid.js';
+import { installErrorReporting, reportCaughtError } from './error-reporting.js';
 import { sliderValueToFontPt, fontPtToSliderValue } from '../edit-new/text/font-slider.js';
 import { composeTextDecorationLine, decorationTokensFromValue } from '../edit-new/text/decoration.js';
 import {
@@ -594,6 +595,22 @@ const TEMPLATE_SLUG = String(root.dataset.templateSlug || '').trim();
 let CSRF = root.dataset.csrf;
 const DOC_ID = root.dataset.docId;
 
+// Uncaught errors, unhandled rejections and the failures caught below are
+// reported to the server (error-reporting.js): the console is only ever read
+// by the person it happened to.
+installErrorReporting({
+    url: root.dataset.clientErrorsUrl,
+    documentId: DOC_ID,
+    editorSession: () => safeLocalStorageGet(`edit_new_session_${DOC_ID}`) || '',
+    build: root.dataset.build || '',
+    getCsrf: () => CSRF,
+});
+
+function logEditorError(where, error) {
+    console.error(where, error);
+    reportCaughtError(error, where);
+}
+
 // The CSRF token above dies with the session (SESSION_LIFETIME minutes of
 // inactivity), after which every POST from a still-open tab is rejected
 // with 419 "CSRF token mismatch" and nothing short of a reload — losing
@@ -854,7 +871,7 @@ function installUploadTestReviewMode() {
             registerSavedCase(data.case);
             setStatusMessage('PDF test saved.', 'success');
         } catch (error) {
-            console.error('PDF upload test save failed', error);
+            logEditorError('PDF upload test save failed', error);
             setStatusMessage(error?.message || 'PDF test could not be saved.', 'error');
         } finally {
             if (saveButton) {
@@ -2290,7 +2307,7 @@ function renderLayersPanel() {
             burn.addEventListener('click', (event) => {
                 event.stopPropagation();
                 burnAnnotationLayer(annotation).catch((err) => {
-                    console.error(err);
+                    logEditorError('renderLayersPanel', err);
                     showError(err.message || 'Failed to burn layer into PDF.');
                 });
             });
@@ -2503,7 +2520,7 @@ function renderPageManagerGrid() {
                 event.stopPropagation();
                 const rotation = rotateButton === rotateLeft ? -90 : 90;
                 rotatePageFromManager(pageIndex, rotation).catch((error) => {
-                    console.error(error);
+                    logEditorError('selectPage', error);
                     setPageManagerStatus(error.message || 'Could not rotate that page.', true);
                 });
             });
@@ -2528,7 +2545,7 @@ function renderPageManagerGrid() {
                 : Number.parseInt(event.dataTransfer?.getData('text/plain') || '-1', 10);
             if (Number.isFinite(source) && source >= 0 && source !== pageIndex) {
                 reorderDocumentPages(pageManagerOrderMoved(source, pageIndex), pageIndex).catch((error) => {
-                    console.error(error);
+                    logEditorError('selectPage', error);
                     setPageManagerStatus(error.message || 'Could not reorder pages.', true);
                 });
             }
@@ -2903,13 +2920,13 @@ pageManagerModal?.addEventListener('click', (event) => {
 });
 pageManagerAddButton?.addEventListener('click', () => {
     addBlankPageFromManager().catch((error) => {
-        console.error(error);
+        logEditorError('deleteSelectedPageFromManager', error);
         setPageManagerStatus(error.message || 'Could not add a page.', true);
     });
 });
 pageManagerDeleteButton?.addEventListener('click', () => {
     deleteSelectedPageFromManager().catch((error) => {
-        console.error(error);
+        logEditorError('deleteSelectedPageFromManager', error);
         setPageManagerStatus(error.message || 'Could not delete that page.', true);
     });
 });
@@ -3600,7 +3617,7 @@ async function submitSelectedPageSplit(destination = 'download') {
     } catch (error) {
         structuralMutationInFlight = false;
         if (popup && !popup.closed) popup.close();
-        console.error(error);
+        logEditorError('submitSelectedPageSplit', error);
         setSplitBusy(false);
         const message = error?.message || 'The selected pages could not be split.';
         setSplitNameStatus(message, true);
@@ -4015,7 +4032,7 @@ async function submitPasswordAction() {
             flashSaveToast(updatingPassword ? 'Password updated' : 'Password set');
         }
     } catch (error) {
-        console.error('PDF password action failed', error);
+        logEditorError('PDF password action failed', error);
         setPasswordError(error?.message || 'The PDF password action failed.');
         setPasswordStatus('');
     } finally {
@@ -15605,7 +15622,7 @@ async function exportPdfPagesAsImages() {
             if (!convertExporting) closeConvertModal();
         }, 700);
     } catch (error) {
-        console.error('Image export failed', error);
+        logEditorError('Image export failed', error);
         const message = error?.message || 'The PDF pages could not be exported as images.';
         setConvertProgress(100, message);
         setStatus(`Image export failed: ${message}`, true);
@@ -15768,7 +15785,7 @@ async function convertEditedPdfToPdfA() {
         setStatus(`${data.label || `PDF/A-${level}`} is ready to download.`);
         flashSaveToast('PDF/A conversion ready');
     } catch (error) {
-        console.error('PDF/A conversion failed', error);
+        logEditorError('PDF/A conversion failed', error);
         const message = error?.message || 'The document could not be converted to PDF/A.';
         setConvertProgress(100, message);
         setStatus(`PDF/A conversion failed: ${message}`, true);
@@ -15853,7 +15870,7 @@ async function convertEditedPdfToWord() {
         setStatus(`Word document exported successfully. Charged $${Number(data.charge_usd || 0).toFixed(2)}.`);
         flashSaveToast('Word document ready');
     } catch (error) {
-        console.error('Word conversion failed', error);
+        logEditorError('Word conversion failed', error);
         const message = error?.message || 'The document could not be converted to Word.';
         setConvertProgress(100, message);
         setStatus(`Word conversion failed: ${message}`, true);
@@ -15937,7 +15954,7 @@ async function convertEditedPdfToExcel() {
         setStatus(`${conversionMessage} Charged $${Number(data.charge_usd || 0).toFixed(2)}.`);
         flashSaveToast('Excel spreadsheet ready');
     } catch (error) {
-        console.error('Excel conversion failed', error);
+        logEditorError('Excel conversion failed', error);
         const message = error?.message || 'The document could not be converted to Excel.';
         setConvertProgress(100, message);
         setStatus(`Excel conversion failed: ${message}`, true);
@@ -16535,7 +16552,7 @@ async function saveAnnotationDebugFromPanel() {
         setDebugPanelStatus('Debug data saved.');
         setStatus('Annotation debug saved.');
     } catch (err) {
-        console.error(err);
+        logEditorError('saveAnnotationDebugFromPanel', err);
         setDebugPanelStatus(err.message || 'Debug save failed.', true);
         showError(err.message || 'Debug save failed.');
     } finally {
@@ -21178,7 +21195,7 @@ function installGuidedInvoiceControls() {
 
     addButton.addEventListener('click', () => {
         addGuidedInvoiceRow().catch((error) => {
-            console.error(error);
+            logEditorError('installGuidedInvoiceControls', error);
             setSaveStatus('Add row failed', true);
             setStatus(error?.message || 'Failed to add invoice row.', true);
             showError(error?.message || 'Failed to add invoice row.');
@@ -21512,7 +21529,7 @@ function installSecurityDepositControls() {
 
     addPropertyButton.addEventListener('click', () => {
         addSecurityDepositPropertyRow().catch((error) => {
-            console.error(error);
+            logEditorError('installSecurityDepositControls', error);
             setSaveStatus('Add row failed', true);
             setStatus(error?.message || 'Failed to add property row.', true);
             showError(error?.message || 'Failed to add property row.');
@@ -21531,7 +21548,7 @@ function installSecurityDepositControls() {
 
     addButton.addEventListener('click', () => {
         addSecurityDepositRow().catch((error) => {
-            console.error(error);
+            logEditorError('installSecurityDepositControls', error);
             setSaveStatus('Add row failed', true);
             setStatus(error?.message || 'Failed to add deduction row.', true);
             showError(error?.message || 'Failed to add deduction row.');
@@ -27249,7 +27266,7 @@ async function postReflow(req, box) {
         annotationOffsetsPts.clear();
         setStatus('Reflowed.');
     } catch (err) {
-        console.error(err);
+        logEditorError('postReflow', err);
         showError(err.message);
         // Roll back visual resize using the snapshot stashed by onResizePointerUp.
         rollbackResize(box);
@@ -27847,7 +27864,7 @@ if (annMenu) {
             const annotation = persistedAnnotationsById.get(String(box?.dataset?.annotationId || '')) || null;
             if (annotation) {
                 burnAnnotationLayer(annotation, box).catch((err) => {
-                    console.error(err);
+                    logEditorError('burnAnnotationLayer', err);
                     showError(err.message || 'Failed to burn layer into PDF.');
                 });
             }
@@ -27916,12 +27933,12 @@ window.addEventListener('resize', () => {
 });
 debugSaveButton?.addEventListener('click', () => {
     saveAnnotationDebugFromPanel().catch((err) => {
-        console.error(err);
+        logEditorError('saveAnnotationDebugFromPanel', err);
     });
 });
 debugImagesInput?.addEventListener('change', (ev) => {
     addDebugImagesFromFiles(ev.currentTarget.files).catch((err) => {
-        console.error(err);
+        logEditorError('addDebugImagesFromFiles', err);
         setDebugPanelStatus(err.message || 'Failed to add image.', true);
     });
     ev.currentTarget.value = '';
@@ -28284,7 +28301,7 @@ afbDebug?.addEventListener('click', () => {
     const box = findSelectedBox();
     if (!box) return;
     openAnnotationDebugPanel(box).catch((err) => {
-        console.error(err);
+        logEditorError('closeEditor', err);
         showError(err.message || 'Failed to open annotation debug panel.');
     });
 });
@@ -28643,7 +28660,7 @@ async function applyEdit() {
         setDownloadButtonsDisabled(false, 'Download PDF');
         setStatus(`Applied ${pendingEditCount} edit${pendingEditCount === 1 ? '' : 's'}.`);
     } catch (err) {
-        console.error(err);
+        logEditorError('applyEdit', err);
         showError(err.message);
         setStatus('Edit failed.', true);
     } finally {
@@ -28749,7 +28766,7 @@ async function downloadStampedPdf() {
         flashSaveToast(passwordProtectionIsActive() ? 'Protected PDF ready' : 'PDF ready');
     } catch (err) {
         if (popup && !popup.closed) popup.close();
-        console.error(err);
+        logEditorError('downloadStampedPdf', err);
         showError(err.message);
         setStatus('PDF generation failed.', true);
     } finally {
@@ -28912,7 +28929,7 @@ async function saveAnnotationStateToDb(options = {}) {
             return false;
         }
 
-        console.error(err);
+        logEditorError('saveAnnotationStateToDb', err);
         const plan = planAfterSaveFailure(failure?.kind || 'error', {
             attempt: saveFailureAttempts,
             online: navigator.onLine !== false,
@@ -30458,7 +30475,7 @@ imageImportApply?.addEventListener('click', () => {
     try {
         if (!beginImagePlacement(imageImportPendingAsset)) throw new Error('Could not prepare that image.');
     } catch (error) {
-        console.error('Image insert failed', error);
+        logEditorError('Image insert failed', error);
         setImageImportStatus(error?.message || 'Could not insert that image.', true);
         return;
     }
@@ -30664,7 +30681,7 @@ if (window.__enpvPdfjsInitialLoadStarted) {
                 syncRotatedPageSnapshot,
             };
         } catch (err) {
-            console.error(err);
+            logEditorError('endShapeStyleGesture', err);
             showError(err.message);
             setStatus('Failed to load PDF.', true);
         }

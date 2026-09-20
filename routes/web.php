@@ -13,6 +13,11 @@ use App\Http\Controllers\PdfTestController;
 use App\Http\Controllers\PdfUploadTestController;
 use Illuminate\Support\Facades\Route;
 
+// Monitoring: every dependency, for a bearer token or an operator (/up stays the load balancer's).
+Route::get('/health/deep', [\App\Http\Controllers\HealthController::class, 'deep'])->middleware('throttle:30,1')->name('health.deep');
+// What went wrong in the browser (resources/js/edit-new-pdfjs/error-reporting.js).
+Route::post('/client-errors', [\App\Http\Controllers\ClientErrorController::class, 'store'])->middleware('throttle:client-errors')->name('clientErrors.store');
+
 Route::get('/', function () {
     return view('home');
 })->name('home');

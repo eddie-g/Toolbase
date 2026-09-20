@@ -14,6 +14,9 @@ class CheckProductionConfig extends Command
     public function handle(): int
     {
         $problems = ProductionConfig::problems();
+        foreach (ProductionConfig::warnings() as $warning) {
+            $this->warn('Warning: '.$warning);
+        }
         if ($problems === []) {
             $this->info('Production configuration is valid ('.(app()->configurationIsCached() ? 'cached' : 'not cached').').');
 
