@@ -17,7 +17,13 @@ class ConvertDocumentExportJob implements ShouldQueue
 {
     use Queueable;
 
-    public int $tries = 1;
+    /**
+     * Two attempts, and only the conversion step is retried (see handle()):
+     * an Adobe or network hiccup used to be final for the user, who had to
+     * start over. Nothing is charged until a conversion has succeeded, so a
+     * second attempt cannot bill twice.
+     */
+    public int $tries = 2;
 
     public int $timeout = 900;
 
@@ -50,13 +56,33 @@ class ConvertDocumentExportJob implements ShouldQueue
         $inputPath = Storage::path($conversion->input_path);
         $outputPath = Storage::path((string) $conversion->output_path);
 
+        $keepInput = false;
         try {
             if (! is_file($inputPath)) {
                 throw new \RuntimeException('The queued PDF input file is missing.');
             }
 
             $conversion->forceFill(['progress' => 45])->save();
-            $result = $service->convert($conversion, $inputPath, $outputPath);
+            try {
+                $result = $service->convert($conversion, $inputPath, $outputPath);
+            } catch (\Throwable $exception) {
+                if ($this->attempts() >= $this->tries) {
+                    throw $exception;
+                }
+                // Back to "queued" so the next attempt can claim it; the
+                // status endpoint keeps saying "working" to the user.
+                @unlink($outputPath);
+                $keepInput = true;
+                $conversion->forceFill(['status' => DocumentConversion::STATUS_QUEUED, 'progress' => 10, 'error' => null])->save();
+                Log::warning('Document conversion failed, retrying once.', [
+                    'conversion_id' => $conversion->uuid,
+                    'format' => $conversion->format,
+                    'error' => $exception->getMessage(),
+                ]);
+                $this->release($exception instanceof \App\Exceptions\PythonServiceBusyException ? 20 : 45);
+
+                return;
+            }
             $conversion->forceFill(['progress' => 85])->save();
 
             $actor = $conversion->user_id
@@ -99,7 +125,9 @@ class ConvertDocumentExportJob implements ShouldQueue
             $this->recordActivity($conversion, 'failed', ['error' => $exception->getMessage()]);
             throw $exception;
         } finally {
-            @unlink($inputPath);
+            if (! $keepInput) {
+                @unlink($inputPath);
+            }
         }
     }
 

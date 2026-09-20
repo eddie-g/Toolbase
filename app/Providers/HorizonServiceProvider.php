@@ -17,9 +17,12 @@ class HorizonServiceProvider extends HorizonApplicationServiceProvider
     {
         parent::boot();
 
-        // Horizon::routeSmsNotificationsTo('15556667777');
-        // Horizon::routeMailNotificationsTo('example@example.com');
-        // Horizon::routeSlackNotificationsTo('slack-webhook-url', '#channel');
+        // Horizon's own alerts (a queue waiting longer than config horizon.waits)
+        // go to the operator address. Jobs that fail for good: AlertOnFailedJob.
+        $alertEmail = (string) config('horizon.alert_email');
+        if ($alertEmail !== '') {
+            Horizon::routeMailNotificationsTo($alertEmail);
+        }
     }
 
     /**

@@ -103,11 +103,17 @@ return [
     |
     */
 
+    // Seconds a job may wait before Horizon raises LongWaitDetected, which is
+    // mailed / sent to Slack (HorizonServiceProvider). Someone is watching a
+    // spinner for the PDF queues, so their alarms are the tightest.
     'waits' => [
         'redis:default' => 60,
-        'redis:document-conversion' => 120,
         'redis:pdf-export' => 20,
         'redis:pdf-extraction' => 30,
+        'redis:document-conversion' => 120,
+        'redis:domain-generation' => 60,
+        'redis:logo-generation' => 120,
+        'redis:maintenance' => 900,
     ],
 
     /*
@@ -193,7 +199,9 @@ return [
     |
     */
 
-    'memory_limit' => 128,
+    // The master and each supervisor process, not the workers (those have
+    // their own 'memory' below). 128 was tight with seven supervisors.
+    'memory_limit' => (int) env('HORIZON_MEMORY_LIMIT', 256),
 
     /*
     |--------------------------------------------------------------------------
@@ -260,17 +268,37 @@ return [
             'autoScalingStrategy' => 'time',
             'maxProcesses' => 1,
             'maxTime' => 0,
-            'maxJobs' => 0,
-            'memory' => 512,
-            'tries' => 1,
+            'maxJobs' => 50,
+            // pdf2docx and PyMuPDF on a long document; 512 was thin.
+            'memory' => 1024,
+            // A transient Adobe or network failure gets a second attempt
+            // (ConvertDocumentExportJob decides what is worth retrying).
+            'tries' => 2,
             'timeout' => 900,
             'nice' => 5,
         ],
 
+        // Long, rare, operator-started work (dictionary imports). Kept off
+        // "default", where it would hold a worker that mail is waiting for, and
+        // away from anything a visitor waits on. (A job's own $timeout wins over
+        // the supervisor's, so the timeouts here only apply to jobs without one.)
+        'supervisor-maintenance' => [
+            'connection' => 'redis',
+            'queue' => ['maintenance'],
+            'balance' => 'simple',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 512,
+            'tries' => 1,
+            'timeout' => 330,
+            'nice' => 10,
+        ],
+
         // Upload processing (ProcessUploadedDocumentJob): text extraction of a
-        // new PDF, up to five minutes. It used to share "default" with mail,
-        // where the 60 s supervisor timeout killed it despite the job asking
-        // for 300. The editor is waiting on it, so it is not niced.
+        // new PDF, up to five minutes. It used to share "default" with mail, so
+        // a few slow PDFs held up every e-mail and a burst of mail held up every
+        // upload. The editor is waiting on it, so it is not niced.
         'supervisor-pdf-extraction' => [
             'connection' => env('PDF_EXTRACTION_QUEUE_CONNECTION', 'redis'),
             'queue' => [env('PDF_EXTRACTION_QUEUE', 'pdf-extraction')],
@@ -279,7 +307,7 @@ return [
             'maxProcesses' => 1,
             'maxTime' => 0,
             'maxJobs' => 100,
-            'memory' => 512,
+            'memory' => 768,
             'tries' => 2,
             'timeout' => (int) env('PDF_EXTRACTION_JOB_TIMEOUT', 300),
             'nice' => 0,
