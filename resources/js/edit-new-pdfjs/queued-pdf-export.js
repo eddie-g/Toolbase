@@ -3,6 +3,8 @@
 // expiring download_url. A server that still answers with the PDF itself
 // (sync mode) is handled by the same call.
 
+import { editorFetch } from './editor-fetch.js';
+
 export const QUEUED_EXPORT_HEADER = { 'X-Export-Mode': 'queued' };
 
 export class PdfExportError extends Error {
@@ -91,7 +93,7 @@ function mapFetchFailure(error, signal) {
  * retried on the next tick; three in a row give up.
  */
 export async function waitForQueuedPdfExport(initial, {
-    fetchImpl = globalThis.fetch,
+    fetchImpl = editorFetch,
     signal = null,
     onProgress = null,
     delay = (milliseconds) => new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds)),
@@ -154,7 +156,7 @@ export async function waitForQueuedPdfExport(initial, {
 export async function requestQueuedPdfExport(url, {
     payload,
     headers = {},
-    fetchImpl = globalThis.fetch,
+    fetchImpl = editorFetch,
     timeoutMs = 300000,
     signal = null,
     onProgress = null,

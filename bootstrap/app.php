@@ -40,6 +40,8 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Session\Middleware\AuthenticateSession::class,
             \App\Http\Middleware\SecurityHeaders::class,
             \App\Http\Middleware\ProtectAuthForms::class,
+            // Kill switches for the editor and the exports (config pdf_editor.switches).
+            \App\Http\Middleware\EditorKillSwitch::class,
             // Rate limits for the editor's routes, by route name (config/editor_limits.php).
             \App\Http\Middleware\ThrottleEditorRoutes::class,
         ]);

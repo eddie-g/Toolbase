@@ -10,6 +10,8 @@ function cleanText(value, fallback = '') {
 }
 
 /** Quick at first (most uploads are ready within seconds), then easing off to 3 s. */
+import { editorFetch } from './editor-fetch.js';
+
 export function processingPollDelayMs(attempt) {
     if (attempt < 6) return 350;
     return Math.min(3000, Math.round(350 * 1.35 ** (attempt - 5)));
@@ -32,7 +34,7 @@ function failure(errorCode, message) {
  * itself reports a lost job as failed well before that).
  */
 export async function waitForDocumentProcessing(statusUrl, {
-    fetchImpl = globalThis.fetch,
+    fetchImpl = editorFetch,
     delay = (milliseconds) => new Promise((resolve) => globalThis.setTimeout(resolve, milliseconds)),
     now = () => Date.now(),
     onWaiting = null,
@@ -75,7 +77,7 @@ export async function waitForDocumentProcessing(statusUrl, {
 }
 
 /** "Try again": asks the server to queue the extraction once more. Resolves with its status payload. */
-export async function retryDocumentProcessing(retryUrl, { fetchImpl = globalThis.fetch, csrf = '' } = {}) {
+export async function retryDocumentProcessing(retryUrl, { fetchImpl = editorFetch, csrf = '' } = {}) {
     try {
         const response = await fetchImpl(retryUrl, {
             method: 'POST',

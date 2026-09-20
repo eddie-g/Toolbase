@@ -187,4 +187,38 @@ return [
         'max_file_pages' => (int) env('PDF_MERGE_MAX_FILE_PAGES', 100),
         'timeout_seconds' => (int) env('PDF_MERGE_TIMEOUT_SECONDS', 120),
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Kill switches
+    |--------------------------------------------------------------------------
+    |
+    | Turn the editor or the exports off without a deploy. The value here is the
+    | default; `php artisan editor:switch editor off` overrides it at once for
+    | every container (the override lives in the cache) until `reset`.
+    |
+    | A switch covers the route classes of config/editor_limits.php plus the
+    | routes named here. While it is off those routes answer 503 with the
+    | message (JSON), or the "unavailable" page (the editor itself). The
+    | documents list, downloads of stored files, renaming and the trash keep
+    | working, and an open editor keeps its unsaved work in the browser.
+    |
+    */
+    'switches' => [
+        'editor' => [
+            'enabled' => (bool) env('PDF_EDITOR_ENABLED', true),
+            'classes' => ['upload', 'process', 'edit', 'render'],
+            'routes' => [
+                'documents.edit', 'documents.edit2', 'documents.editExtracted', 'documents.editNew', 'documents.editPdfjs',
+                'documents.saveAnnotationState', 'documents.processing.retry',
+            ],
+            'message' => 'The PDF editor is temporarily unavailable while we fix a problem. Your documents are safe. Please try again in a few minutes.',
+        ],
+        'export' => [
+            'enabled' => (bool) env('PDF_EXPORT_ENABLED', true),
+            'classes' => ['export'],
+            'routes' => [],
+            'message' => 'Downloads of edited PDFs and conversions are temporarily unavailable. Your changes are saved. Please try again in a few minutes.',
+        ],
+    ],
 ];
