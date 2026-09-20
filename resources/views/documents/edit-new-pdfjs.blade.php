@@ -157,6 +157,9 @@
 @include('documents.edit-new._merge-modal-pdfjs')
 @include('documents.edit-new._encrypt-modal-pdfjs')
 @include('documents.edit-new._rotated-edit-dialog')
+@unless($isUploadTestReview)
+@include('documents.edit-new._touch-device-dialog')
+@endunless
 
 {{-- New PDF.js viewer mount + new viewer's data hooks. The blade's #pages-wrap
      becomes the host for #viewerContainer (CSS overrides #pages-wrap layout
