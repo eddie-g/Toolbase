@@ -123,6 +123,8 @@
      data-documents-url="{{ route('documents.index') }}"
      data-login-url="{{ route('login') }}"
      data-save-url="{{ route('documents.saveAnnotationState', $document) }}"
+     data-annotation-asset-upload-url="{{ route('documents.uploadAnnotationAsset', $document) }}"
+     data-delta-saves="{{ config('pdf_editor.autosave.delta', true) ? '1' : '0' }}"
      data-save-acro-form-url="{{ route('documents.saveAcroFormState', $document) }}"
      data-annotation-debug-url="{{ route('documents.annotationDebug.save', $document) }}"
      data-overwrite-url="{{ route('documents.overwriteAnnotationText') }}"

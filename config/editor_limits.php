@@ -78,6 +78,7 @@ return [
         'pdfTests.renderAnnotations' => 'process',
         'pdfTests.runSingleTest' => 'process',
 
+        'documents.uploadAnnotationAsset' => 'edit',
         'documents.editPdfjsRewriteTj' => 'edit',
         'documents.editPdfjsRedactSourceText' => 'edit',
         'documents.editPdfjsBurnLayer' => 'edit',

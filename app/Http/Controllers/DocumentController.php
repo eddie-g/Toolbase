@@ -7823,6 +7823,41 @@ class DocumentController extends Controller
         ]);
     }
 
+    /**
+     * An image or signature, uploaded when it is inserted so it never travels
+     * inside the autosaved state. The annotation then carries the assetPath.
+     */
+    public function uploadAnnotationAsset(Request $request, Document $document)
+    {
+        $maxBytes = max(1, (int) config('pdf_editor.autosave.max_image_kb', 15360)) * 1024;
+        if (max((int) $request->header('Content-Length', 0), strlen((string) $request->getContent())) > $maxBytes * 1.4) {
+            return response()->json(['success' => false, 'code' => 'image_too_large', 'message' => 'This image is too large to add to a document.'], 413);
+        }
+        $validated = $request->validate([
+            'annotation_id' => 'required|string|max:191',
+            'data_url' => 'required|string|starts_with:data:image/',
+            'file_name' => 'nullable|string|max:255',
+            'mime_type' => 'nullable|string|max:100',
+        ]);
+        // base64 is 4/3 of the bytes it carries.
+        if (strlen($validated['data_url']) * 0.75 > $maxBytes) {
+            return response()->json(['success' => false, 'code' => 'image_too_large', 'message' => 'This image is too large to add to a document.'], 413);
+        }
+
+        $stored = $this->annotationAssets()->storeUploadedImage(
+            $document,
+            $validated['annotation_id'],
+            $validated['data_url'],
+            $validated['file_name'] ?? null,
+            $validated['mime_type'] ?? null,
+        );
+        if ($stored === null) {
+            return response()->json(['success' => false, 'code' => 'image_not_stored', 'message' => 'This image could not be stored.'], 422);
+        }
+
+        return response()->json(['success' => true] + $stored, 201);
+    }
+
     public function annotationAsset(Document $document, string $filename)
     {
         abort_unless($filename !== '' && basename($filename) === $filename, 404);
@@ -12411,6 +12446,15 @@ class DocumentController extends Controller
             'deleted_promoted_source_keys.*' => 'string',
             'session_id' => 'nullable|string|max:191',
             'base_version' => 'nullable|integer|min:0',
+            // A delta: "annotations" holds what changed since the last save this
+            // editor had acknowledged, "removed_ids" what it no longer shows, and
+            // "expected_count" how many annotations the state then has. The rest
+            // is taken from the stored rows; a count that does not come out
+            // means the two sides disagree, and the editor sends everything.
+            'delta' => 'nullable|boolean',
+            'removed_ids' => "nullable|array|max:{$maxAnnotations}",
+            'removed_ids.*' => 'string|max:191',
+            'expected_count' => "nullable|integer|min:0|max:{$maxAnnotations}",
         ], [
             'annotations.max' => "A document can hold at most {$maxAnnotations} edited items. Remove some and save again.",
             'session_annotations.max' => "A document can hold at most {$maxAnnotations} edited items. Remove some and save again.",
@@ -12435,6 +12479,16 @@ class DocumentController extends Controller
         }
 
         $sessionAnnotationsPayload = $this->normalizeAnnotationsForPersistence($document, $incomingAnnotations);
+
+        $isDelta = (bool) ($validated['delta'] ?? false);
+        $removedIds = $isDelta && is_array($validated['removed_ids'] ?? null)
+            ? array_values(array_unique(array_filter(array_map('trim', $validated['removed_ids']), static fn (string $id) => $id !== '')))
+            : [];
+        $expectedCount = $isDelta && isset($validated['expected_count']) ? (int) $validated['expected_count'] : null;
+        if ($isDelta && $expectedCount === null) {
+            throw \Illuminate\Validation\ValidationException::withMessages(['expected_count' => 'A delta save says how many annotations the state has.']);
+        }
+
         $acroFormEntries = $this->normalizeAcroFormEntriesForPersistence(
             is_array($validated['acro_form_entries'] ?? null) ? $validated['acro_form_entries'] : []
         );
@@ -12450,8 +12504,24 @@ class DocumentController extends Controller
             $sessionId,
             $baseVersion,
             $sessionAnnotationsPayload,
-            $acroFormEntries
+            $acroFormEntries,
+            $isDelta,
+            $removedIds,
+            $expectedCount
         ) {
+            // A delta becomes the full state here, from the stored rows the
+            // editor has not changed or removed, so everything below (stale rows, promoted
+            // source keys) sees exactly what a full save would have sent. If the
+            // result is not the state the editor counts on, nothing is written and
+            // the editor sends the whole state instead. Before the version is taken:
+            // returning from the closure commits.
+            if ($isDelta && $sessionId !== '') {
+                $sessionAnnotationsPayload = $this->expandDeltaToFullState($document, $sessionId, $sessionAnnotationsPayload, $removedIds, (int) $expectedCount);
+                if ($sessionAnnotationsPayload === null) {
+                    return false;
+                }
+            }
+
             // Compare-and-swap on the document's state version: the save only
             // goes ahead if nobody saved since this editor loaded. Clients
             // that send no version (QA tools, replay scripts) are not checked.
@@ -12520,6 +12590,14 @@ class DocumentController extends Controller
             return (int) (clone $versionRow)->value('editor_state_version');
         });
 
+        if ($stateVersion === false) {
+            return response()->json([
+                'success' => false,
+                'code' => 'delta_base_missing',
+                'message' => 'The saved state no longer matches this editor. Sending everything again.',
+            ], 409);
+        }
+
         if ($stateVersion === null) {
             return response()->json([
                 'success' => false,
@@ -12555,6 +12633,48 @@ class DocumentController extends Controller
             'state_version' => $stateVersion,
             'assets' => (object) $storedAssets,
         ]);
+    }
+
+    /**
+     * The full state a delta stands for: the changed annotations as sent, plus
+     * every stored annotation the editor neither changed nor removed. Null
+     * when that is not the number of annotations the editor holds: the two
+     * sides disagree about what is stored.
+     *
+     * @param  array<int, array<string, mixed>>  $changed
+     * @param  string[]  $removedIds
+     * @return array<int, array<string, mixed>>|null
+     */
+    private function expandDeltaToFullState(Document $document, string $sessionId, array $changed, array $removedIds, int $expectedCount): ?array
+    {
+        $ownership = $this->resolvePdfStateOwnership($document);
+        $query = PdfState::query()
+            ->where('document_id', $document->id)
+            ->where('state', '!=', 'deleted')
+            ->where('state', '!=', 'extracted');
+        $this->applyPdfStateOwnershipScope($query, $ownership['user_id'], $ownership['admin_id'], $sessionId);
+
+        $leaveOut = array_fill_keys($removedIds, true);
+        $ids = [];
+        foreach ($changed as $annotation) {
+            if (is_array($annotation) && is_string($annotation['id'] ?? null) && trim($annotation['id']) !== '') {
+                $leaveOut[trim($annotation['id'])] = true;   // what was sent wins over what is stored
+                $ids[trim($annotation['id'])] = true;
+            }
+        }
+
+        $full = $changed;
+        foreach ($query->get(['id', 'annotation_data']) as $record) {
+            $data = is_array($record->annotation_data) ? $record->annotation_data : [];
+            $id = is_string($data['id'] ?? null) ? trim($data['id']) : '';
+            if ($id === '' || isset($leaveOut[$id])) {
+                continue;
+            }
+            $full[] = $data;
+            $ids[$id] = true;
+        }
+
+        return count($ids) === $expectedCount ? $full : null;
     }
 
     /**

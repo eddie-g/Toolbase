@@ -126,6 +126,13 @@ return [
         'saves_per_minute' => (int) env('PDF_AUTOSAVE_SAVES_PER_MINUTE', 60),
         // Backstop for clients that drop their cookies to dodge the limit above.
         'saves_per_minute_per_ip' => (int) env('PDF_AUTOSAVE_SAVES_PER_MINUTE_PER_IP', 600),
+        // The editor sends what changed and the ids of the rest, and uploads
+        // images on their own (resources/js/edit-new-pdfjs/delta-save.js).
+        // false: every save carries the whole state again, as before.
+        'delta' => (bool) env('PDF_AUTOSAVE_DELTA', true),
+        // One image or signature, uploaded by the editor when it is inserted
+        // (documents.uploadAnnotationAsset) so it never travels inside the state.
+        'max_image_kb' => (int) env('PDF_AUTOSAVE_MAX_IMAGE_KB', 15360),
     ],
 
     /*
