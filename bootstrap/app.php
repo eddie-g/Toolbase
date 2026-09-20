@@ -1,9 +1,13 @@
 <?php
 
-// Ensure files written by PHP (view cache, config cache, etc.) are always
-// world-writable. This prevents permission errors when artisan runs as root
-// (via `sail artisan`) and the sail web process later tries to overwrite them.
-umask(0000);
+// In the Sail development container only: files written by PHP (view cache,
+// config cache, etc.) are world-writable, which prevents permission errors
+// when artisan runs as root (via `sail artisan`) and the sail web process
+// later tries to overwrite them. Everywhere else the process umask stands:
+// production runs as one user, and documents must not be world-writable.
+if (getenv('LARAVEL_SAIL')) {
+    umask(0000);
+}
 
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;

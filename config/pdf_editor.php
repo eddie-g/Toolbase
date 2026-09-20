@@ -61,6 +61,29 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Retention
+    |--------------------------------------------------------------------------
+    |
+    | What `documents:prune` removes, so storage and the large tables stop
+    | growing without bound. Guests have their own lifetime above; working
+    | files and finished exports are handled hourly by documents:cleanup-temp.
+    |
+    */
+    'retention' => [
+        // Whether the scheduler runs documents:prune. On in production, off
+        // elsewhere unless asked for: a development database is somebody's
+        // test data. The command itself always works (and has --dry-run).
+        'prune' => (bool) env('PDF_RETENTION_PRUNE', env('APP_ENV', 'production') === 'production'),
+        // A document in the trash is deleted for good after this many days. The trash says so.
+        'trash_days' => (int) env('PDF_TRASH_RETENTION_DAYS', 30),
+        // Page renders kept for the live-save check; only the recent ones are ever read.
+        'live_save_preview_days' => 7,
+        // PDFs made by the admin stamp-preview tool. They sit on the public disk.
+        'debug_preview_hours' => 24,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Uploads
     |--------------------------------------------------------------------------
     |
