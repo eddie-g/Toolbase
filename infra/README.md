@@ -44,6 +44,26 @@ Every later deployment runs without the variable: the password and the secret
 are left as they are. The application never uses the admin login; it gets its
 own least-privilege users.
 
+## Configuration and secrets
+
+| File | What it holds |
+| --- | --- |
+| `env/stage.json` | Every non-secret setting of the stage apps (committed; becomes container environment variables) |
+| `env/secrets.json` | Which variables are secrets and where each value comes from. Names only |
+| `scripts/push_secrets.py` | Copies the `dotenv` secrets from a local `.env` into the environment's Key Vault |
+
+```bash
+python3 infra/scripts/push_secrets.py stage .env            # dry run: prints names and what would happen
+python3 infra/scripts/push_secrets.py stage .env --apply
+```
+
+Values are never printed or put on a command line. `APP_KEY` is generated once
+per environment and never overwritten: rotating it needs `APP_PREVIOUS_KEYS`.
+Stage refuses live Stripe keys and skips the Namecheap keys (both Namecheap APIs
+need a whitelisted IP; stage has no fixed outbound IP and uses `DOMAIN_LOOKUP=whois`).
+A secret's Key Vault name is the variable lower-cased with dashes
+(`STRIPE_SECRET` -> `stripe-secret`).
+
 ## Cost notes
 
 - The VNet, subnets, service endpoints and the Container Apps environment are free.
