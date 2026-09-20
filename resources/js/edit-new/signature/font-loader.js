@@ -1,7 +1,7 @@
 /*
  * ensureSignatureFontLoaded (Phase 7ch).
  *
- * Lazy-loads a Google Font for the typed-signature preview. Injects a
+ * Lazy-loads a self-hosted font for the typed-signature preview. Injects a
  * <link rel="stylesheet"> for the requested family (regular + bold)
  * the first time we see it, then resolves once the font has actually
  * loaded into `document.fonts`. Subsequent calls for the same family
@@ -38,7 +38,11 @@ export function ensureSignatureFontLoaded(fontName) {
             link = document.createElement('link');
             link.id = id;
             link.rel = 'stylesheet';
-            link.href = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(normalizedFontName)}:wght@400;700&display=swap`;
+            // Hosted with the editor's other fonts (public/fonts/editor/signature,
+            // written by scripts/fetch-editor-fonts.mjs): one small stylesheet per family.
+            const slug = normalizedFontName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+            const editorFonts = document.querySelector('link[data-editor-fonts]');
+            link.href = new URL(`signature/${slug}.css`, editorFonts?.href || new URL('/fonts/editor/', window.location.origin)).href;
             document.head.appendChild(link);
         }
 

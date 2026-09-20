@@ -86,6 +86,15 @@ module: if a script starts using a package that is not in
   `horizon:status` (`horizon`).
 - Load balancer: `GET /up` (Laravel).
 
+## Fonts
+
+The editor's 38 font families and the 12 typed-signature families are hosted by
+the app (`public/fonts/editor`, 14 MB, committed): the same woff2 files and
+`unicode-range` subsets Google Fonts serves, written by
+`node scripts/fetch-editor-fonts.mjs` from `resources/fonts/editor-fonts.json`.
+Run it again to add a family or pick up new versions. nginx serves
+`/fonts/editor/files/` as immutable. Licences: `public/fonts/editor/README.md`.
+
 ## Not in the image
 
 Node and Playwright (the QA suites and the admin test runner), xdebug, pcov,
