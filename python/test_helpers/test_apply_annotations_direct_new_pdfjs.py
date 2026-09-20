@@ -2473,6 +2473,11 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
 
     def test_rich_lato_style_override_rejects_regular_only_embedded_face(self):
         module = self.module
+        # The face was extracted from a document on the machine the test was
+        # written on (public/fonts/runtime-extracted is not in the repository).
+        extracted_face = MODULE_PATH.parents[2] / "public" / "fonts" / "runtime-extracted" / "5217" / "PdbpbbLato-Regular.ttf"
+        if not extracted_face.exists():
+            self.skipTest(f"needs the runtime-extracted face {extracted_face}")
         metadata = {
             "PdbpbbLato-Regular": {
                 "clean_name": "PdbpbbLato-Regular",

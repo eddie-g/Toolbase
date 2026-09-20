@@ -184,10 +184,12 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: composer audit
         id: composer
+        shell: bash   # pipefail: the audit's exit status, not tee's
         run: composer audit --locked --format=plain 2>&1 | tee composer-audit.txt
         continue-on-error: true
       - name: npm audit (what ships, not the build tools)
         id: npm
+        shell: bash
         run: npm audit --omit=dev 2>&1 | tee npm-audit.txt
         continue-on-error: true
       - name: Summary
