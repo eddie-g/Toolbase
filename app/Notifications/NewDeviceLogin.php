@@ -32,6 +32,6 @@ class NewDeviceLogin extends Notification
             ->line('IP address: '.$this->ip)
             ->line('Browser: '.($this->userAgent ? mb_strimwidth($this->userAgent, 0, 120, '…') : 'unknown'))
             ->line('If this was you, there is nothing to do. If it was not, change your password now and log out your other sessions from your profile.')
-            ->action('Open your profile', url('/portal/profile'));
+            ->action('Open your settings', url('/portal/settings'));
     }
 }

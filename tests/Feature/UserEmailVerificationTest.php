@@ -3,7 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\User;
-use App\UserPortal\Pages\Profile;
+use App\UserPortal\Pages\Settings;
 use Filament\Facades\Filament;
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Foundation\Testing\DatabaseTransactions;
@@ -66,12 +66,14 @@ class UserEmailVerificationTest extends TestCase
         $user = User::factory()->create();
 
         $this->actingAs($user)
-            ->get('/portal/profile')
+            ->get('/portal/settings')
             ->assertOk()
-            ->assertSee('Profile')
+            ->assertSee('Settings')
             ->assertSee('Name')
-            ->assertSee('Email')
+            ->assertSee('Email address')
             ->assertSee('Password');
+
+        $this->actingAs($user)->get('/portal/profile')->assertRedirect('/portal/settings');
     }
 
     public function test_users_can_update_email_from_filament_profile(): void
@@ -89,13 +91,13 @@ class UserEmailVerificationTest extends TestCase
         Filament::setCurrentPanel(Filament::getPanel('user'));
 
         Livewire::actingAs($user)
-            ->test(Profile::class)
-            ->fillForm([
-                'name' => 'New Name',
-                'email' => $newEmail,
-                'current_password' => 'password',
-            ])
-            ->call('save')
+            ->test(Settings::class)
+            ->set('name', 'New Name')
+            ->call('saveProfile')
+            ->assertHasNoErrors()
+            ->set('newEmail', $newEmail)
+            ->set('emailPassword', 'password')
+            ->call('changeEmail')
             ->assertHasNoErrors();
 
         $user->refresh();
@@ -114,15 +116,11 @@ class UserEmailVerificationTest extends TestCase
         Filament::setCurrentPanel(Filament::getPanel('user'));
 
         Livewire::actingAs($user)
-            ->test(Profile::class)
-            ->fillForm([
-                'name' => $user->name,
-                'email' => $user->email,
-                'password' => 'new-password',
-                'passwordConfirmation' => 'new-password',
-                'current_password' => 'password',
-            ])
-            ->call('save')
+            ->test(Settings::class)
+            ->set('currentPassword', 'password')
+            ->set('newPassword', 'new-password')
+            ->set('newPasswordConfirmation', 'new-password')
+            ->call('changePassword')
             ->assertHasNoErrors();
 
         $this->assertTrue(Hash::check('new-password', $user->refresh()->password));
@@ -136,10 +134,9 @@ class UserEmailVerificationTest extends TestCase
         Filament::setCurrentPanel(Filament::getPanel('user'));
 
         Livewire::actingAs($user)
-            ->test(Profile::class)
-            ->callAction('deleteAccount', [
-                'password' => 'password',
-            ])
+            ->test(Settings::class)
+            ->set('deletePassword', 'password')
+            ->call('deleteAccount')
             ->assertRedirect('/');
 
         $this->assertDatabaseMissing('users', [
