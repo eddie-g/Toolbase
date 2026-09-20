@@ -20,6 +20,7 @@
         x-data="{
             loading: null,
             error: null,
+            selectedAmount: null,
             async post(url, body) {
                 const response = await fetch(url, {
                     method: 'POST',
@@ -117,18 +118,32 @@
         {{-- Top up --}}
         <div class="nk-card">
             <h3 class="nk-heading">Add credits</h3>
-            <p class="nk-muted nk-mt-1">Pick an amount. Stripe Checkout opens in this tab and credits land as soon as the payment clears.</p>
+            <p class="nk-muted nk-mt-1">Pick an amount, then check out. Stripe Checkout opens in this tab and credits land as soon as the payment clears.</p>
 
-            <div class="nk-amounts nk-mt-5">
+            <div class="nk-amounts nk-mt-5" role="radiogroup" aria-label="Amount to add">
                 @foreach($amounts as $amount)
-                    <button type="button" class="nk-amount-btn" @click="checkout({{ $amount }})" :disabled="loading !== null">
+                    <button
+                        type="button"
+                        class="nk-amount-btn"
+                        :class="{ 'is-selected': selectedAmount === {{ $amount }} }"
+                        :aria-checked="selectedAmount === {{ $amount }}"
+                        role="radio"
+                        @click="selectedAmount = selectedAmount === {{ $amount }} ? null : {{ $amount }}"
+                        :disabled="loading !== null"
+                    >
+                        <x-heroicon-s-check-circle class="nk-amount-tick" x-show="selectedAmount === {{ $amount }}" x-cloak />
                         <span class="nk-amount-value">${{ $amount }}</span>
                         <span class="nk-amount-unit">USD</span>
-                        <template x-if="loading === 'amount:{{ $amount }}'">
-                            <span class="nk-overlay"><x-filament::loading-indicator /></span>
-                        </template>
                     </button>
                 @endforeach
+            </div>
+
+            <div class="nk-checkout-row nk-mt-4" x-show="selectedAmount !== null" x-cloak>
+                <p class="nk-muted">Adding <strong class="nk-strong" x-text="'$' + selectedAmount + '.00'"></strong> to your balance.</p>
+                <button type="button" class="nk-btn nk-btn-green" @click="checkout(selectedAmount)" :disabled="loading !== null">
+                    <span x-show="!(loading && loading.startsWith('amount:'))">Checkout</span>
+                    <span x-show="loading && loading.startsWith('amount:')" x-cloak>Redirecting…</span>
+                </button>
             </div>
 
             <p class="nk-small nk-mt-4">Payments are processed by Stripe. Netkit never sees your card details.</p>
@@ -138,6 +153,14 @@
         <div class="nk-card">
             <h3 class="nk-heading">Subscriptions</h3>
             <p class="nk-muted nk-mt-1">One plan unlocks every premium tool: the PDF editor, domain search and the logo generator.</p>
+
+            @php $includedCredits = (float) ($plans->max('included_credits') ?? 0); @endphp
+            @if($includedCredits > 0)
+                <div class="nk-note nk-mt-4">
+                    <x-heroicon-s-gift />
+                    <p><strong>Every plan comes with ${{ number_format($includedCredits, 2) }} in credits</strong> to use on the PDF generator, the logo generator and the premium domain tools. The monthly plan adds them again each month.</p>
+                </div>
+            @endif
 
             @if($plans->isEmpty())
                 <p class="nk-muted nk-mt-5">No plans are on offer right now.</p>
@@ -185,7 +208,7 @@
                                     </button>
                                     <p class="nk-small nk-center nk-mt-2">Renews {{ $activePlan->current_period_end?->format('M j, Y') }}</p>
                                 @elseif($isActive)
-                                    <button type="button" class="nk-btn nk-btn-outline" @click="subscribe({{ $plan->id }})" :disabled="loading !== null">
+                                    <button type="button" class="nk-btn nk-btn-blue" @click="subscribe({{ $plan->id }})" :disabled="loading !== null">
                                         <span x-show="loading !== 'plan:{{ $plan->id }}'">Add another week — ${{ $price }}</span>
                                         <span x-show="loading === 'plan:{{ $plan->id }}'" x-cloak>Redirecting…</span>
                                     </button>
@@ -193,7 +216,7 @@
                                 @elseif($blockedByOther)
                                     <button type="button" class="nk-btn nk-btn-outline" disabled>Included in your plan</button>
                                 @else
-                                    <button type="button" class="nk-btn {{ $plan->isOneTime() ? 'nk-btn-outline' : 'nk-btn-primary' }}" @click="subscribe({{ $plan->id }})" :disabled="loading !== null">
+                                    <button type="button" class="nk-btn {{ $plan->isOneTime() ? 'nk-btn-blue' : 'nk-btn-green' }}" @click="subscribe({{ $plan->id }})" :disabled="loading !== null">
                                         <span x-show="loading !== 'plan:{{ $plan->id }}'">{{ $plan->isOneTime() ? 'Buy week pass' : 'Subscribe' }} — ${{ $price }}</span>
                                         <span x-show="loading === 'plan:{{ $plan->id }}'" x-cloak>Redirecting…</span>
                                     </button>
