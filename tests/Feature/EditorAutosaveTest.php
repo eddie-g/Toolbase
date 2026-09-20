@@ -153,6 +153,7 @@ class EditorAutosaveTest extends TestCase
     public function test_an_inline_image_is_stored_once_and_answered_with_its_reference(): void
     {
         Storage::fake('public');
+        Storage::fake('local');   // where annotation assets are written
         $png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
         $image = ['id' => 'img_1', 'type' => 'image', 'pageIndex' => 0, 'x' => 10, 'y' => 10, 'width' => 40, 'height' => 40, 'dataUrl' => $png];
 
