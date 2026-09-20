@@ -69,6 +69,11 @@ class ProductionConfig
             }
         }
 
+        $proxies = array_map('trim', explode(',', (string) config('trustedproxy.proxies')));
+        if (array_intersect($proxies, ['*', '**']) !== []) {
+            $problems[] = 'TRUSTED_PROXIES must not be *: anyone who can reach the app without going through the load balancer could then choose their own address. Name the load balancer\'s subnet.';
+        }
+
         $optional = (array) config('production.optional', []);
         foreach ((array) config('production.required', []) as $key => $variable) {
             if (! in_array($key, $optional, true) && blank(config($key))) {
