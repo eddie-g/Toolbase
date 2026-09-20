@@ -21,10 +21,6 @@ resource vault 'Microsoft.KeyVault/vaults@2023-07-01' = {
     // Reads are gated by Entra roles. The network is narrowed to the apps subnet
     // once the apps read from it (Asana: Cloud 3.4).
     publicNetworkAccess: 'Enabled'
-    networkAcls: {
-      defaultAction: 'Allow'
-      bypass: 'AzureServices'
-    }
   }
 }
 

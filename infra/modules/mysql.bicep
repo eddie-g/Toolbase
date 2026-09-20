@@ -17,6 +17,9 @@ param keyVaultName string
 @description('Burstable SKU, e.g. Standard_B1ms (stage) or Standard_B2ms (production).')
 param skuName string
 param storageGb int
+
+@description('Pre-provisioned IOPS. Burstable includes 300 + 3 per GB at no charge.')
+param storageIops int = 300 + 3 * storageGb
 param backupRetentionDays int
 
 @secure()
@@ -41,6 +44,9 @@ resource server 'Microsoft.DBforMySQL/flexibleServers@2024-12-30' = {
     storage: {
       storageSizeGB: storageGb
       autoGrow: 'Enabled'
+      // The IOPS included with the storage size (free), not pay-per-IO auto scaling.
+      autoIoScaling: 'Disabled'
+      iops: storageIops
     }
     backup: {
       backupRetentionDays: backupRetentionDays
