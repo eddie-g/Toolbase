@@ -73,6 +73,20 @@ class LoginFollowupsTest extends TestCase
         $this->assertCount(1, app('mailer')->getSymfonyTransport()->messages());
     }
 
+    public function test_one_challenge_sends_one_code(): void
+    {
+        config(['services.twilio' => ['sid' => 'AC123', 'token' => 'secret-token', 'from' => '+15550100']]);
+        Http::fake(['api.twilio.com/*' => Http::response(['sid' => 'SM1'], 201)]);
+        $user = User::factory()->create(['phone' => '+15550101234']);
+        app(EnableTwoFactorAuthentication::class)($user);
+        $user->forceFill(['two_factor_channel' => 'sms', 'two_factor_confirmed_at' => now()])->save();
+
+        // Through the dispatcher: the listener was once registered by hand and by discovery.
+        event(new TwoFactorAuthenticationChallenged($user->fresh()));
+
+        Http::assertSentCount(1);
+    }
+
     public function test_operators_can_see_sign_in_activity_and_support_cannot(): void
     {
         AuthEvent::create(['guard' => 'web', 'event' => 'failed', 'email' => 'someone@example.test', 'ip' => '203.0.113.7', 'user_agent' => 'Firefox']);
