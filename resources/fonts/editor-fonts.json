@@ -1,5 +1,5 @@
 {
-    "_comment": "The web fonts the PDF editor hosts itself (scripts/fetch-editor-fonts.mjs writes public/fonts/editor from this). 'editor' families are the ones the font picker offers and the exporter can embed (python/pdf-editor/fonts); the axes are Google Fonts css2 syntax. 'signature' families are loaded one at a time by the typed-signature tab.",
+    "_comment": "The web fonts the PDF editor hosts itself (scripts/fetch-editor-fonts.mjs writes public/fonts/editor from this). 'editor' families are the ones the font picker offers and the exporter can embed (python/pdf-editor/fonts); the axes are Google Fonts css2 syntax. 'signature' families are the ones the typed-signature tab offers, loaded one at a time; 'signatureLegacy' families are no longer offered but stay hosted so a signature typed in one can still be reopened and edited.",
     "editor": {
         "Barlow": "ital,wght@0,400;0,700;1,400;1,700",
         "Bebas Neue": "",
@@ -42,11 +42,20 @@
     },
     "signature": [
         "Great Vibes",
-        "Dancing Script",
-        "Allura",
-        "Pacifico",
         "Alex Brush",
+        "Allura",
+        "Dancing Script",
         "Sacramento",
+        "Mr Dafoe",
+        "Mrs Saint Delafield",
+        "Herr Von Muellerhoff",
+        "Mr De Haviland",
+        "Homemade Apple",
+        "La Belle Aurore",
+        "Kristi"
+    ],
+    "signatureLegacy": [
+        "Pacifico",
         "Parisienne",
         "Marck Script",
         "Satisfy",

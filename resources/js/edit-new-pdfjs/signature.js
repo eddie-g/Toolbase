@@ -106,6 +106,9 @@ const PLACEMENT_MAX_HEIGHT_FRACTION = 0.18;
 const PLACEMENT_MIN_WIDTH_PTS = 24;
 const PLACEMENT_MIN_HEIGHT_PTS = 8;
 
+// Families the Font list offered before NK_44. No longer offered, still hosted.
+const RETIRED_SIGNATURE_FONTS = ['Pacifico', 'Parisienne', 'Marck Script', 'Satisfy', 'Caveat', 'Kaushan Script', 'Tangerine'];
+
 export function isSignatureAnnotation(annotation) {
     return !!annotation && String(annotation.type || '').toLowerCase() === 'signature';
 }
@@ -287,6 +290,25 @@ export function installSignatureFeature(deps) {
         persistPrefs({ savedView: !!active });
     }
 
+    /**
+     * Pick a family in the Font list (NK_44). A remembered or stored family
+     * the list no longer offers falls back to the default; a signature being
+     * reopened keeps its retired family as a temporary entry, since those
+     * families stay hosted ('signatureLegacy' in resources/fonts/editor-fonts.json).
+     */
+    function selectSignatureFont(fontName, { keepRetired = false } = {}) {
+        if (!signatureFontInput) return;
+        const name = String(fontName || '').trim();
+        signatureFontInput.querySelectorAll('option[data-retired]').forEach((option) => option.remove());
+        if (keepRetired && RETIRED_SIGNATURE_FONTS.includes(name)) {
+            const option = new Option(name, name);
+            option.dataset.retired = '1';
+            signatureFontInput.add(option);
+        }
+        signatureFontInput.value = name;
+        if (signatureFontInput.value !== name) signatureFontInput.value = 'Great Vibes';
+    }
+
     async function renderTypedSignaturePreview() {
         const renderToken = bumpSignatureTypedRenderToken();
         if (signatureMode !== 'type' || !signatureCanvas || !signatureCtx) return;
@@ -297,7 +319,7 @@ export function installSignatureFeature(deps) {
             return;
         }
         const fontName = signatureFontInput?.value || 'Great Vibes';
-        await ensureSignatureFontLoaded(fontName);
+        const fontLoaded = await ensureSignatureFontLoaded(fontName);
         if (renderToken !== signatureTypedRenderToken
             || signatureMode !== 'type' || !signatureCanvas || !signatureCtx) return;
         clearSignatureCanvas();
@@ -314,7 +336,9 @@ export function installSignatureFeature(deps) {
         }
         signatureCtx.fillText(text, signatureCanvas.width / 2, signatureCanvas.height / 2);
         setSignatureDirtyState(true);
-        setSignatureStatus('Typed signature ready to place.', 'ready');
+        setSignatureStatus(fontLoaded
+            ? 'Typed signature ready to place.'
+            : `${fontName} could not be loaded, so a fallback font is shown.`, 'ready');
     }
 
     function trimmedSignatureCanvasAsset() {
@@ -409,7 +433,7 @@ export function installSignatureFeature(deps) {
         if (signatureTypeSizeInput) signatureTypeSizeInput.value = signaturePrefs.typeSize;
         if (signatureWidthInput) signatureWidthInput.value = signaturePrefs.width;
         if (signatureSmoothingInput) signatureSmoothingInput.value = signaturePrefs.smoothing;
-        if (signatureFontInput) signatureFontInput.value = signaturePrefs.font;
+        selectSignatureFont(signaturePrefs.font);
         syncSignatureColorLabels();
         syncSignatureTypeSizeLabel();
         clearSignatureDrawingState();
@@ -487,7 +511,7 @@ export function installSignatureFeature(deps) {
 
         if (preferredMode === 'type' && composer) {
             if (signatureTextInput) signatureTextInput.value = String(composer.text || '');
-            if (signatureFontInput) signatureFontInput.value = String(composer.fontFamily || 'Great Vibes');
+            selectSignatureFont(composer.fontFamily || 'Great Vibes', { keepRetired: true });
             if (signatureTypeColorInput) signatureTypeColorInput.value = normalizeHexColor(composer.inkColor, '#111827');
             if (signatureTypeSizeInput) signatureTypeSizeInput.value = String(Math.max(24, Math.min(240, Number(composer.fontSize) || 136)));
             syncSignatureColorLabels();

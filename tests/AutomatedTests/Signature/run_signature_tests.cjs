@@ -1466,7 +1466,7 @@ async function testModalShell(page, ctx) {
     await page.click('[data-signature-mode="type"]');
     await page.waitForTimeout(150);
     await page.fill('#signature-text', 'Dirty state');
-    await page.selectOption('#signature-font', 'Pacifico');
+    await page.selectOption('#signature-font', 'Mr Dafoe');
     await page.waitForTimeout(150);
     await page.click('[data-signature-mode="draw"]');
     await page.waitForTimeout(150);
@@ -1486,9 +1486,9 @@ async function testModalShell(page, ctx) {
         `apply=${reset.applyDisabled} save=${reset.saveDisabled}`);
 
     const resetValues = reset.values;
-    // The font was changed to Pacifico before cancelling: settings persist,
+    // The font was changed to Mr Dafoe before cancelling: settings persist,
     // content does not.
-    const resetOk = resetValues.font === 'Pacifico'
+    const resetOk = resetValues.font === 'Mr Dafoe'
         && resetValues.text === ''
         && resetValues.color === COMPOSER_DEFAULTS.color
         && resetValues.width === COMPOSER_DEFAULTS.width
@@ -1769,8 +1769,9 @@ async function testDrawControls(page, ctx) {
 // ---------------------------------------------------------------------------
 
 const SIGNATURE_FONTS = [
-    'Great Vibes', 'Dancing Script', 'Allura', 'Pacifico', 'Alex Brush', 'Sacramento',
-    'Parisienne', 'Marck Script', 'Satisfy', 'Caveat', 'Kaushan Script', 'Tangerine',
+    'Great Vibes', 'Alex Brush', 'Allura', 'Dancing Script', 'Sacramento', 'Mr Dafoe',
+    'Mrs Saint Delafield', 'Herr Von Muellerhoff', 'Mr De Haviland', 'Homemade Apple',
+    'La Belle Aurore', 'Kristi',
 ];
 
 async function testTypeFonts(page, ctx) {
@@ -1798,6 +1799,18 @@ async function testTypeFonts(page, ctx) {
     r.equals('typed-ready-status', state.status, 'Typed signature ready to place.',
         'Typing enables the mark and reports it is ready');
 
+    // --- NK_44: the control is labelled Font and offers the signature faces
+    const picker = await page.evaluate(() => {
+        const select = document.getElementById('signature-font');
+        return {
+            label: select.closest('.signature-field').querySelector('.signature-field__label').textContent.trim(),
+            options: Array.from(select.options).map((option) => option.value),
+        };
+    });
+    r.equals('font-label', picker.label, 'Font', 'The font control is labelled Font, not Style');
+    r.equals('font-options', picker.options.join(', '), SIGNATURE_FONTS.join(', '),
+        'The list offers the signature faces, in order');
+
     // --- every font renders, and distinctly ------------------------------
     const fingerprints = new Map();
     const failures = [];
@@ -1814,8 +1827,9 @@ async function testTypeFonts(page, ctx) {
         failures.length ? failures.join(' | ') : `${SIGNATURE_FONTS.length} fonts checked`);
 
     const distinct = new Set(fingerprints.values()).size;
-    r.assert('fonts-look-different', distinct >= Math.ceil(SIGNATURE_FONTS.length * 0.75),
-        'Fonts render visibly differently rather than all falling back to one face',
+    // NK_44: every face must load. One fallback face for all of them is 1 distinct render.
+    r.assert('fonts-look-different', distinct === SIGNATURE_FONTS.length,
+        'Every font renders as its own face rather than falling back to one',
         `${distinct} distinct renders across ${SIGNATURE_FONTS.length} fonts`);
 
     const linkCount = await page.evaluate(() => document.querySelectorAll('link[id^="signature-font-"]').length);
@@ -1824,7 +1838,7 @@ async function testTypeFonts(page, ctx) {
         `${linkCount} link tags for ${SIGNATURE_FONTS.length} fonts`);
 
     // --- rapid switching: the last selection must win ---------------------
-    for (const font of ['Pacifico', 'Tangerine', 'Caveat', 'Allura']) {
+    for (const font of ['Mr Dafoe', 'Kristi', 'Homemade Apple', 'Allura']) {
         await page.selectOption('#signature-font', font);
         await page.waitForTimeout(60);
     }
@@ -1835,11 +1849,53 @@ async function testTypeFonts(page, ctx) {
         'After rapid font switching the preview matches the last selection',
         settled.hash === allura ? 'matches Allura' : `hash ${settled.hash} vs Allura ${allura}`);
 
+    // --- NK_44: a signature typed in a retired face reopens in it ---------
+    // Pacifico was offered before NK_44: put it back just long enough to
+    // place a mark in it, the way an older document carries one.
+    await page.evaluate(() => document.getElementById('signature-font').add(new Option('Pacifico', 'Pacifico')));
+    await page.selectOption('#signature-font', 'Pacifico');
+    await page.waitForTimeout(1200);
+    await armPlacement(page);
+    await clickPageFraction(page, 1, 0.4, 0.4);
+    await captureAutosave(page, ctx.saveRecorder);
+    await page.evaluate(() => document.querySelector('#signature-font option[value="Pacifico"]')?.remove());
+    await dblclickSignatureBox(page);
+    await page.waitForTimeout(1200);
+    const readFontPicker = () => page.evaluate(() => {
+        const select = document.getElementById('signature-font');
+        return {
+            value: select.value,
+            retired: Array.from(select.querySelectorAll('option[data-retired]')).map((option) => option.value),
+        };
+    });
+    const reopenedPicker = await readFontPicker();
+    const reopenedPrint = await canvasFingerprint(page);
+    r.assert('retired-font-reopens', reopenedPicker.value === 'Pacifico'
+        && reopenedPicker.retired.join() === 'Pacifico'
+        && !Array.from(fingerprints.values()).includes(reopenedPrint.hash),
+        'A signature typed in a font the list no longer offers reopens in that font',
+        `font=${reopenedPicker.value} retired=[${reopenedPicker.retired.join()}]`);
+
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    await openSignatureModal(page);
+    const freshPicker = await readFontPicker();
+    r.assert('retired-font-not-remembered', freshPicker.value === 'Great Vibes' && freshPicker.retired.length === 0,
+        'A new signature never starts in a retired font, even when it was the last one used',
+        `font=${freshPicker.value} retired=[${freshPicker.retired.join()}]`);
+    await page.click('[data-signature-mode="type"]');
+    await page.fill('#signature-text', 'Ada Lovelace');
+    await page.waitForTimeout(400);
+
     // --- blocked fonts still fall back -----------------------------------
-    await ctx.setFontsBlocked(true);
-    await page.click('#signature-clear');
+    // A fresh page: every face above is already loaded in this one.
+    await ctx.setFontsBlocked(true, { hosted: true });
+    await page.keyboard.press('Escape');
+    await openEditor(page, ctx.docId);
+    await openSignatureModal(page);
+    await page.click('[data-signature-mode="type"]');
     await page.waitForTimeout(200);
-    await page.selectOption('#signature-font', 'Marck Script');
+    await page.selectOption('#signature-font', 'Kristi');
     await page.fill('#signature-text', 'Offline Fallback');
     const fallbackStart = Date.now();
     await page.waitForFunction(() => {
@@ -1853,6 +1909,9 @@ async function testTypeFonts(page, ctx) {
     r.assert('blocked-fonts-fall-back', fallback.inked > 0 && fallbackMs < 6000,
         'With Google Fonts blocked the preview still renders in a fallback face',
         `${fallback.inked} inked px after ${fallbackMs}ms`);
+    const blockedStatus = (await readModalState(page)).status;
+    r.assert('blocked-font-says-so', /Kristi could not be loaded/.test(blockedStatus),
+        'A font that cannot be loaded is reported instead of silently drawn in a fallback', blockedStatus);
 
     const artifact = await capture(page, '06-type-fonts', 'typed-fonts');
     await page.keyboard.press('Escape');
@@ -3819,7 +3878,7 @@ async function nk5RememberedSettings(page, ctx) {
     await setColour(page, 'signature-color', '#227744');
     await page.click('[data-signature-mode="type"]');
     await page.waitForTimeout(250);
-    await page.selectOption('#signature-font', 'Pacifico');
+    await page.selectOption('#signature-font', 'Mr Dafoe');
     await setRange(page, 'signature-type-size', 96);
     await setColour(page, 'signature-type-color', '#aa2266');
     await page.fill('#signature-text', 'Should not persist');
@@ -3833,7 +3892,7 @@ async function nk5RememberedSettings(page, ctx) {
         reopened.values.width === '13'
         && reopened.values.smoothing === '22'
         && reopened.values.color === '#227744'
-        && reopened.values.font === 'Pacifico'
+        && reopened.values.font === 'Mr Dafoe'
         && reopened.values.typeSize === '96'
         && reopened.values.typeColor === '#aa2266',
         'Ink, stroke width, smoothing, font and size all persist',
@@ -5359,7 +5418,7 @@ async function testRememberedSettings(page, ctx) {
     // Change tab and several settings.
     await page.click('[data-signature-mode="type"]');
     await page.waitForTimeout(250);
-    await page.selectOption('#signature-font', 'Pacifico');
+    await page.selectOption('#signature-font', 'Mr Dafoe');
     await setRange(page, 'signature-type-size', 96);
     await setColour(page, 'signature-type-color', '#aa2266');
     await page.click('[data-signature-mode="draw"]');
@@ -5381,7 +5440,7 @@ async function testRememberedSettings(page, ctx) {
         'Reopening returns to the tab that was last used',
         `mode=${reopened.activeMode}`);
     r.assert('remembers-settings',
-        reopened.values.font === 'Pacifico'
+        reopened.values.font === 'Mr Dafoe'
         && reopened.values.typeSize === '96'
         && reopened.values.width === '11'
         && reopened.values.smoothing === '20'
@@ -5402,7 +5461,7 @@ async function testRememberedSettings(page, ctx) {
     const afterReload = await readModalState(page);
     r.assert('remembers-across-reload',
         afterReload.activeMode === 'type'
-        && afterReload.values.font === 'Pacifico'
+        && afterReload.values.font === 'Mr Dafoe'
         && afterReload.values.width === '11',
         'Settings and tab survive a full page reload',
         `mode=${afterReload.activeMode} font=${afterReload.values.font} width=${afterReload.values.width}`);
@@ -5670,9 +5729,20 @@ async function runTests(ids) {
                 // added ~60s to the run. Test 06 toggles this off because
                 // webfont loading is precisely what it covers.
                 let fontsBlocked = true;
-                const setFontsBlocked = (value) => { fontsBlocked = !!value; };
+                // The signature faces are self-hosted since the editor stopped
+                // asking Google, so they load in every test; only test 06 blocks
+                // them ({ hosted: true }) to prove the fallback.
+                let hostedFontsBlocked = false;
+                const setFontsBlocked = (value, { hosted = false } = {}) => {
+                    fontsBlocked = !!value;
+                    hostedFontsBlocked = !!value && hosted;
+                };
                 await context.route(/fonts\.(googleapis|gstatic)\.com/, (route) => {
                     if (fontsBlocked) route.abort().catch(() => {});
+                    else route.continue().catch(() => {});
+                });
+                await context.route(/\/fonts\/editor\/signature\//, (route) => {
+                    if (hostedFontsBlocked) route.abort().catch(() => {});
                     else route.continue().catch(() => {});
                 });
 

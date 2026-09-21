@@ -99,9 +99,9 @@
                 "gid": "1217748440589990",
                 "area": "Type",
                 "title": "Type tab: text entry, font list and webfont loading",
-                "summary": "All 12 script fonts lazy-load and render distinctly, rapid font switching never lets a stale render win, and blocked or slow Google Fonts still fall back within ~2s without hanging.",
+                "summary": "The Font list offers the 12 signature faces and each one lazy-loads and renders as its own face (NK_44), rapid font switching never lets a stale render win, a font that cannot be loaded falls back within ~2s and says so, and a signature typed in a retired font still reopens in it.",
                 "automated": true,
-                "automation_note": "All 12 fonts, the rapid-switch race and the blocked-fonts fallback are automated. Subjective \"does it look like a signature\" remains manual.",
+                "automation_note": "All 12 fonts, the Font label and list, the rapid-switch race, the blocked-fonts fallback and the retired-font reopen are automated. Subjective \"does it look like a signature\" remains manual.",
                 "story": "signature-tool"
             },
             {

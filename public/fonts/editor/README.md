@@ -44,11 +44,18 @@ The files are the woff2 subsets Google Fonts serves; each family is used under i
 | Ubuntu | Ubuntu Font Licence 1.0 | licenses/ubuntu.txt |
 | Work Sans | SIL Open Font License 1.1 | licenses/work-sans.txt |
 | Great Vibes | SIL Open Font License 1.1 | licenses/great-vibes.txt |
-| Dancing Script | SIL Open Font License 1.1 | licenses/dancing-script.txt |
-| Allura | SIL Open Font License 1.1 | licenses/allura.txt |
-| Pacifico | SIL Open Font License 1.1 | licenses/pacifico.txt |
 | Alex Brush | SIL Open Font License 1.1 | licenses/alex-brush.txt |
+| Allura | SIL Open Font License 1.1 | licenses/allura.txt |
+| Dancing Script | SIL Open Font License 1.1 | licenses/dancing-script.txt |
 | Sacramento | SIL Open Font License 1.1 | licenses/sacramento.txt |
+| Mr Dafoe | SIL Open Font License 1.1 | licenses/mr-dafoe.txt |
+| Mrs Saint Delafield | SIL Open Font License 1.1 | licenses/mrs-saint-delafield.txt |
+| Herr Von Muellerhoff | SIL Open Font License 1.1 | licenses/herr-von-muellerhoff.txt |
+| Mr De Haviland | SIL Open Font License 1.1 | licenses/mr-de-haviland.txt |
+| Homemade Apple | Apache License 2.0 | licenses/homemade-apple.txt |
+| La Belle Aurore | SIL Open Font License 1.1 | licenses/la-belle-aurore.txt |
+| Kristi | SIL Open Font License 1.1 | licenses/kristi.txt |
+| Pacifico | SIL Open Font License 1.1 | licenses/pacifico.txt |
 | Parisienne | SIL Open Font License 1.1 | licenses/parisienne.txt |
 | Marck Script | SIL Open Font License 1.1 | licenses/marck-script.txt |
 | Satisfy | Apache License 2.0 | licenses/satisfy.txt |
