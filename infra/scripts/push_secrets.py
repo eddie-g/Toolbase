@@ -62,11 +62,30 @@ def vault_url(env, name=""):
 
 
 def existing_secrets(env):
-    out = subprocess.run(
-        [AZ, "rest", "--method", "get", "--url", vault_url(env), "--query", "value[].name", "-o", "json"],
-        check=True, capture_output=True, text=True,
-    ).stdout
-    return set(json.loads(out or "[]"))
+    """Every secret name in the vault. The listing is paged (a few names per page)."""
+    names, url = set(), vault_url(env)
+    while url:
+        out = subprocess.run(
+            [AZ, "rest", "--method", "get", "--url", url, "-o", "json"],
+            check=True, capture_output=True, text=True,
+        ).stdout
+        page = json.loads(out or "{}")
+        names.update(item["name"] for item in page.get("value", []))
+        url = page.get("nextLink")
+    return names
+
+
+def secret_exists(env, name):
+    """Direct lookup, so a generated secret is never replaced because a listing was incomplete."""
+    result = subprocess.run(
+        [AZ, "rest", "--method", "get", "--url", vault_url(env, name), "--query", "name", "-o", "tsv"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        return True
+    if "SecretNotFound" in result.stderr or "NotFound" in result.stderr:
+        return False
+    sys.exit(f"Could not check whether {name} exists; refusing to continue.\n{result.stderr.strip()}")
 
 
 def put_secret(env, name, value, variable):
@@ -101,7 +120,7 @@ def main():
         source = entry["source"]
 
         if source == "generated":
-            if name in present:
+            if name in present or secret_exists(env, name):
                 rows.append((variable, name, "kept (already in the vault, never overwritten)"))
                 continue
             value = "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
