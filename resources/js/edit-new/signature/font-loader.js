@@ -7,13 +7,29 @@
  * loaded into `document.fonts`. Subsequent calls for the same family
  * return the same in-flight promise so we never inject the link twice
  * or fight for paint with multiple parallel awaiters.
+ *
+ * Resolves true when a face of the family is really loaded, false when the
+ * stylesheet or its files could not be fetched (NK_44): the canvas then draws
+ * the `cursive` fallback, and the caller says so instead of showing every
+ * font as the same face with no explanation.
  */
 
 const signatureFontLoadPromises = new Map();
 
+// document.fonts.check() answers true for a family with no @font-face at all,
+// so look for a loaded face instead.
+function signatureFontIsLoaded(fontName) {
+    if (!document.fonts?.forEach) return true;
+    let loaded = false;
+    document.fonts.forEach((face) => {
+        if (face.status === 'loaded' && face.family.replace(/["']/g, '') === fontName) loaded = true;
+    });
+    return loaded;
+}
+
 export function ensureSignatureFontLoaded(fontName) {
     const normalizedFontName = String(fontName || '').trim();
-    if (!normalizedFontName) return Promise.resolve();
+    if (!normalizedFontName) return Promise.resolve(false);
     if (signatureFontLoadPromises.has(normalizedFontName)) {
         return signatureFontLoadPromises.get(normalizedFontName);
     }
@@ -24,13 +40,13 @@ export function ensureSignatureFontLoaded(fontName) {
             if (settled) return;
             settled = true;
             if (!document.fonts?.load) {
-                resolve();
+                resolve(true);
                 return;
             }
             Promise.allSettled([
                 document.fonts.load(`400 96px "${normalizedFontName}"`),
                 document.fonts.load(`700 96px "${normalizedFontName}"`),
-            ]).finally(resolve);
+            ]).finally(() => resolve(signatureFontIsLoaded(normalizedFontName)));
         };
 
         let link = document.getElementById(id);

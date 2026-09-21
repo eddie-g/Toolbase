@@ -74,20 +74,22 @@
                         <input id="signature-text" type="text" placeholder="Type your full name">
                     </label>
                     <label class="signature-field">
-                        <span class="signature-field__label">Style</span>
+                        <span class="signature-field__label">Font</span>
+                        {{-- Keep in step with "signature" in resources/fonts/editor-fonts.json: every family
+                             here needs its hosted stylesheet (scripts/fetch-editor-fonts.mjs --signature). --}}
                         <select id="signature-font">
                             <option value="Great Vibes" selected>Great Vibes</option>
-                            <option value="Dancing Script">Dancing Script</option>
-                            <option value="Allura">Allura</option>
-                            <option value="Pacifico">Pacifico</option>
                             <option value="Alex Brush">Alex Brush</option>
+                            <option value="Allura">Allura</option>
+                            <option value="Dancing Script">Dancing Script</option>
                             <option value="Sacramento">Sacramento</option>
-                            <option value="Parisienne">Parisienne</option>
-                            <option value="Marck Script">Marck Script</option>
-                            <option value="Satisfy">Satisfy</option>
-                            <option value="Caveat">Caveat</option>
-                            <option value="Kaushan Script">Kaushan Script</option>
-                            <option value="Tangerine">Tangerine</option>
+                            <option value="Mr Dafoe">Mr Dafoe</option>
+                            <option value="Mrs Saint Delafield">Mrs Saint Delafield</option>
+                            <option value="Herr Von Muellerhoff">Herr Von Muellerhoff</option>
+                            <option value="Mr De Haviland">Mr De Haviland</option>
+                            <option value="Homemade Apple">Homemade Apple</option>
+                            <option value="La Belle Aurore">La Belle Aurore</option>
+                            <option value="Kristi">Kristi</option>
                         </select>
                     </label>
                     <div class="signature-field">
