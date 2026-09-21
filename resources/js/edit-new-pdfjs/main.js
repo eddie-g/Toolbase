@@ -24177,7 +24177,7 @@ function updateAnnotationFormatBarForBox(box) {
     const fontSizePts = selectedBoxFontSizePts(box);
     if (afbSize) afbSize.value = String(fontPtToSliderValue(fontSizePts));
     setFormatBarSizeLabel(fontSizePts);
-    if (afbTextColor) {
+    if (afbTextColor && !colorPickerIsDragging(afbTextColor)) {
         afbTextColor.value = cssColorToHex(
             box.style.getPropertyValue('--enpv-text-color')
             || existing?.textColor
@@ -24186,7 +24186,7 @@ function updateAnnotationFormatBarForBox(box) {
             || '#000000',
         );
     }
-    if (afbBgColor) {
+    if (afbBgColor && !colorPickerIsDragging(afbBgColor)) {
         const bg = String(
             box.dataset.backgroundColor
             || box.style.getPropertyValue('--enpv-bg-color')
@@ -24235,7 +24235,7 @@ function updateAnnotationFormatBarForBox(box) {
         setToggleControl(afbItalic, inlineState.italic);
         setToggleControl(afbUnderline, inlineState.underline);
         setToggleControl(afbStrikeout, inlineState.strikeout);
-        if (afbTextColor && inlineState.color) afbTextColor.value = inlineState.color;
+        if (afbTextColor && inlineState.color && !colorPickerIsDragging(afbTextColor)) afbTextColor.value = inlineState.color;
         if (inlineState.fontFamily) {
             const inlineFont = ensureFormatBarFontOption(inlineState.fontFamily);
             if (inlineFont && afbFont) afbFont.value = inlineFont;
@@ -24597,19 +24597,86 @@ function applyTextColorToWholeAnnotationBox(box, color) {
     });
 }
 
+/** Returns the span wrapped around an inline selection, or null when the whole box was coloured. */
 function applyTextColorToSelectedBox(color) {
     const normalized = cssColorToHex(color, '#000000');
     const box = findSelectedBox();
     if (box && selectedInlineTextRange(box)) {
         const inlineState = inlineSelectionStyleState(box);
-        if (inlineState?.color && cssColorToHex(inlineState.color, '') === normalized) return;
+        if (inlineState?.color && cssColorToHex(inlineState.color, '') === normalized) return null;
     }
+    let wrapper = null;
     if (applyInlineStyleToSelectedText('change selected text color', (span) => {
         span.style.color = normalized;
-    }, { reason: 'text-color', fit: false })) return;
+        wrapper = span;
+    }, { reason: 'text-color', fit: false })) return wrapper;
     applyStyleToSelectedBox('change annotation color', (box) => {
         applyTextColorToWholeAnnotationBox(box, normalized);
     }, { reason: 'text-color', fit: false });
+    return null;
+}
+
+/*
+ * NK_45: the browser's colour picker fires `input` for every pointer move of
+ * a drag and `change` once when it closes. Running the full inline apply per
+ * move pushed an undo snapshot, nested one more span, re-fitted and re-saved
+ * the box each time, and the format bar then wrote the colour back into the
+ * open picker, so its handle trailed the pointer by seconds. A drag now
+ * applies once, recolours that span on the following moves and commits on
+ * `change`; the format bar leaves the dragged input alone.
+ */
+let colorPickerDrag = null;
+
+function beginColorPickerDrag(input) {
+    const box = findSelectedBox();
+    if (colorPickerDrag?.input !== input || colorPickerDrag.boxUid !== (box?.dataset.uid || '')) {
+        colorPickerDrag = { input, boxUid: box?.dataset.uid || '', wrapper: null, lastInputAt: 0 };
+    }
+    colorPickerDrag.lastInputAt = performance.now();
+    return colorPickerDrag;
+}
+
+// A picker closed on the colour it opened with fires no `change`, so the
+// guard expires by itself instead of waiting for one.
+function colorPickerIsDragging(input) {
+    return colorPickerDrag?.input === input && performance.now() - colorPickerDrag.lastInputAt < 500;
+}
+
+function setInlineColorWrapperColor(wrapper, color) {
+    wrapper.style.color = color;
+    // Text coloured earlier keeps its own declaration inside the wrapper.
+    wrapper.querySelectorAll('*').forEach((element) => {
+        if (element instanceof HTMLElement && element.style.color) element.style.color = color;
+    });
+}
+
+function previewTextColorFromPicker(color) {
+    const drag = beginColorPickerDrag(afbTextColor);
+    const box = findSelectedBox();
+    if (drag.wrapper?.isConnected && box?.contains(drag.wrapper)) {
+        setInlineColorWrapperColor(drag.wrapper, cssColorToHex(color, '#000000'));
+        return;
+    }
+    if (box && selectedInlineTextRange(box)) {
+        drag.wrapper = applyTextColorToSelectedBox(color);
+        return;
+    }
+    previewTextColorOnSelectedBox(color);
+}
+
+function commitTextColorFromPicker(color) {
+    const drag = colorPickerDrag;
+    colorPickerDrag = null;
+    const box = findSelectedBox();
+    if (drag?.wrapper?.isConnected && box?.contains(drag.wrapper) && !isAnnBoxLocked(box)) {
+        // The first move of the drag already pushed the undo snapshot.
+        setInlineColorWrapperColor(drag.wrapper, cssColorToHex(color, '#000000'));
+        const range = document.createRange();
+        range.selectNodeContents(drag.wrapper);
+        finishInlineTextStyleMutation(box, range, { reason: 'text-color', fit: false });
+        return;
+    }
+    applyTextColorToSelectedBox(color);
 }
 
 function applyBackgroundColorToSelectedBox(color) {
@@ -28260,20 +28327,17 @@ afbSize?.addEventListener('change', () => {
     applyFontSizeToSelectedBox(pt);
 });
 afbTextColor?.addEventListener('change', () => {
-    applyTextColorToSelectedBox(afbTextColor.value);
+    commitTextColorFromPicker(afbTextColor.value);
 });
 afbTextColor?.addEventListener('input', () => {
-    const box = findSelectedBox();
-    if (box && selectedInlineTextRange(box)) {
-        applyTextColorToSelectedBox(afbTextColor.value);
-        return;
-    }
-    previewTextColorOnSelectedBox(afbTextColor.value);
+    previewTextColorFromPicker(afbTextColor.value);
 });
 afbBgColor?.addEventListener('change', () => {
+    colorPickerDrag = null;
     applyBackgroundColorToSelectedBox(afbBgColor.value);
 });
 afbBgColor?.addEventListener('input', () => {
+    beginColorPickerDrag(afbBgColor);
     previewBackgroundColorOnSelectedBox(afbBgColor.value);
 });
 afbOpacity?.addEventListener('change', () => {
