@@ -1,10 +1,9 @@
 // Virtual network for one environment.
 //
 //   apps     Container Apps environment (delegated). Storage and Key Vault are
-//            reached over service endpoints, which are free; only Redis needs a
-//            private endpoint because it has no service endpoint.
+//            reached over service endpoints, which are free.
 //   mysql    MySQL Flexible Server, VNet-integrated (delegated), no public access.
-//   private  private endpoints (Redis).
+//   private  private endpoints (none yet).
 //
 // A NAT gateway gives the apps subnet one fixed outbound IP. Production needs it
 // because the Namecheap API only answers whitelisted addresses; stage uses the
@@ -80,10 +79,9 @@ resource vnet 'Microsoft.Network/virtualNetworks@2024-05-01' = {
   }
 }
 
-// Zones the later stories register into: MySQL (story 4) and Redis (story 5).
+// MySQL Flexible Server registers itself in this zone.
 var privateZones = [
   { name: 'netkit-${env}.private.mysql.database.azure.com', privateLink: false }
-  { name: 'privatelink.redis.cache.windows.net', privateLink: true }
 ]
 
 resource zones 'Microsoft.Network/privateDnsZones@2024-06-01' = [
@@ -115,5 +113,4 @@ output appsSubnetId string = vnet.properties.subnets[0].id
 output mysqlSubnetId string = vnet.properties.subnets[1].id
 output privateSubnetId string = vnet.properties.subnets[2].id
 output mysqlZoneId string = zones[0].id
-output redisZoneId string = zones[1].id
 output egressIp string = fixedEgress ? egressIp!.properties.ipAddress : ''

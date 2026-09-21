@@ -11,7 +11,7 @@ Manager, so the caller needs Owner or Contributor on the vault, not a
 data-plane role.
 
 Rules
-  - "generated" secrets (APP_KEY) are created once and never overwritten.
+  - "generated" secrets (APP_KEY, REDIS_PASSWORD) are created once and never overwritten.
   - stage refuses live Stripe keys.
   - entries marked "stage": "skip" are not copied to stage.
 """
@@ -123,7 +123,10 @@ def main():
             if name in present or secret_exists(env, name):
                 rows.append((variable, name, "kept (already in the vault, never overwritten)"))
                 continue
-            value = "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
+            if entry.get("generator") == "password":
+                value = secrets.token_urlsafe(36)
+            else:
+                value = "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
             action = "generated"
         elif source == "dotenv":
             if env == "stage" and entry.get("stage") == "skip":
