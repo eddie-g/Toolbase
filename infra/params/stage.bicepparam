@@ -10,8 +10,6 @@ param suffix = 'iedp'
 param mysqlSku = 'Standard_B1ms'
 param mysqlStorageGb = 20
 param mysqlBackupDays = 7
-param redisSku = 'Basic'
-param redisCapacity = 0
 param appShareQuotaGb = 50
 param fontsShareQuotaGb = 5
 

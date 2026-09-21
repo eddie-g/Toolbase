@@ -2,25 +2,20 @@
   "APP_NAME": "Netkit",
   "APP_ENV": "production",
   "APP_DEBUG": "false",
-  "APP_URL": "https://stage-web.bravecliff-68c58605.eastus2.azurecontainerapps.io",
   "TRUSTED_PROXIES": "127.0.0.1,::1,10.20.0.0/23,100.100.0.0/16",
   "BCRYPT_ROUNDS": "12",
   "PRODUCTION_CONFIG_OPTIONAL": "services.stripe.webhook_secret",
-
   "LOG_CHANNEL": "stderr",
   "LOG_LEVEL": "info",
   "LOG_STDERR_FORMATTER": "Monolog\\Formatter\\JsonFormatter",
-
   "DB_CONNECTION": "mysql",
   "DB_HOST": "mysql-netkit-stage-iedp.mysql.database.azure.com",
   "DB_PORT": "3306",
   "DB_DATABASE": "netkit",
   "MYSQL_ATTR_SSL_CA": "/etc/ssl/certs/ca-certificates.crt",
-
   "REDIS_CLIENT": "phpredis",
-  "REDIS_SCHEME": "tls",
-  "REDIS_HOST": "redis-netkit-stage-iedp.redis.cache.windows.net",
-  "REDIS_PORT": "6380",
+  "REDIS_HOST": "redis",
+  "REDIS_PORT": "6379",
   "SESSION_DRIVER": "redis",
   "SESSION_LIFETIME": "120",
   "SESSION_ENCRYPT": "true",
@@ -30,22 +25,17 @@
   "QUEUE_CONNECTION": "redis",
   "REDIS_QUEUE_RETRY_AFTER": "960",
   "BROADCAST_CONNECTION": "log",
-
   "FILESYSTEM_DISK": "local",
-
   "MAIL_MAILER": "resend",
   "MAIL_FROM_NAME": "Netkit (stage)",
-
   "ADMIN_TWO_FACTOR_REQUIRED": "true",
   "SECURITY_HSTS": "false",
   "SECURITY_CSP_MODE": "report-only",
-
   "DOMAIN_LOOKUP": "whois",
   "GEMINI_MODEL": "gemini-2.5-flash-lite",
   "OPENAI_IMAGE_MODEL": "gpt-image-1",
   "LOGO_EDITOR_ENABLED": "false",
   "LOGO_CUSTOM_PROMPT_ENABLED": "false",
-
   "PDF_MODE": "annotation_base",
   "LAYOUT_MODE": "new_writer",
   "PDF_SAVE_MODE": "live_save",
@@ -57,8 +47,12 @@
   "PDF_EXPORT_ALLOW_SYNC": "false",
   "PDF_GUEST_PRUNE": "true",
   "PYTHON_MAX_CONCURRENT": "2",
-
   "ADOBE_PDF_SERVICES_REGION": "US",
   "DOCUMENT_CONVERSION_PRICE_USD": "0.10",
-  "DOCUMENT_CONVERSION_PAGES_PER_TRANSACTION": "50"
+  "DOCUMENT_CONVERSION_PAGES_PER_TRANSACTION": "50",
+  "DB_USERNAME": "netkitadmin",
+  "PHP_FPM_MAX_CHILDREN": "8",
+  "PHP_FPM_START_SERVERS": "2",
+  "PHP_FPM_MIN_SPARE": "1",
+  "PHP_FPM_MAX_SPARE": "4"
 }
