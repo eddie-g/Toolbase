@@ -2,6 +2,45 @@
 
 use Illuminate\Support\Str;
 
+// The production worker plan. Also what any environment without a plan of its
+// own runs (staging, a load-test stack): Horizon starts no workers at all for
+// an environment it has no entry for, and queued jobs then wait for ever
+// without an error anywhere.
+$productionSupervisors = [
+    'supervisor-default' => [
+        'maxProcesses' => 10,
+        'balanceMaxShift' => 1,
+        'balanceCooldown' => 3,
+    ],
+    'supervisor-domains' => [
+        'maxProcesses' => 10,
+        'balanceMaxShift' => 2,
+        'balanceCooldown' => 3,
+    ],
+    'supervisor-logos' => [
+        'maxProcesses' => 20,
+        'balanceMaxShift' => 3,
+        'balanceCooldown' => 3,
+    ],
+    'supervisor-document-conversions' => [
+        'maxProcesses' => 4,
+        'balanceMaxShift' => 1,
+        'balanceCooldown' => 5,
+    ],
+    'supervisor-pdf-extraction' => [
+        'minProcesses' => 2,
+        'maxProcesses' => 6,
+        'balanceMaxShift' => 2,
+        'balanceCooldown' => 3,
+    ],
+    'supervisor-pdf-export' => [
+        'minProcesses' => 2,
+        'maxProcesses' => 6,
+        'balanceMaxShift' => 2,
+        'balanceCooldown' => 3,
+    ],
+];
+
 return [
 
     /*
@@ -332,40 +371,7 @@ return [
     ],
 
     'environments' => [
-        'production' => [
-            'supervisor-default' => [
-                'maxProcesses' => 10,
-                'balanceMaxShift' => 1,
-                'balanceCooldown' => 3,
-            ],
-            'supervisor-domains' => [
-                'maxProcesses' => 10,
-                'balanceMaxShift' => 2,
-                'balanceCooldown' => 3,
-            ],
-            'supervisor-logos' => [
-                'maxProcesses' => 20,
-                'balanceMaxShift' => 3,
-                'balanceCooldown' => 3,
-            ],
-            'supervisor-document-conversions' => [
-                'maxProcesses' => 4,
-                'balanceMaxShift' => 1,
-                'balanceCooldown' => 5,
-            ],
-            'supervisor-pdf-extraction' => [
-                'minProcesses' => 2,
-                'maxProcesses' => 6,
-                'balanceMaxShift' => 2,
-                'balanceCooldown' => 3,
-            ],
-            'supervisor-pdf-export' => [
-                'minProcesses' => 2,
-                'maxProcesses' => 6,
-                'balanceMaxShift' => 2,
-                'balanceCooldown' => 3,
-            ],
-        ],
+        'production' => $productionSupervisors,
 
         'local' => [
             'supervisor-default' => [
@@ -387,6 +393,9 @@ return [
                 'maxProcesses' => 2,
             ],
         ],
+
+        // Matched last: 'local' and 'production' above win for their own names.
+        '*' => $productionSupervisors,
     ],
 
     /*

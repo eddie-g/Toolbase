@@ -90,4 +90,17 @@ return [
         'verify_url' => 'https://challenges.cloudflare.com/turnstile/v0/siteverify',
     ],
 
+
+    /*
+    |--------------------------------------------------------------------------
+    | Load testing
+    |--------------------------------------------------------------------------
+    |
+    | Multiplies the sign-in throttle (5 a minute per account and address, 20
+    | an hour per account, 50 an hour per address) so tests/Load can sign in
+    | thousands of accounts from a few addresses on a staging stack. Ignored
+    | when APP_ENV is production, whatever it is set to.
+    |
+    */
+    'login_throttle_scale' => (int) env('LOGIN_RATE_LIMIT_SCALE', 1),
 ];
