@@ -6714,6 +6714,7 @@ def normalize_exact_source_span_layout(
     source_lines = raw_source_lines if isinstance(raw_source_lines, list) else []
     if not isinstance(source_spans, list) or not source_spans:
         return []
+    box_style = whole_box_style_overrides(ann)
 
     # Source spans are geometry/typography hints, never replacement text.
     # Extraction can repeat an operator-boundary word even though the
@@ -6945,9 +6946,9 @@ def normalize_exact_source_span_layout(
                 or "Helvetica"
             ),
             "font_size": float(span.get("fontSize") or span.get("font_size") or font_size or 0),
-            "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
-            "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
-            "color": _normalize_color(span.get("hex_color") if span.get("hex_color") is not None else span.get("color"), str(ann.get("textColor") or "#000000")),
+            "font_weight": box_style.get("font_weight") or str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
+            "font_style": box_style.get("font_style") or str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+            "color": box_style.get("color") or _normalize_color(span.get("hex_color") if span.get("hex_color") is not None else span.get("color"), str(ann.get("textColor") or "#000000")),
             "underline": bool(span.get("underline")),
             "strikeout": bool(span.get("strikeout")),
             "span_rotation": infer_exact_source_rotation(span.get("rotation"), span.get("direction"), rect),
@@ -7504,10 +7505,37 @@ def _match_source_span_face_for_style(
     return exact_match or weight_only_match or style_only_match
 
 
+def whole_box_style_overrides(ann: Dict[str, Any]) -> Dict[str, Any]:
+    """AE4-2: bold, italic or a colour applied to a WHOLE promoted paragraph is
+    saved on the annotation only (no rich runs), and the captured source spans'
+    own weight / colour used to win, so the download ignored the change. A
+    style-dirty annotation's requested weight, slant and chosen colour override
+    the spans; a colour-only change leaves a bold lead-in alone."""
+    if not (_boolish(ann.get("styleDirty")) or _boolish(ann.get("userForcedRichText"))):
+        return {}
+    overrides: Dict[str, Any] = {}
+    reason = str(ann.get("richTextPromotionReason") or "").strip().lower()
+    weight = str(ann.get("fontWeight") or "").strip()
+    if weight and (is_bold_weight(weight) or reason == "font-weight"):
+        overrides["font_weight"] = "700" if is_bold_weight(weight) else "400"
+    style = str(ann.get("fontStyle") or "").strip().lower()
+    if style and (is_italic_style(style) or reason == "font-style"):
+        overrides["font_style"] = style if is_italic_style(style) else "normal"
+    color = source_color_to_hex(ann.get("textColor") or "", "")
+    source_color = source_color_to_hex(ann.get("pdfjsSourceTextColor") or "", "")
+    if color and (
+        _boolish(ann.get("textColorExplicit"))
+        or (color.lower() not in {"#000000", source_color.lower()} and reason in {"text-color", "font-weight", "font-style", "font-size", "font-family", "underline", "strikeout", "background-color"})
+    ):
+        overrides["color"] = color
+    return overrides
+
+
 def _source_face_spans_for_annotation(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
     source_spans = ann.get("sourceSpans")
     if not isinstance(source_spans, list):
         return []
+    box_style = whole_box_style_overrides(ann)
 
     faces: list[Dict[str, Any]] = []
     for span in source_spans:
@@ -7533,8 +7561,8 @@ def _source_face_spans_for_annotation(ann: Dict[str, Any]) -> list[Dict[str, Any
             "font_family": font_family or font_source_name,
             "font_source_name": font_source_name or font_family,
             "font_size": float(span.get("fontSize") or span.get("font_size") or ann.get("fontSize") or 12),
-            "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
-            "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+            "font_weight": box_style.get("font_weight") or str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
+            "font_style": box_style.get("font_style") or str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
         })
     return faces
 
