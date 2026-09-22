@@ -4265,6 +4265,12 @@ class _RichTextTextNodeCounter(HTMLParser):
 _RICH_TEXT_BLOCK_TAGS = {"div", "p", "li", "ul", "ol"}
 
 
+def _rich_text_words_compare_text(value: Any) -> str:
+    """Whitespace-insensitive form of _normalize_rich_text_compare_text (a
+    forced row break after "Oscar-" adds a space the text does not have)."""
+    return "".join(_normalize_rich_text_compare_text(value).split())
+
+
 def _normalize_rich_text_compare_text(value: Any) -> str:
     normalized = sanitize_pdf_text(value).replace("\r\n", "\n").replace("\r", "\n")
     normalized = re.sub(r"[ \t]+\n", "\n", normalized)
@@ -5031,7 +5037,13 @@ def build_wrapped_rich_text_span_layout(
 
     rendered_text = _rich_text_layout_ops_to_text(ops)
     if _normalize_rich_text_compare_text(rendered_text) != _normalize_rich_text_compare_text(ann.get("text") or ""):
-        return []
+        # The caller may have forced the editor's row breaks into the ops
+        # (_apply_pdfjs_visual_line_breaks, NK_37): their text then has a
+        # newline where the annotation text has a space. That is the same
+        # text, and rejecting it here threw away every bold / colour run of a
+        # resized paragraph (document 7978, promoted_2_1) and drew it plain.
+        if _rich_text_words_compare_text(rendered_text) != _rich_text_words_compare_text(ann.get("text") or ""):
+            return []
 
     wrapped_lines = wrap_rich_text_layout_ops(ops, wrap_width if wrap_width else available_width)
     if not wrapped_lines:
