@@ -6904,12 +6904,25 @@ function computePageForegroundColor(pageDiv, rect, fallback = '#000000') {
         }
     }
     if (!buckets.size) return fallback || '';
-    let bestKey = null;
     let bestScore = -1;
+    for (const score of buckets.values()) bestScore = Math.max(bestScore, score);
+    if (bestScore <= 0) return fallback || '';
+    // AE1-1: at small zooms most sampled pixels of a glyph are antialiasing
+    // and subpixel fringes, which sit between the ink and the background
+    // (a black row voted blue, an orange one pale yellow). The ink is the
+    // bucket farthest from the background among those that carry real
+    // weight, so choose that instead of the most frequent one.
+    let bestKey = null;
+    let bestDistance = -1;
+    let bestKeyScore = -1;
     for (const [key, score] of buckets.entries()) {
-        if (score > bestScore) {
+        if (score < bestScore * 0.3) continue;
+        const [r, g, b] = key.split(',').map((part) => Number.parseInt(part, 10) || 0);
+        const distance = Math.hypot(r - background.r, g - background.g, b - background.b);
+        if (distance > bestDistance + 0.5 || (Math.abs(distance - bestDistance) <= 0.5 && score > bestKeyScore)) {
             bestKey = key;
-            bestScore = score;
+            bestDistance = distance;
+            bestKeyScore = score;
         }
     }
     if (!bestKey) return fallback || '';
