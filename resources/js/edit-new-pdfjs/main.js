@@ -9881,6 +9881,28 @@ function promotedSourceLineBreakCounts(annotation, lineCount) {
     return sourceVisualLineBreakCounts(boxes, lineCount);
 }
 
+/*
+ * AE2-4: mirror of the exporter's _text_lines_follow_source_rows. A saved
+ * paragraph whose text still reads row by row like the captured block (an
+ * edited word changes at most one row) exports on the PDF's own rows, and
+ * that depends on the "\n" between them. Hydration used to collapse those
+ * breaks into spaces for every reflow-enabled block, so the next autosave
+ * sent one line and the download re-wrapped the paragraph after a reload.
+ */
+function annotationTextFollowsSourceRows(annotation) {
+    if (!annotation || boolish(annotation.userSizedTextBox)) return false;
+    const comparable = (value) => normalizeComparableText(String(value || ''));
+    const textLines = String(annotation.text || '').replace(/\r\n?/g, '\n').split('\n')
+        .map((line) => comparable(line)).filter(Boolean);
+    if (textLines.length < 2) return false;
+    const sourceLines = [annotation.sourceTextLines, annotation.pdfjsVisualLines]
+        .find((lines) => Array.isArray(lines) && lines.length > 1);
+    if (!sourceLines) return false;
+    const rows = new Set(sourceLines.map((line) => comparable(line)).filter(Boolean));
+    const matched = textLines.filter((line) => rows.has(line)).length;
+    return matched >= textLines.length - 1;
+}
+
 function collapsePromotedExtractionVisualBreaks(box, annotationOverride = null) {
     const tc = selectedBoxTextElement(box);
     const annotation = annotationOverride
@@ -12758,7 +12780,7 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
         });
     }
     appendViewportRotatedContent(box, tc, viewport, displayRect);
-    if (box.dataset.promotedReflowEnabled === '1') {
+    if (box.dataset.promotedReflowEnabled === '1' && !annotationTextFollowsSourceRows(annotation)) {
         collapsePromotedExtractionVisualBreaks(box, annotation);
     }
     const keepsPromotedBlockGeometry = restoresPromotedSourceGeometry
@@ -22487,7 +22509,7 @@ function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale,
         ));
     }
     box.appendChild(tc);
-    if (box.dataset.promotedReflowEnabled === '1') {
+    if (box.dataset.promotedReflowEnabled === '1' && !annotationTextFollowsSourceRows(annotation)) {
         collapsePromotedExtractionVisualBreaks(box, annotation);
     }
     const persistedRichMode = annotation.userForcedRichText === true
