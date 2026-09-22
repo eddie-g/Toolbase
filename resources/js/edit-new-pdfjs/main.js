@@ -5161,6 +5161,26 @@ function pushHistorySnapshot(_label = '') {
     updateHistoryButtons();
 }
 
+/*
+ * AE5-4: committing a box that was styled inline while in edit mode pushed a
+ * snapshot identical to the state after the commit (the inline style had
+ * already pushed its own and synced the box), so the first Undo did nothing.
+ * Push the pre-commit state only when the commit changes something.
+ */
+function syncBoxAndPushHistoryIfChanged(box) {
+    if (applyingHistory) {
+        syncAnnotationBoxToPersistedAnnotations(box);
+        return;
+    }
+    const before = captureHistorySnapshot();
+    syncAnnotationBoxToPersistedAnnotations(box);
+    if (JSON.stringify(before) === JSON.stringify(captureHistorySnapshot())) return;
+    undoStack.push(before);
+    if (undoStack.length > MAX_HISTORY_DEPTH) undoStack.shift();
+    redoStack.length = 0;
+    updateHistoryButtons();
+}
+
 function restoreHistorySnapshot(snapshot) {
     applyingHistory = true;
     try {
@@ -26590,9 +26610,10 @@ function commitUserCreatedTextBoxAndKeepSelected(box) {
         return true;
     }
     if (box.classList.contains('is-editing') || box.dataset.pendingEdit === '1' || box.dataset.pendingResize === '1') {
-        pushHistorySnapshot('commit text annotation edit');
+        syncBoxAndPushHistoryIfChanged(box);
+    } else {
+        syncAnnotationBoxToPersistedAnnotations(box);
     }
-    syncAnnotationBoxToPersistedAnnotations(box);
     if (!box.isConnected) return true;
     selectedAnnBoxUid = box.dataset.uid || null;
     selectedAnnBoxIsEditing = false;
@@ -26620,9 +26641,10 @@ function deselectAnnBox(options = {}) {
             return;
         }
         if (cur.classList.contains('is-editing') || cur.dataset.pendingEdit === '1' || cur.dataset.pendingResize === '1') {
-            pushHistorySnapshot('commit annotation edit');
+            syncBoxAndPushHistoryIfChanged(cur);
+        } else {
+            syncAnnotationBoxToPersistedAnnotations(cur);
         }
-        syncAnnotationBoxToPersistedAnnotations(cur);
     }
     if (annMenu) annMenu.hidden = true;
     hideAnnotationFormatBar();
