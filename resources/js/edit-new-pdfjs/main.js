@@ -298,6 +298,27 @@ function setRemovedPdfLinkRectsForBox(box, rects) {
 
 // True when the content carries formatting the user authored on part of the
 // text (bold, italic, underline, colour, size or family on a span).
+/** True when at least one text run differs in style from the annotation's base. */
+function richTextRunsCarryAuthoredStyle(runs, annotation) {
+    const textRuns = (runs || []).filter((run) => run && typeof run === 'object' && run.type !== 'break' && String(run.text || '') !== '');
+    if (!textRuns.length) return false;
+    const base = {
+        weight: isBoldCssWeight(annotation?.fontWeight) ? '700' : '400',
+        style: String(annotation?.fontStyle || 'normal').toLowerCase() === 'italic' ? 'italic' : 'normal',
+        color: cssColorToHex(annotation?.textColor || annotation?.color || '#000000', '#000000'),
+        underline: boolish(annotation?.underline),
+        strikeout: boolish(annotation?.strikeout),
+    };
+    return textRuns.some((run) => (
+        (isBoldCssWeight(run.fontWeight) ? '700' : '400') !== base.weight
+        || (String(run.fontStyle || 'normal').toLowerCase() === 'italic' ? 'italic' : 'normal') !== base.style
+        || (run.color && cssColorToHex(run.color, base.color) !== base.color)
+        || boolish(run.underline) !== base.underline
+        || boolish(run.strikeout) !== base.strikeout
+        || Boolean(run.linkUrl)
+    ));
+}
+
 function textElementHasAuthoredInlineStyles(textElement) {
     if (!textElement) return false;
     return Array.from(textElement.querySelectorAll('[style]')).some((element) => {
@@ -26494,6 +26515,24 @@ function beginEditMode(box, options = {}) {
         let isSimplePromotedParagraph = isPromotedSourceBlock
             && !isPreformattedPromotedBlock
             && !prefersExactPromotedSourceLayout;
+        // AE4-5 / AE5-3: the first edit styled words on the exact source
+        // scaffold and saved them as runs with row breaks. The flowing
+        // one-span editor would rebuild the surface from plain text and lose
+        // both, so a block whose saved runs carry a style is edited as the
+        // rich overlay it already renders as (runs, breaks and styles kept).
+        if (isSimplePromotedParagraph
+            && box.dataset.promotedParagraphFlow !== '1'
+            && richTextRunsCarryAuthoredStyle(existing?.richTextRuns, existing)) {
+            const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1;
+            if (renderRichTextRunsIntoElement(tc, existing.richTextRuns, scale, existing.text || '')) {
+                isSimplePromotedParagraph = false;
+                clearSourceFidelitySpanState(box);
+                delete box.dataset.sourceSpanGlyphAligned;
+                delete box.dataset.promotedSourceBlockEditEntryLayout;
+                box.dataset.inlineStyleAuthored = '1';
+                rescaleRichTextInlineStylesForAnnotation(tc, existing, scale);
+            }
+        }
         const editingText = isSimplePromotedParagraph
             ? simplePromotedParagraphText(existing, originalText)
             : originalText;
