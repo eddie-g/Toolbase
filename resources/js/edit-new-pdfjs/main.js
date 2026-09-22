@@ -25640,16 +25640,73 @@ function applyInlineStyleToSelectedText(historyLabel, mutator, options = {}) {
         finishInlineTextStyleMutation(box, nextRange, options);
         return true;
     }
-    const wrapper = document.createElement(options.wrapperTag === 'a' ? 'a' : 'span');
-    mutator(wrapper, box);
-    const fragment = range.extractContents();
-    // A whole-paragraph selection can contain source spans with an explicit
-    // regular/normal style. A bold/italic wrapper cannot override those child
-    // declarations through inheritance, so normalize the selected fragment's
-    // requested property before applying the new uniform selection style.
-    if (format) stripFormatFromFragment(fragment, format);
-    wrapper.appendChild(fragment);
-    range.insertNode(wrapper);
+    const wrapperTag = options.wrapperTag === 'a' ? 'a' : 'span';
+    const wrapSubRange = (subRange) => {
+        const wrapper = document.createElement(wrapperTag);
+        mutator(wrapper, box);
+        const fragment = subRange.extractContents();
+        // A whole-paragraph selection can contain source spans with an explicit
+        // regular/normal style. A bold/italic wrapper cannot override those child
+        // declarations through inheritance, so normalize the selected fragment's
+        // requested property before applying the new uniform selection style.
+        if (format) stripFormatFromFragment(fragment, format);
+        wrapper.appendChild(fragment);
+        // A range that reaches a row boundary pulls whole source-run spans
+        // into the wrapper. Their own inline declarations (a run's
+        // text-decoration-line: none) would beat the wrapper's, and the
+        // serialiser reads each text node's nearest element, so repeat the
+        // requested properties on every element the wrapper now contains.
+        const requested = Array.from(wrapper.style).map((name) => [name, wrapper.style.getPropertyValue(name)]);
+        if (requested.length) {
+            wrapper.querySelectorAll('*').forEach((element) => {
+                if (!(element instanceof HTMLElement)) return;
+                requested.forEach(([name, value]) => element.style.setProperty(name, value));
+            });
+        }
+        subRange.insertNode(wrapper);
+        return wrapper;
+    };
+    // AE4-6 / AE3-8: a selection that crosses a source row boundary must not
+    // be wrapped in one span. extractContents would split both
+    // .enpv-edit-source-line elements and put the row break inside the
+    // wrapper; the serialiser then could not match the run stream to the
+    // text and the style never reached the download. Wrap each row's part
+    // in its own span inside its own line element instead.
+    const lineOf = (node) => (node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement)
+        ?.closest?.('.enpv-edit-source-line') || null;
+    const startLine = lineOf(range.startContainer);
+    const endLine = lineOf(range.endContainer);
+    if (startLine && endLine && startLine !== endLine && tc.contains(startLine) && tc.contains(endLine)) {
+        const lines = Array.from(tc.querySelectorAll('.enpv-edit-source-line'));
+        const startIndex = lines.indexOf(startLine);
+        const endIndex = lines.indexOf(endLine);
+        if (startIndex >= 0 && endIndex > startIndex) {
+            const wrappers = [];
+            const first = document.createRange();
+            first.setStart(range.startContainer, range.startOffset);
+            first.setEnd(startLine, startLine.childNodes.length);
+            const last = document.createRange();
+            last.setStart(endLine, 0);
+            last.setEnd(range.endContainer, range.endOffset);
+            const middle = lines.slice(startIndex + 1, endIndex).map((line) => {
+                const whole = document.createRange();
+                whole.selectNodeContents(line);
+                return whole;
+            });
+            // Wrap from the end so earlier offsets stay valid.
+            if (!last.collapsed) wrappers.unshift(wrapSubRange(last));
+            middle.reverse().forEach((whole) => { if (!whole.collapsed) wrappers.unshift(wrapSubRange(whole)); });
+            if (!first.collapsed) wrappers.unshift(wrapSubRange(first));
+            if (wrappers.length) {
+                const spanning = document.createRange();
+                spanning.setStartBefore(wrappers[0]);
+                spanning.setEndAfter(wrappers[wrappers.length - 1]);
+                finishInlineTextStyleMutation(box, spanning, options);
+                return true;
+            }
+        }
+    }
+    const wrapper = wrapSubRange(range);
     range.selectNodeContents(wrapper);
     finishInlineTextStyleMutation(box, range, options);
     return true;
