@@ -7695,6 +7695,7 @@ def build_dirty_promoted_style_mapped_span_layout(
     ann: Dict[str, Any],
     text: str,
     line_layout: list[Dict[str, Any]],
+    current_rect: Optional[fitz.Rect] = None,
 ) -> list[Dict[str, Any]]:
     if not bool(ann.get("promotedFromExtraction")):
         return []
@@ -7835,6 +7836,14 @@ def build_dirty_promoted_style_mapped_span_layout(
     # intended per-run formatting, so when it's present and multi-run we
     # honour it directly.
     rich_text_runs_per_line = _rich_text_runs_per_line_for_dirty_promoted(ann)
+    # AE2-1: an edited row used to be fitted into its ORIGINAL glyph bbox (a
+    # lengthened last row came out at 7.9pt), although the editor lets it run
+    # to the block's right edge. The column is what the row may use.
+    column_right = max(
+        [float(entry["rect"].x1) for entry in line_layout if isinstance(entry.get("rect"), fitz.Rect)]
+        + ([float(current_rect.x1)] if isinstance(current_rect, fitz.Rect) and not current_rect.is_empty else [])
+        or [0.0]
+    )
     mapped_layout: list[Dict[str, Any]] = []
     for index, line_entry in enumerate(line_layout):
         line_rect = line_entry.get("rect")
@@ -7957,6 +7966,14 @@ def build_dirty_promoted_style_mapped_span_layout(
             and _boolish(ann.get("preserveSourceTypography"))
         )
 
+        source_line_text = " ".join(
+            " ".join(_sanitize(span.get("text") or "").split()) for span in source_line_spans
+        ).strip()
+        mapped_line_text = " ".join(" ".join(_sanitize(run.get("text") or "").split()) for run in mapped_runs).strip()
+        line_text_edited = bool(source_line_spans) and mapped_line_text != source_line_text
+        if line_text_edited and column_right > float(line_rect.x1) + 0.5:
+            line_rect = fitz.Rect(line_rect.x0, line_rect.y0, column_right, line_rect.y1)
+
         spans: list[Dict[str, Any]] = []
         cursor_x = float(draw_x)
         source_position_index = 0
@@ -7972,6 +7989,14 @@ def build_dirty_promoted_style_mapped_span_layout(
                 source_span = source_line_spans[source_position_index]
                 source_position_index += 1
                 span_rect = fitz.Rect(source_span["rect"])
+                if (
+                    line_text_edited
+                    and " ".join(run_text.split()) != " ".join(_sanitize(source_span.get("text") or "").split())
+                    and source_position_index == len(source_line_spans)
+                    and column_right > float(span_rect.x1) + 0.5
+                ):
+                    # The edited run is the row's last: it may run to the column edge.
+                    span_rect = fitz.Rect(span_rect.x0, span_rect.y0, column_right, span_rect.y1)
                 span_baseline_x = source_span.get("baseline_x")
                 span_baseline_y = source_span.get("baseline_y")
                 if span_baseline_x is None:
@@ -10481,6 +10506,7 @@ def draw_text(
             render_ann,
             text,
             exact_source_line_layout,
+            current_rect=rect,
         ) if exact_source_line_layout else []
         exact_source_span_layout = normalize_exact_source_span_layout(
             render_ann,
