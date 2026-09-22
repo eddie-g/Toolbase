@@ -10762,7 +10762,19 @@ def draw_text(
             pdfjs_visual_lines
             and rich_layout_text_matches
             and not preserve_extracted_lines
-            and (_boolish(render_ann.get("userSizedTextBox")) or _pdfjs_overlay_was_resized(render_ann))
+            and (
+                _boolish(render_ann.get("userSizedTextBox"))
+                or _pdfjs_overlay_was_resized(render_ann)
+                # AE3-7: a style-promoted paragraph keeps the editor's rows too.
+                or (
+                    bool(render_ann.get("promotedFromExtraction"))
+                    and (
+                        _boolish(render_ann.get("styleDirty"))
+                        or _boolish(render_ann.get("promotedDirty"))
+                        or _boolish(render_ann.get("promotedReflowEnabled"))
+                    )
+                )
+            )
         ):
             forced_row_ops = _apply_pdfjs_visual_line_breaks(rich_layout_ops, pdfjs_visual_lines)
             if forced_row_ops:

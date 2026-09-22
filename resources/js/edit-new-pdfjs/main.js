@@ -6153,7 +6153,16 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         ? canonicalRichTextHtmlFromRuns(richTextRuns)
         : authoredRichTextHtml;
     const visualLines = tc ? readVisualLinesFromBox(tc) : [];
-    const shouldPersistVisualLines = box.dataset.promotedParagraphFlow !== '1'
+    // AE3-7: a style-promoted paragraph's rows are the browser's own
+    // wrap of the embedded face; the exporter, which lays it out with the
+    // bundled substitute, needs them to break the same rows.
+    const shouldPersistVisualLines = (
+        box.dataset.promotedParagraphFlow !== '1'
+        || box.dataset.styleDirty === '1'
+        || box.dataset.userSizedTextBox === '1'
+        || box.dataset.promotedReflowEnabled === '1'
+        || Boolean(promotedEditFlags?.promotedDirty)
+    )
         && box.dataset.sourceSpanEditActive !== '1'
         && visualLines.length > 1
         && normalizeVisualLineComparableText(visualLines.join(' ')) === normalizeVisualLineComparableText(textValue);
