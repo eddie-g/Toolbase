@@ -6087,12 +6087,8 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         && visualLines.length > 1
         && normalizeVisualLineComparableText(visualLines.join(' ')) === normalizeVisualLineComparableText(textValue);
     const sourceTextColor = existingAnnotation?.pdfjsSourceTextColor || box.dataset.sourceTextColor || '';
-    const preferSourceColor = sourceTextColor
-        && box.dataset.styleDirty !== '1'
-        && !boolish(existingAnnotation?.styleDirty)
-        && box.dataset.userForcedRichText !== '1'
-        && !boolish(existingAnnotation?.userForcedRichText)
-        && String(box.dataset.editorMode || existingAnnotation?.pdfjsEditorMode || '') !== 'rich';
+    const textColorExplicit = annotationTextColorIsExplicit(existingAnnotation, box);
+    const preferSourceColor = sourceTextColor && !textColorExplicit;
     const existingSourceMask = annotationSourceMaskPdfBox(existingAnnotation);
     const sourceGeometryMoved = !pdfRectsNearlyEqual(pdfRect, baseRect, 3.0)
         && !(existingSourceMask && pdfRectsNearlyEqual(pdfRect, existingSourceMask, 3.0));
@@ -6239,6 +6235,7 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         opacity,
         textColor,
         color: textColor,
+        textColorExplicit: textColorExplicit || undefined,
         backgroundColor,
         underline,
         strikeout,
@@ -7315,6 +7312,23 @@ function shouldDropInheritedMovedSourceBackground(annotation = null, box = null)
     return true;
 }
 
+/*
+ * AE3-2 / AE4-4: the document's own text colour (sampled into
+ * pdfjsSourceTextColor / dataset.sourceTextColor) used to be dropped as soon as
+ * a row was styleDirty for any reason — a family or size change turned orange
+ * text black. Only a colour the user chose (textColorExplicit, set by the
+ * colour controls) may replace the source colour. Older saves have no flag:
+ * a dirty annotation carrying a non-black colour is taken as chosen.
+ */
+function annotationTextColorIsExplicit(annotation, box = null) {
+    if (box?.dataset?.textColorExplicit === '1') return true;
+    if (!annotation) return false;
+    if (boolish(annotation.textColorExplicit)) return true;
+    const saved = cssColorToHex(annotation.textColor || annotation.color || '', '');
+    return (boolish(annotation.styleDirty) || boolish(annotation.userForcedRichText))
+        && saved !== '' && saved !== '#000000';
+}
+
 function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = null) {
     if (!box) return;
     const fontSizePts = Number(annotation?.fontSize ?? annotation?.requestedFontSize ?? box.dataset.fontSizePts);
@@ -7379,11 +7393,10 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
         (preferDocumentTypography ? documentFontStyle : null)
         || annotation?.fontStyle || sourceStyle?.fontStyle || 'normal',
     ));
-    const preferSourceColor = !boolish(annotation?.styleDirty)
-        && !boolish(annotation?.userForcedRichText)
-        && String(annotation?.pdfjsEditorMode || '') !== 'rich';
+    const sourceColor = annotation?.pdfjsSourceTextColor || box.dataset.sourceTextColor || '';
+    const preferSourceColor = sourceColor && !annotationTextColorIsExplicit(annotation, box);
     const color = cssColorToHex(
-        (preferSourceColor && annotation?.pdfjsSourceTextColor)
+        (preferSourceColor && sourceColor)
         || annotation?.textColor
         || annotation?.color
         || annotation?.pdfjsSourceTextColor
@@ -18328,7 +18341,7 @@ function createAnnotationBoxFromSpan(spanEl) {
     if (matchedAnnotation?.fontFamily) box.style.setProperty('--enpv-font-family', matchedAnnotation.fontFamily);
     if (Number(matchedAnnotation?.fontSize) > 0) box.dataset.fontSizePts = String(Number(matchedAnnotation.fontSize));
     const matchedTextColor = cssColorToHex(
-        (!boolish(matchedAnnotation?.styleDirty) && (matchedAnnotation?.pdfjsSourceTextColor || box.dataset.sourceTextColor))
+        (!annotationTextColorIsExplicit(matchedAnnotation, box) && (matchedAnnotation?.pdfjsSourceTextColor || box.dataset.sourceTextColor))
         || matchedAnnotation?.textColor
         || matchedAnnotation?.color
         || '#000000',
@@ -24660,6 +24673,7 @@ function applyFontSizeToSelectedBox(fontSizePts) {
 function applyTextColorToWholeAnnotationBox(box, color) {
     if (!box) return;
     const normalized = cssColorToHex(color, '#000000');
+    box.dataset.textColorExplicit = '1';
     box.style.setProperty('--enpv-text-color', normalized);
     const tc = selectedBoxTextElement(box);
     if (!tc) return;
