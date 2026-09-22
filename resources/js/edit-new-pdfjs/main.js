@@ -22367,6 +22367,17 @@ function fitSimplePromotedParagraphWrap(box, annotation) {
     if (!box || box.dataset.promotedParagraphFlow !== '1') return 0;
     const content = selectedBoxTextElement(box);
     if (!content) return 0;
+    // AE5-1: this tracking only compensates browser-vs-PDF metric drift at
+    // the paragraph's captured width. A narrowed or re-flowed box cannot
+    // reproduce the captured rows, and forcing them drove the letter
+    // spacing to the -8% clamp (a visibly condensed paragraph the download
+    // never shows). Such a box wraps at normal tracking.
+    const clearTracking = () => {
+        content.style.letterSpacing = '';
+        delete box.dataset.promotedParagraphLetterSpacingPx;
+        return 0;
+    };
+    if (box.dataset.userSizedTextBox === '1' || box.dataset.promotedReflowEnabled === '1') return clearTracking();
     const sourceLines = simplePromotedParagraphSourceLineTexts(annotation);
     if (sourceLines.length < 2) return 0;
     const sourceText = logicalParagraphFlowText(sourceLines.join(' '));
@@ -22401,12 +22412,11 @@ function fitSimplePromotedParagraphWrap(box, annotation) {
         constraints += 1;
     }
     if (!constraints) return 0;
-    let letterSpacingPx;
-    if (lowerBound <= upperBound) {
-        letterSpacingPx = Math.min(upperBound, Math.max(lowerBound, 0));
-    } else {
-        letterSpacingPx = upperBound;
-    }
+    // Inconsistent constraints mean the captured breaks cannot be
+    // reproduced at this width; leave the tracking alone rather than
+    // squeezing to the clamp.
+    if (lowerBound > upperBound) return clearTracking();
+    let letterSpacingPx = Math.min(upperBound, Math.max(lowerBound, 0));
     const fontSizePx = Number.parseFloat(style.fontSize || '') || 12;
     letterSpacingPx = Math.max(-fontSizePx * 0.08, Math.min(fontSizePx * 0.04, letterSpacingPx));
     if (!Number.isFinite(letterSpacingPx)) return 0;
