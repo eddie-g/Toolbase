@@ -1719,6 +1719,55 @@ def pdfjs_source_text_needs_redaction(ann: Dict[str, Any]) -> bool:
     return pdfjs_source_edit_requires_redaction(ann)
 
 
+def _bridge_redacted_word_gaps(
+    target_rects: list[fitz.Rect],
+    page_words: list,
+) -> list[fitz.Rect]:
+    """AE2-5 / AE3-9: page.get_text("words") never covers the spaces between
+    words, and MuPDF only removes glyphs whose box intersects a redaction
+    rect, so every edited or deleted row left its original " " glyphs in the
+    text layer (copy and search saw ghost whitespace). Return the gaps between
+    consecutive target words on one row, when no other word sits in them."""
+    gaps: list[fitz.Rect] = []
+    rows: list[list[fitz.Rect]] = []
+    for rect in sorted(target_rects, key=lambda r: (r.y0, r.x0)):
+        for row in rows:
+            anchor = row[0]
+            overlap = min(anchor.y1, rect.y1) - max(anchor.y0, rect.y0)
+            if overlap >= 0.6 * min(anchor.height, rect.height):
+                row.append(rect)
+                break
+        else:
+            rows.append([rect])
+    others = []
+    for w in page_words:
+        try:
+            others.append(fitz.Rect(float(w[0]), float(w[1]), float(w[2]), float(w[3])))
+        except Exception:
+            continue
+    for row in rows:
+        row.sort(key=lambda r: r.x0)
+        for left, right in zip(row, row[1:]):
+            gap = right.x0 - left.x1
+            height = max(left.height, right.height)
+            if gap <= 0.2 or gap > 1.5 * height:
+                continue
+            gap_rect = fitz.Rect(left.x1, max(left.y0, right.y0), right.x0, min(left.y1, right.y1))
+            if gap_rect.is_empty:
+                continue
+            # Another word inside the gap means the two targets are not
+            # neighbours on this row (a collateral word between them).
+            if any(
+                not (other & gap_rect).is_empty
+                and (other & gap_rect).width > 0.5
+                and not other.intersects(left) and not other.intersects(right)
+                for other in others
+            ):
+                continue
+            gaps.append(gap_rect)
+    return gaps
+
+
 def redact_pdfjs_source_text(page: fitz.Page, ann: Dict[str, Any], source_rect: fitz.Rect, fill: tuple[float, float, float]) -> bool:
     if source_rect is None or source_rect.is_empty:
         return False
@@ -1752,6 +1801,7 @@ def redact_pdfjs_source_text(page: fitz.Page, ann: Dict[str, Any], source_rect: 
                 matched_any = True
         if not matched_any:
             tightened_rects.append(rect)
+    tightened_rects.extend(_bridge_redacted_word_gaps(tightened_rects, page_words))
     added = False
     for rect in tightened_rects:
         rect = fitz.Rect(rect) & page_coordinate_rect(page)
@@ -2729,6 +2779,11 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
     # boundary, so a whole-rect fallback remains scoped to this edited block.
     if not target_entries:
         target_entries = [(fitz.Rect(source_rect), None)]
+    else:
+        target_entries.extend(
+            (gap_rect, None)
+            for gap_rect in _bridge_redacted_word_gaps([entry[0] for entry in target_entries], page_words)
+        )
 
     # A large heading can fully engulf a small target's default glyph box,
     # leaving no default-box strip to redact. In that one geometry, map the
