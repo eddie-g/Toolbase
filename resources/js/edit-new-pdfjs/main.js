@@ -24292,22 +24292,6 @@ function hideAnnotationFormatBar() {
     document.body.classList.remove('enpv-text-panel-open');
 }
 
-/*
- * AE1-2: the Text Options drawer overlays the right 400px of the viewer,
- * and the centred page had nothing to scroll to, so right-column boxes
- * (their resize handles, their last words) were unreachable at 190%. The
- * body class pads the scroll container so the page can be scrolled out
- * from under the drawer; the box that opened it is scrolled clear at once.
- */
-function revealBoxBesideTextPanel(box) {
-    const container = document.getElementById('viewerContainer');
-    if (!container || !box || !annFormatBar) return;
-    const panelRect = annFormatBar.getBoundingClientRect();
-    const boxRect = box.getBoundingClientRect();
-    if (!(panelRect.width > 0) || boxRect.right + 24 <= panelRect.left) return;
-    const overlap = boxRect.right + 24 - panelRect.left;
-    container.scrollLeft = Math.min(container.scrollWidth - container.clientWidth, container.scrollLeft + overlap);
-}
 
 function positionAnnotationFormatBarUnderMenu(box = null) {
     if (!annFormatBar || !annFormatBar.classList.contains('is-visible')) return;
@@ -24536,10 +24520,9 @@ function updateAnnotationFormatBarForBox(box) {
     closeNotesPanel();
     annFormatBar.classList.add('is-visible');
     document.body.classList.add('enpv-text-panel-open');
-    requestAnimationFrame(() => {
-        positionAnnotationFormatBarUnderMenu(box);
-        revealBoxBesideTextPanel(box);
-    });
+    // NK_46: the page must not move when the drawer opens; the viewer can
+    // be scrolled under the drawer by the user (AE1-2).
+    requestAnimationFrame(() => positionAnnotationFormatBarUnderMenu(box));
 }
 
 // NK_7: strip one named inline format (and only that one) from every run in the

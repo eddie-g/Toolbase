@@ -3868,11 +3868,17 @@ body.enpv-body .enpv-page-manager-modal {
     pointer-events: none;
     transition: opacity 80ms ease-out;
 }
-/* AE1-2: with the Text Options drawer open the page must be able to scroll
-   out from under it. Padding on the overflow:auto container extends its
-   scroll width without rescaling or re-rendering the PDF.js canvas. */
-body.enpv-body.enpv-text-panel-open #viewerContainer {
+/* AE1-2 / NK_46: with the Text Options drawer open the page must be able to
+   scroll out from under it. The padding sits on the pages host, not on the
+   scroll container: its content box (and so the centred page's position)
+   is unchanged while the container's scroll width grows by the drawer's
+   width. Nothing is rescaled or re-rendered. */
+body.enpv-body.enpv-text-panel-open #viewerContainer > .pdfViewer {
+    /* A block's auto width would absorb the padding; pin the content box
+       to the container so the page stays put and the box overflows. */
+    width: 100%;
     padding-right: var(--enpv-side-panel-width);
+    box-sizing: content-box;
 }
 body.enpv-body.enpv-viewer-ready #viewerContainer {
     opacity: 1;
