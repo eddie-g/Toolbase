@@ -3363,7 +3363,20 @@ def resolve_pdfjs_visible_overlay_typography(page: fitz.Page, ann: Dict[str, Any
         # baseline discovered above, but draw with the bundled Unicode-safe
         # annotation font.
         resolved["pdfjsAvoidEmbeddedSourceFont"] = True
-        resolved["fontFamily"] = normalize_font_family(ann.get("fontFamily") or "Helvetica") or "Helvetica"
+        # AE1-3 / NK_28: a source row's own family is "sans-serif" (the text
+        # layer's CSS), which normalised to Helvetica and drew every moved
+        # Lato row in Arimo, whose wider glyphs were then fitted row by row
+        # at 11.35–12pt. The bundled sibling of the source face (Lato) keeps
+        # the metrics, so the rows keep their size.
+        requested_family = str(ann.get("fontFamily") or "").strip()
+        generic_family = requested_family.lower() in {"", "sans-serif", "serif", "monospace", "cursive", "fantasy", "system-ui"}
+        substitute = resolve_substitute_font_entry(source_font, ann) if generic_family and source_font else None
+        resolved["fontFamily"] = (
+            (substitute.get("family") if substitute and substitute.get("family") else None)
+            or (source_family if generic_family and source_family else None)
+            or normalize_font_family(requested_family or "Helvetica")
+            or "Helvetica"
+        )
     try:
         source_size = float(best_span.get("size") or 0.0)
     except Exception:
@@ -8542,6 +8555,20 @@ def resolve_text_fontfile(ann: Dict[str, Any]) -> Optional[str]:
     if embedded_entry:
         return embedded_entry.get("fontfile")
     family = normalize_font_family(ann.get("fontFamily"))
+    # AE1-3 / NK_28: a span whose family is only the text layer's loaded name
+    # ("g_d0_f4") or a generic normalises to Helvetica and was drawn in Arimo;
+    # its PDF face name says which bundled family keeps the metrics (Lato).
+    requested_lower = str(ann.get("fontFamily") or "").strip().lower()
+    if family == "Helvetica" and requested_lower not in {"helvetica", "arial", "arimo"}:
+        source_name = str(ann.get("fontSourceName") or ann.get("pdfjsSourceFontFamily") or "").strip()
+        # The configured metric substitute (HelveticaNeue → Inter) first, then
+        # the bundled family of the same name (Lato).
+        substitute = resolve_substitute_font_entry(source_name, ann) if source_name else None
+        if substitute and substitute.get("fontfile"):
+            return substitute.get("fontfile")
+        source_family = normalize_font_family(source_name)
+        if source_family and source_family != "Helvetica" and source_family in FONT_FILE_VARIANTS:
+            family = source_family
     variants = FONT_FILE_VARIANTS.get(family, FONT_FILE_VARIANTS["Helvetica"])
     is_bold = is_bold_weight(resolve_annotation_font_weight(ann))
     is_italic = is_italic_style(resolve_annotation_font_style(ann))
@@ -9201,6 +9228,13 @@ def apply_rich_styles_to_pdfjs_source_runs(
     return styled_runs or runs
 
 
+def _source_run_family(requested: Any, pdf_font_name: Any) -> str:
+    requested_family = str(requested or "").strip()
+    if requested_family.lower() not in {"", "sans-serif", "serif", "monospace", "cursive", "fantasy", "system-ui"}:
+        return requested_family
+    return normalize_font_family(str(pdf_font_name or "")) or requested_family or "Helvetica"
+
+
 def normalize_pdfjs_source_span_run_layout(
     ann: Dict[str, Any],
     text: str,
@@ -9247,7 +9281,9 @@ def normalize_pdfjs_source_span_run_layout(
             "right": right,
             "top": top,
             "bottom": bottom,
-            "font_family": str(item.get("fontFamily") or ann.get("fontFamily") or "Helvetica"),
+            # AE1-3 / NK_28: the run's family is the text layer's generic
+            # "sans-serif"; the bundled sibling of its PDF face keeps the metrics.
+            "font_family": _source_run_family(item.get("fontFamily") or ann.get("fontFamily"), item.get("pdfjsFontName")),
             "font_source_name": str(item.get("pdfjsFontName") or item.get("fontFamily") or ann.get("fontSourceName") or ann.get("fontFamily") or "Helvetica"),
             "font_size_px": font_size_px,
             "font_weight": str(item.get("fontWeight") or ann.get("fontWeight") or "400"),
