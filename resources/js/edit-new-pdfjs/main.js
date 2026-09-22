@@ -5260,6 +5260,36 @@ function isRedundantPdfjsSourceOverlay(annotation) {
     return pdfRectsNearlyEqual(current, baseline, 3.0);
 }
 
+/*
+ * AE1-6: a multi-line promoted paragraph stays in the persisted map even when
+ * it is back at its origin (isRedundantPdfjsSourceOverlay keeps it for undo),
+ * so a paragraph dragged away and back was still exported: the exporter
+ * redacted the embedded glyphs and redrew them in the bundled face. This is
+ * the same text + geometry test, applied only to what is sent for a download.
+ */
+function isUnchangedPromotedParagraph(annotation) {
+    if (!annotation || String(annotation.type || '').toLowerCase() !== 'text') return false;
+    if (!(isPromotedExtractionAnnotation(annotation) && promotedSourceBlockHasMultipleLines(annotation))) return false;
+    if (!boolish(annotation.savedTextOverlay) || boolish(annotation.pdfjsDeleted)) return false;
+    if (boolish(annotation.styleDirty) || boolish(annotation.userForcedRichText) || boolish(annotation.promotedDirty)) return false;
+    if (boolish(annotation.userSizedTextBox) || boolish(annotation.promotedReflowEnabled)) return false;
+    if (Array.isArray(annotation.richTextRuns) && annotation.richTextRuns.length) return false;
+    if (String(annotation.richTextHtml || '').trim()) return false;
+    const sameText = normalizeComparableText(annotation.text) === normalizeComparableText(
+        annotation.pdfjsSourceText || annotation.originalText || '',
+    );
+    if (!sameText) return false;
+    const baseline = annotationBaselinePdfBox(annotation);
+    const current = annotationCurrentPdfBox(annotation);
+    if (!baseline || !current) return false;
+    // The moved overlay re-measures the block's height from its rows, so
+    // only the origin has to match exactly; the size may differ by a row gap.
+    return Math.abs(current.x - baseline.x) <= 0.5
+        && Math.abs(current.y - baseline.y) <= 0.5
+        && Math.abs(current.w - baseline.w) <= Math.max(3, baseline.w * 0.05)
+        && Math.abs(current.h - baseline.h) <= Math.max(3, baseline.h * 0.05);
+}
+
 function pdfjsSourceBoxesMatch(left, right) {
     const leftBox = annotationBaselinePdfBox(left);
     const rightBox = annotationBaselinePdfBox(right);
@@ -28900,6 +28930,7 @@ async function buildPdfjsDownloadPayload() {
     syncRenderedPersistedOverlayBoxesToPersistedAnnotations();
     const sessionAnnotationsPayload = Array.from(persistedAnnotationsById.values())
         .filter((annotation) => !isRedundantPdfjsSourceOverlay(annotation))
+        .filter((annotation) => !isUnchangedPromotedParagraph(annotation))
         .filter((annotation) => boolish(annotation.pdfjsDeleted) || !isSuppressedStalePdfjsOverlay(annotation))
         .map((annotation) => stripTransientAnnotationFields(annotation))
         .filter((annotation) => shouldIncludeInPdfjsSessionPayload(annotation))
