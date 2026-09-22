@@ -24905,6 +24905,19 @@ function applyFontFamilyToSelectedBox(fontFamily) {
             delete box.dataset.fontSourceName;
             delete box.dataset.forceEmbeddedFont;
         }
+        // AE3-5: preserveLineHeight skips ensureNaturalTextLineHeight, and the
+        // box's variable was the source size (a 1.0 pitch), so the re-set
+        // paragraph collapsed to 12pt rows and shrank. The captured row pitch
+        // (16.8pt) is what the family swap must keep.
+        if (!applySourceRowPitchForUnchangedTypography(box)) {
+            const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1;
+            const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+            const savedPitch = Number(existing?.lineHeight);
+            const fontPts = Number.parseFloat(box.dataset.fontSizePts || '') || Number(existing?.fontSize) || 0;
+            if (savedPitch > 0 && fontPts > 0 && savedPitch >= fontPts * 1.05) {
+                box.style.setProperty('--enpv-line-height', `${savedPitch * scale}px`);
+            }
+        }
     }, { reason: 'font-family', stripInlineProps: ['font-family'], ...reflowOptions });
 }
 
