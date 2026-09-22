@@ -846,9 +846,29 @@ def clamp_page_index(value: Any, page_count: int) -> Optional[int]:
     return idx
 
 
+def source_color_to_hex(value: Any, fallback: str = "") -> str:
+    """The extraction stores span colours as PyMuPDF integers (16755002, or
+    the same digits as a string). Turn those into "#rrggbb"; pass hex through.
+    AE1-4: a moved paragraph's orange run came out black because the integer
+    reached hex_to_rgb as an 8-digit string."""
+    if isinstance(value, bool):
+        return fallback
+    if isinstance(value, int):
+        return f"#{(value >> 16) & 0xFF:02x}{(value >> 8) & 0xFF:02x}{value & 0xFF:02x}"
+    text = str(value or "").strip()
+    if text.isdigit() and not (len(text) == 6 and text.startswith("#")):
+        try:
+            return source_color_to_hex(int(text), fallback)
+        except ValueError:
+            return fallback
+    return text or fallback
+
+
 def hex_to_rgb(value: Any) -> Tuple[float, float, float]:
     if not value:
         return (0.0, 0.0, 0.0)
+    if isinstance(value, int) or str(value).strip().isdigit():
+        value = source_color_to_hex(value)
     text = str(value).strip().lstrip("#")
     if len(text) != 6:
         return (0.0, 0.0, 0.0)
@@ -6194,7 +6214,7 @@ def normalize_exact_source_line_layout(
                 "font_size": float(span.get("fontSize") or span.get("font_size") or font_size or 0),
                 "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
                 "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
-                "color": str(
+                "color": source_color_to_hex(
                     (span.get("hex_color") if span.get("hex_color") is not None else span.get("color"))
                     or ann.get("textColor")
                     or "#000000"
@@ -7690,7 +7710,7 @@ def build_dirty_promoted_style_mapped_span_layout(
             "font_size": float(span.get("fontSize") or span.get("font_size") or ann.get("fontSize") or 12),
             "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
             "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
-            "color": str(span.get("hex_color") or span.get("color") or ann.get("textColor") or "#000000"),
+            "color": source_color_to_hex(span.get("hex_color") or span.get("color") or ann.get("textColor") or "#000000"),
             "underline": bool(span.get("underline")),
             "strikeout": bool(span.get("strikeout")),
             "span_rotation": infer_exact_source_rotation(span.get("rotation"), span.get("direction"), rect),
@@ -9111,6 +9131,10 @@ def normalize_pdfjs_source_span_run_layout(
             "font_size_px": font_size_px,
             "font_weight": str(item.get("fontWeight") or ann.get("fontWeight") or "400"),
             "font_style": str(item.get("fontStyle") or ann.get("fontStyle") or "normal"),
+            # AE1-4: the captured run carries the PDF's own colour of that run
+            # (an orange name inside a black paragraph); without it every run
+            # took the annotation's colour when the block was moved.
+            "color": source_color_to_hex(item.get("textColor") or item.get("color") or "", "") or None,
             "underline": _boolish(item.get("underline")),
             "strikeout": _boolish(item.get("strikeout")),
             "canonical_space_before": _boolish(item.get("canonicalSpaceBefore")),
