@@ -3858,7 +3858,13 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
     font_weight = resolve_annotation_font_weight(ann)
     font_style = resolve_annotation_font_style(ann)
     text_align = str(ann.get("textAlign") or "left").strip().lower()
-    text_decoration = "underline" if resolve_annotation_underline(ann) else "none"
+    decoration_tokens = [
+        token for token, active in (
+            ("underline", resolve_annotation_underline(ann)),
+            ("line-through", resolve_annotation_strikeout(ann)),
+        ) if active
+    ]
+    text_decoration = " ".join(decoration_tokens) or "none"
     font_family = css_font_family(ann.get("fontFamily"))
     text_color = str(ann.get("textColor") or "#000000").strip() or "#000000"
     # The htmlbox path renders text only — the background rectangle is drawn
@@ -4278,6 +4284,10 @@ def _apply_inline_style_state(state: Dict[str, Any], style_value: str) -> Dict[s
                 next_state["underline"] = True
             elif "none" in compact_value:
                 next_state["underline"] = False
+            if "line-through" in compact_value:
+                next_state["strikeout"] = True
+            elif "none" in compact_value:
+                next_state["strikeout"] = False
         elif prop == "color":
             normalized_color = normalize_css_color(value)
             if normalized_color:
@@ -4449,6 +4459,8 @@ class _RichTextLayoutParser(HTMLParser):
             next_state["font_weight"] = "700"
         elif lower_tag == "u":
             next_state["underline"] = True
+        elif lower_tag in {"s", "strike", "del"}:
+            next_state["strikeout"] = True
 
         attrs_map = {str(name or "").strip().lower(): str(value or "") for name, value in attrs}
         if lower_tag == "a":
@@ -4494,6 +4506,7 @@ def _rich_text_base_style(ann: Dict[str, Any]) -> Dict[str, Any]:
         "font_style": resolve_annotation_font_style(ann),
         "color": normalize_css_color(ann.get("textColor")) or str(ann.get("textColor") or "#000000"),
         "underline": bool(resolve_annotation_underline(ann)),
+        "strikeout": bool(resolve_annotation_strikeout(ann)),
         "link_url": None,
         "span_rotation": 0.0,
         "documentId": ann.get("documentId"),
@@ -4566,6 +4579,8 @@ def _structured_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]
             style["color"] = color
         if "underline" in raw_run:
             style["underline"] = _boolish(raw_run.get("underline"))
+        if "strikeout" in raw_run:
+            style["strikeout"] = _boolish(raw_run.get("strikeout"))
         style["link_url"] = normalize_hyperlink_destination(
             raw_run.get("linkUrl") or raw_run.get("link_url") or ""
         ) or None
@@ -4889,6 +4904,7 @@ def wrap_rich_text_layout_ops(
             "font_style": entry.get("font_style"),
             "color": entry.get("color"),
             "underline": bool(entry.get("underline")),
+            "strikeout": bool(entry.get("strikeout")),
             "underline_is_current_style": True,
             "link_url": normalize_hyperlink_destination(entry.get("link_url") or "") or None,
             "span_rotation": entry.get("span_rotation") or 0.0,
@@ -5066,6 +5082,7 @@ class _RichTextUniformStyleInspector(HTMLParser):
             "font_style": "normal",
             "font_weight": "400",
             "underline": False,
+            "strikeout": False,
         }]
 
     def _append_newline(self) -> None:
@@ -5085,6 +5102,8 @@ class _RichTextUniformStyleInspector(HTMLParser):
             next_state["font_weight"] = "700"
         elif lower_tag == "u":
             next_state["underline"] = True
+        elif lower_tag in {"s", "strike", "del"}:
+            next_state["strikeout"] = True
 
         attrs_map = {str(name or "").strip().lower(): str(value or "") for name, value in attrs}
         next_state = _apply_inline_style_state(next_state, attrs_map.get("style", ""))
@@ -5146,6 +5165,7 @@ def resolve_uniform_rich_text_styles(ann: Dict[str, Any], text: str) -> Dict[str
     )
     all_bold = all(is_bold_weight(segment.get("font_weight")) for segment in segments)
     all_underline = all(bool(segment.get("underline")) for segment in segments)
+    all_strikeout = all(bool(segment.get("strikeout")) for segment in segments)
 
     result: Dict[str, Any] = {}
     if all_italic:
@@ -5154,6 +5174,8 @@ def resolve_uniform_rich_text_styles(ann: Dict[str, Any], text: str) -> Dict[str
         result["font_weight"] = "700"
     if all_underline:
         result["underline"] = True
+    if all_strikeout:
+        result["strikeout"] = True
     return result
 
 
@@ -5241,6 +5263,41 @@ def resolve_annotation_font_weight(ann: Dict[str, Any]) -> str:
             return "700"
 
     return font_weight
+
+
+# AE4-3: strikeout was applied in the editor and saved on the annotation and
+# its runs, but this writer only ever read `underline`; the download drew the
+# text without the line. The ratio matches new_annotation_writer (NK_7).
+STRIKEOUT_BASELINE_RATIO = 0.28
+
+
+def resolve_annotation_strikeout(ann: Dict[str, Any]) -> bool:
+    if bool(ann.get("strikeout")):
+        return True
+
+    text = str(ann.get("text") or "")
+    uniform_styles = resolve_uniform_rich_text_styles(ann, text)
+    if bool(uniform_styles.get("strikeout")):
+        return True
+
+    rich_html = str(ann.get("richTextHtml") or "").strip().lower()
+    if rich_html and has_single_run_rich_text(ann, text):
+        return "line-through" in rich_html.replace(" ", "")
+
+    return False
+
+
+def draw_strikeout_line(page, draw_x, baseline_y, width, size, color, opacity, morph) -> None:
+    strike_y = baseline_y - max(0.5, size * STRIKEOUT_BASELINE_RATIO)
+    draw_rotated_line(
+        page,
+        fitz.Point(draw_x, strike_y),
+        fitz.Point(draw_x + width, strike_y),
+        color=color,
+        width=max(0.5, size * 0.06),
+        opacity=opacity,
+        morph=morph,
+    )
 
 
 def resolve_annotation_underline(ann: Dict[str, Any]) -> bool:
@@ -6096,6 +6153,7 @@ def normalize_exact_source_line_layout(
     annotation_font_weight = resolve_annotation_font_weight(ann)
     annotation_font_style = resolve_annotation_font_style(ann)
     annotation_underline = resolve_annotation_underline(ann)
+    annotation_strikeout = resolve_annotation_strikeout(ann)
     dominant_source_color = None
     dominant_source_font_family = None
     dominant_source_font_weight = None
@@ -6142,6 +6200,7 @@ def normalize_exact_source_line_layout(
                     or "#000000"
                 ),
                 "underline": bool(span.get("underline")),
+                "strikeout": bool(span.get("strikeout")),
                 "rotation": span.get("rotation"),
                 "direction": span.get("direction"),
             })
@@ -6397,6 +6456,7 @@ def normalize_exact_source_line_layout(
                 "font_style": annotation_font_style if force_annotation_font_style else (dominant_span.get("font_style") or dominant_span.get("fontStyle") or annotation_font_style),
                 "color": annotation_text_color if force_annotation_text_color else (dominant_span.get("color") or annotation_text_color),
                 "underline": annotation_underline if force_annotation_underline else any(bool(span.get("underline")) for span in line_spans),
+                "strikeout": annotation_strikeout or any(bool(span.get("strikeout")) for span in line_spans),
             }
         if translate_x != 0.0 or translate_y != 0.0:
             rect = fitz.Rect(
@@ -6423,6 +6483,7 @@ def normalize_exact_source_line_layout(
             "font_style": line_style.get("font_style") or annotation_font_style,
             "color": line_style.get("color") or annotation_text_color,
             "underline": bool(line_style.get("underline")) if line_style else annotation_underline,
+            "strikeout": bool(line_style.get("strikeout")) if line_style else annotation_strikeout,
         })
 
     return layout
@@ -6868,6 +6929,7 @@ def normalize_exact_source_span_layout(
             "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
             "color": _normalize_color(span.get("hex_color") if span.get("hex_color") is not None else span.get("color"), str(ann.get("textColor") or "#000000")),
             "underline": bool(span.get("underline")),
+            "strikeout": bool(span.get("strikeout")),
             "span_rotation": infer_exact_source_rotation(span.get("rotation"), span.get("direction"), rect),
         })
 
@@ -7024,6 +7086,7 @@ def _style_run_signature(style: Dict[str, Any]) -> tuple[Any, ...]:
         str(style.get("font_style") or ""),
         str(style.get("color") or ""),
         bool(style.get("underline")),
+        bool(style.get("strikeout")),
         str(style.get("link_url") or ""),
         normalize_quarter_turn_degrees(style.get("span_rotation")),
     )
@@ -7041,6 +7104,7 @@ def _resolve_style_run_font(
         "fontStyle": style.get("font_style"),
         "textColor": style.get("color"),
         "underline": style.get("underline"),
+        "strikeout": style.get("strikeout"),
         "documentId": style.get("documentId"),
         "__documentId": style.get("__documentId"),
         "promotedFromExtraction": style.get("promotedFromExtraction"),
@@ -7196,6 +7260,7 @@ def _map_source_styles_onto_saved_text(
             "font_style": span.get("font_style") or base_style.get("font_style"),
             "color": span.get("color") or base_style.get("color"),
             "underline": bool(span.get("underline")) if span.get("underline") is not None else bool(base_style.get("underline")),
+            "strikeout": bool(span.get("strikeout")) if span.get("strikeout") is not None else bool(base_style.get("strikeout")),
             "span_rotation": span.get("span_rotation") or base_style.get("span_rotation") or 0.0,
             "documentId": base_style.get("documentId"),
             "__documentId": base_style.get("__documentId"),
@@ -7331,7 +7396,7 @@ def _rich_text_runs_per_line_for_dirty_promoted(
         for key in (
             "font_family", "font_source_name", "font_size", "line_height",
             "font_family_explicit", "font_size_explicit", "line_height_explicit",
-            "font_weight", "font_style", "underline", "color",
+            "font_weight", "font_style", "underline", "strikeout", "color",
             "link_url",
         ):
             value = op.get(key)
@@ -7627,6 +7692,7 @@ def build_dirty_promoted_style_mapped_span_layout(
             "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
             "color": str(span.get("hex_color") or span.get("color") or ann.get("textColor") or "#000000"),
             "underline": bool(span.get("underline")),
+            "strikeout": bool(span.get("strikeout")),
             "span_rotation": infer_exact_source_rotation(span.get("rotation"), span.get("direction"), rect),
         })
 
@@ -7687,6 +7753,7 @@ def build_dirty_promoted_style_mapped_span_layout(
             "font_style": line_entry.get("font_style") or ann.get("fontStyle") or "normal",
             "color": line_entry.get("color") or ann.get("textColor") or "#000000",
             "underline": bool(line_entry.get("underline")) if line_entry.get("underline") is not None else bool(ann.get("underline")),
+            "strikeout": bool(line_entry.get("strikeout")) if line_entry.get("strikeout") is not None else bool(ann.get("strikeout")),
             "span_rotation": line_entry.get("rotation") or 0.0,
             "documentId": ann.get("documentId"),
             "__documentId": ann.get("__documentId"),
@@ -7913,6 +7980,8 @@ def draw_text_using_exact_source_lines(
         line_ann["fontStyle"] = line_entry.get("font_style") or ann.get("fontStyle")
         if line_entry.get("underline") is not None:
             line_ann["underline"] = bool(line_entry.get("underline"))
+        if line_entry.get("strikeout") is not None:
+            line_ann["strikeout"] = bool(line_entry.get("strikeout"))
 
         line_font_size = float(line_entry.get("font_size") or font_size or 0)
         if line_font_size <= 0:
@@ -8016,6 +8085,8 @@ def draw_text_using_exact_source_lines(
                 opacity=opacity,
                 morph=line_morph,
             )
+        if resolve_annotation_strikeout(line_ann):
+            draw_strikeout_line(page, draw_x, baseline_y, text_width * scale_x, line_font_size, line_color, opacity, line_morph)
 
     return True
 
@@ -8032,6 +8103,7 @@ def draw_text_using_exact_source_spans(
         return False
 
     annotation_underline = resolve_annotation_underline(ann)
+    annotation_strikeout = resolve_annotation_strikeout(ann)
     for line_entry in lines:
         if not isinstance(line_entry, dict):
             continue
@@ -8064,6 +8136,9 @@ def draw_text_using_exact_source_spans(
             # exact-span export returns early. Per-span true still works for
             # mixed rich text when the annotation itself is not underlined.
             span_ann["underline"] = bool(span_entry.get("underline"))
+            span_ann["strikeout"] = bool(span_entry.get("strikeout")) or (
+                annotation_strikeout and not span_entry.get("underline_is_current_style")
+            )
             if (
                 inherit_annotation_underline
                 and not span_entry.get("underline_is_current_style")
@@ -8249,6 +8324,8 @@ def draw_text_using_exact_source_spans(
                     opacity=opacity,
                     morph=effective_morph,
                 )
+            if resolve_annotation_strikeout(span_ann):
+                draw_strikeout_line(page, draw_x, baseline_y, span_font.text_length(span_text, fontsize=span_font_size), span_font_size, span_color, opacity, effective_morph)
 
             link_url = normalize_hyperlink_destination(span_entry.get("link_url") or "")
             if link_url:
@@ -8848,6 +8925,7 @@ def rich_text_style_runs_for_exact_text(ann: Dict[str, Any], text: str) -> list[
             "font_style": entry.get("font_style"),
             "color": entry.get("color"),
             "underline": bool(entry.get("underline")),
+            "strikeout": bool(entry.get("strikeout")),
             "link_url": normalize_hyperlink_destination(entry.get("link_url") or "") or None,
         })
     return runs
@@ -8873,7 +8951,7 @@ def apply_rich_style_to_pdfjs_source_run(run: Dict[str, Any], style: Dict[str, A
     updated = dict(run)
     for key in (
         "font_family", "font_source_name", "font_weight", "font_style",
-        "color", "underline", "underline_is_current_style", "link_url",
+        "color", "underline", "strikeout", "underline_is_current_style", "link_url",
     ):
         value = style.get(key)
         if value is not None and value != "":
@@ -9034,6 +9112,7 @@ def normalize_pdfjs_source_span_run_layout(
             "font_weight": str(item.get("fontWeight") or ann.get("fontWeight") or "400"),
             "font_style": str(item.get("fontStyle") or ann.get("fontStyle") or "normal"),
             "underline": _boolish(item.get("underline")),
+            "strikeout": _boolish(item.get("strikeout")),
             "canonical_space_before": _boolish(item.get("canonicalSpaceBefore")),
         })
     if len(runs) < 1:
@@ -9137,6 +9216,7 @@ def normalize_pdfjs_source_span_run_layout(
             "font_style": run["font_style"],
             "color": run.get("color") or ann.get("textColor") or "#000000",
             "underline": bool(run.get("underline")) if run.get("underline") is not None else bool(ann.get("underline")),
+            "strikeout": bool(run.get("strikeout")) if run.get("strikeout") is not None else bool(ann.get("strikeout")),
             "span_rotation": 0.0,
         })
 
@@ -10280,6 +10360,8 @@ def draw_text(
                     opacity=opacity,
                     morph=single_line_morph,
                 )
+            if resolve_annotation_strikeout(ann):
+                draw_strikeout_line(page, draw_x, baseline_y, draw_font.text_length(text, fontsize=size), size, color, opacity, single_line_morph)
             return
         exact_source_line_layout = normalize_exact_source_line_layout(
             render_ann,
@@ -10791,6 +10873,8 @@ def draw_text(
                     opacity=opacity,
                     morph=line_morph,
                 )
+            if resolve_annotation_strikeout(ann) and line:
+                draw_strikeout_line(page, draw_x, line_baseline_y, text_width, size, color, opacity, line_morph)
         return
 
     if mask_only:
@@ -10861,6 +10945,8 @@ def draw_text(
             opacity=opacity,
             morph=morph,
         )
+    if resolve_annotation_strikeout(ann):
+        draw_strikeout_line(page, draw_x, baseline_y, fallback_font.text_length(text, fontsize=size), size, color, opacity, morph)
 
 
 def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
