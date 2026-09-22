@@ -8755,13 +8755,68 @@ function pickerCssFontFamily(value) {
     const key = normalizeFontKey(value);
     if (!key) return '';
     if (!pickerCssFontFamilies) {
-        pickerCssFontFamilies = new Map();
+        const map = new Map();
         document.querySelectorAll('#afb-font option[value]').forEach((option) => {
             const stack = String(option.style?.fontFamily || '').trim();
-            if (stack) pickerCssFontFamilies.set(normalizeFontKey(option.value), stack);
+            if (stack) map.set(normalizeFontKey(option.value), stack);
         });
+        // The picker may not be in the DOM yet on the first call; cache once it is.
+        if (map.size) pickerCssFontFamilies = map;
+        else return '';
     }
     return pickerCssFontFamilies.get(key) || '';
+}
+
+/*
+ * AE2-6: a pdf.js runtime face is a subset registered at weight 400 even when
+ * its outlines are bold (MontserratThin_700wght). A glyph the subset lacks (an
+ * accented letter typed into the heading) fell to the generic sans at 400, so
+ * it showed thin beside the bold glyphs while the download drew it bold. Give
+ * the run the bundled family of the same name as a fallback, ask for the
+ * semantic weight, and turn synthesis off so the runtime face's own bold
+ * outlines are not emboldened again.
+ */
+function bundledFallbackFamilyForRuntimeFace(embedded) {
+    if (!embedded) return '';
+    const key = normalizeFontKey(stripPdfFontSubsetPrefix(embedded.cleanName || embedded.family || ''));
+    if (!key) return '';
+    let best = '';
+    let stack = '';
+    document.querySelectorAll('#afb-font option[value]').forEach((option) => {
+        const optionKey = normalizeFontKey(option.value);
+        // Only the bundled (Google) families: a document face is itself a subset.
+        if (!optionKey || option.dataset.pdfjsEmbeddedFont || option.dataset.pdfjsDynamic) return;
+        if (key.startsWith(optionKey) && optionKey.length > best.length && option.style?.fontFamily) {
+            best = optionKey;
+            stack = String(option.style.fontFamily).trim();
+        }
+    });
+    return stack;
+}
+
+function sourceRunFontStyleParts(item) {
+    const fontFamily = String(item?.fontFamily || '').trim();
+    const parts = [];
+    const embedded = fontFamily ? embeddedFontOptionForValue(fontFamily) : null;
+    const semanticWeight = Number.parseInt(item?.semanticFontWeight || '', 10);
+    const renderWeight = sourceRunRenderFontWeight(item);
+    const fallback = Number.isFinite(semanticWeight) && semanticWeight >= 600 && !isBoldCssWeight(renderWeight)
+        ? bundledFallbackFamilyForRuntimeFace(embedded)
+        : '';
+    if (fontFamily) {
+        const chain = cssFontFamilyWithGenericFallback(fontFamily);
+        // Put the bundled family before the generic the chain ends with.
+        parts.push(`font-family:${fallback
+            ? chain.replace(/,\s*(sans-serif|serif|monospace|cursive|fantasy|system-ui)\s*$/, `, ${fallback}`)
+            : chain}`);
+    }
+    if (fallback) {
+        parts.push(`font-weight:${semanticWeight}`);
+        parts.push('font-synthesis:none');
+    } else {
+        parts.push(`font-weight:${renderWeight}`);
+    }
+    return parts;
 }
 
 function cssFontFamilyWithGenericFallback(value) {
@@ -9654,12 +9709,7 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
                 // Preserve the leading indentation of this line.
                 html += buildGapSpan(Math.max(0, Number(item.leftPx) - paragraphMinLeftPx), item);
             }
-            const styleParts = [];
-            const fontFamily = String(item.fontFamily || '').trim();
-            if (fontFamily) {
-                styleParts.push(`font-family:${cssFontFamilyWithGenericFallback(fontFamily)}`);
-            }
-            styleParts.push(`font-weight:${sourceRunRenderFontWeight(item)}`);
+            const styleParts = sourceRunFontStyleParts(item);
             // Always emit font-style: a run that is upright must override an
             // italic box-level --enpv-font-style, not inherit it.
             styleParts.push(`font-style:${sourceRunRenderFontStyle(item)}`);
