@@ -23879,6 +23879,21 @@ function stripPdfFontSubsetPrefix(value) {
     return String(value || '').trim().replace(/^[A-Z]{6}\+/i, '');
 }
 
+/*
+ * AE3-6: an extracted face also registered its bare family name ("Montserrat",
+ * "Lato") as a lookup key, so choosing the Google "Montserrat" option resolved
+ * to the document's 5-glyph Montserrat-Thin subset and the editor drew a
+ * hairline / fallback mix while the download used bundled Montserrat. A
+ * family name the picker offers as a bundled font must keep meaning that.
+ */
+function pickerOffersBundledFamily(name) {
+    const key = normalizeFontKey(name);
+    if (!key) return false;
+    return Array.from(document.querySelectorAll('#afb-font option[value]')).some((option) => (
+        !option.dataset.pdfjsEmbeddedFont && !option.dataset.pdfjsDynamic && normalizeFontKey(option.value) === key
+    ));
+}
+
 function registerEmbeddedFontMetadata(font) {
     const cleanName = String(font?.clean_name || font?.name || '').trim();
     const filePath = String(font?.file_path || '').trim();
@@ -23899,7 +23914,7 @@ function registerEmbeddedFontMetadata(font) {
     };
     [
         metadata.cleanName,
-        metadata.family,
+        pickerOffersBundledFamily(metadata.family) ? '' : metadata.family,
         metadata.pdfFontName,
         metadata.pdfFontName.includes('+') ? metadata.pdfFontName.split('+').slice(1).join('+') : '',
     ].forEach((candidate) => {
@@ -23949,7 +23964,7 @@ function registerPdfjsRuntimeFontMetadata(fontObject, faceName = '') {
     [
         metadata.cssFamily,
         metadata.cleanName,
-        metadata.family,
+        pickerOffersBundledFamily(metadata.family) ? '' : metadata.family,
         metadata.pdfFontName,
         stripPdfFontSubsetPrefix(metadata.pdfFontName),
     ].forEach((candidate, index) => {
