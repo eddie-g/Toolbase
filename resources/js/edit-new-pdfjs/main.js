@@ -24423,6 +24423,76 @@ function ensureNaturalTextLineHeight(box) {
     return lineHeightPx;
 }
 
+const GENERIC_CSS_FONT_FAMILIES = new Set(['', 'sans-serif', 'serif', 'monospace', 'cursive', 'fantasy', 'system-ui']);
+
+/*
+ * AE4-1 / AE3-3 / AE4-4: a pdf.js source row is built with the text layer's
+ * CSS family ("sans-serif"); its real face only lives in dataset.sourceFontFamily.
+ * Promoting the row for a whole-box style change (bold, italic, size, colour,
+ * background) used to keep that generic family, so the editor drew the row in
+ * the browser's sans (wider than the source face: it wrapped over the row
+ * below) and the exporter matched "sans-serif" + weight against the document's
+ * faces, landing on an unrelated family or the base-14 Helvetica. Name the
+ * source face on the box instead, the way choosing it in the Font picker does,
+ * so only the weight, slant, size or colour changes.
+ */
+function carrySourceFaceIntoPromotedBox(box) {
+    if (!box || box.dataset.forceEmbeddedFont === '1' || box.dataset.fontSourceName) return;
+    const current = parseCssFontFamily(box.dataset.fontFamilyValue || box.style.getPropertyValue('--enpv-font-family')).toLowerCase();
+    if (!GENERIC_CSS_FONT_FAMILIES.has(current)) return;
+    const sourceName = box.dataset.sourceFontFamily || sourceSpanRunsForBox(box)[0]?.pdfjsFontName || '';
+    if (GENERIC_CSS_FONT_FAMILIES.has(String(sourceName).trim().toLowerCase())) return;
+    const embedded = embeddedFontOptionForValue(sourceName);
+    if (!embedded) return;
+    box.dataset.fontFamilyValue = embedded.pickerValue || embedded.cleanName;
+    box.dataset.fontSourceName = embedded.cleanName;
+    box.dataset.forceEmbeddedFont = '1';
+    box.style.setProperty('--enpv-font-family', cssFontFamilyWithGenericFallback(embedded.cssFamily));
+}
+
+/** A source box that came from one text row (no second row top among its runs). */
+function isSingleRowSourceBox(box) {
+    if (!box || box.classList.contains('is-promoted-source-block') || box.dataset.promotedParagraphFlow === '1') return false;
+    const runs = sourceSpanRunsForBox(box);
+    if (!runs.length) return false;
+    const tops = new Set(runs.map((run) => Math.round(Number(run.topPx) || 0)));
+    return tops.size === 1;
+}
+
+/*
+ * AE4-1: the exporter keeps an unresized source row on one line and fits the
+ * face into the row's width, so a bold or italic row comes out slightly
+ * smaller rather than wrapped. Do the same in the editor: measure the restyled
+ * row at its source size and shrink the type until it fits the box, instead of
+ * letting it wrap onto the row below. Toggling the style off measures again
+ * from the source size, so the row grows back.
+ */
+function fitSingleRowFontToBoxWidth(box) {
+    if (!isSingleRowSourceBox(box) || box.dataset.userSizedTextBox === '1' || box.dataset.userFontSize === '1') return false;
+    const tc = selectedBoxTextElement(box);
+    const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 0;
+    const basePx = Number.parseFloat(box.dataset.sourceFontSizePx || '') || 0;
+    if (!tc || !(scale > 0) || !(basePx > 0)) return false;
+    const runsScale = Number.parseFloat(box.dataset.sourceSpanRunsScale || '') || scale;
+    const baseAtScale = basePx * (scale / runsScale);
+    box.style.setProperty('--enpv-font-size', `${baseAtScale}px`);
+    // Measured in the DOM, not on a canvas: a synthetic bold on the PDF.js
+    // face widens the rendered glyphs, which measureText does not report.
+    const previousWhiteSpace = tc.style.whiteSpace;
+    tc.style.whiteSpace = 'nowrap';
+    const range = document.createRange();
+    range.selectNodeContents(tc);
+    const contentWidth = range.getBoundingClientRect().width;
+    tc.style.whiteSpace = previousWhiteSpace;
+    const boxWidth = Number.parseFloat(box.style.width || '') || box.getBoundingClientRect().width || 0;
+    if (!(contentWidth > 0) || !(boxWidth > 0)) return false;
+    const ratio = Math.min(1, boxWidth / contentWidth);
+    const fittedPx = Math.max(baseAtScale * 0.6, baseAtScale * ratio);
+    box.style.setProperty('--enpv-font-size', `${fittedPx}px`);
+    box.dataset.fontSizePts = String(Math.round((fittedPx / scale) * 100) / 100);
+    return ratio < 0.995;
+}
+
 function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     const box = findSelectedBox();
     if (!box || typeof mutator !== 'function') return;
@@ -24435,6 +24505,7 @@ function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     pushHistorySnapshot(historyLabel || 'change annotation style');
     if (options.promote !== false) {
         promoteBoxToRichTextMode(box, options.reason || historyLabel || 'style');
+        if (options.reason !== 'font-family') carrySourceFaceIntoPromotedBox(box);
     }
     if (options.naturalFlow === true) {
         normalizeSourceSpanMarkupForNaturalFlow(box, {
@@ -24444,6 +24515,7 @@ function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     mutator(box);
     stripInlineStylePropertiesFromBox(box, options.stripInlineProps);
     stripInlineFormatsFromBox(box, options.stripInlineFormats);
+    const fitsRowFont = options.reason === 'font-weight' || options.reason === 'font-style';
     fitTextBoxAfterStyleMutation(box, options);
     box.dataset.styleDirty = '1';
     box.dataset.pendingEdit = '1';
@@ -24451,7 +24523,8 @@ function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
     // The sync above reveals the committed overlay, so a box that was still a
     // hidden source handle can only be measured and fitted now.
-    if (fitTextBoxAfterStyleMutation(box, options)) {
+    const rowFontChanged = fitsRowFont && fitSingleRowFontToBoxWidth(box);
+    if (fitTextBoxAfterStyleMutation(box, options) || rowFontChanged) {
         syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
     }
     refitStyledBoxWhenFontsSettle(box, options);
@@ -24578,6 +24651,7 @@ function applyFontSizeToSelectedBox(fontSizePts) {
         const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1;
         const normalized = Math.max(1, Math.min(300, Math.round(pt * 10) / 10));
         box.dataset.fontSizePts = String(normalized);
+        box.dataset.userFontSize = '1';
         box.style.setProperty('--enpv-font-size', `${normalized * scale}px`);
         box.style.setProperty('--enpv-line-height', `${normalized * scale * 1.2}px`);
     }, { reason: 'font-size', naturalFlow: true, stripInlineProps: ['font-size', 'line-height'], fitOptions: { allowShrink: true, fitWidth: false } });
@@ -24695,6 +24769,7 @@ function previewTextColorOnSelectedBox(color) {
     const normalized = cssColorToHex(color, '#000000');
     if (box.dataset.editorMode !== 'rich') {
         promoteBoxToRichTextMode(box, 'text-color');
+        carrySourceFaceIntoPromotedBox(box);
     }
     applyTextColorToWholeAnnotationBox(box, normalized);
     box.dataset.styleDirty = '1';
@@ -24707,6 +24782,7 @@ function previewBackgroundColorOnSelectedBox(color) {
     const normalized = cssColorToHex(color, '#ffffff');
     if (box.dataset.editorMode !== 'rich') {
         promoteBoxToRichTextMode(box, 'background-color');
+        carrySourceFaceIntoPromotedBox(box);
     }
     box.dataset.backgroundColor = normalized;
     box.style.setProperty('--enpv-bg-color', normalized);
