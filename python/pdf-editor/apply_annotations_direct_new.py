@@ -4927,7 +4927,10 @@ def _apply_pdfjs_visual_line_breaks(
     for index, (ch, op_index) in enumerate(chars):
         if index in cut_set:
             flush()
-            out.append({"type": "break"})
+            # A measured row end that coincides with a hard break in the runs
+            # is one break, not two (an empty row doubled the pitch, AE5-2).
+            if ops[op_index].get("type") != "break" and not (out and out[-1].get("type") == "break"):
+                out.append({"type": "break"})
             drop_ws = True
         if ops[op_index].get("type") == "break":
             flush()
@@ -6142,6 +6145,63 @@ def normalize_exact_source_line_layout(
     if len(normalized_text_lines) == len(raw_boxes):
         line_texts = [str(line or "") for line in normalized_text_lines]
         active_raw_boxes = list(raw_boxes)
+    elif (
+        bool(ann.get("promotedDirty"))
+        and len(normalized_text_lines) > len(raw_boxes)
+        and _boolish(ann.get("userSizedTextBox")) is False
+    ):
+        # AE5-2: one or more user breaks (Enter) gave the text MORE lines than
+        # captured rows. Returning [] here abandoned the exact rows and the
+        # wrapped layout re-broke a fitted row and overran the block below.
+        # Align greedily: a line that matches (or starts) the next captured row
+        # keeps that row's box; a line the user broke off gets a synthetic box
+        # one row pitch below, and every later row shifts by that pitch.
+        aligned_texts: list[str] = []
+        aligned_boxes: list[Any] = []
+        pitch = 0.0
+        if len(raw_boxes) >= 2:
+            try:
+                pitch = float(raw_boxes[1][1]) - float(raw_boxes[0][1])
+            except Exception:
+                pitch = 0.0
+        if pitch <= 0 and raw_boxes:
+            try:
+                pitch = (float(raw_boxes[0][3]) - float(raw_boxes[0][1])) * 1.2
+            except Exception:
+                pitch = 0.0
+        compare_row = lambda value: " ".join(str(value or "").split()).lower()
+        source_rows = [compare_row(line) for line in source_lines]
+        box_index = 0
+        shift = 0.0
+        for line in normalized_text_lines:
+            line_text = str(line or "")
+            key = compare_row(line_text)
+            source_key = source_rows[box_index] if box_index < len(source_rows) else ""
+            takes_captured_row = box_index < len(raw_boxes) and (
+                not source_key
+                or key == source_key
+                or (key and source_key.startswith(key))
+                or (key and key.startswith(source_key))
+            )
+            if takes_captured_row:
+                box = list(raw_boxes[box_index])
+                box_index += 1
+            elif aligned_boxes:
+                previous = aligned_boxes[-1]
+                box = [previous[0], float(previous[1]) + pitch, previous[2], float(previous[3]) + pitch]
+                shift += pitch
+                # A line that is the rest of the captured row it was split
+                # from consumes that row too.
+                if box_index < len(source_rows) and key and source_rows[box_index].endswith(key):
+                    box_index += 1
+            else:
+                box = list(raw_boxes[0])
+            if shift and takes_captured_row:
+                box = [box[0], float(box[1]) + shift, box[2], float(box[3]) + shift]
+            aligned_texts.append(line_text)
+            aligned_boxes.append(box)
+        line_texts = aligned_texts
+        active_raw_boxes = aligned_boxes
     elif (
         bool(ann.get("promotedDirty"))
         and len(normalized_text_lines) > 1
@@ -10758,6 +10818,23 @@ def draw_text(
         # (pdfjsVisualLines); wrapping the runs again with MuPDF's metrics put
         # "Form 1040, 1040-SR," on two rows the editor showed on one (NK_37).
         rich_layout_wrap_width = rich_layout_available_width
+        # AE5-2: a paragraph the user broke with Enter carries its rows as
+        # hard breaks in `text`; when no visual rows were measured those are
+        # the editor's rows.
+        manual_text_rows = split_text_preserving_manual_line_breaks(text)
+        if (
+            not pdfjs_visual_lines
+            and len(manual_text_rows) > 1
+            and rich_layout_text_matches
+            and bool(render_ann.get("promotedFromExtraction"))
+            and (_boolish(render_ann.get("promotedDirty")) or _boolish(render_ann.get("promotedReflowEnabled")))
+        ):
+            if any(op.get("type") == "break" for op in rich_layout_ops):
+                # The runs already carry the rows; draw each row as one line
+                # and let the per-line fit condense a row the editor kept.
+                rich_layout_wrap_width = 1_000_000_000.0
+            else:
+                pdfjs_visual_lines = [str(row) for row in manual_text_rows]
         if (
             pdfjs_visual_lines
             and rich_layout_text_matches
