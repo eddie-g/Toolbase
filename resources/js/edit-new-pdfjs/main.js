@@ -6218,6 +6218,19 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         && box.dataset.userSizedTextBox !== '1'
         && (box.dataset.styleDirty !== '1' || styleOnlyOnSourceRows)
         && Number(existingAnnotation?.lineHeight) > 0;
+    // AE5-5: a reloaded, previously narrowed paragraph has no live paragraph
+    // pitch (the flow editor is not installed) and its rehydrated
+    // userSizedTextBox flag blocks keepPromotedVerticalMetrics, so the line
+    // height fell to the container's 1.2em default and the download's rows
+    // came out cramped. Nothing was resized or re-flowed in this session, so
+    // the saved pitch stands.
+    const keepReloadedPromotedLineHeight = isPromotedExtractionAnnotation(existingAnnotation)
+        && box.dataset.pendingResize !== '1'
+        && box.dataset.promotedParagraphFlow !== '1'
+        && box.dataset.sourceSpanEditActive !== '1'
+        && Number(existingAnnotation?.lineHeight) > 0
+        && Number(existingAnnotation?.fontSize) > 0
+        && Math.abs(Number(existingAnnotation.fontSize) - fontSizePts) < 0.25;
     const promotedParagraphLineHeightPx = Number.isFinite(livePromotedParagraphLineHeightPx)
         && livePromotedParagraphLineHeightPx > 0
         ? livePromotedParagraphLineHeightPx
@@ -6254,7 +6267,7 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         requestedFontSize: fontSizePts,
         lineHeight: promotedParagraphLineHeightPts > 0
             ? promotedParagraphLineHeightPts
-            : keepPromotedVerticalMetrics
+            : keepPromotedVerticalMetrics || keepReloadedPromotedLineHeight
             ? Number(existingAnnotation.lineHeight)
             : (Number.isFinite(lineHeightPx) && scale > 0 ? (lineHeightPx / scale) : (Number(existingAnnotation?.lineHeight) || undefined)),
         fontFamily: annotationFontFamily,
@@ -31072,6 +31085,8 @@ if (window.__enpvPdfjsInitialLoadStarted) {
                 linkService,
                 captureFlatPageRotationSnapshot,
                 syncRotatedPageSnapshot,
+                // Read-only view of the persisted annotations for the QA suites.
+                persistedAnnotation: (id) => cloneForHistory(persistedAnnotationsById.get(String(id)) || null),
             };
         } catch (err) {
             console.error(err);

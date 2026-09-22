@@ -3998,8 +3998,22 @@ PYTHON;
             }
             $annotation['promotedSourceBlockNum'] = (int) $canonicalBlock->block_num;
 
+            // AE5-5: the block's extracted pitch seeds a lineHeight the
+            // annotation does not carry yet. Once the editor has saved its
+            // own (a narrowed or re-flowed paragraph saves 16.8 for a 12pt
+            // face), that value must come back unchanged, or a reload alone
+            // compacts the paragraph in every later download.
+            $savedLineHeight = isset($annotation['lineHeight']) && is_numeric($annotation['lineHeight'])
+                ? (float) $annotation['lineHeight']
+                : 0.0;
+            $keepsSavedLineHeight = $savedLineHeight > 0 && (
+                !empty($annotation['userSizedTextBox'])
+                || !empty($annotation['promotedReflowEnabled'])
+                || !empty($annotation['styleDirty'])
+                || $hasUserEditedPromotedText
+            );
             $lineHeight = (float) ($canonicalBlock->avg_line_height ?? $canonicalBlock->line_height ?? 0.0);
-            if ($lineHeight > 0) {
+            if ($lineHeight > 0 && !$keepsSavedLineHeight) {
                 $annotation['lineHeight'] = $lineHeight;
             }
         }
