@@ -8691,9 +8691,34 @@ function unicodeSafeCssFontFamily(value) {
 // default serif, which looks wildly different from e.g. Calibri. With the
 // generic appended, an unloadable "Calibri-BoldItalic" still renders as
 // synthetic bold-italic sans-serif.
+/*
+ * AE3-1: the Font picker's values are one word ("PlayfairDisplay", "BebasNeue")
+ * while public/fonts/editor/editor-fonts.css declares the faces under their
+ * real names ("Playfair Display"). Each picker option carries the declared
+ * stack in its inline style, so a value is mapped through it before it is used
+ * as a CSS family; otherwise Chrome finds no such face and falls back to the
+ * generic, which wraps and measures differently from the exported face.
+ */
+let pickerCssFontFamilies = null;
+
+function pickerCssFontFamily(value) {
+    const key = normalizeFontKey(value);
+    if (!key) return '';
+    if (!pickerCssFontFamilies) {
+        pickerCssFontFamilies = new Map();
+        document.querySelectorAll('#afb-font option[value]').forEach((option) => {
+            const stack = String(option.style?.fontFamily || '').trim();
+            if (stack) pickerCssFontFamilies.set(normalizeFontKey(option.value), stack);
+        });
+    }
+    return pickerCssFontFamilies.get(key) || '';
+}
+
 function cssFontFamilyWithGenericFallback(value) {
     const raw = String(value || '').trim();
     if (!raw || raw.includes(',')) return cssQuoteFontFamily(raw);
+    const pickerStack = pickerCssFontFamily(raw);
+    if (pickerStack && !embeddedFontOptionForValue(raw)) return pickerStack;
     const lower = raw.replace(/["']/g, '').toLowerCase();
     // Match the PDF writer's TrebuchetMS substitute. Document fonts expose a
     // loaded Verdana face; without this alias Chrome falls back to serif and
@@ -24036,6 +24061,11 @@ function ensureFormatBarFontOption(value) {
     const existing = formatBarAvailableOptions(afbFont)
         .find((option) => option.value.toLowerCase() === normalized.toLowerCase());
     if (existing) return existing.value;
+    // A run styled through the picker computes to the declared family
+    // ("Open Sans"); show it as the option that declares it (AE3-1).
+    const declared = formatBarAvailableOptions(afbFont)
+        .find((option) => normalizeFontKey(parseCssFontFamily(option.style?.fontFamily || '')) === normalizeFontKey(normalized));
+    if (declared) return declared.value;
 
     const option = document.createElement('option');
     option.value = normalized;
@@ -24571,7 +24601,7 @@ function applyFontFamilyToSelectedBox(fontFamily) {
         fitOptions: { allowShrink: true, fitWidth: false },
     };
     if (applyInlineStyleToSelectedText('change selected text font', (span, box) => {
-        span.style.fontFamily = unicodeSafeCssFontFamily(cssFamily);
+        span.style.fontFamily = (!embedded && pickerCssFontFamily(normalized)) || unicodeSafeCssFontFamily(cssFamily);
         if (embedded && box) {
             if (embedded.pdfFontName) {
                 span.dataset.sourcePdfFontName = embedded.pdfFontName;
