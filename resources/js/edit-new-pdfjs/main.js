@@ -6208,10 +6208,15 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     // the DOM here compounds bloat on every commit — the reloaded overlay
     // then renders with wider line pitch than the original block. Keep the
     // extraction-derived metrics unless the user actually resized the box.
+    // AE4-7 / AE5-5: a whole-box style (or a reload after one) changes no
+    // row, so the block keeps the PDF's pitch and height instead of the
+    // flow editor's 1.2em line box.
+    const styleOnlyOnSourceRows = box.dataset.styleDirty === '1'
+        && annotationTextFollowsSourceRows({ ...(existingAnnotation || {}), text: textValue });
     const keepPromotedVerticalMetrics = isPromotedExtractionAnnotation(existingAnnotation)
         && box.dataset.pendingResize !== '1'
         && box.dataset.userSizedTextBox !== '1'
-        && box.dataset.styleDirty !== '1'
+        && (box.dataset.styleDirty !== '1' || styleOnlyOnSourceRows)
         && Number(existingAnnotation?.lineHeight) > 0;
     const promotedParagraphLineHeightPx = Number.isFinite(livePromotedParagraphLineHeightPx)
         && livePromotedParagraphLineHeightPx > 0
@@ -6236,9 +6241,11 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         pdfjsVisualLines: shouldPersistVisualLines ? visualLines : undefined,
         originalText: String(existingAnnotation?.originalText || originalTextForBox(box) || sourceText),
         pdfX: pdfRect.x,
+        // A reloaded block's DOM box can sit a row gap off its saved origin
+        // without anything having moved; a real drag moves it much further.
         pdfY: (keepPromotedVerticalMetrics
             && Number.isFinite(Number(existingAnnotation?.pdfY))
-            && Math.abs(pdfRect.y - Number(existingAnnotation.pdfY)) < 3)
+            && Math.abs(pdfRect.y - Number(existingAnnotation.pdfY)) < (styleOnlyOnSourceRows ? 6 : 3))
             ? Number(existingAnnotation.pdfY)
             : pdfRect.y,
         pdfWidth: pdfRect.w,
@@ -6323,7 +6330,9 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         promotedReflowEnabled: displayMarkupTextOverride == null
             && isPromotedSourceBox
             && (box.dataset.promotedReflowEnabled === '1'
-                || box.dataset.naturalTextFlow === '1'
+                // A reloaded rich paragraph is flagged naturalTextFlow, but
+                // while its text still reads row by row nothing has reflowed.
+                || (box.dataset.naturalTextFlow === '1' && !styleOnlyOnSourceRows)
                 || boolish(existingAnnotation?.promotedReflowEnabled)),
         promotedDirty: isPromotedSourceBox
             && promotedEditFlags.promotedDirty,
