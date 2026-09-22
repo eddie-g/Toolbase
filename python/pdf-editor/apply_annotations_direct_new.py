@@ -5039,7 +5039,8 @@ def build_wrapped_rich_text_span_layout(
 
     font_cache: Dict[tuple[Any, ...], fitz.Font] = {}
     base_font_size = max(0.5, float(ann.get("fontSize") or 12.0))
-    base_line_height = max(float(line_height or 0.0), base_font_size * 1.18)
+    explicit_line_height = float(line_height or 0.0) > 0
+    base_line_height = float(line_height) if explicit_line_height else base_font_size * 1.18
     line_metrics: list[Dict[str, float]] = []
     for line_runs in wrapped_lines:
         if not line_runs:
@@ -5062,7 +5063,7 @@ def build_wrapped_rich_text_span_layout(
             desired_height = max(
                 glyph_height,
                 float(run.get("line_height") or 0.0),
-                run_size * 1.18,
+                base_line_height * (run_size / base_font_size) if explicit_line_height else run_size * 1.18,
             )
             half_leading = max(0.0, desired_height - glyph_height) / 2.0
             run_metrics.append((half_leading + glyph_ascent, half_leading + glyph_descent, desired_height))
@@ -10374,8 +10375,11 @@ def draw_text(
     if preserve_extracted_lines:
         if line_height <= 0:
             line_height = size * 1.2
-    else:
-        line_height = max(line_height, size * 1.18)
+    elif line_height <= 0:
+        # AE1-5: the editor sends the pitch it renders (12 for a wrapped
+        # 12pt source row); flooring it at 1.18 × size pushed the second
+        # line onto the row below. Only a missing value takes the default.
+        line_height = size * 1.18
     rect = pdfjs_visible_overlay_render_rect(page, render_ann, to_rect(page, ann))
     custom_font = None
     html_archive = None
