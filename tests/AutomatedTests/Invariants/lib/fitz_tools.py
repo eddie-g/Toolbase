@@ -319,7 +319,19 @@ def cmd_inkcount(png, threshold='140'):
     for i in range(0, len(data) - n + 1, n):
         if 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2] < t:
             dark += 1
-    print(json.dumps({'dark': dark, 'area': pix.w * pix.h}))
+    # Contrast ink: pixels far from the most common colour (the background),
+    # whatever their colour - white text moved onto a light page is still text.
+    counts = {}
+    for i in range(0, len(data) - n + 1, n):
+        key = (data[i] // 8, data[i + 1] // 8, data[i + 2] // 8)
+        counts[key] = counts.get(key, 0) + 1
+    bg = max(counts, key=counts.get) if counts else (31, 31, 31)
+    bg = (bg[0] * 8 + 4, bg[1] * 8 + 4, bg[2] * 8 + 4)
+    contrast = 0
+    for i in range(0, len(data) - n + 1, n):
+        if max(abs(data[i] - bg[0]), abs(data[i + 1] - bg[1]), abs(data[i + 2] - bg[2])) > 40:
+            contrast += 1
+    print(json.dumps({'dark': dark, 'contrast': contrast, 'area': pix.w * pix.h}))
 
 
 def cmd_stylewords(pdf, pno, rect):

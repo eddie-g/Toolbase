@@ -4198,7 +4198,30 @@ function hasPdfjsImmutableSourceText(annotation) {
         || annotation.pdfjsAnchorUid != null;
 }
 
+// A box made by paste/duplicate (id "..._new_<uuid>") is free text, never a
+// source overlay: it once kept the original's source binding, masked the
+// original's glyphs and, when deleted, deleted the original's source text,
+// leaving the label drawn but unselectable (doc 8699 "Repair").
+const PASTED_ANNOTATION_ID = /_new_[0-9a-f]{8}-[0-9a-f]{4}-/i;
+const SOURCE_BINDING_FIELDS = [
+    'pdfjsSourceText', 'pdfjsSourceX', 'pdfjsSourceY', 'pdfjsSourceW', 'pdfjsSourceH',
+    'pdfjsSourceOccurrence', 'pdfjsSourcePageHeight', 'sourceMaskX', 'sourceMaskY', 'sourceMaskW', 'sourceMaskH',
+    'pdfjsSourceMaskX', 'pdfjsSourceMaskY', 'pdfjsSourceMaskW', 'pdfjsSourceMaskH',
+    'promotedSourceKey', 'promotedFromExtraction', 'movedTextOverlay', 'sourceLineBBoxes', 'sourceTextLines',
+];
+
+function stripSourceBindingFromPastedAnnotation(annotation) {
+    SOURCE_BINDING_FIELDS.forEach((key) => { delete annotation[key]; });
+    annotation.userCreated = true;
+    annotation.skipPdfjsSourceMask = true;
+    return annotation;
+}
+
 function normalizePdfjsSourceBackedTextFlags(annotation) {
+    if (PASTED_ANNOTATION_ID.test(String(annotation?.id || '')) && !boolish(annotation?.pdfjsDeleted)) {
+        if (hasPdfjsImmutableSourceText(annotation)) stripSourceBindingFromPastedAnnotation(annotation);
+        return annotation;
+    }
     if (!hasPdfjsImmutableSourceText(annotation)) return annotation;
     annotation.userCreated = false;
     annotation.skipPdfjsSourceMask = false;
@@ -5141,6 +5164,12 @@ function upsertPersistedAnnotation(annotation) {
     if (!annotation || typeof annotation !== 'object') return;
     const id = String(annotation.id || '');
     if (!id) return;
+    // Deleting a pasted copy never deletes the original's source text; drop
+    // such records (saved before this was fixed) so the source is back.
+    if (boolish(annotation.pdfjsDeleted) && id.startsWith('pdfjs_deleted_') && PASTED_ANNOTATION_ID.test(id)) {
+        deletePersistedAnnotation(id);
+        return;
+    }
     if (isShapeAnnotation(annotation)) normalizePdfjsLineAnnotationBox(normalizeLegacyPdfjsLineEndpointPreview(normalizeShapeAnnotation(annotation)));
     if (isSignatureAnnotation(annotation) || isImageAnnotation(annotation)) normalizeImageAnnotation(annotation);
     if (isFieldAnnotation(annotation)) normalizeFieldAnnotation(annotation);
@@ -13998,6 +14027,7 @@ function deletedMaskAnnotationFromBox(box) {
     if (!box) return null;
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
     if (isUserCreatedTextBox(box, existing)) return null;
+    if (PASTED_ANNOTATION_ID.test(String(box.dataset.annotationId || ''))) return null;
     const sourceText = String(existing?.pdfjsSourceText || existing?.originalText || baseTextForBox(box) || originalTextForBox(box) || '');
     const layer = box.parentElement;
     const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
@@ -14725,6 +14755,120 @@ function scheduleRuleAwareMaskRefresh(mask, rect, pageDiv = null, options = {}) 
     window.setTimeout(() => applyDeletedEraseMaskSegments(mask, rect, pageDiv, options), 1000);
 }
 
+// A deleted multi-row block erases row by row, each row in the colour under
+// it: one block-sized patch painted white over the striped table fill and
+// the row rules between the rows (doc 8699 promoted_1_22 deleted).
+// Text-layer runs whose centre lies inside the deleted area, in the mask's
+// page px, padded; each covered in the colour under it. Until the text layer
+// has rendered, the whole area is covered (as before) and then narrowed.
+function createDeletedTextRunsEraseElement(rect, pageDiv = null) {
+    if (!rect || !pageDiv) return null;
+    const mask = document.createElement('div');
+    mask.className = 'enpv-delete-erase-mask';
+    mask.dataset.deletedEraseMask = '1';
+    mask.style.position = 'absolute';
+    mask.style.left = `${rect.left}px`;
+    mask.style.top = `${rect.top}px`;
+    mask.style.width = `${rect.width}px`;
+    mask.style.height = `${rect.height}px`;
+    mask.style.background = 'transparent';
+    mask.style.pointerEvents = 'none';
+    mask.style.zIndex = '1';
+    const runPieces = () => {
+        const canvas = pageDiv.querySelector(':scope canvas');
+        const layerEl = pageDiv.querySelector('.textLayer');
+        if (!canvas || !layerEl) return null;
+        const origin = canvas.getBoundingClientRect();
+        const pieces = [];
+        layerEl.querySelectorAll('span').forEach((span) => {
+            if (span.children.length || !String(span.textContent || '').trim()) return;
+            const r = trimmedTextRangeClientRect(span) || span.getBoundingClientRect();
+            if (!r || !(r.width > 0) || !(r.height > 0)) return;
+            const cx = (r.left + r.right) / 2 - origin.left;
+            const cy = (r.top + r.bottom) / 2 - origin.top;
+            if (cx < rect.left || cx > rect.left + rect.width || cy < rect.top || cy > rect.top + rect.height) return;
+            const pad = MOVED_SOURCE_MASK_VISUAL_PADDING_PX;
+            pieces.push({ left: r.left - origin.left - pad, top: r.top - origin.top - 1, width: r.width + pad * 2, height: r.height + 2 });
+        });
+        return pieces.length ? pieces : null;
+    };
+    const paint = () => {
+        const pieces = runPieces() || [{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }];
+        mask.replaceChildren(...pieces.map((piece) => {
+            const seg = document.createElement('div');
+            seg.style.position = 'absolute';
+            seg.style.left = `${piece.left - rect.left}px`;
+            seg.style.top = `${piece.top - rect.top}px`;
+            seg.style.width = `${piece.width}px`;
+            seg.style.height = `${piece.height}px`;
+            seg.style.background = samplePageBackgroundColor(pageDiv, piece);
+            return seg;
+        }));
+    };
+    paint();
+    window.requestAnimationFrame(paint);
+    window.setTimeout(paint, 250);
+    window.setTimeout(paint, 1000);
+    window.setTimeout(paint, 2500);
+    return mask;
+}
+
+function createDeletedRowsEraseElement(annotation, rect, viewport, scale, pageDiv = null) {
+    if (!rect || !viewport || !(scale > 0)) return null;
+    const rows = Array.isArray(annotation?.sourceLineBBoxes) ? annotation.sourceLineBBoxes : [];
+    const pageHeight = Number(annotation.sourcePageHeight || annotation.pdfjsSourcePageHeight || 0);
+    if (rows.length < 2 || !(pageHeight > 0)) {
+        // No source rows (a deleted pdf.js overlay): erase the page's own
+        // text runs inside the deleted area instead of the whole area.
+        return createDeletedTextRunsEraseElement(rect, pageDiv);
+    }
+    const pieces = rows
+        .filter((row) => Array.isArray(row) && row.length >= 4 && row.slice(0, 4).every((v) => Number.isFinite(Number(v))))
+        .map((row) => {
+            const [x0, y0, x1, y1] = row.slice(0, 4).map(Number);
+            if (!(x1 > x0) || !(y1 > y0)) return null;
+            // top-down PDF rows -> PDF user space, padded for antialiasing
+            return pdfRectToCanvasRect(inflatePdfRect({ x: x0, y: pageHeight - y1, w: x1 - x0, h: y1 - y0 }, 1), viewport, scale);
+        })
+        .filter((piece) => piece && piece.width > 0 && piece.height > 0);
+    if (pieces.length < 2) return null;
+    const left = Math.min(rect.left, ...pieces.map((p) => p.left));
+    const top = Math.min(rect.top, ...pieces.map((p) => p.top));
+    const right = Math.max(rect.left + rect.width, ...pieces.map((p) => p.left + p.width));
+    const bottom = Math.max(rect.top + rect.height, ...pieces.map((p) => p.top + p.height));
+    const mask = document.createElement('div');
+    mask.className = 'enpv-delete-erase-mask';
+    mask.dataset.deletedEraseMask = '1';
+    mask.style.position = 'absolute';
+    mask.style.left = `${left}px`;
+    mask.style.top = `${top}px`;
+    mask.style.width = `${right - left}px`;
+    mask.style.height = `${bottom - top}px`;
+    mask.style.background = 'transparent';
+    mask.style.pointerEvents = 'none';
+    mask.style.zIndex = '1';
+    const paint = () => {
+        mask.replaceChildren(...pieces.map((piece) => {
+            const seg = document.createElement('div');
+            seg.style.position = 'absolute';
+            seg.style.left = `${piece.left - left}px`;
+            seg.style.top = `${piece.top - top}px`;
+            seg.style.width = `${piece.width}px`;
+            seg.style.height = `${piece.height}px`;
+            seg.style.background = samplePageBackgroundColor(pageDiv, piece);
+            return seg;
+        }));
+    };
+    paint();
+    if (pageDiv) {
+        // the canvas may still be rendering: resample like the block mask does
+        window.requestAnimationFrame(paint);
+        window.setTimeout(paint, 250);
+        window.setTimeout(paint, 1000);
+    }
+    return mask;
+}
+
 function createDeletedEraseElement(rect, pageDiv = null) {
     if (!rect || rect.width <= 0 || rect.height <= 0) return null;
     const mask = document.createElement('div');
@@ -15260,6 +15404,21 @@ function alignMaskRunRectToFilledSourceCell(runRect, boundsRect, pageDiv) {
     };
 }
 
+// The tight extent of the box's own source glyphs (sourceMask*), in the
+// same page px as the mask, padded like a run.
+function ownSourceGlyphCanvasRect(box, pageDiv = null) {
+    const pdfBox = boxSourceMaskPdfBox(box);
+    if (!pdfBox) return null;
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    const viewport = Number.isFinite(pageIndex) && pageIndex >= 0 ? pdfViewer.getPageView(pageIndex)?.viewport : null;
+    const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 0;
+    if (!viewport || !(scale > 0)) return null;
+    const rect = pdfRectToCanvasRect(pdfBox, viewport, scale);
+    if (!rect || !(rect.width > 0) || !(rect.height > 0)) return null;
+    const pad = MOVED_SOURCE_MASK_VISUAL_PADDING_PX;
+    return { left: rect.left - pad, top: rect.top - 1, width: rect.width + (pad * 2), height: rect.height + 2 };
+}
+
 function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
     if (!mask || !box || !rect) return false;
     if (box.dataset.movedTextOverlay === '1') {
@@ -15381,6 +15540,26 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
     writeElementRuntimeState(mask, 'enpvMaskProtectedRects', protectedRects);
     writeElementRuntimeState(mask, 'enpvMaskCutRects', cutRects);
     const protectedRunRects = subtractRects(runRects, cutRects);
+    // The box's own glyphs are always covered. A run widened to its form cell
+    // shares the cell with a protected neighbour (the underscore line after
+    // "Name:" on the Heirship form); cutting that neighbour's rect removed the
+    // whole run and left "Name:" painted after the move (NK_73). Page rules
+    // still cut the glyph rect.
+    // Single source rows only: a paragraph's glyph rect is the whole block
+    // (its row gaps hold table stripes and rules, doc 8699).
+    const ownGlyphRect = box.classList.contains('is-promoted-source-block')
+        ? null
+        : ownSourceGlyphCanvasRect(box, pageDiv);
+    if (ownGlyphRect) {
+        const ruleCuts = preserveHorizontalCanvasRules ? ruleGapsWithoutOwnedUnderlines(ownGlyphRect) : [];
+        const uncovered = subtractRects([{
+            left: ownGlyphRect.left,
+            top: ownGlyphRect.top,
+            right: ownGlyphRect.left + ownGlyphRect.width,
+            bottom: ownGlyphRect.top + ownGlyphRect.height,
+        }], [...protectedRunRects, ...ruleCuts]);
+        protectedRunRects.push(...uncovered);
+    }
     const runUnion = unionRects(protectedRunRects.map((runRect) => ({
         left: runRect.left,
         top: runRect.top,
@@ -23763,7 +23942,8 @@ function renderAnnotationBoxLayer(pageIndex) {
     const promotedSourceBlockOwnedOverlayRects = [];
     for (const annotation of deletedTextMasks) {
         const maskRect = deletedMaskCanvasRect(annotation, viewport, scale);
-        const mask = createDeletedEraseElement(maskRect, pageDiv);
+        const mask = createDeletedRowsEraseElement(annotation, maskRect, viewport, scale, pageDiv)
+            || createDeletedEraseElement(maskRect, pageDiv);
         if (!mask) continue;
         (sourceMaskLayer || layer).appendChild(mask);
         const ownerBlock = promotedSourceBlockCandidates.find((blockAnnotation) => (
@@ -24940,6 +25120,11 @@ function registerPdfjsRuntimeFontMetadata(fontObject, faceName = '') {
         || '',
     ).trim();
     if (!pdfFontName || !loadedName || fontObject?.disableFontFace === true) return null;
+    // A composite (Type0 / CID) face is loaded by PDF.js with its glyphs keyed
+    // by CID, not by Unicode: text typed or shown in it draws the wrong
+    // glyphs ("Date" became "B rcm", "Name:" became "L kc" on the Heirship
+    // form, NK_73). Such text uses the extracted font or a generic face.
+    if (fontObject?.composite === true) return null;
     const cleanName = stripPdfFontSubsetPrefix(pdfFontName) || pdfFontName;
     const metadata = {
         cleanName,
@@ -27028,6 +27213,7 @@ function pasteAnnotationClipboard() {
         next.text = '';
     } else {
         next.type = 'text';
+        stripSourceBindingFromPastedAnnotation(next);
     }
 
     pushHistorySnapshot('paste annotation');
@@ -32352,6 +32538,18 @@ if (window.__enpvPdfjsInitialLoadStarted) {
                     const tc = document.querySelector(`.enpv-annotation-box[data-annotation-id="${id}"] .enpv-text-content`);
                     return tc ? Array.from(tc.querySelectorAll('[data-source-span-line="1"]'))
                         .map((line) => (promotedSourcePushedRowWords.get(line) || []).map((entry) => entry.token)) : null;
+                },
+                // A moved/edited box's source mask: the rects it covers, cuts
+                // (protected neighbours, rules) and runs, for the QA suites.
+                maskState: (id) => {
+                    const box = document.querySelector(`.enpv-annotation-box[data-annotation-id="${id}"]`);
+                    const mask = box?._enpvSourceMask;
+                    if (!mask) return null;
+                    return {
+                        runRects: readElementRuntimeState(mask, 'enpvMaskRunRects') || null,
+                        protectedRects: readElementRuntimeState(mask, 'enpvMaskProtectedRects') || null,
+                        cutRects: readElementRuntimeState(mask, 'enpvMaskCutRects') || null,
+                    };
                 },
             };
         } catch (err) {

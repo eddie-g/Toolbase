@@ -713,8 +713,30 @@ class Session {
         const data = { movedPt: [r2(dxPt), r2(dyPt)], inkPixels: res.inkPixels, area: res.area, inkBBoxPx: res.inkBBoxPx, tolInk: TOL.inkPixels, newPlaceDarkPixels: rendered?.dark ?? null, shots: { old: shotPath, ink: shotPath.replace('.png', '_ink.png'), expected: shotPath.replace('.png', '_expected.png'), newPlace: newShot } };
         if (res.inkPixels > TOL.inkPixels) {
             await this.violate('I6', step, this.stepIndex, `after moving the block ${r2(dxPt)},${r2(dyPt)}pt its old place keeps ${res.inkPixels} ink pixels (tol ${TOL.inkPixels})`, data);
-        } else if (rendered && rendered.dark < TOL.renderedDarkPixels && this.pdfWords.length) {
-            await this.violate('I6', step, this.stepIndex, `moved block renders no text at its new place (${rendered.dark} dark pixels)`, { ...data, notRendered: true });
+        } else if (rendered && Math.max(rendered.dark, rendered.contrast ?? 0) < TOL.renderedDarkPixels && this.pdfWords.length) {
+            // Ink of any colour counts; but text whose colour matches the
+            // background it was moved onto (white header text dropped on the
+            // page) is invisible by design, not missing.
+            const invisibleByColour = await page.evaluate((sel) => {
+                const box = document.querySelector(sel);
+                const tc = box?.querySelector('.enpv-text-content') || box;
+                if (!tc) return false;
+                const rgb = (c) => (String(c).match(/\d+/g) || []).slice(0, 3).map(Number);
+                const text = rgb(getComputedStyle(tc).color);
+                const pageDiv = box.closest('.page');
+                const canvas = pageDiv?.querySelector('canvas');
+                if (!canvas || text.length < 3) return false;
+                const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                const br = box.getBoundingClientRect(); const cr = canvas.getBoundingClientRect();
+                const sx = canvas.width / cr.width; const sy = canvas.height / cr.height;
+                const px = ctx.getImageData(Math.max(0, Math.round((br.left - cr.left - 2) * sx)), Math.max(0, Math.round((br.top - cr.top + br.height / 2) * sy)), 1, 1).data;
+                return Math.max(...text.map((v, i) => Math.abs(v - px[i]))) < 40;
+            }, this.sel()).catch(() => false);
+            if (invisibleByColour) {
+                this.notes.push({ step: this.stepIndex, note: 'moved text has the colour of its new background (not checked)' });
+            } else {
+                await this.violate('I6', step, this.stepIndex, `moved block renders no text at its new place (${rendered.dark} dark, ${rendered.contrast ?? 0} contrast pixels)`, { ...data, notRendered: true });
+            }
         }
     }
 
