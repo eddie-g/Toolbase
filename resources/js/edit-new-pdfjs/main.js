@@ -13810,7 +13810,10 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
     const mask = createSourceMaskElement(maskRect, pageDiv, {
         preserveRules: !boolish(annotation.movedTextOverlay),
     });
-    if (mask && boolish(annotation.movedTextOverlay)) {
+    // A saved promoted block covers its source run by run too (see
+    // attachSourceMaskForBox): one block-sized patch painted over table
+    // stripes and faint row rules on reload (doc 8699 promoted_1_22).
+    if (mask && (boolish(annotation.movedTextOverlay) || box.classList.contains('is-promoted-source-block'))) {
         applyMovedOverlayRunMaskSegments(mask, box, maskRect, pageDiv);
         scheduleMovedOverlayRunMaskRefresh(mask, box, maskRect, pageDiv);
     }
