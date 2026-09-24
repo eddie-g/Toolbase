@@ -26,10 +26,6 @@ param mysqlSku string
 param mysqlStorageGb int
 param mysqlBackupDays int
 
-@allowed(['Basic', 'Standard'])
-param redisSku string
-param redisCapacity int
-
 param appShareQuotaGb int
 param fontsShareQuotaGb int
 
@@ -92,21 +88,6 @@ module mysql 'modules/mysql.bicep' = {
   }
 }
 
-module redis 'modules/redis.bicep' = {
-  name: 'redis'
-  params: {
-    location: location
-    env: env
-    suffix: suffix
-    tags: tags
-    privateSubnetId: network.outputs.privateSubnetId
-    privateDnsZoneId: network.outputs.redisZoneId
-    keyVaultName: vault.outputs.name
-    skuName: redisSku
-    capacity: redisCapacity
-  }
-}
-
 module storage 'modules/storage.bicep' = {
   name: 'storage'
   params: {
@@ -128,11 +109,8 @@ output egressIp string = network.outputs.egressIp
 output mysqlSubnetId string = network.outputs.mysqlSubnetId
 output privateSubnetId string = network.outputs.privateSubnetId
 output mysqlZoneId string = network.outputs.mysqlZoneId
-output redisZoneId string = network.outputs.redisZoneId
 output keyVaultName string = vault.outputs.name
 output mysqlHost string = mysql.outputs.host
 output mysqlDatabase string = mysql.outputs.database
-output redisHost string = redis.outputs.host
-output redisPort int = redis.outputs.sslPort
 output storageAccount string = storage.outputs.accountName
 output storageMounts array = storage.outputs.mountNames
