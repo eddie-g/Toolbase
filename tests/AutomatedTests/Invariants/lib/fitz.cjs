@@ -25,5 +25,6 @@ function bgcheck(pdf, pageNo, oldRect, exclude, shot, scale, redactWords) {
 }
 function exportdiff(base, edited, specPath) { return run(['exportdiff', base, edited, specPath]); }
 function inkcount(png, threshold = 140) { return run(['inkcount', png, threshold]); }
+function stylewords(pdf, pageNo, rectPt) { return run(['stylewords', pdf, pageNo, JSON.stringify(rectPt)]); }
 
-module.exports = { pageWords, render, bgcheck, exportdiff, inkcount };
+module.exports = { pageWords, render, bgcheck, exportdiff, inkcount, stylewords };

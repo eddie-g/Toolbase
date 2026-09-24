@@ -65,10 +65,28 @@ function seedList(spec) {
  *   type-before:<word>:<text>   open the block (menu), real click just before the first word starting
  *   type-after:<word>:<text>    with <word> (or just after it), type <text>, click outside, Download PDF.
  *   type-at:<text>              same, at a seeded caret point (row/word from the seed): an I7 sweep across a corpus.
+ *   style-at                    seeded caret, colour/bold/italic, typed word, maybe Enter, download: I7 style sweep.
  *   <steps>.json                a JSON array of generator steps.
  */
 function scriptSteps(spec, seed = 1) {
     if (fs.existsSync(spec)) return JSON.parse(fs.readFileSync(spec, 'utf8'));
+    // style-at: the style sweep. A seeded caret point, a seeded style change
+    // (colour / bold / italic), a typed word, optionally Enter, then download:
+    // I7 compares every word's colour, weight, slant, size and row with the editor.
+    if (spec === 'style-at') {
+        const r = rng(seed, 4);
+        const control = r.pick(['color', 'color', 'bold', 'italic']);
+        const steps = [
+            { op: 'enter', via: 'menu' },
+            { op: 'click', at: { kind: r.pick(['wordEnd', 'between', 'mid']), row: r.frac(), word: r.frac() } },
+        ];
+        if (r.chance(0.5)) steps.push({ op: 'dblclick', at: { kind: 'mid', row: r.frac(), word: r.frac() } });
+        steps.push({ op: 'format', control, value: control === 'color' ? r.pick(['#e72323', '#1f6feb', '#2e7d32']) : null });
+        steps.push({ op: 'type', text: r.pick([' yesd', ' new text', 'Zq']) });
+        if (r.chance(0.6)) steps.push({ op: 'key', key: 'Enter', n: 1 });
+        steps.push({ op: 'exit', via: 'outside' }, { op: 'download' });
+        return steps;
+    }
     const at = spec.match(/^type-at:(.*)$/s);
     if (at) {
         // seeded caret point (row/word fractions from the seed), then the same edit + download
@@ -142,7 +160,7 @@ function resummarize(dir) {
     }
     if (args.maxPdfs) pdfs = pdfs.slice(0, args.maxPdfs);
     const fixedSteps = args.script ? scriptSteps(args.script) : null;
-    if (fixedSteps && args.seeds === '1-5' && !args.script.startsWith('type-at:')) seeds = [1];
+    if (fixedSteps && args.seeds === '1-5' && !args.script.startsWith('type-at:') && args.script !== 'style-at') seeds = [1];
     const block = blockRef(args.block);
     const meta = { run, startedAt: new Date().toISOString(), args: process.argv.slice(2).join(' '), tolerances: TOL, corpus: pdfs };
     fs.writeFileSync(path.join(outDir, 'meta.json'), JSON.stringify(meta, null, 1));

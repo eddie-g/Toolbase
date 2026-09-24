@@ -25,6 +25,9 @@ const TOL = {
     fontPx: 0.1,               // I5 font size
     boxHeightPt: 0.5,          // I5 box height
     exportPosPt: 0.5,          // I7 untouched row bbox in the download
+    styleColour: 48,           // I7 style: max per-channel colour difference (0-255)
+    styleSizePt: 0.6,          // I7 style: font size difference
+    styleRowPt: 2.5,           // I7 style: row placement (floor; also 45% of the font size)
     exportRowOriginPt: 0.5,    // I7 every row of the edited block: first-glyph x, baseline, and x of the words before the edit point
     inkPixels: 6,              // I6 leftover pixels at the old place
     renderedDarkPixels: 12,    // I6 the moved text renders (dark pixels at the new place)
@@ -777,6 +780,9 @@ class Session {
         if (await H.isEditing(page, this.id)) await this.exitEdit('outside');
         await H.sleep(1500);
         const base = await this.baseline();
+        // Style fidelity: what the edited block shows before the download.
+        const paints = await page.evaluate((sel) => document.querySelector(sel)?.classList.contains('is-persisted-overlay') === true, this.sel());
+        const editorStyled = paints ? await page.evaluate(M.styledWords, { sel: this.sel() }) : null;
         const edited = path.join(this.outDir, `download${this.stepIndex}.pdf`);
         await H.downloadPdf(page, edited);
         this.count('I7');
@@ -795,11 +801,48 @@ class Session {
         const originBad = res.rowOriginBad || [];
         const data = { ...res, baseline: base, edited, untouchedChanged: res.untouchedChanged.slice(0, 12), extraLines: res.extraLines.slice(0, 12), textMatch: textBad ? false : res.textMatch, rowOriginBad: originBad.slice(0, 12), rowGeometry: (res.rowGeometry || []).slice(0, 40) };
         this.geometry = { rows: (res.rowGeometry || []).length, edited: (res.rowGeometry || []).filter((r) => r.edited).length, bad: originBad.length, maxAbsDx: Math.max(0, ...(res.rowGeometry || []).filter((r) => !r.missing).map((r) => Math.abs(r.dx))), maxAbsDy: Math.max(0, ...(res.rowGeometry || []).filter((r) => !r.missing).map((r) => Math.abs(r.dy))), maxAbsPrefixDx: Math.max(0, ...(res.rowGeometry || []).filter((r) => r.edited).map((r) => Math.abs(r.prefixMaxDx || 0))) };
+        const style = editorStyled && !editorStyled.error ? this.styleFidelity(editorStyled.words, F.stylewords(edited, this.pageNo, [n.x - 2, n.y - 2, n.x + n.w + 2, n.y + n.h + 2]).words) : null;
+        if (style) {
+            data.style = style;
+            this.styleStats = { matched: style.matched, words: style.editorWords, bad: style.bad.length };
+        }
+        if (style && style.bad.length) {
+            const kinds = [...new Set(style.bad.flatMap((b) => b.what))];
+            const w = style.bad[0];
+            await this.violate('I7', step, this.stepIndex, `download style: ${style.bad.length}/${style.matched} words differ from the editor (${kinds.join(', ')}); e.g. "${w.t}": ${w.what.map((k) => `${k} ${JSON.stringify(w.editor[k])}→${JSON.stringify(w.pdf[k])}`).join(', ')}`, { ...data, styleKinds: kinds.join('+') });
+        }
         if (res.pageCountChanged || res.untouchedChanged.length || res.extraLines.length || textBad || res.colourLost.length || originBad.length) {
             const worst = originBad.filter((r) => !r.missing).sort((a, b) => Math.max(Math.abs(b.dx), Math.abs(b.dy), Math.abs(b.prefixMaxDx || 0)) - Math.max(Math.abs(a.dx), Math.abs(a.dy), Math.abs(a.prefixMaxDx || 0)))[0];
             const originMsg = originBad.length ? `, ${originBad.length} block rows off their origin${worst ? ` (row ${worst.row}${worst.edited ? ' edited' : ''}: dx ${worst.dx}pt, dy ${worst.dy}pt, prefix dx ${worst.prefixMaxDx ?? '-'}pt)` : ' (row missing)'}` : '';
             await this.violate('I7', step, this.stepIndex, `download: ${res.untouchedChanged.length}/${res.untouchedLines} untouched rows changed, ${res.extraLines.length} extra rows, edited text ${textBad ? 'MISMATCH' : 'ok'}, ${res.colourLost.length} colour losses${originMsg}`, data);
         }
+    }
+
+    /** I7 style: pair editor words with download words by text; report
+     *  colour/bold/italic/size differences and a word whose row placement
+     *  (baseline offset from the block's first paired word) moved. */
+    styleFidelity(editorWords, pdfWords) {
+        const pairs = M.align(editorWords, pdfWords);
+        const bad = [];
+        const dist = (a, b) => {
+            const p = (h) => [1, 3, 5].map((i) => Number.parseInt(String(h || '#000000').slice(i, i + 2), 16) || 0);
+            const [x, y] = [p(a), p(b)];
+            return Math.max(...x.map((v, i) => Math.abs(v - y[i])));
+        };
+        const [e0, p0] = pairs[0] || [];
+        for (const [e, q] of pairs) {
+            const what = [];
+            if (dist(e.color, q.color) > TOL.styleColour) what.push('color');
+            if (e.bold !== q.bold) what.push('bold');
+            if (e.italic !== q.italic) what.push('italic');
+            if (Math.abs(e.size - q.size) > TOL.styleSizePt) what.push('size');
+            const rowShift = (q.base - p0.base) - (e.base - e0.base);
+            if (Math.abs(rowShift) > Math.max(TOL.styleRowPt, e.size * 0.45)) what.push('row');
+            if (what.length) {
+                bad.push({ t: e.t, what, rowShift: r2(rowShift), editor: { color: e.color, bold: e.bold, italic: e.italic, size: r2(e.size), row: r2(e.base - e0.base) }, pdf: { color: q.color, bold: q.bold, italic: q.italic, size: r2(q.size), row: r2(q.base - p0.base), font: q.font } });
+            }
+        }
+        return { editorWords: editorWords.length, pdfWords: pdfWords.length, matched: pairs.length, bad: bad.slice(0, 20) };
     }
 
     // ------------------------------------------------------------------ I4

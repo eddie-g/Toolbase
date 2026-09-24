@@ -318,6 +318,51 @@ def cmd_inkcount(png, threshold='140'):
     print(json.dumps({'dark': dark, 'area': pix.w * pix.h}))
 
 
+def cmd_stylewords(pdf, pno, rect):
+    """Words inside rect (pt, displayed space) with their drawn style:
+    colour, bold, italic, size and baseline (for I7 style fidelity)."""
+    doc = fitz.open(pdf)
+    page = doc[int(pno) - 1]
+    rot = page.rotation_matrix
+    area = fitz.Rect(json.loads(rect))
+    out = []
+    for b in page.get_text('rawdict')['blocks']:
+        if b['type'] != 0:
+            continue
+        for l in b['lines']:
+            cur = None
+            for s in l['spans']:
+                font = s.get('font') or ''
+                flags = int(s.get('flags') or 0)
+                bold = bool(flags & 16) or bool(re.search(r'bold|black|heavy|semibold|demi', font, re.I))
+                italic = bool(flags & 2) or bool(re.search(r'italic|oblique', font, re.I))
+                for ch in s['chars']:
+                    c = ch['c']
+                    r = fitz.Rect(ch['bbox']) * rot
+                    if not c.strip() or c == '\u00ad':
+                        if cur:
+                            out.append(cur)
+                            cur = None
+                        continue
+                    centre = fitz.Point((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2)
+                    if not area.contains(centre):
+                        if cur:
+                            out.append(cur)
+                            cur = None
+                        continue
+                    if cur is None:
+                        origin = fitz.Point(ch['origin']) * rot
+                        cur = {'t': '', 'x': r.x0, 'base': origin.y, 'size': round(s['size'], 2),
+                               'color': '#%06x' % s['color'], 'bold': bold, 'italic': italic, 'font': font}
+                    cur['t'] += c
+            if cur:
+                out.append(cur)
+    for w in out:
+        w['x'] = round(w['x'], 2)
+        w['base'] = round(w['base'], 2)
+    print(json.dumps({'words': out}))
+
+
 if __name__ == '__main__':
     cmd, *args = sys.argv[1:]
-    {'words': cmd_words, 'render': cmd_render, 'bgcheck': cmd_bgcheck, 'exportdiff': cmd_exportdiff, 'inkcount': cmd_inkcount}[cmd](*args)
+    {'words': cmd_words, 'render': cmd_render, 'bgcheck': cmd_bgcheck, 'exportdiff': cmd_exportdiff, 'inkcount': cmd_inkcount, 'stylewords': cmd_stylewords}[cmd](*args)

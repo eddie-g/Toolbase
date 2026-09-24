@@ -1,0 +1,9 @@
+[
+ { "op": "enter", "via": "menu" },
+ { "op": "clickText", "needle": "change.", "pos": "after" },
+ { "op": "format", "control": "color", "value": "#e72323" },
+ { "op": "type", "text": " yesd" },
+ { "op": "key", "key": "Enter", "n": 1 },
+ { "op": "exit", "via": "outside" },
+ { "op": "download" }
+]

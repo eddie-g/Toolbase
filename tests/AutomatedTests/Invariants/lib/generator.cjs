@@ -80,6 +80,13 @@ function generate(seed, count) {
             default: push({ op });
         }
     }
+    // A sequence that changed the block ends with a download: style and
+    // row fidelity (I7) is only visible in the exported PDF.
+    const changed = steps.some((st) => st.op === 'type' || st.op === 'format' || (st.op === 'key' && st.key === 'Enter'));
+    if (changed && steps[steps.length - 1].op !== 'download') {
+        if (editing) push({ op: 'exit', via: 'outside' });
+        push({ op: 'download' });
+    }
     return steps;
 }
 

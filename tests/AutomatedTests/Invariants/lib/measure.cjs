@@ -94,6 +94,76 @@ function pageWords({ sel, mode, rect }) {
     };
 }
 
+/** In-page: the box's visible words with their computed style, in PDF pt
+ *  (page-relative): colour, bold, italic, size and baseline. */
+function styledWords({ sel }) {
+    const box = document.querySelector(sel);
+    if (!box) return { error: 'no box' };
+    const pageDiv = box.closest('.page');
+    const pr = pageDiv.getBoundingClientRect();
+    const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 1;
+    const tc = box.querySelector('.enpv-text-content') || box;
+    const ctx2d = document.createElement('canvas').getContext('2d');
+    const ascentCache = new Map();
+    const ascent = (st) => {
+        const font = `${st.fontStyle} ${st.fontWeight} ${st.fontSize} ${st.fontFamily}`;
+        if (!ascentCache.has(font)) { ctx2d.font = font; ascentCache.set(font, ctx2d.measureText('Hg').fontBoundingBoxAscent); }
+        return ascentCache.get(font);
+    };
+    const hex = (c) => {
+        const m = String(c || '').match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+        return m ? '#' + m.slice(1, 4).map((v) => Number(v).toString(16).padStart(2, '0')).join('') : String(c || '');
+    };
+    // A bold/italic PDF face is often drawn from its own font file at CSS
+    // weight 400: the scaffold run records the source's semantic weight and
+    // slant. An inline weight/style the user set wins over it.
+    const explicit = (el, prop) => {
+        for (let n = el; n && n !== tc.parentElement; n = n.parentElement) {
+            if (n.style && n.style[prop]) return n.style[prop];
+            if (n.dataset && (n.dataset.sourceSpanRun === '1' || n.dataset.sourceSemanticFontWeight)) break;
+        }
+        return '';
+    };
+    const semantic = (el, key) => el.closest?.(`[data-source-semantic-font-${key}]`)?.dataset?.[key === 'weight' ? 'sourceSemanticFontWeight' : 'sourceSemanticFontStyle'] || '';
+    const visualBold = (el, st) => {
+        if (Number.parseInt(st.fontWeight, 10) >= 600) return true;
+        if (explicit(el, 'fontWeight')) return false;
+        return Number.parseInt(semantic(el, 'weight'), 10) >= 600 || /bold|black|heavy|semibold|demi/i.test(st.fontFamily.split(',')[0]);
+    };
+    const visualItalic = (el, st) => {
+        if (/italic|oblique/.test(st.fontStyle)) return true;
+        if (explicit(el, 'fontStyle')) return false;
+        return /italic|oblique/.test(semantic(el, 'style')) || /italic|oblique/i.test(st.fontFamily.split(',')[0]);
+    };
+    const words = []; let cur = null;
+    const flush = () => { if (cur) { words.push(cur); cur = null; } };
+    const walker = document.createTreeWalker(tc, NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+        const n = walker.currentNode; const v = n.nodeValue || '';
+        const parent = n.parentElement;
+        const st = parent ? getComputedStyle(parent) : null;
+        if (!st || st.display === 'none' || st.visibility === 'hidden') continue;
+        for (let i = 0; i < v.length; i += 1) {
+            const ch = v[i];
+            if (/[\u00ad\u200b-\u200d\u2060\ufeff]/.test(ch)) continue;
+            if (/\s/.test(ch)) { flush(); continue; }
+            const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + 1);
+            const rc = Array.from(r.getClientRects()).find((x) => x.width > 0 || x.height > 0);
+            if (!rc) continue;
+            if (!cur) {
+                cur = {
+                    t: '', x: (rc.left - pr.left) / scale, base: (rc.top + ascent(st) - pr.top) / scale,
+                    size: Number.parseFloat(st.fontSize) / scale, color: hex(st.color),
+                    bold: visualBold(parent, st), italic: visualItalic(parent, st),
+                };
+            }
+            cur.t += ch;
+        }
+    }
+    flush();
+    return { scale, words };
+}
+
 /** In-page: text + caret state of the box's contenteditable. */
 function textState({ sel }) {
     const strip = (s) => String(s || '').replace(/[\s ­​-‍⁠﻿]+/g, '');
@@ -233,4 +303,4 @@ function compare(ref, got, scale, thresholdPx) {
     };
 }
 
-module.exports = { pageWords, textState, keyPlan, targetPoints, align, assignRows, compare, norm };
+module.exports = { styledWords, pageWords, textState, keyPlan, targetPoints, align, assignRows, compare, norm };

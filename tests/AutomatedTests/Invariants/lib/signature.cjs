@@ -89,7 +89,12 @@ function locus(v) {
         case 'I4': return `neighbour ${d.what || 'changed'}`;
         case 'I5': return `session drift: ${(d.drift || []).join('+') || 'state'}`;
         case 'I6': return d.notRendered ? 'moved text not rendered' : 'mask: leftover glyph pixels';
-        case 'I7': if (d.pageCountChanged) return 'exporter: page count';
+        case 'I7': if (d.styleKinds) {
+                const k = d.styleKinds.split('+');
+                if (k.includes('row')) return 'exporter style: row placement (empty row / break lost)';
+                return `exporter style: ${k.filter((x) => x !== 'row').sort().join('+')} differs from editor`;
+            }
+            if (d.pageCountChanged) return 'exporter: page count';
             if ((d.rowOriginBad || []).length) return 'exporter edited-row origin';
             if ((d.untouchedChanged || []).length) return 'exporter: untouched row changed';
             if ((d.extraLines || []).length) return 'exporter: extra ink outside block';
