@@ -5555,7 +5555,7 @@ def resolve_embedded_font_entry(ann: Dict[str, Any]) -> Optional[Dict[str, Any]]
     if is_pdfjs_visible_overlay and not has_exact_pdfjs_source_font:
         return None
 
-    text_to_stamp = str(ann.get("text") or "")
+    text_to_stamp = soft_hyphens_as_drawn(ann.get("text"))
     preserve_source = _boolish(ann.get("preserveSourceTypography")) and bool(
         ann.get("promotedFromExtraction")
     )
@@ -5904,6 +5904,33 @@ def resolve_substitute_font_entry(psname: str, ann: Dict[str, Any]) -> Optional[
 
 
 _FONT_CMAP_CACHE: dict[str, Optional[set[int]]] = {}
+
+
+def soft_hyphens_as_drawn(text: Any, row_ends_at_text_end: bool = True) -> str:
+    """Resolve U+00AD the way the editor and the source PDF show it.
+
+    PDFs such as the Isartor suite map their row-break hyphen glyph to a soft
+    hyphen, so a promoted row arrives as "... and vi\u00ad". No face the
+    exporter can draw with carries U+00AD: runtime-extracted subsets only map
+    the hyphen glyph to U+002D, and the bundled faces have the alias stripped
+    on purpose (NK_36). The soft hyphen alone therefore failed every coverage
+    check and dropped the whole row to base-14 Helvetica, which cannot encode
+    curly quotes and draws them as "\u00b7". A soft hyphen is a visible "-"
+    only where a row breaks, and invisible anywhere else.
+    """
+    value = str(text or "")
+    if "\u00AD" not in value:
+        return value
+    out: list[str] = []
+    length = len(value)
+    for index, ch in enumerate(value):
+        if ch != "\u00AD":
+            out.append(ch)
+            continue
+        rest = value[index + 1:].lstrip(" \t")
+        if rest[:1] in {"\n", "\r"} or (not rest and row_ends_at_text_end):
+            out.append("-")
+    return "".join(out)
 
 
 def _embedded_font_covers_text(fontfile: Any, text: str) -> bool:
@@ -7279,6 +7306,7 @@ def _resolve_style_run_font(
     cache_key = _style_run_signature(style)
     font = font_cache.get(cache_key) if font_cache is not None else None
     if font is None:
+        text = soft_hyphens_as_drawn(text)
         style_ann["text"] = text
         fontfile = resolve_text_fontfile_with_coverage(style_ann, text)
         if fontfile:
@@ -7303,7 +7331,7 @@ def _measure_style_run_text_width(
         font_size = 12.0
     font = _resolve_style_run_font(text, style, font_cache)
 
-    return float(font.text_length(text, fontsize=font_size))
+    return float(font.text_length(soft_hyphens_as_drawn(text), fontsize=font_size))
 
 
 def _style_mapping_is_ambiguous(
@@ -7348,9 +7376,24 @@ def _should_use_authoritative_dirty_promoted_base_style(
     source_line_spans: list[Dict[str, Any]],
     base_style: Dict[str, Any],
 ) -> bool:
-    if has_single_run_rich_text(ann, expected_line_text):
-        return True
     if not source_line_spans:
+        return True
+    # A plain-text edit (no run markup) of a row whose PDF spans differ only
+    # in colour (a red list bullet) keeps each span's colour: the editor draws
+    # those glyphs from the source spans, and a single black run painted the
+    # bullet black (NK_8131).
+    plain_text_edit = (
+        not ann.get("richTextRuns")
+        and not str(ann.get("richTextHtml") or "").strip()
+        and not _boolish(ann.get("styleDirty"))
+        and not _boolish(ann.get("userForcedRichText"))
+    )
+    source_colors = {
+        _normalized_style_value(span.get("color"))
+        for span in source_line_spans
+        if _normalized_style_value(span.get("color"))
+    }
+    if has_single_run_rich_text(ann, expected_line_text) and not (plain_text_edit and len(source_colors) > 1):
         return True
 
     base_exact_family = normalize_exact_font_family(
@@ -8174,7 +8217,7 @@ def draw_text_using_exact_source_lines(
         if not isinstance(line_entry, dict):
             continue
         line_rect = line_entry.get("rect")
-        line_text = (
+        line_text = soft_hyphens_as_drawn(
             sanitize_pdfjs_source_text(line_entry.get("text"))
             if is_pdfjs_visible_overlay_text(ann)
             else sanitize_pdf_text(line_entry.get("text"))
@@ -8323,13 +8366,15 @@ def draw_text_using_exact_source_spans(
             continue
         _prev_span_rect: Optional[fitz.Rect] = None
         _prev_span_text: Optional[str] = None
+        _row_spans = [entry for entry in (line_entry.get("spans") or []) if isinstance(entry, dict)]
         for span_entry in line_entry.get("spans") or []:
             if not isinstance(span_entry, dict):
                 continue
-            span_text = (
+            span_text = soft_hyphens_as_drawn(
                 sanitize_pdfjs_source_text(span_entry.get("text"))
                 if is_pdfjs_visible_overlay_text(ann)
-                else sanitize_pdf_text(span_entry.get("text"))
+                else sanitize_pdf_text(span_entry.get("text")),
+                row_ends_at_text_end=span_entry is _row_spans[-1],
             )
             span_rect = span_entry.get("rect")
             if not span_text or not isinstance(span_rect, fitz.Rect):
@@ -8685,6 +8730,7 @@ def resolve_text_fontfile_with_coverage(ann: Dict[str, Any], text: str) -> Optio
     enough: if the subset does not contain every glyph in this run, using it
     emits .notdef boxes in the exported PDF.
     """
+    text = soft_hyphens_as_drawn(text)
     scoped_ann = dict(ann)
     scoped_ann["text"] = text
     fontfile = resolve_text_fontfile(scoped_ann)
@@ -10582,7 +10628,7 @@ def draw_text(
             )
             page.insert_text(
                 fitz.Point(draw_x, baseline_y),
-                text,
+                soft_hyphens_as_drawn(text),
                 fontsize=size,
                 fontname=fontname,
                 color=color,
@@ -11126,7 +11172,9 @@ def draw_text(
 
             page.insert_text(
                 fitz.Point(draw_x, line_baseline_y),
-                sanitize_pdfjs_source_text(line) if pdfjs_visible_overlay else sanitize_pdf_text(line),
+                soft_hyphens_as_drawn(
+                    sanitize_pdfjs_source_text(line) if pdfjs_visible_overlay else sanitize_pdf_text(line)
+                ),
                 fontsize=size,
                 fontname=fontname,
                 color=color,
@@ -11153,6 +11201,7 @@ def draw_text(
 
     if mask_only:
         return
+    text = soft_hyphens_as_drawn(text)
 
     # Fallback for text annotations that do not include pdfWidth/pdfHeight
     # (keepBounds=false), or annotations where rect is zero-size.
@@ -11934,8 +11983,383 @@ def _suppress_promoted_source_erase_over_user_shapes(annotations: list) -> None:
                 break
 
 
+def _row_local_promoted_edit_rows(ann: Dict[str, Any]) -> Optional[List[int]]:
+    """NK_8131: the rows of a dirty promoted paragraph the user changed, when
+    every other row is still the PDF's own row (same row count and order, no
+    restyle, resize or move). [] when the text reads exactly like the PDF's
+    rows again (a typed character was deleted); None when the edit is not
+    row-local."""
+    if not isinstance(ann, dict) or str(ann.get("type") or "").lower() != "text":
+        return None
+    if not _boolish(ann.get("promotedFromExtraction")):
+        return None
+    # Only the PDF.js visible export keeps the source page's glyphs under the
+    # overlays. The clean rebuild (__sourcePdfPath) starts from a page whose
+    # text was removed, so every row must still be stamped there.
+    if ann.get("__sourcePdfPath") or not is_pdfjs_visible_overlay_text(ann):
+        return None
+    if str(ann.get("backgroundColor") or "transparent").strip().lower() not in ("", "transparent"):
+        return None
+    source_color = str(ann.get("pdfjsSourceTextColor") or "").strip().lower()
+    if source_color and str(ann.get("textColor") or source_color).strip().lower() != source_color:
+        return None
+    for flag in (
+        "styleDirty", "userForcedRichText", "userSizedTextBox", "movedTextOverlay",
+        "pdfjsDeleted", "underline", "strikeout", "backgroundColorExplicit", "hasCustomBackground",
+    ):
+        if _boolish(ann.get(flag)):
+            return None
+    if abs(normalize_rotation_degrees(ann.get("rotation", 0.0))) > 1e-6:
+        return None
+    if _promoted_annotation_was_resized(ann):
+        return None
+    # A paragraph the editor re-flowed (a row outgrew the box and had nowhere
+    # to go) no longer fits its PDF rows: stamping it row by row clipped the
+    # overflow and dropped words from the download (NK_59, "chapter 5,").
+    if _boolish(ann.get("promotedReflowEnabled")):
+        return None
+    split = lambda value: str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    text_lines = split(ann.get("text"))
+    boxes = ann.get("sourceLineBBoxes")
+    source_rows = ann.get("sourceTextLines")
+    source_text_lines = split(ann.get("pdfjsSourceText") or ann.get("originalText"))
+    count = len(text_lines)
+    if (
+        count < 2
+        or not isinstance(boxes, list) or len(boxes) != count
+        or not isinstance(source_rows, list) or len(source_rows) != count
+        or len(source_text_lines) != count
+    ):
+        return None
+    if any(not isinstance(box, (list, tuple)) or len(box) < 4 for box in boxes):
+        return None
+    # normalize_annotations_for_pdf_export folds the quotes of the source
+    # rows but not of the edited text; compare both folded.
+    comparable = lambda value: " ".join(sanitize_pdf_text(str(value or "")).split())
+    # The immutable source text is the reference: sourceTextLines is re-derived
+    # from the edited rows once the annotation is saved and reloaded.
+    changed = [index for index in range(count) if comparable(text_lines[index]) != comparable(source_text_lines[index])]
+    if len(changed) >= count:
+        return None
+    if any(not comparable(text_lines[index]) for index in changed):
+        return None
+    return changed
+
+
+def _pad_promoted_appended_rows(ann: Dict[str, Any]) -> Dict[str, Any]:
+    """NK_59: the editor appends rows under a last row that outgrew the box
+    (`promotedAppendedRows`). Give each one a source row one row pitch below
+    the previous, with empty source text, so the row-local export stamps it
+    like any other changed row."""
+    try:
+        appended = int(ann.get("promotedAppendedRows") or 0)
+    except (TypeError, ValueError):
+        return ann
+    boxes = ann.get("sourceLineBBoxes")
+    source_rows = ann.get("sourceTextLines")
+    if appended <= 0 or not isinstance(boxes, list) or not boxes or not isinstance(source_rows, list):
+        return ann
+    split = lambda value: str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    if len(split(ann.get("text"))) != len(boxes) + appended or len(source_rows) != len(boxes):
+        return ann
+    try:
+        rows = [[float(v) for v in box[:4]] for box in boxes]
+    except (TypeError, ValueError, IndexError):
+        return ann
+    last = rows[-1]
+    pitch = (last[1] - rows[-2][1]) if len(rows) >= 2 else (last[3] - last[1]) * 1.2
+    if not pitch > 0:
+        return ann
+    padded = dict(ann)
+    padded["sourceLineBBoxes"] = list(boxes) + [
+        [last[0], last[1] + pitch * k, last[2], last[3] + pitch * k] for k in range(1, appended + 1)
+    ]
+    padded["sourceTextLines"] = list(source_rows) + [""] * appended
+    for key in ("pdfjsSourceText", "originalText"):
+        if ann.get(key) is not None:
+            padded[key] = str(ann.get(key)) + "\n" * appended
+    return padded
+
+
+def split_row_local_promoted_edit(ann: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """NK_8131: export a row-local paragraph edit as one annotation per
+    changed row. Only those rows are masked and re-stamped; every untouched
+    row keeps the PDF's own glyphs, so it cannot move in the download (the
+    whole-block re-stamp re-spaced every justified row by up to ~2pt)."""
+    ann = _pad_promoted_appended_rows(ann)
+    changed = _row_local_promoted_edit_rows(ann)
+    if changed is None:
+        return [ann]
+    if not changed:
+        # Nothing differs from the PDF's own rows: its glyphs are the export.
+        return []
+    split = lambda value: str(value or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    text_lines = split(ann.get("text"))
+    source_text_lines = split(ann.get("pdfjsSourceText") or ann.get("originalText"))
+    boxes = [[float(v) for v in box[:4]] for box in ann["sourceLineBBoxes"]]
+    count = len(boxes)
+    rich_rows: Optional[List[List[Any]]] = None
+    runs = ann.get("richTextRuns")
+    if isinstance(runs, list) and runs:
+        rich_rows = [[]]
+        for run in runs:
+            if isinstance(run, dict) and str(run.get("type") or "") == "break":
+                rich_rows.append([])
+            else:
+                rich_rows[-1].append(run)
+        if len(rich_rows) != count:
+            return [ann]
+    try:
+        page_height = float(ann.get("pdfjsSourcePageHeight") or ann.get("sourcePageHeight") or 0.0)
+        block_top = float(ann.get("sourceBlockTop"))
+        block_bottom = block_top + float(ann.get("sourceBlockHeight"))
+        mask_top = page_height - float(ann.get("pdfjsSourceY")) - float(ann.get("pdfjsSourceH"))
+        mask_bottom = page_height - float(ann.get("pdfjsSourceY"))
+    except (TypeError, ValueError):
+        return [ann]
+    if page_height <= 0:
+        return [ann]
+    pad_top = max(0.0, block_top - mask_top)
+    pad_bottom = max(0.0, mask_bottom - block_bottom)
+    try:
+        span_runs = json.loads(ann["pdfjsSourceSpanRuns"]) if isinstance(ann.get("pdfjsSourceSpanRuns"), str) else ann.get("pdfjsSourceSpanRuns")
+        runs_scale = float(ann.get("pdfjsSourceSpanRunsScale") or 0.0)
+    except (TypeError, ValueError):
+        span_runs, runs_scale = None, 0.0
+
+    def within_row(top: float, bottom: float, row: List[float]) -> bool:
+        center = (top + bottom) / 2.0
+        return row[1] - 1.0 <= center <= row[3] + 1.0
+
+    rows: List[Dict[str, Any]] = []
+    for index in changed:
+        row = boxes[index]
+        gap_above = row[1] - boxes[index - 1][3] if index > 0 else pad_top * 2.0
+        gap_below = boxes[index + 1][1] - row[3] if index + 1 < count else pad_bottom * 2.0
+        top = row[1] - max(0.0, min(pad_top, gap_above / 2.0 - 0.1))
+        bottom = row[3] + max(0.0, min(pad_bottom, gap_below / 2.0 - 0.1))
+        child = dict(ann)
+        child["id"] = f"{ann.get('id')}__row{index}"
+        child["text"] = text_lines[index]
+        child["pdfjsSourceText"] = source_text_lines[index]
+        original_lines = split(ann.get("originalText"))
+        child["originalText"] = original_lines[index] if len(original_lines) == count else source_text_lines[index]
+        child["sourceTextLines"] = [ann["sourceTextLines"][index]]
+        child["sourceLineBBoxes"] = [ann["sourceLineBBoxes"][index]]
+        child["pdfjsVisualLines"] = [text_lines[index]]
+        child["promotedReflowEnabled"] = False
+        child["sourceBlockTop"] = row[1]
+        child["sourceBlockHeight"] = row[3] - row[1]
+        child["pdfY"] = page_height - row[3]
+        child["pdfHeight"] = row[3] - row[1]
+        child["pdfjsSourceY"] = page_height - bottom
+        child["pdfjsSourceH"] = bottom - top
+        child.pop("richTextHtml", None)
+        if rich_rows is not None:
+            child["richTextRuns"] = rich_rows[index]
+        if isinstance(ann.get("sourceSpans"), list):
+            child["sourceSpans"] = [
+                span for span in ann["sourceSpans"]
+                if isinstance(span, dict) and isinstance(span.get("bbox"), list) and len(span["bbox"]) >= 4
+                and within_row(float(span["bbox"][1]), float(span["bbox"][3]), row)
+            ]
+        if isinstance(span_runs, list) and runs_scale > 0:
+            child["pdfjsSourceSpanRuns"] = json.dumps([
+                run for run in span_runs
+                if isinstance(run, dict)
+                and within_row(float(run.get("topPx") or 0.0) / runs_scale, float(run.get("bottomPx") or 0.0) / runs_scale, row)
+            ])
+        _narrow_row_edit_to_changed_spans(child, row, text_lines[index], source_text_lines[index], runs_scale)
+        rows.append(child)
+    return rows
+
+
+def _span_leading_whitespace_width(
+    span: Dict[str, Any],
+    span_text: str,
+    leading: int,
+    child: Dict[str, Any],
+    runs_scale: float,
+) -> float:
+    """Width of the whitespace a source span opens with. PDF.js reports the
+    span's visible text as its own run starting at the first glyph; use that
+    run's left edge, else a Helvetica-width estimate of the spaces."""
+    try:
+        x0 = float(span["bbox"][0])
+        x1 = float(span["bbox"][2])
+        size = float(span.get("font_size") or span.get("fontSize") or child.get("fontSize") or 0.0)
+    except (TypeError, ValueError, KeyError, IndexError):
+        return 0.0
+    if size <= 0 or not x1 > x0:
+        return 0.0
+    limit = min(x1 - x0, size * leading)
+    words = span_text.split()
+    try:
+        runs = json.loads(child["pdfjsSourceSpanRuns"]) if isinstance(child.get("pdfjsSourceSpanRuns"), str) else None
+    except (TypeError, ValueError):
+        runs = None
+    if words and isinstance(runs, list) and runs_scale > 0:
+        for run in runs:
+            if not isinstance(run, dict):
+                continue
+            run_words = str(run.get("text") or "").split()
+            if not run_words or run_words[0] != words[0]:
+                continue
+            try:
+                shift = float(run.get("leftPx")) / runs_scale - x0
+            except (TypeError, ValueError):
+                continue
+            if 0.0 < shift <= limit:
+                return shift
+    try:
+        return min(limit, fitz.get_text_length(span_text[:leading], fontname="helv", fontsize=size))
+    except Exception:
+        return 0.0
+
+
+def _narrow_row_edit_to_changed_spans(
+    child: Dict[str, Any],
+    row: List[float],
+    text: str,
+    source_text: str,
+    runs_scale: float,
+) -> None:
+    """NK_59: keep the row's unchanged leading source spans (a red bullet
+    and its gap, a bold label) as the PDF's own glyphs. Only the text from
+    the first changed span on is masked and re-stamped, starting at that
+    span's x in that span's colour. Re-stamping the whole row drew the bullet
+    black and collapsed its gap to one space."""
+    spans = sorted(
+        (span for span in (child.get("sourceSpans") or [])
+         if isinstance(span, dict) and isinstance(span.get("bbox"), list) and len(span["bbox"]) >= 4
+         and str(span.get("text") or "").strip()),
+        key=lambda span: float(span["bbox"][0]),
+    )
+    if len(spans) < 2:
+        return
+    comparable = lambda value: sanitize_pdf_text(str(value or ""))
+
+    def consume(value: str, count: int) -> Optional[int]:
+        """Offset in `value` just after the first `count` spans, or None when
+        `value` does not start with those spans' text (whitespace between)."""
+        folded = comparable(value)
+        pos = 0
+        for span in spans[:count]:
+            while pos < len(folded) and folded[pos].isspace():
+                pos += 1
+            span_text = comparable(span.get("text")).strip()
+            if not folded.startswith(span_text, pos):
+                return None
+            pos += len(span_text)
+            # A span must end at a word boundary to be unchanged.
+            if pos < len(folded) and not folded[pos].isspace():
+                return None
+        return pos
+
+    kept = 0
+    for count in range(1, len(spans)):
+        if consume(text, count) is None or consume(source_text, count) is None:
+            break
+        kept = count
+    if kept <= 0:
+        return
+    text_pos = consume(text, kept)
+    source_pos = consume(source_text, kept)
+    if text_pos is None or source_pos is None:
+        return
+    new_text = comparable(text)[text_pos:].lstrip()
+    new_source = comparable(source_text)[source_pos:].lstrip()
+    if not new_text:
+        return
+    first = spans[kept]
+    x0 = float(first["bbox"][0])
+    # The first changed span often opens with the PDF's inter-run space
+    # (" test suite. ..." after an italic "for)"): its bbox and origin start
+    # at that space, but the re-stamped text is left-stripped, so the first
+    # word landed on the space and read "for)test". Start the re-stamp at the
+    # span's first glyph instead.
+    first_text = str(first.get("text") or "")
+    leading = len(first_text) - len(first_text.lstrip())
+    if leading:
+        shift = _span_leading_whitespace_width(first, first_text, leading, child, runs_scale)
+        if shift > 0:
+            first = dict(first)
+            for key in ("text", "render_text", "rawText"):
+                if isinstance(first.get(key), str):
+                    first[key] = first[key].lstrip()
+            first["bbox"] = [x0 + shift] + list(first["bbox"][1:])
+            origin = first.get("origin")
+            if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+                first["origin"] = [float(origin[0]) + shift] + list(origin[1:])
+            x0 += shift
+            spans = spans[:kept] + [first] + spans[kept + 1:]
+    right = max(float(row[2]), max(float(span["bbox"][2]) for span in spans[kept:]))
+    if not x0 < right:
+        return
+    width = right - x0
+    child["text"] = new_text
+    child["pdfjsSourceText"] = new_source
+    child["originalText"] = new_source
+    child["sourceTextLines"] = [new_source]
+    child["pdfjsVisualLines"] = [new_text]
+    child["sourceLineBBoxes"] = [[x0, row[1], right, row[3]]]
+    child["sourceSpans"] = spans[kept:]
+    child["sourceBlockLeft"] = x0
+    child["sourceBlockWidth"] = width
+    child["pdfX"] = x0
+    child["pdfWidth"] = width
+    child["pdfjsSourceX"] = x0
+    child["pdfjsSourceW"] = width
+    for key in ("pdfjsSourceMaskX", "pdfjsSourceMaskY", "pdfjsSourceMaskW", "pdfjsSourceMaskH"):
+        child.pop(key, None)
+    color = str(first.get("hex_color") or "").strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        child["textColor"] = color
+        child["color"] = color
+        child["pdfjsSourceTextColor"] = color
+    # Run markup of the whole row would redraw the kept spans too.
+    child.pop("richTextRuns", None)
+    child.pop("richTextHtml", None)
+    try:
+        runs = json.loads(child["pdfjsSourceSpanRuns"]) if isinstance(child.get("pdfjsSourceSpanRuns"), str) else None
+    except (TypeError, ValueError):
+        runs = None
+    if isinstance(runs, list) and runs_scale > 0:
+        child["pdfjsSourceSpanRuns"] = json.dumps([
+            run for run in runs
+            if isinstance(run, dict) and float(run.get("leftPx") or 0.0) / runs_scale >= x0 - 1.0
+        ])
+
+
+_MID_ROW_SOFT_HYPHEN_RE = re.compile(r"­+(?=[^\n])")
+
+
+def _drop_mid_row_soft_hyphens(ann: Any) -> Any:
+    """A soft hyphen is only drawn where a row breaks. Typing after a
+    row-end "stan­" moves it mid-row, where the editor hides it; drawing it
+    printed a visible "-" (and a subset without U+00AD fell to Helvetica).
+    Only an edited promoted paragraph is touched: its row-end hyphens stay."""
+    if not isinstance(ann, dict) or str(ann.get("type") or "").lower() != "text":
+        return ann
+    if not (_boolish(ann.get("promotedFromExtraction")) and _boolish(ann.get("promotedDirty"))):
+        return ann
+    text = ann.get("text")
+    if not isinstance(text, str) or not _MID_ROW_SOFT_HYPHEN_RE.search(text):
+        return ann
+    cleaned = dict(ann)
+    cleaned["text"] = _MID_ROW_SOFT_HYPHEN_RE.sub("", text)
+    visual = ann.get("pdfjsVisualLines")
+    if isinstance(visual, list):
+        cleaned["pdfjsVisualLines"] = [
+            _MID_ROW_SOFT_HYPHEN_RE.sub("", line) if isinstance(line, str) else line for line in visual
+        ]
+    return cleaned
+
+
 def apply_annotations(pdf_path: str, annotations: list) -> None:
     annotations = normalize_annotations_for_pdf_export(annotations)
+    annotations = [_drop_mid_row_soft_hyphens(ann) for ann in annotations]
+    annotations = [row for ann in annotations for row in split_row_local_promoted_edit(ann)]
     annotations = sorted(annotations, key=annotation_layer_order)
     _suppress_invisible_text_placeholder_over_user_fills(annotations)
     suppress_pdfjs_deleted_masks_owned_by_replacements(annotations)

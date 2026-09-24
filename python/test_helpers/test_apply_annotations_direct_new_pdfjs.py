@@ -2593,5 +2593,120 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
         self.assertFalse(regular_font.is_bold)
         self.assertIn("bold", bold_font.name.lower())
 
+    def _row_local_paragraph(self, text):
+        rows = [
+            "The present installment of the test suite",
+            "quadrant. It does not cover any of the other quadrants",
+            "that future installments will expand coverage.",
+        ]
+        return {
+            "id": "promoted_2_10", "type": "text", "pageIndex": 1,
+            "promotedFromExtraction": True, "promotedDirty": True,
+            "text": text, "pdfjsSourceText": "\n".join(rows), "originalText": "\n".join(rows),
+            "sourceTextLines": list(rows),
+            "sourceLineBBoxes": [[107.7, 500.0, 509.3, 510.0], [107.7, 514.0, 510.9, 524.0], [107.7, 528.0, 387.4, 538.0]],
+            "sourceBlockLeft": 107.7, "sourceBlockTop": 500.0, "sourceBlockWidth": 403.2, "sourceBlockHeight": 38.0,
+            "pdfX": 107.35, "pdfY": 842.0 - 538.0, "pdfWidth": 403.9, "pdfHeight": 38.0,
+            "pdfjsSourceX": 107.35, "pdfjsSourceY": 842.0 - 538.7, "pdfjsSourceW": 403.9, "pdfjsSourceH": 40.1,
+            "pdfjsSourcePageHeight": 842, "pdfjsEditorMode": "rich", "pdfjsSourceText": "\n".join(rows),
+            "richTextRuns": [
+                run
+                for index, line in enumerate(text.split("\n"))
+                for run in ([{"type": "break"}] if index else []) + [{"type": "text", "text": line}]
+            ],
+            "sourceSpans": [
+                {"bbox": [107.7, 500.0, 509.3, 510.0], "text": rows[0]},
+                {"bbox": [107.7, 514.0, 510.9, 524.0], "text": rows[1]},
+                {"bbox": [107.7, 528.0, 387.4, 538.0], "text": rows[2]},
+            ],
+        }
+
+    def test_nk8131_row_local_edit_exports_only_the_changed_row(self):
+        source = self._row_local_paragraph("x")["pdfjsSourceText"]
+        ann = self._row_local_paragraph(source.replace("other", "otherish"))
+        rows = self.module.split_row_local_promoted_edit(ann)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["id"], "promoted_2_10__row1")
+        self.assertEqual(row["text"], "quadrant. It does not cover any of the otherish quadrants")
+        self.assertEqual(row["sourceLineBBoxes"], [[107.7, 514.0, 510.9, 524.0]])
+        self.assertAlmostEqual(row["pdfY"], 842.0 - 524.0)
+        self.assertAlmostEqual(row["pdfHeight"], 10.0)
+        # the mask stays inside the row: never reaches the rows above or below
+        self.assertGreaterEqual(842.0 - row["pdfjsSourceY"] - row["pdfjsSourceH"], 510.0)
+        self.assertLessEqual(842.0 - row["pdfjsSourceY"], 528.0)
+        self.assertEqual([span["text"] for span in row["sourceSpans"]], ["quadrant. It does not cover any of the other quadrants"])
+        self.assertEqual(len(row["richTextRuns"]), 1)
+        self.assertFalse(row["promotedReflowEnabled"])
+
+    def test_nk8131_row_local_edit_that_was_undone_keeps_the_source_glyphs(self):
+        source = self._row_local_paragraph("x")["pdfjsSourceText"]
+        self.assertEqual(self.module.split_row_local_promoted_edit(self._row_local_paragraph(source)), [])
+
+    def test_nk8131_reflowed_or_restyled_paragraph_is_not_split(self):
+        source = self._row_local_paragraph("x")["pdfjsSourceText"]
+        joined = self._row_local_paragraph(source.replace("\n", " "))
+        self.assertEqual(self.module.split_row_local_promoted_edit(joined), [joined])
+        styled = self._row_local_paragraph(source.replace("other", "otherish"))
+        styled["styleDirty"] = True
+        self.assertEqual(self.module.split_row_local_promoted_edit(styled), [styled])
+
+    def test_row_local_restamp_starts_after_the_changed_spans_leading_space(self):
+        # Isartor p2 promoted_2_3: "rhymes with " + italic "for)" are kept; the
+        # re-stamp of " test suite. ..." must start at "test", not on its space.
+        spans = [
+            {"bbox": [107.7, 208.65, 173.12, 218.61], "origin": [107.7, 216.9], "text": "rhymes with ", "hex_color": "#000000"},
+            {"bbox": [173.04, 208.65, 191.43, 218.61], "origin": [173.04, 216.9], "text": "for)", "hex_color": "#000000"},
+            {"bbox": [191.46, 208.65, 510.35, 218.61], "origin": [191.46, 216.9], "font_size": 9.96,
+             "text": " test suite. This test suite comprises a set of files which can be ", "hex_color": "#000000"},
+        ]
+        scale = 1.6266666666666665
+        child = {
+            "sourceSpans": spans,
+            "fontSize": 9.96,
+            "pdfjsSourceSpanRuns": json.dumps([
+                {"text": "for)", "leftPx": 281.5, "topPx": 340.0, "bottomPx": 356.2},
+                {"text": "test suite. This test suite comprises a set of files which can be", "leftPx": 317.1, "topPx": 340.0, "bottomPx": 356.2},
+            ]),
+        }
+        self.module._narrow_row_edit_to_changed_spans(
+            child,
+            [107.7, 208.65, 510.35, 218.61],
+            "rhymes with for) test suite. This test suite big comprises a set of files which can",
+            "rhymes with  for)  test suite. This test suite comprises a set of files which can be",
+            scale,
+        )
+        self.assertEqual(child["text"], "test suite. This test suite big comprises a set of files which can")
+        self.assertAlmostEqual(child["pdfX"], 317.1 / scale, places=2)
+        self.assertAlmostEqual(child["sourceSpans"][0]["origin"][0], 317.1 / scale, places=2)
+        self.assertEqual(child["sourceSpans"][0]["text"], "test suite. This test suite comprises a set of files which can be ")
+
+    def test_mid_row_soft_hyphen_is_dropped_from_an_edited_paragraph(self):
+        ann = {
+            "type": "text", "promotedFromExtraction": True, "promotedDirty": True,
+            "text": "violations of the PDF/A-1b\nstan\u00adQ dard. The test\nsuite stan\u00ad\ndard.",
+            "pdfjsVisualLines": ["violations of the PDF/A-1b", "stan\u00adQ dard. The test", "suite stan\u00ad", "dard."],
+        }
+        cleaned = self.module._drop_mid_row_soft_hyphens(ann)
+        self.assertEqual(cleaned["text"], "violations of the PDF/A-1b\nstanQ dard. The test\nsuite stan\u00ad\ndard.")
+        self.assertEqual(cleaned["pdfjsVisualLines"][1], "stanQ dard. The test")
+        self.assertEqual(cleaned["pdfjsVisualLines"][2], "suite stan\u00ad")
+        untouched = dict(ann, promotedDirty=False)
+        self.assertIs(self.module._drop_mid_row_soft_hyphens(untouched), untouched)
+
+    def test_plain_text_edit_keeps_a_coloured_bullet_span(self):
+        spans = [
+            {"text": "\u2022", "color": "#e4222b", "font_source_name": "Verdana", "font_weight": "400", "font_style": "normal"},
+            {"text": "As discussed", "color": "#000000", "font_source_name": "Verdana", "font_weight": "400", "font_style": "normal"},
+        ]
+        base = {"font_source_name": "Verdana", "font_weight": "400", "font_style": "normal", "color": "#000000"}
+        plain = {"promotedFromExtraction": True, "promotedDirty": True}
+        self.assertFalse(self.module._should_use_authoritative_dirty_promoted_base_style(plain, "\u2022 ARs discussed", spans, base))
+        restyled = dict(plain, styleDirty=True)
+        self.assertTrue(self.module._should_use_authoritative_dirty_promoted_base_style(restyled, "\u2022 ARs discussed", spans, base))
+        runs = self.module._map_source_styles_onto_saved_text("\u2022 ARs discussed", spans, base)
+        self.assertEqual((runs[0]["text"], runs[0]["color"]), ("\u2022", "#e4222b"))
+
+
 if __name__ == "__main__":
     unittest.main()
