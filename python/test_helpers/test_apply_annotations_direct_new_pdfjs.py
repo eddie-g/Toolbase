@@ -2681,6 +2681,31 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
         self.assertAlmostEqual(child["sourceSpans"][0]["origin"][0], 317.1 / scale, places=2)
         self.assertEqual(child["sourceSpans"][0]["text"], "test suite. This test suite comprises a set of files which can be ")
 
+    def test_row_indented_with_spaces_restamps_at_its_first_glyph(self):
+        # SS-5 p3 promoted_3_4: every continuation row is one span that opens
+        # with ~18 spaces; the download request trims the span text, so only
+        # the pdf.js run knows the row's ink starts at 73.6, not at 18.6.
+        scale = 1.5
+        child = {
+            "sourceSpans": [{"bbox": [18.575, 218.3, 520.0, 233.3], "origin": [18.575, 229.76], "font_size": 11,
+                             "text": "you have a Social Security number. Contact us to see if your reason qualifies for a"}],
+            "fontSize": 11,
+            "pdfjsSourceSpanRuns": json.dumps([
+                {"text": "you have a Social Security number. Contact us", "leftPx": 73.6 * scale, "topPx": 221.1 * scale, "bottomPx": 232.1 * scale},
+            ]),
+        }
+        self.module._narrow_row_edit_to_changed_spans(
+            child,
+            [18.575, 218.3, 520.0, 233.3],
+            "you have a Social Security number. 123 Contact us to see if your reason qualifies for a",
+            "                  you have a Social Security number. Contact us to see if your reason qualifies for a",
+            scale,
+        )
+        self.assertAlmostEqual(child["pdfX"], 73.6, places=2)
+        self.assertAlmostEqual(child["sourceSpans"][0]["origin"][0], 73.6, places=2)
+        self.assertEqual(child["sourceLineBBoxes"][0][0], child["pdfX"])
+        self.assertEqual(child["text"], "you have a Social Security number. 123 Contact us to see if your reason qualifies for a")
+
     def test_mid_row_soft_hyphen_is_dropped_from_an_edited_paragraph(self):
         ann = {
             "type": "text", "promotedFromExtraction": True, "promotedDirty": True,

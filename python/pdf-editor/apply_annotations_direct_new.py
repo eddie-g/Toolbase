@@ -12235,9 +12235,12 @@ def _narrow_row_edit_to_changed_spans(
          and str(span.get("text") or "").strip()),
         key=lambda span: float(span["bbox"][0]),
     )
-    if len(spans) < 2:
+    if not spans:
         return
     comparable = lambda value: sanitize_pdf_text(str(value or ""))
+    if len(spans) < 2:
+        _start_row_edit_at_first_glyph(child, row, spans, text, source_text, runs_scale)
+        return
 
     def consume(value: str, count: int) -> Optional[int]:
         """Offset in `value` just after the first `count` spans, or None when
@@ -12262,6 +12265,7 @@ def _narrow_row_edit_to_changed_spans(
             break
         kept = count
     if kept <= 0:
+        _start_row_edit_at_first_glyph(child, row, spans, text, source_text, runs_scale)
         return
     text_pos = consume(text, kept)
     source_pos = consume(source_text, kept)
@@ -12329,6 +12333,84 @@ def _narrow_row_edit_to_changed_spans(
             run for run in runs
             if isinstance(run, dict) and float(run.get("leftPx") or 0.0) / runs_scale >= x0 - 1.0
         ])
+
+
+def _start_row_edit_at_first_glyph(
+    child: Dict[str, Any],
+    row: List[float],
+    spans: List[Dict[str, Any]],
+    text: str,
+    source_text: str,
+    runs_scale: float,
+) -> None:
+    """A row indented with leading spaces (SS-5: every continuation row is
+    one span that opens with ~18 spaces) was re-stamped from the span's
+    left edge with the spaces stripped, so the edited row jumped ~55pt left
+    of its neighbours. Start it at the row's first glyph instead: the
+    pdf.js run of the row's first word knows where that glyph is even when
+    the span text reached us trimmed (the download request trims it)."""
+    first = spans[0]
+    if str(text or "")[:1].isspace():
+        return
+    try:
+        span_x0 = float(first["bbox"][0])
+        span_x1 = float(first["bbox"][2])
+    except (TypeError, ValueError, KeyError, IndexError):
+        return
+    shift = 0.0
+    source_words = str(source_text or "").split()
+    try:
+        runs = json.loads(child["pdfjsSourceSpanRuns"]) if isinstance(child.get("pdfjsSourceSpanRuns"), str) else child.get("pdfjsSourceSpanRuns")
+    except (TypeError, ValueError):
+        runs = None
+    if source_words and isinstance(runs, list) and runs_scale > 0:
+        lefts = []
+        for run in runs:
+            if not isinstance(run, dict):
+                continue
+            run_words = str(run.get("text") or "").split()
+            if not run_words or run_words[0] != source_words[0]:
+                continue
+            try:
+                lefts.append(float(run.get("leftPx")) / runs_scale)
+            except (TypeError, ValueError):
+                continue
+        if lefts:
+            shift = min(lefts) - span_x0
+    if shift <= 0.5:
+        first_text = str(first.get("text") or "")
+        leading = len(first_text) - len(first_text.lstrip())
+        shift = _span_leading_whitespace_width(first, first_text, leading, child, runs_scale) if leading else 0.0
+    if shift <= 0.5 or span_x0 + shift >= span_x1:
+        return
+    x0 = span_x0 + shift
+    right = max(float(row[2]), max(float(span["bbox"][2]) for span in spans))
+    if not x0 < right:
+        return
+    moved = dict(first)
+    for key in ("text", "render_text", "rawText"):
+        if isinstance(moved.get(key), str):
+            moved[key] = moved[key].lstrip()
+    moved["bbox"] = [x0] + list(first["bbox"][1:])
+    origin = first.get("origin")
+    if isinstance(origin, (list, tuple)) and len(origin) >= 2:
+        moved["origin"] = [float(origin[0]) + shift] + list(origin[1:])
+    new_source = str(source_text or "").lstrip()
+    child["text"] = str(text or "").lstrip()
+    child["pdfjsSourceText"] = new_source
+    child["originalText"] = new_source
+    child["sourceTextLines"] = [new_source]
+    child["pdfjsVisualLines"] = [child["text"]]
+    child["sourceLineBBoxes"] = [[x0, row[1], right, row[3]]]
+    child["sourceSpans"] = [moved] + list(spans[1:])
+    child["sourceBlockLeft"] = x0
+    child["sourceBlockWidth"] = right - x0
+    child["pdfX"] = x0
+    child["pdfWidth"] = right - x0
+    child["pdfjsSourceX"] = x0
+    child["pdfjsSourceW"] = right - x0
+    for key in ("pdfjsSourceMaskX", "pdfjsSourceMaskY", "pdfjsSourceMaskW", "pdfjsSourceMaskH"):
+        child.pop(key, None)
 
 
 _MID_ROW_SOFT_HYPHEN_RE = re.compile(r"­+(?=[^\n])")
