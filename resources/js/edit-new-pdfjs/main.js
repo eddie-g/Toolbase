@@ -14573,6 +14573,15 @@ function detectHorizontalCanvasRuleGaps(pageDiv, rect, options = {}) {
         return [];
     }
 
+    // A rule is ink that differs from the page behind the text. On a dark
+    // band (white heading on navy, doc 8699) the background itself passed the
+    // old absolute-darkness test, so every row outside the glyphs looked like
+    // a full-width rule and was carved out of the mask, leaving the old
+    // glyphs' bottoms visible after a font change.
+    const backgroundMatch = String(samplePageBackgroundColor(pageDiv, rect) || '')
+        .match(/rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+    const background = backgroundMatch ? backgroundMatch.slice(1, 4).map(Number) : null;
+    const RULE_MIN_BACKGROUND_DISTANCE = 85;
     const darkRows = [];
     for (let y = 0; y < sh; y += 1) {
         let dark = 0;
@@ -14586,7 +14595,12 @@ function detectHorizontalCanvasRuleGaps(pageDiv, rect, options = {}) {
             const r = data[offset];
             const g = data[offset + 1];
             const b = data[offset + 2];
-            if (r < 170 && g < 170 && b < 170) {
+            // Ink = far from the background in any channel: also catches pure
+            // red/blue rules on white (NK_42), which absolute darkness missed.
+            if (background
+                ? Math.max(Math.abs(r - background[0]), Math.abs(g - background[1]), Math.abs(b - background[2]))
+                    >= RULE_MIN_BACKGROUND_DISTANCE
+                : (r < 170 && g < 170 && b < 170)) {
                 dark += 1;
                 if (x < leftProbeEnd) leftProbeDark += 1;
                 if (x >= rightProbeStart) rightProbeDark += 1;
