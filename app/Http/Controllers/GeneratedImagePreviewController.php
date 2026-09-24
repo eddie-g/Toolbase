@@ -66,6 +66,11 @@ class GeneratedImagePreviewController extends Controller
             abort(403);
         }
 
+        // Deleted for good from the portal's trash: its files are gone too.
+        if ($logoRequest->isImagePurged($index)) {
+            abort(404);
+        }
+
         $urls = array_values(array_filter((array) $logoRequest->image_urls));
         $sourceUrl = $urls[$index] ?? null;
         if (!is_string($sourceUrl) || trim($sourceUrl) === '') {

@@ -2593,5 +2593,235 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
         self.assertFalse(regular_font.is_bold)
         self.assertIn("bold", bold_font.name.lower())
 
+    def _row_local_paragraph(self, text):
+        rows = [
+            "The present installment of the test suite",
+            "quadrant. It does not cover any of the other quadrants",
+            "that future installments will expand coverage.",
+        ]
+        return {
+            "id": "promoted_2_10", "type": "text", "pageIndex": 1,
+            "promotedFromExtraction": True, "promotedDirty": True,
+            "text": text, "pdfjsSourceText": "\n".join(rows), "originalText": "\n".join(rows),
+            "sourceTextLines": list(rows),
+            "sourceLineBBoxes": [[107.7, 500.0, 509.3, 510.0], [107.7, 514.0, 510.9, 524.0], [107.7, 528.0, 387.4, 538.0]],
+            "sourceBlockLeft": 107.7, "sourceBlockTop": 500.0, "sourceBlockWidth": 403.2, "sourceBlockHeight": 38.0,
+            "pdfX": 107.35, "pdfY": 842.0 - 538.0, "pdfWidth": 403.9, "pdfHeight": 38.0,
+            "pdfjsSourceX": 107.35, "pdfjsSourceY": 842.0 - 538.7, "pdfjsSourceW": 403.9, "pdfjsSourceH": 40.1,
+            "pdfjsSourcePageHeight": 842, "pdfjsEditorMode": "rich", "pdfjsSourceText": "\n".join(rows),
+            "richTextRuns": [
+                run
+                for index, line in enumerate(text.split("\n"))
+                for run in ([{"type": "break"}] if index else []) + [{"type": "text", "text": line}]
+            ],
+            "sourceSpans": [
+                {"bbox": [107.7, 500.0, 509.3, 510.0], "text": rows[0]},
+                {"bbox": [107.7, 514.0, 510.9, 524.0], "text": rows[1]},
+                {"bbox": [107.7, 528.0, 387.4, 538.0], "text": rows[2]},
+            ],
+        }
+
+    def test_nk8131_row_local_edit_exports_only_the_changed_row(self):
+        source = self._row_local_paragraph("x")["pdfjsSourceText"]
+        ann = self._row_local_paragraph(source.replace("other", "otherish"))
+        rows = self.module.split_row_local_promoted_edit(ann)
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["id"], "promoted_2_10__row1")
+        self.assertEqual(row["text"], "quadrant. It does not cover any of the otherish quadrants")
+        self.assertEqual(row["sourceLineBBoxes"], [[107.7, 514.0, 510.9, 524.0]])
+        self.assertAlmostEqual(row["pdfY"], 842.0 - 524.0)
+        self.assertAlmostEqual(row["pdfHeight"], 10.0)
+        # the mask stays inside the row: never reaches the rows above or below
+        self.assertGreaterEqual(842.0 - row["pdfjsSourceY"] - row["pdfjsSourceH"], 510.0)
+        self.assertLessEqual(842.0 - row["pdfjsSourceY"], 528.0)
+        self.assertEqual([span["text"] for span in row["sourceSpans"]], ["quadrant. It does not cover any of the other quadrants"])
+        self.assertEqual(len(row["richTextRuns"]), 1)
+        self.assertFalse(row["promotedReflowEnabled"])
+
+    def test_nk8131_row_local_edit_that_was_undone_keeps_the_source_glyphs(self):
+        source = self._row_local_paragraph("x")["pdfjsSourceText"]
+        self.assertEqual(self.module.split_row_local_promoted_edit(self._row_local_paragraph(source)), [])
+
+    def test_nk8131_reflowed_or_restyled_paragraph_is_not_split(self):
+        source = self._row_local_paragraph("x")["pdfjsSourceText"]
+        joined = self._row_local_paragraph(source.replace("\n", " "))
+        self.assertEqual(self.module.split_row_local_promoted_edit(joined), [joined])
+        styled = self._row_local_paragraph(source.replace("other", "otherish"))
+        styled["styleDirty"] = True
+        self.assertEqual(self.module.split_row_local_promoted_edit(styled), [styled])
+
+    def test_row_local_restamp_starts_after_the_changed_spans_leading_space(self):
+        # Isartor p2 promoted_2_3: "rhymes with " + italic "for)" are kept; the
+        # re-stamp of " test suite. ..." must start at "test", not on its space.
+        spans = [
+            {"bbox": [107.7, 208.65, 173.12, 218.61], "origin": [107.7, 216.9], "text": "rhymes with ", "hex_color": "#000000"},
+            {"bbox": [173.04, 208.65, 191.43, 218.61], "origin": [173.04, 216.9], "text": "for)", "hex_color": "#000000"},
+            {"bbox": [191.46, 208.65, 510.35, 218.61], "origin": [191.46, 216.9], "font_size": 9.96,
+             "text": " test suite. This test suite comprises a set of files which can be ", "hex_color": "#000000"},
+        ]
+        scale = 1.6266666666666665
+        child = {
+            "sourceSpans": spans,
+            "fontSize": 9.96,
+            "pdfjsSourceSpanRuns": json.dumps([
+                {"text": "for)", "leftPx": 281.5, "topPx": 340.0, "bottomPx": 356.2},
+                {"text": "test suite. This test suite comprises a set of files which can be", "leftPx": 317.1, "topPx": 340.0, "bottomPx": 356.2},
+            ]),
+        }
+        self.module._narrow_row_edit_to_changed_spans(
+            child,
+            [107.7, 208.65, 510.35, 218.61],
+            "rhymes with for) test suite. This test suite big comprises a set of files which can",
+            "rhymes with  for)  test suite. This test suite comprises a set of files which can be",
+            scale,
+        )
+        self.assertEqual(child["text"], "test suite. This test suite big comprises a set of files which can")
+        self.assertAlmostEqual(child["pdfX"], 317.1 / scale, places=2)
+        self.assertAlmostEqual(child["sourceSpans"][0]["origin"][0], 317.1 / scale, places=2)
+        self.assertEqual(child["sourceSpans"][0]["text"], "test suite. This test suite comprises a set of files which can be ")
+
+    def test_row_indented_with_spaces_restamps_at_its_first_glyph(self):
+        # SS-5 p3 promoted_3_4: every continuation row is one span that opens
+        # with ~18 spaces; the download request trims the span text, so only
+        # the pdf.js run knows the row's ink starts at 73.6, not at 18.6.
+        scale = 1.5
+        child = {
+            "sourceSpans": [{"bbox": [18.575, 218.3, 520.0, 233.3], "origin": [18.575, 229.76], "font_size": 11,
+                             "text": "you have a Social Security number. Contact us to see if your reason qualifies for a"}],
+            "fontSize": 11,
+            "pdfjsSourceSpanRuns": json.dumps([
+                {"text": "you have a Social Security number. Contact us", "leftPx": 73.6 * scale, "topPx": 221.1 * scale, "bottomPx": 232.1 * scale},
+            ]),
+        }
+        self.module._narrow_row_edit_to_changed_spans(
+            child,
+            [18.575, 218.3, 520.0, 233.3],
+            "you have a Social Security number. 123 Contact us to see if your reason qualifies for a",
+            "                  you have a Social Security number. Contact us to see if your reason qualifies for a",
+            scale,
+        )
+        self.assertAlmostEqual(child["pdfX"], 73.6, places=2)
+        self.assertAlmostEqual(child["sourceSpans"][0]["origin"][0], 73.6, places=2)
+        self.assertEqual(child["sourceLineBBoxes"][0][0], child["pdfX"])
+        self.assertEqual(child["text"], "you have a Social Security number. 123 Contact us to see if your reason qualifies for a")
+
+    def test_restyled_paragraph_with_a_coloured_word_is_drawn_from_its_runs(self):
+        # SS-5 p1 promoted_1_13: "yesd" coloured red plus an Enter-made empty
+        # row. The editor rewrote sourceTextLines to the edited rows, so the
+        # exact-row path took over and painted every row black.
+        rows = ["reason for the change. yesd", None, "citizenship or current"]
+        ann = {
+            "promotedFromExtraction": True, "promotedDirty": True, "styleDirty": True,
+            "promotedReflowEnabled": True,
+            "text": "reason for the change. yesd\n\ncitizenship or current",
+            "sourceTextLines": rows,
+            "sourceLineBBoxes": [[18, 480, 300, 492], [18, 493, 18, 505], [18, 506, 200, 518]],
+            "richTextRuns": [
+                {"type": "text", "text": "reason for the change. ", "color": "#000000"},
+                {"type": "text", "text": "yesd", "color": "#e72323"},
+                {"type": "break"}, {"type": "break"},
+                {"type": "text", "text": "citizenship or current", "color": "#000000"},
+            ],
+        }
+        self.assertTrue(self.module._rich_runs_have_mixed_styles(ann))
+        self.assertFalse(self.module.should_preserve_promoted_source_lines(ann, ann["text"]))
+        uniform = dict(ann, richTextRuns=[dict(run, color="#000000") if run.get("type") == "text" else run for run in ann["richTextRuns"]])
+        self.assertFalse(self.module._rich_runs_have_mixed_styles(uniform))
+
+    def _snapshot_paragraph(self):
+        runs = [
+            {"type": "text", "text": "reason for the change. ", "color": "#000000", "fontWeight": "400", "fontStyle": "normal", "fontSize": 11, "fontFamily": "Helvetica"},
+            {"type": "text", "text": "yesd", "color": "#e72323", "fontWeight": "400", "fontStyle": "normal", "fontSize": 11, "fontFamily": "Helvetica"},
+            {"type": "break"},
+            {"type": "text", "text": "", "color": "#000000", "fontWeight": "400", "fontStyle": "normal", "fontSize": 11, "fontFamily": "Helvetica"},
+        ]
+        ann = {
+            "id": "promoted_1_13", "type": "text", "pageIndex": 0,
+            "promotedFromExtraction": True, "promotedDirty": True, "styleDirty": True,
+            "text": "reason for the change. yesd", "fontFamily": "Helvetica", "fontSize": 11,
+            "textColor": "#000000", "fontWeight": "400", "fontStyle": "normal",
+            "pdfX": 100.0, "pdfY": 600.0, "pdfWidth": 300.0, "pdfHeight": 14.0,
+            "richTextRuns": runs,
+        }
+        words = [("reason", 100.0, 34.0, "#000000"), ("for", 137.0, 15.0, "#000000"), ("the", 155.0, 16.0, "#000000"),
+                 ("change.", 174.0, 40.0, "#000000"), ("yesd", 217.0, 23.0, "#e72323")]
+        guard = {"text": ann["text"], "fontFamily": "Helvetica", "fontSize": 11, "textColor": "#000000",
+                 "fontWeight": "400", "fontStyle": "normal",
+                 # the request turns the empty run text into null
+                 "runs": [[r.get("text") or None, r["color"], "400", "normal", 11, "Helvetica", False, False]
+                          for r in runs if r["type"] != "break"]}
+        ann["editorLayout"] = {"v": 1, "pdfX": 100.0, "pdfY": 600.0, "guard": guard, "rows": [{"b": 603.0, "words": [
+            {"t": t, "x": x, "b": 603.0, "w": w, "s": 11, "ff": "Helvetica", "fs": "Helvetica", "fw": "400", "it": False, "c": c, "u": False, "st": False}
+            for t, x, w, c in words]}]}
+        return ann
+
+    def test_editor_layout_snapshot_draws_each_word_where_the_editor_showed_it(self):
+        ann = self._snapshot_paragraph()
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        self.assertTrue(self.module._editor_layout_guard_matches(ann, ann["editorLayout"]["guard"]))
+        ann["__editorLayoutValid"] = True
+        layout = self.module.editor_layout_for_annotation(page, ann)
+        self.assertIsNotNone(layout)
+        self.assertTrue(self.module.draw_editor_layout(page, ann, layout))
+        def first_char(page_, ch):
+            # the extractor prefixes a synthesized space to a span after a gap
+            for block in page_.get_text("rawdict")["blocks"]:
+                for line in block.get("lines", []):
+                    for span in line["spans"]:
+                        for char in span["chars"]:
+                            if char["c"] == ch:
+                                return span, char
+            return None, None
+        yesd, y_char = first_char(page, "y")
+        self.assertEqual(yesd["color"], 0xE72323)
+        self.assertAlmostEqual(y_char["origin"][0], 217.0, places=1)
+        self.assertAlmostEqual(y_char["origin"][1], 792 - 603.0, places=1)
+        # moved since the snapshot: every word follows the box
+        moved = dict(ann, pdfX=110.0, pdfY=590.0)
+        page2 = doc.new_page(width=612, height=792)
+        self.module.draw_editor_layout(page2, moved, layout)
+        _span2, y_char2 = first_char(page2, "y")
+        self.assertAlmostEqual(y_char2["origin"][0], 227.0, places=1)
+        self.assertAlmostEqual(y_char2["origin"][1], 792 - 593.0, places=1)
+
+    def test_stale_editor_layout_snapshot_is_ignored(self):
+        ann = self._snapshot_paragraph()
+        recoloured = dict(ann, richTextRuns=[dict(run, color="#1f6feb") if run.get("text") == "yesd" else run for run in ann["richTextRuns"]])
+        self.assertFalse(self.module._editor_layout_guard_matches(recoloured, ann["editorLayout"]["guard"]))
+        page = fitz.open().new_page(width=612, height=792)
+        untouched = dict(ann, promotedDirty=False, styleDirty=False, __editorLayoutValid=True)
+        self.assertIsNone(self.module.editor_layout_for_annotation(page, untouched))
+        missing_word = dict(ann, text="reason for the change. yesd extra", __editorLayoutValid=True)
+        self.assertIsNone(self.module.editor_layout_for_annotation(page, missing_word))
+
+    def test_mid_row_soft_hyphen_is_dropped_from_an_edited_paragraph(self):
+        ann = {
+            "type": "text", "promotedFromExtraction": True, "promotedDirty": True,
+            "text": "violations of the PDF/A-1b\nstan\u00adQ dard. The test\nsuite stan\u00ad\ndard.",
+            "pdfjsVisualLines": ["violations of the PDF/A-1b", "stan\u00adQ dard. The test", "suite stan\u00ad", "dard."],
+        }
+        cleaned = self.module._drop_mid_row_soft_hyphens(ann)
+        self.assertEqual(cleaned["text"], "violations of the PDF/A-1b\nstanQ dard. The test\nsuite stan\u00ad\ndard.")
+        self.assertEqual(cleaned["pdfjsVisualLines"][1], "stanQ dard. The test")
+        self.assertEqual(cleaned["pdfjsVisualLines"][2], "suite stan\u00ad")
+        untouched = dict(ann, promotedDirty=False)
+        self.assertIs(self.module._drop_mid_row_soft_hyphens(untouched), untouched)
+
+    def test_plain_text_edit_keeps_a_coloured_bullet_span(self):
+        spans = [
+            {"text": "\u2022", "color": "#e4222b", "font_source_name": "Verdana", "font_weight": "400", "font_style": "normal"},
+            {"text": "As discussed", "color": "#000000", "font_source_name": "Verdana", "font_weight": "400", "font_style": "normal"},
+        ]
+        base = {"font_source_name": "Verdana", "font_weight": "400", "font_style": "normal", "color": "#000000"}
+        plain = {"promotedFromExtraction": True, "promotedDirty": True}
+        self.assertFalse(self.module._should_use_authoritative_dirty_promoted_base_style(plain, "\u2022 ARs discussed", spans, base))
+        restyled = dict(plain, styleDirty=True)
+        self.assertTrue(self.module._should_use_authoritative_dirty_promoted_base_style(restyled, "\u2022 ARs discussed", spans, base))
+        runs = self.module._map_source_styles_onto_saved_text("\u2022 ARs discussed", spans, base)
+        self.assertEqual((runs[0]["text"], runs[0]["color"]), ("\u2022", "#e4222b"))
+
+
 if __name__ == "__main__":
     unittest.main()

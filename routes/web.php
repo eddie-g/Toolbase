@@ -48,6 +48,7 @@ Route::post('/forms/{form}/fill', [DocumentController::class, 'createFromFillabl
 Route::post('/pdf-state/stamp-preview', [DocumentController::class, 'stampPdfStatePreview'])->name('pdfState.stampPreview');
 Route::post('/documents', [DocumentController::class, 'store'])->name('documents.store');
 Route::post('/documents/create-blank', [DocumentController::class, 'createBlank'])->name('documents.createBlank');
+Route::post('/documents/create-from-image/{logoRequest}/{index}', [DocumentController::class, 'createFromGeneratedImage'])->whereNumber('index')->middleware('auth:web')->name('documents.createFromGeneratedImage');
 Route::post('/documents/create-ai', [DocumentController::class, 'createAi'])->name('documents.createAi');
 Route::post('/documents/create-from-template', [DocumentController::class, 'createFromTemplate'])->name('documents.createFromTemplate');
 Route::post('/documents/create-simple-invoice', [DocumentController::class, 'createSimpleInvoice'])->name('documents.createSimpleInvoice');

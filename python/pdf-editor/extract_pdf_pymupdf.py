@@ -2972,18 +2972,30 @@ def _split_block_on_horizontal_barriers(block, horizontal_lines=None):
     segments = []
     current_segment = [0]
     split_detected = False
+    # Blank separator rows (added when stacked fragments were merged) carry
+    # synthetic bboxes that can straddle a table rule, hiding it from the
+    # row-pair test (doc 8699: three table cells merged into one block).
+    # Compare each text row with the previous TEXT row; a separator left at
+    # the end of a segment is dropped at the split.
+    previous_text_index = 0 if text_lines[0].strip() else None
 
     for index in range(1, len(text_lines)):
-        if _rects_have_horizontal_barrier(
-            _effective_line_rect(line_bboxes[index - 1], 'upper'),
+        if not text_lines[index].strip():
+            current_segment.append(index)
+            continue
+        if previous_text_index is not None and _rects_have_horizontal_barrier(
+            _effective_line_rect(line_bboxes[previous_text_index], 'upper'),
             _effective_line_rect(line_bboxes[index], 'lower'),
             horizontal_lines,
         ):
+            while len(current_segment) > 1 and not text_lines[current_segment[-1]].strip():
+                current_segment.pop()
             segments.append(current_segment)
             current_segment = [index]
             split_detected = True
         else:
             current_segment.append(index)
+        previous_text_index = index
 
     if current_segment:
         segments.append(current_segment)
@@ -4959,6 +4971,101 @@ def _block_has_regular_continuation_after_bold(block):
     return False
 
 
+def _stacked_merge_block_rows(block):
+    rows = [bbox for bbox in (block.get('line_bboxes') or []) if bbox and len(bbox) >= 4]
+    if rows:
+        return [tuple(float(value) for value in bbox[:4]) for bbox in rows]
+    left = float(block.get('left', 0) or 0)
+    top = float(block.get('top', 0) or 0)
+    return [(left, top, left + float(block.get('width', 0) or 0), top + float(block.get('height', 0) or 0))]
+
+
+def _stacked_merge_would_cover_other_block(page_blocks, index_a, index_b, block_a, block_b):
+    """True when merging a and b would make their rect swallow a row of a third block.
+
+    The merged block's rect is the union of a and b. A row of another block
+    that sits (at least half its height) inside the part of that union which
+    neither a nor b already covers ends up nested inside the merged block and
+    is shown as a selection box inside the paragraph's box. Rows that merely
+    continue a row of a or b inline (same baseline band, within a word gap,
+    e.g. a link or styled run split off by an x-gap) do not count.
+    """
+    def _rect(block):
+        left = float(block.get('left', 0) or 0)
+        top = float(block.get('top', 0) or 0)
+        return (
+            left,
+            top,
+            left + float(block.get('width', 0) or 0),
+            top + float(block.get('height', 0) or 0),
+        )
+
+    def _intersection(r1, r2):
+        rect = (max(r1[0], r2[0]), max(r1[1], r2[1]), min(r1[2], r2[2]), min(r1[3], r2[3]))
+        return rect if rect[2] - rect[0] > 0.5 and rect[3] - rect[1] > 0.5 else None
+
+    def _area(rect):
+        return (rect[2] - rect[0]) * (rect[3] - rect[1]) if rect else 0.0
+
+    rect_a = _rect(block_a)
+    rect_b = _rect(block_b)
+    union = (
+        min(rect_a[0], rect_b[0]),
+        min(rect_a[1], rect_b[1]),
+        max(rect_a[2], rect_b[2]),
+        max(rect_a[3], rect_b[3]),
+    )
+    owner_rows = [row for row in _stacked_merge_block_rows(block_a) + _stacked_merge_block_rows(block_b) if row[3] - row[1] > 0.5]
+    for index, other in enumerate(page_blocks):
+        if index in (index_a, index_b):
+            continue
+        for row in _stacked_merge_block_rows(other):
+            height = row[3] - row[1]
+            covered = _intersection(union, row)
+            if not covered or covered[3] - covered[1] < height * 0.5:
+                continue
+            added = _area(covered) - _area(_intersection(rect_a, covered)) - _area(_intersection(rect_b, covered))
+            if added <= 4.0:
+                continue
+            continues_owner_row = any(
+                min(row[3], owner[3]) - max(row[1], owner[1]) >= height * 0.5
+                and max(0.0, row[0] - owner[2], owner[0] - row[2]) <= height
+                for owner in owner_rows
+            )
+            if not continues_owner_row:
+                return True
+    return False
+
+
+def _block_opens_list_item(page_blocks, block_index, block):
+    """True when a standalone list marker sits just left of the block's first row."""
+    text_lines = block.get('text_lines') or [block.get('text') or '']
+    if text_lines and _starts_with_list_item_marker(text_lines[0]):
+        return True
+    line_bboxes = [bbox for bbox in (block.get('line_bboxes') or []) if bbox and len(bbox) >= 4]
+    left = float(block.get('left', 0) or 0)
+    if line_bboxes:
+        first_top, first_bottom = float(line_bboxes[0][1]), float(line_bboxes[0][3])
+    else:
+        first_top = float(block.get('top', 0) or 0)
+        first_bottom = first_top + float(block.get('avg_line_height') or block.get('height') or 0)
+    for index, other in enumerate(page_blocks):
+        if index == block_index:
+            continue
+        other_lines = other.get('text_lines') or [other.get('text') or '']
+        if len(other_lines) != 1 or not _is_standalone_list_item_marker(other_lines[0]):
+            continue
+        other_left = float(other.get('left', 0) or 0)
+        other_right = other_left + float(other.get('width', 0) or 0)
+        other_top = float(other.get('top', 0) or 0)
+        other_bottom = other_top + float(other.get('height', 0) or 0)
+        if other_right > left + 1.0 or left - other_right > 36.0:
+            continue
+        if min(first_bottom, other_bottom) - max(first_top, other_top) > 0.5:
+            return True
+    return False
+
+
 def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
     """
     Merge vertically stacked synthetic paragraph fragments back into a single block.
@@ -5156,6 +5263,19 @@ def _merge_stacked_paragraph_blocks(page_blocks, page_words, page_lines):
                     # gap than ordinary wrapped lines, but should still stay in one block.
                     max_allowed_gap = max(max_allowed_gap, max(a_line_height, b_line_height) * 2.35)
                 if vertical_gap < -1.0 or vertical_gap > max_allowed_gap:
+                    continue
+                # Never merge across another block. The scan skips blocks it
+                # cannot merge (other column bucket, source ops, style) and
+                # would otherwise join the rows above and below them, so the
+                # merged block's rect swallows the skipped block and the
+                # editor shows one selection box nested inside another.
+                if _stacked_merge_would_cover_other_block(
+                    page_blocks, original_index, candidate_index, block_a, block_b,
+                ):
+                    continue
+                # The lower block opens the next list item: its bullet sits
+                # beside its first row. Merging it would join two items.
+                if _block_opens_list_item(page_blocks, candidate_index, block_b):
                     continue
 
                 merge_target_index = candidate_index

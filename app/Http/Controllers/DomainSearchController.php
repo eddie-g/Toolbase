@@ -3443,6 +3443,10 @@ class DomainSearchController extends Controller
             'image_index' => 'nullable|integer|min:0',
         ]);
 
+        // One upscale takes 15-30 s between the provider and the download;
+        // the web SAPI's default 30 s limit would kill it half way.
+        set_time_limit(300);
+
         $user = $request->user();
         $imageUrl = $request->input('image_url');
         $upscaleFactor = (int) $request->input('upscale_factor', 2);
@@ -3471,6 +3475,19 @@ class DomainSearchController extends Controller
             }
 
             if ($imageIndex !== null) {
+                // Charged once per image: the card says it is upscaled and
+                // offers no second go, but a stale tab or a double click could.
+                if (!empty($logoRequest->imageMeta($imageIndex)['upscaled'])) {
+                    return response()->json([
+                        'error' => 'This image has already been upscaled.',
+                    ], 409);
+                }
+                if ($logoRequest->isImageHidden($imageIndex)) {
+                    return response()->json([
+                        'error' => 'This image is in the trash.',
+                    ], 422);
+                }
+
                 $imageUrls = array_values((array) $logoRequest->image_urls);
                 if (isset($imageUrls[$imageIndex]) && is_string($imageUrls[$imageIndex]) && $imageUrls[$imageIndex] !== '') {
                     $imageUrl = $imageUrls[$imageIndex];
@@ -3536,12 +3553,30 @@ class DomainSearchController extends Controller
             $storedUpscale = $this->storeUpscaledImage((int) $user->id, $upscaledUrl);
             $servedUpscaledUrl = $storedUpscale['url'] ?? $upscaledUrl;
 
+            // The provider's reply carries no dimensions; read them off the file.
+            if ($storedUpscale && (!$upscaledWidth || !$upscaledHeight)) {
+                $size = @getimagesize(Storage::disk('public')->path($storedUpscale['path']));
+                if ($size) {
+                    [$upscaledWidth, $upscaledHeight] = $size;
+                }
+            }
+
             if ($logoRequest && $imageIndex !== null) {
                 $imageUrls = array_values((array) $logoRequest->image_urls);
                 $imageUrls[$imageIndex] = $servedUpscaledUrl;
                 $logoRequest->update([
                     'image_urls' => $imageUrls,
                     'storage_type' => $storedUpscale ? 'path' : ($logoRequest->storage_type ?: 'url'),
+                ]);
+                $logoRequest->updateImageMeta($imageIndex, [
+                    'upscaled' => [
+                        'factor' => $upscaleFactor,
+                        'width' => $upscaledWidth ? (int) $upscaledWidth : null,
+                        'height' => $upscaledHeight ? (int) $upscaledHeight : null,
+                        'original_url' => $imageUrl,
+                        'cost' => $upscaleCost,
+                        'at' => now()->toIso8601String(),
+                    ],
                 ]);
             }
 

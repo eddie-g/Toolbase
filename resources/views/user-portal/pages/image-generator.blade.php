@@ -1,510 +1,129 @@
 <x-filament-panels::page>
-    <style>
-        .netkit-images-callout {
-            border: 1px solid rgb(199 210 254);
-            background: linear-gradient(135deg, rgb(238 242 255), rgb(250 245 255));
-            border-radius: 8px;
-            padding: 18px 20px;
-        }
+    {{-- Styles: resources/css/user-portal.css (nk-* classes, "Images" block).
+         One item per image; per-image state is ai_logo_requests.image_meta. --}}
+    @php
+        $images = $this->images;
+        $inTrash = $this->formatFilter === 'trash';
+        $trashCount = $this->trashCount;
+        $upscaleCost = '$' . number_format($this->upscaleCost, 2);
+        $studioUrl = route('domainSearch.logoStudio');
+        $pencil = 'm16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z';
+        $trashIcon = 'm14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0';
+    @endphp
 
-        .dark .netkit-images-callout {
-            border-color: rgba(99, 102, 241, 0.45);
-            background: linear-gradient(135deg, rgba(49, 46, 129, 0.46), rgba(88, 28, 135, 0.24));
-        }
+    <div class="nk-page" x-data="logoGallery()">
 
-        .netkit-image-board {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(265px, 1fr));
-            gap: 16px;
-        }
-
-        .netkit-image-card {
-            position: relative;
-            overflow: hidden;
-            border: 1px solid rgb(214 219 226);
-            border-radius: 3px;
-            background: white;
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
-            transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease;
-        }
-
-        .netkit-image-card:hover {
-            transform: translateY(-2px);
-            border-color: rgb(148 163 184);
-            box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
-        }
-
-        .dark .netkit-image-card {
-            border-color: rgb(31 41 55);
-            background: rgb(17 24 39);
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
-        }
-
-        .netkit-image-frame {
-            position: relative;
-            height: 210px;
-            border-bottom: 1px solid rgb(229 231 235);
-            background: rgb(241 245 249);
-        }
-
-        .dark .netkit-image-frame {
-            border-bottom-color: rgb(31 41 55);
-            background: rgb(3 7 18);
-        }
-
-        .netkit-image-frame button {
-            display: block;
-            width: 100%;
-            height: 100%;
-        }
-
-        .netkit-image-frame img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-        }
-
-        .netkit-image-format {
-            position: absolute;
-            top: 8px;
-            left: 8px;
-            padding: 2px 6px;
-            border-radius: 2px;
-            background: rgba(255, 255, 255, 0.88);
-            color: rgb(71 85 105);
-            font-size: 10px;
-            font-weight: 700;
-            letter-spacing: 0.03em;
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
-        }
-
-        .dark .netkit-image-format {
-            background: rgba(17, 24, 39, 0.88);
-            color: rgb(203 213 225);
-        }
-
-        .netkit-image-edit {
-            position: absolute;
-            top: 8px;
-            right: 8px;
-            display: inline-flex;
-            width: 26px;
-            height: 26px;
-            align-items: center;
-            justify-content: center;
-            border-radius: 2px;
-            background: rgba(255, 255, 255, 0.88);
-            color: rgb(100 116 139);
-            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
-        }
-
-        .dark .netkit-image-edit {
-            background: rgba(17, 24, 39, 0.88);
-            color: rgb(203 213 225);
-        }
-
-        .netkit-image-body {
-            padding: 16px;
-        }
-
-        .netkit-image-title {
-            overflow: hidden;
-            color: rgb(31 41 55);
-            font-size: 15px;
-            font-weight: 600;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .dark .netkit-image-title {
-            color: white;
-        }
-
-        .netkit-image-title-row {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            margin-top: 8px;
-        }
-
-        .netkit-image-title-edit {
-            display: inline-flex;
-            width: 28px;
-            height: 28px;
-            flex: 0 0 auto;
-            align-items: center;
-            justify-content: center;
-            border: 1px solid rgb(226 232 240);
-            border-radius: 7px;
-            color: rgb(100 116 139);
-            transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
-        }
-
-        .netkit-image-title-edit:hover {
-            border-color: rgb(148 163 184);
-            background: rgb(248 250 252);
-            color: rgb(15 23 42);
-        }
-
-        .dark .netkit-image-title-edit {
-            border-color: rgb(55 65 81);
-            color: rgb(203 213 225);
-        }
-
-        .dark .netkit-image-title-edit:hover {
-            background: rgb(31 41 55);
-            color: white;
-        }
-
-        .netkit-rename-form {
-            display: grid;
-            grid-template-columns: 1fr auto auto;
-            gap: 8px;
-            margin-top: 10px;
-        }
-
-        .netkit-rename-input {
-            min-width: 0;
-            border: 1px solid rgb(203 213 225);
-            border-radius: 8px;
-            padding: 8px 10px;
-            font-size: 13px;
-            color: rgb(15 23 42);
-        }
-
-        .netkit-rename-input:focus {
-            outline: 2px solid rgb(14 165 233 / 0.25);
-            border-color: rgb(14 165 233);
-        }
-
-        .dark .netkit-rename-input {
-            border-color: rgb(55 65 81);
-            background: rgb(17 24 39);
-            color: white;
-        }
-
-        .netkit-rename-save,
-        .netkit-rename-cancel {
-            border-radius: 8px;
-            padding: 8px 10px;
-            font-size: 12px;
-            font-weight: 700;
-        }
-
-        .netkit-rename-save {
-            background: rgb(15 23 42);
-            color: white;
-        }
-
-        .netkit-rename-cancel {
-            border: 1px solid rgb(203 213 225);
-            color: rgb(71 85 105);
-        }
-
-        .netkit-image-prompt {
-            display: -webkit-box;
-            min-height: 40px;
-            margin-top: 8px;
-            overflow: hidden;
-            -webkit-box-orient: vertical;
-            -webkit-line-clamp: 2;
-            color: rgb(100 116 139);
-            font-size: 13px;
-            line-height: 20px;
-        }
-
-        .dark .netkit-image-prompt {
-            color: rgb(156 163 175);
-        }
-
-        .netkit-image-meta {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            margin-top: 10px;
-            color: rgb(148 163 184);
-            font-size: 12px;
-        }
-
-        .netkit-image-actions {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-            margin-top: 12px;
-            opacity: 0.92;
-        }
-
-        .netkit-image-card:hover .netkit-image-actions {
-            opacity: 1;
-        }
-
-        .netkit-images-callout__row {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-        }
-
-        @media (min-width: 768px) {
-            .netkit-images-callout__row {
-                flex-direction: row;
-                align-items: center;
-                justify-content: space-between;
-            }
-        }
-
-        .netkit-images-callout__title {
-            font-size: 16px;
-            font-weight: 700;
-            color: rgb(49 46 129);
-        }
-
-        .dark .netkit-images-callout__title {
-            color: rgb(224 231 255);
-        }
-
-        .netkit-images-callout__text {
-            margin-top: 4px;
-            font-size: 14px;
-            color: rgb(67 56 202);
-        }
-
-        .dark .netkit-images-callout__text {
-            color: rgb(199 210 254);
-        }
-
-        .netkit-seg {
-            display: inline-flex;
-            padding: 4px;
-            border-radius: 10px;
-            border: 1px solid rgb(226 232 240);
-            background: white;
-            gap: 2px;
-        }
-
-        .dark .netkit-seg {
-            border-color: rgb(55 65 81);
-            background: rgb(17 24 39);
-        }
-
-        .netkit-seg__btn {
-            border-radius: 7px;
-            padding: 6px 14px;
-            font-size: 13px;
-            font-weight: 600;
-            color: rgb(71 85 105);
-            transition: background 140ms ease, color 140ms ease;
-        }
-
-        .netkit-seg__btn:hover {
-            color: rgb(15 23 42);
-        }
-
-        .dark .netkit-seg__btn {
-            color: rgb(148 163 184);
-        }
-
-        .dark .netkit-seg__btn:hover {
-            color: white;
-        }
-
-        .netkit-seg__btn.is-active {
-            background: rgb(15 23 42);
-            color: white;
-        }
-
-        .dark .netkit-seg__btn.is-active {
-            background: white;
-            color: rgb(2 6 23);
-        }
-
-        .netkit-btn-primary {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 8px;
-            padding: 8px 12px;
-            font-size: 13px;
-            font-weight: 600;
-            background: rgb(2 132 199);
-            color: white;
-            transition: background 140ms ease;
-        }
-
-        .netkit-btn-primary:hover {
-            background: rgb(3 105 161);
-        }
-
-        .netkit-btn-primary:disabled {
-            cursor: wait;
-            background: rgb(56 189 248);
-        }
-
-        .netkit-btn-secondary {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 8px;
-            padding: 8px 12px;
-            font-size: 13px;
-            font-weight: 600;
-            border: 1px solid rgb(203 213 225);
-            color: rgb(51 65 85);
-            transition: background 140ms ease;
-        }
-
-        .netkit-btn-secondary:hover {
-            background: rgb(248 250 252);
-        }
-
-        .dark .netkit-btn-secondary {
-            border-color: rgb(55 65 81);
-            color: rgb(226 232 240);
-        }
-
-        .dark .netkit-btn-secondary:hover {
-            background: rgb(31 41 55);
-        }
-
-        .netkit-btn-vector {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 8px;
-            padding: 8px 12px;
-            font-size: 13px;
-            font-weight: 600;
-            background: rgb(241 245 249);
-            color: rgb(100 116 139);
-        }
-
-        .dark .netkit-btn-vector {
-            background: rgb(31 41 55);
-            color: rgb(203 213 225);
-        }
-
-        .netkit-badge {
-            display: inline-flex;
-            align-items: center;
-            border-radius: 6px;
-            padding: 2px 8px;
-            font-size: 11px;
-            font-weight: 700;
-            background: rgb(239 246 255);
-            color: rgb(29 78 216);
-        }
-
-        .dark .netkit-badge {
-            background: rgba(30, 58, 138, 0.4);
-            color: rgb(191 219 254);
-        }
-
-        .netkit-badge--cost {
-            background: rgb(236 253 245);
-            color: rgb(4 120 87);
-        }
-
-        .dark .netkit-badge--cost {
-            background: rgba(6, 78, 59, 0.45);
-            color: rgb(167 243 208);
-        }
-
-        .netkit-images-empty {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 12px;
-            padding: 28px 16px;
-            color: rgb(100 116 139);
-            font-size: 14px;
-            text-align: center;
-        }
-
-        .dark .netkit-images-empty {
-            color: rgb(156 163 175);
-        }
-    </style>
-
-    <div class="space-y-5" x-data="logoGallery()">
-        <section class="netkit-images-callout">
-            <div class="netkit-images-callout__row">
-                <div>
-                    <h2 class="netkit-images-callout__title">Create more image concepts</h2>
-                    <p class="netkit-images-callout__text">Use Logo Generator to create raster images, vector marks, and brand visuals for this gallery.</p>
-                </div>
-                <x-filament::button
-                    tag="a"
-                    :href="route('domainSearch.logoGenerator')"
-                    size="lg"
-                    icon="heroicon-m-sparkles"
-                >
-                    Open Logo Generator
-                </x-filament::button>
+        {{-- Call to action --}}
+        <section class="nk-card nk-row">
+            <div>
+                <h3 class="nk-heading">Create more images</h3>
+                <p class="nk-muted nk-mt-1">Use the Logo Studio to make raster images, vector marks and brand visuals. Everything you generate lands here.</p>
             </div>
+            <a href="{{ $studioUrl }}" class="nk-btn nk-btn-primary nk-btn-auto">
+                <x-filament::icon icon="heroicon-m-sparkles" class="nk-btn-icon" />
+                Open Logo Generator
+            </a>
         </section>
 
-        <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-                <h2 class="text-xl font-semibold text-gray-950 dark:text-white">Images</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400">Generated images and vectors from your logo workflows.</p>
-            </div>
-
-            <div class="flex flex-wrap items-center gap-2">
-                <div class="netkit-seg">
+        {{-- Toolbar --}}
+        <div class="nk-row">
+            <p class="nk-muted">
+                @if ($inTrash)
+                    {{ number_format($images->total()) }} in Trash · deleted permanently after {{ \App\Models\AiLogoRequest::TRASH_DAYS }} days
+                @else
+                    {{ number_format($images->total()) }} {{ $images->total() === 1 ? 'image' : 'images' }}
+                @endif
+            </p>
+            <div class="nk-toolbar">
+                <div class="nk-tabs" role="tablist" aria-label="Show">
+                    @foreach (['all' => 'All', 'raster' => 'Raster', 'vector' => 'Vector'] as $key => $label)
+                        <button
+                            type="button"
+                            role="tab"
+                            aria-selected="{{ $this->formatFilter === $key ? 'true' : 'false' }}"
+                            wire:click="setFormatFilter('{{ $key }}')"
+                            @class(['nk-tab', 'is-active' => $this->formatFilter === $key])
+                        >{{ $label }}</button>
+                    @endforeach
                     <button
                         type="button"
-                        wire:click="setFormatFilter('all')"
-                        @class(['netkit-seg__btn', 'is-active' => $this->formatFilter === 'all'])
+                        role="tab"
+                        aria-selected="{{ $inTrash ? 'true' : 'false' }}"
+                        wire:click="setFormatFilter('trash')"
+                        @class(['nk-tab', 'nk-tab-with-count', 'is-active' => $inTrash])
                     >
-                        All
-                    </button>
-                    <button
-                        type="button"
-                        wire:click="setFormatFilter('raster')"
-                        @class(['netkit-seg__btn', 'is-active' => $this->formatFilter === 'raster'])
-                    >
-                        Raster
-                    </button>
-                    <button
-                        type="button"
-                        wire:click="setFormatFilter('vector')"
-                        @class(['netkit-seg__btn', 'is-active' => $this->formatFilter === 'vector'])
-                    >
-                        Vector
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="{{ $trashIcon }}" /></svg>
+                        Trash
+                        @if ($trashCount > 0)
+                            <span class="nk-tab-count">{{ $trashCount }}</span>
+                        @endif
                     </button>
                 </div>
-                <div class="netkit-seg">
+                <div class="nk-tabs" role="tablist" aria-label="Layout">
                     <button
                         type="button"
+                        role="tab"
+                        aria-selected="{{ $this->viewMode === 'grid' ? 'true' : 'false' }}"
+                        aria-label="Grid"
+                        title="Grid"
                         wire:click="setViewMode('grid')"
-                        @class(['netkit-seg__btn', 'is-active' => $this->viewMode === 'grid'])
-                    >
-                        Grid
-                    </button>
+                        @class(['nk-tab', 'nk-tab-icon', 'is-active' => $this->viewMode === 'grid'])
+                    ><x-filament::icon icon="heroicon-m-squares-2x2" /></button>
                     <button
                         type="button"
+                        role="tab"
+                        aria-selected="{{ $this->viewMode === 'table' ? 'true' : 'false' }}"
+                        aria-label="List"
+                        title="List"
                         wire:click="setViewMode('table')"
-                        @class(['netkit-seg__btn', 'is-active' => $this->viewMode === 'table'])
-                    >
-                        Table
-                    </button>
+                        @class(['nk-tab', 'nk-tab-icon', 'is-active' => $this->viewMode === 'table'])
+                    ><x-filament::icon icon="heroicon-m-bars-3" /></button>
                 </div>
             </div>
         </div>
 
-        <div x-show="upscaleError" x-cloak class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-800/60 dark:bg-red-950/40 dark:text-red-200">
-            <div class="flex items-start justify-between gap-3">
-                <span x-text="upscaleError"></span>
-                <button type="button" class="text-red-500 hover:text-red-700" @click="upscaleError = null" aria-label="Dismiss error">&times;</button>
+        {{-- Upscale result / error --}}
+        <div x-show="notice" x-cloak class="nk-callout nk-callout-success">
+            <x-heroicon-o-check-circle />
+            <div style="flex: 1; min-width: 0;">
+                <p class="nk-callout-title" x-text="notice"></p>
             </div>
+            <button type="button" class="nk-icon-btn" @click="notice = null" aria-label="Dismiss">
+                <x-filament::icon icon="heroicon-m-x-mark" />
+            </button>
+        </div>
+        <div x-show="upscaleError" x-cloak class="nk-callout nk-callout-danger">
+            <x-heroicon-o-exclamation-triangle />
+            <div style="flex: 1; min-width: 0;">
+                <p class="nk-callout-title">Upsize failed</p>
+                <p class="nk-callout-body" x-text="upscaleError"></p>
+            </div>
+            <button type="button" class="nk-icon-btn" @click="upscaleError = null" aria-label="Dismiss error">
+                <x-filament::icon icon="heroicon-m-x-mark" />
+            </button>
         </div>
 
-        @if ($this->requests->count() === 0)
+        @if ($inTrash && $images->total() > 0)
+            <div class="nk-row">
+                <p class="nk-small">Images in Trash are hidden everywhere else. Restore one to bring it back.</p>
+                <button
+                    type="button"
+                    class="nk-btn nk-btn-danger nk-btn-sm nk-btn-auto"
+                    wire:click="emptyTrash"
+                    wire:confirm="Permanently delete all {{ $images->total() }} images in Trash? This cannot be undone."
+                >
+                    Empty Trash
+                </button>
+            </div>
+        @endif
+
+        @if ($images->total() === 0)
             @php
                 $availableBalance = (float) (auth()->user()?->credit_balance ?? 0);
             @endphp
 
-            <div
-                class="netkit-images-empty"
+            <section
+                class="nk-card nk-empty"
                 x-data="{
                     loading: false,
                     error: null,
@@ -538,225 +157,289 @@
                     }
                 }"
             >
-                @if ($availableBalance <= 0)
-                    <div>
-                        <p class="font-medium text-gray-700 dark:text-gray-200">You will need credits to generate images.</p>
-                        <template x-if="error">
-                            <p class="mt-2 text-sm text-red-600 dark:text-red-400" x-text="error"></p>
-                        </template>
-                    </div>
-                    <x-filament::button
-                        type="button"
-                        icon="heroicon-m-credit-card"
-                        x-on:click="buyCredits()"
-                        x-bind:disabled="loading"
-                    >
-                        <span x-text="loading ? 'Starting checkout...' : 'Buy credits'">Buy credits</span>
-                    </x-filament::button>
+                @if ($inTrash)
+                    <svg class="nk-empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="{{ $trashIcon }}" /></svg>
+                    <p class="nk-strong">Trash is empty</p>
+                    <p class="nk-muted nk-mt-1">Deleted images stay here for {{ \App\Models\AiLogoRequest::TRASH_DAYS }} days before they are removed for good.</p>
                 @else
-                    <p>No images generated yet</p>
+                    <x-filament::icon icon="heroicon-o-photo" class="nk-empty-icon" />
+                    @if ($availableBalance <= 0 && $this->formatFilter === 'all')
+                        <p class="nk-strong">You'll need credits to generate images</p>
+                        <p class="nk-muted nk-mt-1">Add credits to your balance, then open the Logo Studio.</p>
+                        <p class="nk-error nk-mt-2" x-show="error" x-cloak x-text="error"></p>
+                        <button type="button" class="nk-btn nk-btn-primary nk-btn-auto nk-mt-4" x-on:click="buyCredits()" x-bind:disabled="loading">
+                            <x-filament::icon icon="heroicon-m-credit-card" class="nk-btn-icon" />
+                            <span x-text="loading ? 'Starting checkout…' : 'Buy credits'">Buy credits</span>
+                        </button>
+                    @elseif ($this->formatFilter !== 'all')
+                        <p class="nk-strong">No {{ $this->formatFilter }} images yet</p>
+                        <p class="nk-muted nk-mt-1">Switch to All to see everything you've generated.</p>
+                    @else
+                        <p class="nk-strong">No images yet</p>
+                        <p class="nk-muted nk-mt-1">Open the Logo Studio to make your first one.</p>
+                    @endif
                 @endif
-            </div>
+            </section>
         @elseif ($this->viewMode === 'grid')
-            <div class="netkit-image-board">
-                @foreach ($this->requests as $request)
+            <div class="nk-gallery">
+                @foreach ($images as $image)
                     @php
-                        $urls = is_array($request->image_urls) ? array_values(array_filter($request->image_urls)) : [];
-                        $generator = $this->modelLabel($request->model);
-                        $cost = $request->latest_cost_usd ?? null;
-                        $title = $request->domain ?: 'Untitled';
+                        $key = $image['key'];
+                        $title = $image['name'] ?: 'Untitled';
+                        $created = $image['created_at'];
+                        $up = $image['upscaled'];
                     @endphp
 
-                    @foreach ($urls as $imageIndex => $url)
-                        @php
-                            $path = strtolower((string) parse_url($url, PHP_URL_PATH));
-                            $isVector = $request->output_format === 'vector' || str_ends_with($path, '.svg');
-                            $imageKey = 'user-' . $request->id . '-' . $imageIndex;
-                            $previewUrl = route('generatedImages.preview', ['logoRequest' => $request->id, 'index' => $imageIndex]);
-                            $originalUrl = route('generatedImages.original', ['logoRequest' => $request->id, 'index' => $imageIndex]);
-                        @endphp
+                    <article class="nk-img-card" wire:key="card-{{ $key }}">
+                        <div class="nk-img-media">
+                        <button
+                            type="button"
+                            class="nk-img-frame"
+                            aria-label="Preview {{ $title }}"
+                            @click="openPreview(@js($image['original_url']), @js($title))"
+                        >
+                            <img src="{{ $image['preview_url'] }}" alt="{{ $title }}" loading="lazy" x-on:error="imageLoadFallback($event, @js($image['original_url']))" />
+                            <span class="nk-img-format">{{ $image['vector'] ? 'Vector' : 'Raster' }}</span>
+                            @if ($up)
+                                <span class="nk-img-upscaled" title="Upscaled {{ $up['factor'] ?? 2 }}×">
+                                    <x-filament::icon icon="heroicon-m-arrows-pointing-out" />
+                                    Upscaled @if (!empty($up['width'])) · {{ $up['width'] }} × {{ $up['height'] }} @endif
+                                </span>
+                            @endif
+                        </button>
+                        @unless ($inTrash)
+                            @include('user-portal.partials.image-menu', ['image' => $image, 'class' => 'nk-img-gear'])
+                        @endunless
+                        </div>
 
-                        <article class="netkit-image-card">
-                            <div class="netkit-image-frame">
-                                <button
-                                    type="button"
-                                    class="block aspect-[4/3] w-full"
-                                    @click="openPreview(imageUrl('{{ $imageKey }}', @js($originalUrl)), @js($title))"
-                                >
-                                    <img
-                                        :src="imagePreviewUrl('{{ $imageKey }}', @js($previewUrl))"
-                                        alt="{{ $title }}"
-                                        class="h-full w-full object-cover"
-                                        loading="lazy"
-                                        x-on:error="imageLoadFallback($event, imageUrl('{{ $imageKey }}', @js($originalUrl)))"
+                        <div class="nk-img-body">
+                            @if ($this->editingImageKey === $key)
+                                <div class="nk-rename">
+                                    <input
+                                        type="text"
+                                        class="nk-input nk-input-sm"
+                                        wire:model="editingName"
+                                        wire:keydown.enter="saveRename({{ $image['id'] }}, {{ $image['index'] }})"
+                                        wire:keydown.escape="cancelRename"
+                                        aria-label="Image name"
+                                        autofocus
                                     />
-                                </button>
-                                <div class="netkit-image-format">
-                                    {{ strtoupper((string) ($request->output_format ?? 'image')) }}
+                                    <button type="button" class="nk-btn nk-btn-primary nk-btn-sm" wire:click="saveRename({{ $image['id'] }}, {{ $image['index'] }})">Save</button>
+                                    <button type="button" class="nk-btn nk-btn-outline nk-btn-sm" wire:click="cancelRename">Cancel</button>
                                 </div>
+                                @error('editingName') <p class="nk-error nk-mt-1">{{ $message }}</p> @enderror
+                            @else
+                                <div class="nk-img-title-row">
+                                    <p @class(['nk-img-title', 'is-untitled' => !$image['name']])>{{ $title }}</p>
+                                    @unless ($inTrash)
+                                        <button type="button" class="nk-icon-btn" wire:click="startRename({{ $image['id'] }}, {{ $image['index'] }})" aria-label="Rename image" title="Rename">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="{{ $pencil }}" /></svg>
+                                        </button>
+                                        <button type="button" class="nk-icon-btn nk-icon-btn-danger" wire:click="trashImage({{ $image['id'] }}, {{ $image['index'] }})" aria-label="Move to Trash" title="Delete (moves to Trash)">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="{{ $trashIcon }}" /></svg>
+                                        </button>
+                                    @endunless
+                                </div>
+                            @endif
+
+                            <p class="nk-img-prompt" title="{{ $image['prompt'] }}">{{ $image['prompt'] ?: 'Prompt hidden' }}</p>
+
+                            <div class="nk-img-meta">
+                                <span class="nk-badge nk-badge-zinc">{{ $image['generator'] }}</span>
+                                @if ($image['cost'] !== null)
+                                    <span class="nk-badge nk-badge-zinc" title="What this image cost">${{ number_format($image['cost'], 4) }}</span>
+                                @endif
+                                @if ($inTrash)
+                                    <span class="nk-img-date" title="Deleted permanently on {{ $image['purge_on']->format('M j, Y') }}">
+                                        {{ max(0, (int) ceil(now()->diffInDays($image['purge_on'], false))) }} days left
+                                    </span>
+                                @else
+                                    <time class="nk-img-date" datetime="{{ $created?->toIso8601String() }}" title="{{ $created?->format('M j, Y g:i a') }}">
+                                        {{ $created?->isToday() ? $created->format('g:i a') : $created?->format('M j') }}
+                                    </time>
+                                @endif
                             </div>
 
-                            <div class="netkit-image-body">
-                                <div class="flex flex-wrap items-center gap-1.5 text-[11px] font-semibold">
-                                    <span class="netkit-badge">{{ $generator }}</span>
-                                    @if ($cost !== null)
-                                        <span class="netkit-badge netkit-badge--cost">${{ number_format((float) $cost, 4) }}</span>
-                                    @endif
-                                </div>
-
-                                @if ($this->editingImageKey === $imageKey)
-                                    <div class="netkit-rename-form">
-                                        <input
-                                            type="text"
-                                            wire:model="editingName"
-                                            class="netkit-rename-input"
-                                            wire:keydown.enter="saveRename({{ $request->id }})"
-                                            wire:keydown.escape="cancelRename"
-                                        />
-                                        <button type="button" wire:click="saveRename({{ $request->id }})" class="netkit-rename-save">Save</button>
-                                        <button type="button" wire:click="cancelRename" class="netkit-rename-cancel">Cancel</button>
-                                    </div>
-                                @else
-                                    <div class="netkit-image-title-row">
-                                        <div class="min-w-0 grow">
-                                            <p class="netkit-image-title">{{ $title }}</p>
-                                        </div>
-                                        <button
-                                            type="button"
-                                            wire:click="startRename({{ $request->id }}, '{{ $imageKey }}')"
-                                            class="netkit-image-title-edit"
-                                            aria-label="Rename image"
-                                            title="Rename"
-                                        >
-                                            <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" />
-                                            </svg>
-                                        </button>
-                                    </div>
-                                    <p class="netkit-image-prompt">{{ $request->original_prompt ?: 'Prompt hidden' }}</p>
-                                @endif
-
-                                <div class="netkit-image-meta">
-                                    <span aria-hidden="true">☆</span>
-                                    <span class="grow"></span>
-                                    <span>{{ optional($request->created_at)->format('g:i a') }}</span>
-                                </div>
-
-                                <div class="netkit-image-actions">
-                                    <a
-                                        :href="imageUrl('{{ $imageKey }}', @js($originalUrl))"
-                                        download
-                                        class="netkit-btn-secondary"
+                            @if ($inTrash)
+                                <div class="nk-img-actions">
+                                    <button type="button" class="nk-btn nk-btn-outline nk-btn-sm" wire:click="restoreImage({{ $image['id'] }}, {{ $image['index'] }})">
+                                        <x-filament::icon icon="heroicon-m-arrow-uturn-left" class="nk-btn-icon" />
+                                        Restore
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="nk-btn nk-btn-danger nk-btn-sm"
+                                        wire:click="purgeImage({{ $image['id'] }}, {{ $image['index'] }})"
+                                        wire:confirm="Permanently delete this image? This cannot be undone."
                                     >
+                                        Delete permanently
+                                    </button>
+                                </div>
+                            @else
+                                <div class="nk-img-actions">
+                                    <a href="{{ $image['original_url'] }}" download class="nk-btn nk-btn-outline nk-btn-sm">
+                                        <x-filament::icon icon="heroicon-m-arrow-down-tray" class="nk-btn-icon" />
                                         Download
                                     </a>
-                                    @if ($isVector)
-                                        <span class="netkit-btn-vector">Vector</span>
+                                    @if ($image['vector'])
+                                        <span class="nk-btn nk-btn-ghost nk-btn-sm" title="Vectors scale to any size already">
+                                            <x-filament::icon icon="heroicon-m-check" class="nk-btn-icon" />
+                                            Scalable
+                                        </span>
+                                    @elseif ($up)
+                                        @if (!empty($up['original_url']))
+                                            <a href="{{ $up['original_url'] }}" download class="nk-btn nk-btn-ghost nk-btn-sm" title="The image as it was before upscaling">
+                                                Original
+                                            </a>
+                                        @else
+                                            <span class="nk-btn nk-btn-ghost nk-btn-sm">Upscaled</span>
+                                        @endif
                                     @else
-                                        <button
-                                            type="button"
-                                            class="netkit-btn-primary"
-                                            :disabled="isUpscaling('{{ $imageKey }}')"
-                                            @click="upsizeImage('{{ $imageKey }}', imageUrl('{{ $imageKey }}', @js($originalUrl)), {{ (int) $request->id }}, {{ (int) $imageIndex }}, @js($previewUrl))"
-                                            x-text="isUpscaling('{{ $imageKey }}') ? 'Upsizing...' : 'Upsize'"
-                                        ></button>
-                                    @endif
-                                </div>
-                            </div>
-                        </article>
-                    @endforeach
-                @endforeach
-            </div>
-        @else
-            <div class="overflow-hidden rounded-lg border border-gray-200 bg-white">
-                <table class="min-w-full text-sm">
-                    <thead class="bg-gray-50 text-gray-700">
-                        <tr>
-                            <th class="px-4 py-3 text-left font-semibold">Preview</th>
-                            <th class="px-4 py-3 text-left font-semibold">Name</th>
-                            <th class="px-4 py-3 text-left font-semibold">Prompt</th>
-                            <th class="px-4 py-3 text-left font-semibold">Generator</th>
-                            <th class="px-4 py-3 text-left font-semibold">Cost</th>
-                            <th class="px-4 py-3 text-left font-semibold">Type</th>
-                            <th class="px-4 py-3 text-left font-semibold">Created</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-gray-100">
-                        @foreach ($this->requests as $request)
-                            @php
-                                $urls = is_array($request->image_urls) ? array_values(array_filter($request->image_urls)) : [];
-                                $cover = $urls[0] ?? null;
-                                $title = $request->domain ?: 'Untitled';
-                                $coverPreviewUrl = $cover ? route('generatedImages.preview', ['logoRequest' => $request->id, 'index' => 0]) : null;
-                                $coverOriginalUrl = $cover ? route('generatedImages.original', ['logoRequest' => $request->id, 'index' => 0]) : null;
-                                $tableEditKey = 'table-' . $request->id;
-                            @endphp
-                            <tr>
-                                <td class="px-4 py-3">
-                                    @if ($cover)
-                                        <button type="button" @click="openPreview(@js($coverOriginalUrl), @js($title))" class="block">
-                                            <img src="{{ $coverPreviewUrl }}" alt="{{ $title }}" class="h-12 w-12 rounded-md border border-gray-200 object-contain" loading="lazy" x-on:error="imageLoadFallback($event, @js($coverOriginalUrl))" />
-                                        </button>
-                                    @else
-                                        <div class="h-12 w-12 rounded-md border border-gray-200 bg-gray-100"></div>
-                                    @endif
-                                </td>
-                                <td class="px-4 py-3 font-medium text-gray-900">
-                                    @if ($this->editingImageKey === $tableEditKey)
-                                        <div class="netkit-rename-form">
-                                            <input
-                                                type="text"
-                                                wire:model="editingName"
-                                                class="netkit-rename-input"
-                                                wire:keydown.enter="saveRename({{ $request->id }})"
-                                                wire:keydown.escape="cancelRename"
-                                            />
-                                            <button type="button" wire:click="saveRename({{ $request->id }})" class="netkit-rename-save">Save</button>
-                                            <button type="button" wire:click="cancelRename" class="netkit-rename-cancel">Cancel</button>
-                                        </div>
-                                    @else
-                                        <div class="flex items-center gap-2">
-                                            <span>{{ $request->domain ?: '-' }}</span>
-                                            <button type="button" wire:click="startRename({{ $request->id }}, '{{ $tableEditKey }}')" class="netkit-image-title-edit" aria-label="Rename image" title="Rename">
-                                                <svg class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" />
-                                                </svg>
+                                        <div class="nk-upsize" x-data="{ confirming: false }" @click.outside="confirming = false">
+                                            <button
+                                                type="button"
+                                                class="nk-btn nk-btn-primary nk-btn-sm"
+                                                x-show="!confirming && !isUpscaling('{{ $key }}')"
+                                                @click="confirming = true"
+                                                title="Upscale to 2× resolution"
+                                            >
+                                                <x-filament::icon icon="heroicon-m-arrows-pointing-out" class="nk-btn-icon" />
+                                                Upsize · {{ $upscaleCost }}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="nk-btn nk-btn-green nk-btn-sm"
+                                                x-show="confirming && !isUpscaling('{{ $key }}')"
+                                                x-cloak
+                                                @click="confirming = false; upsizeImage('{{ $key }}', @js($image['original_url']), {{ $image['id'] }}, {{ $image['index'] }})"
+                                            >
+                                                Pay {{ $upscaleCost }}
+                                            </button>
+                                            <button type="button" class="nk-btn nk-btn-primary nk-btn-sm" x-show="isUpscaling('{{ $key }}')" x-cloak disabled>
+                                                Upsizing…
                                             </button>
                                         </div>
                                     @endif
+                                </div>
+                            @endif
+                        </div>
+                    </article>
+                @endforeach
+            </div>
+        @else
+            <section class="nk-card nk-card-flush nk-scroll">
+                <table class="nk-table nk-table-padded">
+                    <thead>
+                        <tr>
+                            <th>Preview</th>
+                            <th>Name</th>
+                            <th>Prompt</th>
+                            <th>Generator</th>
+                            <th class="nk-right">Cost</th>
+                            <th>Type</th>
+                            <th>{{ $inTrash ? 'Deleted for good' : 'Created' }}</th>
+                            <th class="nk-right"><span class="sr-only">Actions</span></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach ($images as $image)
+                            @php
+                                $key = $image['key'];
+                                $title = $image['name'] ?: 'Untitled';
+                                $up = $image['upscaled'];
+                            @endphp
+                            <tr wire:key="row-{{ $key }}">
+                                <td>
+                                    <button type="button" class="nk-img-thumb" aria-label="Preview {{ $title }}" @click="openPreview(@js($image['original_url']), @js($title))">
+                                        <img src="{{ $image['preview_url'] }}" alt="" loading="lazy" x-on:error="imageLoadFallback($event, @js($image['original_url']))" />
+                                    </button>
                                 </td>
-                                <td class="px-4 py-3 text-gray-600">
-                                    <span class="block max-w-md truncate">{{ $request->original_prompt ?: 'Prompt hidden' }}</span>
+                                <td class="nk-strong">
+                                    @if ($this->editingImageKey === $key)
+                                        <div class="nk-rename">
+                                            <input
+                                                type="text"
+                                                class="nk-input nk-input-sm"
+                                                wire:model="editingName"
+                                                wire:keydown.enter="saveRename({{ $image['id'] }}, {{ $image['index'] }})"
+                                                wire:keydown.escape="cancelRename"
+                                                aria-label="Image name"
+                                                autofocus
+                                            />
+                                            <button type="button" class="nk-btn nk-btn-primary nk-btn-sm" wire:click="saveRename({{ $image['id'] }}, {{ $image['index'] }})">Save</button>
+                                            <button type="button" class="nk-btn nk-btn-outline nk-btn-sm" wire:click="cancelRename">Cancel</button>
+                                        </div>
+                                    @else
+                                        <div class="nk-img-title-row">
+                                            <span @class(['nk-nowrap', 'nk-muted' => !$image['name']])>{{ $title }}</span>
+                                            @unless ($inTrash)
+                                                <button type="button" class="nk-icon-btn" wire:click="startRename({{ $image['id'] }}, {{ $image['index'] }})" aria-label="Rename image" title="Rename">
+                                                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="{{ $pencil }}" /></svg>
+                                                </button>
+                                            @endunless
+                                        </div>
+                                    @endif
                                 </td>
-                                <td class="px-4 py-3 text-gray-600">{{ $this->modelLabel($request->model) }}</td>
-                                <td class="px-4 py-3 text-gray-600">${{ number_format((float) ($request->latest_cost_usd ?? 0), 4) }}</td>
-                                <td class="px-4 py-3 text-gray-600">{{ strtoupper((string) ($request->output_format ?? 'image')) }}</td>
-                                <td class="px-4 py-3 text-gray-600">{{ optional($request->created_at)->format('M d, Y H:i') }}</td>
+                                <td><span class="nk-truncate" title="{{ $image['prompt'] }}">{{ $image['prompt'] ?: 'Prompt hidden' }}</span></td>
+                                <td>{{ $image['generator'] }}</td>
+                                <td class="nk-right">{{ $image['cost'] !== null ? '$' . number_format($image['cost'], 4) : '—' }}</td>
+                                <td>
+                                    <span class="nk-badge nk-badge-zinc">{{ $image['vector'] ? 'Vector' : 'Raster' }}</span>
+                                    @if ($up)
+                                        <span class="nk-badge nk-badge-lime nk-badge-block" title="Upscaled {{ $up['factor'] ?? 2 }}×">Upscaled @if (!empty($up['width'])) {{ $up['width'] }}×{{ $up['height'] }} @endif</span>
+                                    @endif
+                                </td>
+                                <td class="nk-nowrap" title="{{ $inTrash ? '' : $image['created_at']?->format('M j, Y g:i a') }}">
+                                    {{ $inTrash ? $image['purge_on']->format('M j, Y') : $image['created_at']?->format('M j, Y') }}
+                                </td>
+                                <td>
+                                    <div class="nk-row-actions">
+                                        @if ($inTrash)
+                                            <button type="button" class="nk-btn nk-btn-outline nk-btn-sm nk-btn-auto" wire:click="restoreImage({{ $image['id'] }}, {{ $image['index'] }})">Restore</button>
+                                            <button type="button" class="nk-btn nk-btn-danger nk-btn-sm nk-btn-auto" wire:click="purgeImage({{ $image['id'] }}, {{ $image['index'] }})" wire:confirm="Permanently delete this image? This cannot be undone.">Delete permanently</button>
+                                        @else
+                                            @include('user-portal.partials.image-menu', ['image' => $image, 'class' => 'nk-row-gear'])
+                                            <a href="{{ $image['original_url'] }}" download class="nk-icon-btn" aria-label="Download" title="Download">
+                                                <x-filament::icon icon="heroicon-m-arrow-down-tray" />
+                                            </a>
+                                            <button type="button" class="nk-icon-btn nk-icon-btn-danger" wire:click="trashImage({{ $image['id'] }}, {{ $image['index'] }})" aria-label="Move to Trash" title="Delete (moves to Trash)">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="{{ $trashIcon }}" /></svg>
+                                            </button>
+                                        @endif
+                                    </div>
+                                </td>
                             </tr>
                         @endforeach
                     </tbody>
                 </table>
-            </div>
+            </section>
         @endif
 
-        <div>
-            {{ $this->requests->links() }}
-        </div>
+        @if ($images->hasPages())
+            <x-filament::pagination :paginator="$images" />
+        @endif
 
+        {{-- Lightbox --}}
         <div
             x-show="previewUrl"
             x-cloak
             x-transition.opacity
-            class="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
+            class="nk-lightbox"
+            role="dialog"
+            aria-modal="true"
             @click.self="closePreview()"
             @keydown.escape.window="closePreview()"
         >
-            <div class="max-h-full w-full max-w-6xl">
-                <div class="mb-3 flex items-center justify-between gap-3 text-white">
-                    <p class="truncate text-sm font-semibold" x-text="previewAlt"></p>
-                    <button type="button" class="rounded-lg bg-white/10 px-3 py-1.5 text-sm font-semibold hover:bg-white/20" @click="closePreview()">Close</button>
+            <div class="nk-lightbox-inner">
+                <div class="nk-lightbox-bar">
+                    <p class="nk-lightbox-title" x-text="previewAlt"></p>
+                    <a :href="previewUrl" download class="nk-btn nk-btn-sm nk-btn-glass">
+                        <x-filament::icon icon="heroicon-m-arrow-down-tray" class="nk-btn-icon" />
+                        Download
+                    </a>
+                    <button type="button" class="nk-btn nk-btn-sm nk-btn-glass" @click="closePreview()">Close</button>
                 </div>
-                <img :src="previewUrl" :alt="previewAlt" class="mx-auto max-h-[82vh] max-w-full rounded-lg bg-white object-contain shadow-2xl" />
+                <img :src="previewUrl" :alt="previewAlt" class="nk-lightbox-img" />
             </div>
         </div>
     </div>
@@ -766,18 +449,9 @@
             return {
                 previewUrl: null,
                 previewAlt: '',
+                notice: null,
                 upscaleError: null,
                 upscaling: {},
-                replacementUrls: {},
-                replacementPreviewUrls: {},
-
-                imageUrl(key, fallbackUrl) {
-                    return this.replacementUrls[key] || fallbackUrl;
-                },
-
-                imagePreviewUrl(key, fallbackUrl) {
-                    return this.replacementPreviewUrls[key] || fallbackUrl;
-                },
 
                 isUpscaling(key) {
                     return Boolean(this.upscaling[key]);
@@ -786,6 +460,11 @@
                 openPreview(url, alt) {
                     this.previewUrl = url;
                     this.previewAlt = alt || 'Generated image';
+                },
+
+                closePreview() {
+                    this.previewUrl = null;
+                    this.previewAlt = '';
                 },
 
                 imageLoadFallback(event, fallbackUrl) {
@@ -801,14 +480,17 @@
                     image.src = fallbackUrl;
                 },
 
-                closePreview() {
-                    this.previewUrl = null;
-                    this.previewAlt = '';
+                // The studio reads this stash on load and sets itself up exactly
+                // as the image was made (see generator-script applyShowcasePreset).
+                openInStudio(preset) {
+                    try { sessionStorage.setItem('logo-lab:preset', JSON.stringify(preset)); } catch (e) {}
+                    window.location.href = @js($studioUrl);
                 },
 
-                async upsizeImage(key, imageUrl, logoRequestId, imageIndex, previewUrl) {
+                async upsizeImage(key, imageUrl, logoRequestId, imageIndex) {
                     if (this.isUpscaling(key)) return;
 
+                    this.notice = null;
                     this.upscaleError = null;
                     this.upscaling = { ...this.upscaling, [key]: true };
                     const abortController = new AbortController();
@@ -837,13 +519,11 @@
                             return;
                         }
 
-                        this.replacementUrls = { ...this.replacementUrls, [key]: data.upscaled_url };
-                        if (previewUrl) {
-                            this.replacementPreviewUrls = { ...this.replacementPreviewUrls, [key]: `${previewUrl}?v=${Date.now()}` };
-                        }
-                        if (this.previewUrl === imageUrl) {
-                            this.previewUrl = data.upscaled_url;
-                        }
+                        const size = data.width && data.height ? ` to ${data.width} × ${data.height}` : '';
+                        const cost = typeof data.cost === 'number' ? ` · $${data.cost.toFixed(2)} charged` : '';
+                        this.notice = `Image upscaled${size}${cost}.`;
+                        // The card re-renders from the server: new file, "Upscaled" badge.
+                        await this.$wire.$refresh();
                     } catch (error) {
                         this.upscaleError = error.name === 'AbortError'
                             ? 'Upsize is taking longer than expected. Please try again in a moment.'

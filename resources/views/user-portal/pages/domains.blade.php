@@ -1,146 +1,288 @@
 <x-filament-panels::page>
-    <style>
-        .tb-domains-hero {
-            position: relative;
-            overflow: hidden;
-            border: 1px solid rgb(186 230 253);
-            border-radius: 16px;
-            padding: 28px;
-            background:
-                radial-gradient(120% 140% at 100% 0%, rgba(56, 189, 248, 0.18), transparent 55%),
-                linear-gradient(135deg, rgb(240 249 255), rgb(238 242 255));
-            box-shadow: 0 10px 30px -18px rgba(2, 132, 199, 0.45);
-        }
-
-        .dark .tb-domains-hero {
-            border-color: rgba(14, 116, 144, 0.45);
-            background:
-                radial-gradient(120% 140% at 100% 0%, rgba(8, 145, 178, 0.25), transparent 55%),
-                linear-gradient(135deg, rgba(8, 47, 73, 0.55), rgba(30, 27, 75, 0.45));
-            box-shadow: 0 16px 40px -24px rgba(2, 6, 23, 0.9);
-        }
-
-        .tb-domains-hero__row {
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        @media (min-width: 768px) {
-            .tb-domains-hero__row {
-                flex-direction: row;
-                align-items: center;
-                justify-content: space-between;
-            }
-        }
-
-        .tb-domains-hero__badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 4px 10px;
-            border-radius: 9999px;
-            background: rgba(2, 132, 199, 0.12);
-            color: rgb(3 105 161);
-            font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 0.06em;
-            text-transform: uppercase;
-        }
-
-        .dark .tb-domains-hero__badge {
-            background: rgba(56, 189, 248, 0.16);
-            color: rgb(125 211 252);
-        }
-
-        .tb-domains-hero__title {
-            margin-top: 12px;
-            font-size: 22px;
-            font-weight: 700;
-            line-height: 1.2;
-            color: rgb(8 47 73);
-        }
-
-        .dark .tb-domains-hero__title {
-            color: rgb(224 242 254);
-        }
-
-        .tb-domains-hero__text {
-            margin-top: 8px;
-            max-width: 38rem;
-            font-size: 14px;
-            line-height: 1.55;
-            color: rgb(3 105 161);
-        }
-
-        .dark .tb-domains-hero__text {
-            color: rgb(186 230 253);
-        }
-    </style>
-
+    {{-- Styles: resources/css/user-portal.css (nk-* classes, "Domains" block). --}}
     @php
+        $tz = auth()->user()?->displayTimezone() ?? config('app.timezone');
         $selectedSearch = $this->selectedSearchRecord();
-        $selectedRows = $selectedSearch ? $this->resultRowsFor($selectedSearch) : [];
+        $statusLabels = ['available' => 'Available', 'premium' => 'Premium', 'taken' => 'Taken', 'unknown' => 'Not checked'];
+        $buyUrl = fn (string $domain) => 'https://www.namecheap.com/domains/registration/results/?domain=' . urlencode($domain);
     @endphp
 
     @if ($selectedSearch)
-        <div class="space-y-6">
-            <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                    <h2 class="text-xl font-semibold tracking-tight text-gray-950 dark:text-white">
-                        Results
-                    </h2>
-                    <p class="mt-1 max-w-3xl text-sm text-gray-500 dark:text-gray-400">
-                        {{ str($selectedSearch->prompt)->limit(120) }}
-                    </p>
+        {{-- One search's results --}}
+        @php
+            $rows = collect($this->resultRowsFor($selectedSearch))->map(function (array $row) use ($tz, $statusLabels) {
+                $status = \App\UserPortal\Pages\Domains::statusOf($row);
+                $checked = !empty($row['checked_at']) ? \Illuminate\Support\Carbon::parse($row['checked_at'])->timezone($tz) : null;
+
+                return [
+                    'domain' => strtolower((string) $row['domain']),
+                    'status' => $status,
+                    'label' => $statusLabels[$status],
+                    'checked' => $checked?->format('M j, Y g:i a'),
+                ];
+            })->values();
+            $counts = $rows->countBy('status');
+        @endphp
+
+        <div class="nk-page"
+            x-data="{
+                rows: @js($rows),
+                filter: 'all',
+                search: '',
+                page: 1,
+                perPage: 25,
+                get filtered() {
+                    const needle = this.search.trim().toLowerCase();
+                    return this.rows.filter((row) => (this.filter === 'all' || row.status === this.filter)
+                        && (!needle || row.domain.includes(needle)));
+                },
+                get pages() { return Math.max(1, Math.ceil(this.filtered.length / this.perPage)); },
+                get paged() { return this.filtered.slice((this.page - 1) * this.perPage, this.page * this.perPage); },
+                get first() { return this.filtered.length ? (this.page - 1) * this.perPage + 1 : 0; },
+                get last() { return Math.min(this.page * this.perPage, this.filtered.length); },
+            }"
+            x-init="$watch('search', () => page = 1); $watch('filter', () => page = 1); $watch('perPage', () => page = 1)"
+        >
+            <section class="nk-card">
+                <a href="{{ \App\UserPortal\Pages\Domains::getUrl(panel: 'user') . '?tab=searches' }}" class="nk-back">
+                    <x-filament::icon icon="heroicon-m-arrow-left" />
+                    Recent searches
+                </a>
+                <h3 class="nk-heading nk-mt-2">“{{ $selectedSearch->prompt }}”</h3>
+                <p class="nk-muted nk-mt-1">
+                    Searched {{ $selectedSearch->created_at?->copy()->timezone($tz)->format('M j, Y g:i a') }}
+                    · {{ $rows->count() }} {{ $rows->count() === 1 ? 'domain' : 'domains' }}
+                </p>
+                <div class="nk-chips nk-mt-4">
+                    <span class="nk-badge nk-badge-green">{{ $counts->get('available', 0) }} available</span>
+                    <span class="nk-badge nk-badge-amber">{{ $counts->get('premium', 0) }} premium</span>
+                    <span class="nk-badge nk-badge-zinc">{{ $counts->get('taken', 0) }} taken</span>
+                    @if ($counts->get('unknown', 0) > 0)
+                        <span class="nk-badge nk-badge-zinc">{{ $counts->get('unknown') }} not checked</span>
+                    @endif
+                </div>
+            </section>
+
+            @if ($rows->isEmpty())
+                <section class="nk-card nk-empty">
+                    <x-filament::icon icon="heroicon-o-globe-alt" class="nk-empty-icon" />
+                    <p class="nk-strong">No domains were stored for this search</p>
+                </section>
+            @else
+                <div class="nk-row">
+                    <div class="nk-tabs" role="tablist" aria-label="Filter by status">
+                        @foreach (['all' => 'All', 'available' => 'Available', 'premium' => 'Premium', 'taken' => 'Taken'] as $key => $label)
+                            <button type="button" role="tab" class="nk-tab" :class="{ 'is-active': filter === '{{ $key }}' }" @click="filter = '{{ $key }}'">
+                                {{ $label }}
+                                <span class="nk-tab-count">{{ $key === 'all' ? $rows->count() : $counts->get($key, 0) }}</span>
+                            </button>
+                        @endforeach
+                    </div>
+                    <label class="nk-search">
+                        <x-filament::icon icon="heroicon-m-magnifying-glass" />
+                        <input type="search" class="nk-input" placeholder="Search domains" x-model.debounce.150ms="search" aria-label="Search domains">
+                    </label>
                 </div>
 
-                <x-filament::button
-                    tag="a"
-                    :href="\App\UserPortal\Pages\Domains::getUrl(panel: 'user')"
-                    color="gray"
-                    icon="heroicon-m-arrow-left"
-                >
-                    Back to domains
-                </x-filament::button>
-            </div>
-
-            @include('user-portal.widgets.domain-search-results', [
-                'rows' => $selectedRows,
-            ])
+                <section class="nk-card nk-card-flush nk-scroll">
+                    <table class="nk-table nk-table-padded">
+                        <thead>
+                            <tr>
+                                <th>Domain</th>
+                                <th>Status</th>
+                                <th>Checked</th>
+                                <th class="nk-right"><span class="sr-only">Actions</span></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="row in paged" :key="row.domain">
+                                <tr>
+                                    <td class="nk-strong nk-domain" x-text="row.domain"></td>
+                                    <td><span class="nk-badge" :class="'nk-status-' + row.status" x-text="row.label"></span></td>
+                                    <td class="nk-nowrap" x-text="row.checked || '—'"></td>
+                                    <td class="nk-right">
+                                        <template x-if="row.status === 'available' || row.status === 'premium'">
+                                            <a class="nk-btn nk-btn-outline nk-btn-sm nk-btn-auto" target="_blank" rel="noopener"
+                                                :href="'https://www.namecheap.com/domains/registration/results/?domain=' + encodeURIComponent(row.domain)">
+                                                Buy
+                                                <x-filament::icon icon="heroicon-m-arrow-top-right-on-square" class="nk-btn-icon" />
+                                            </a>
+                                        </template>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                    <div x-show="filtered.length === 0" x-cloak class="nk-empty">
+                        <p class="nk-muted">No domains match.</p>
+                    </div>
+                    <div class="nk-table-foot" x-show="filtered.length > 0">
+                        <span class="nk-small" x-text="`${first}–${last} of ${filtered.length}`"></span>
+                        <div class="nk-toolbar">
+                            <select class="nk-input nk-select nk-input-sm nk-per-page" x-model.number="perPage" aria-label="Per page">
+                                <option value="10">10 per page</option>
+                                <option value="25">25 per page</option>
+                                <option value="50">50 per page</option>
+                            </select>
+                            <button type="button" class="nk-btn nk-btn-outline nk-btn-sm nk-btn-auto" @click="page--" :disabled="page <= 1">Previous</button>
+                            <button type="button" class="nk-btn nk-btn-outline nk-btn-sm nk-btn-auto" @click="page++" :disabled="page >= pages">Next</button>
+                        </div>
+                    </div>
+                </section>
+            @endif
         </div>
     @else
+        {{-- Favourites and recent searches --}}
+        @php
+            $counts = $this->counts;
+            $refreshDisabled = $this->refreshDisabled();
+        @endphp
 
-        <section class="tb-domains-hero">
-            <div class="tb-domains-hero__row">
+        <div class="nk-page">
+            <section class="nk-card nk-row">
                 <div>
-                    <span class="tb-domains-hero__badge">
-                        <x-filament::icon icon="heroicon-m-globe-alt" class="h-3.5 w-3.5" />
-                        Workspace
-                    </span>
-                    <h2 class="tb-domains-hero__title">Find more domain ideas</h2>
-                    <p class="tb-domains-hero__text">
-                        Generate names, check availability, and save promising domains to this workspace.
-                    </p>
+                    <h3 class="nk-heading">Find more domains</h3>
+                    <p class="nk-muted nk-mt-1">Describe your idea in the Domain Generator and it checks which names are free to register.</p>
                 </div>
+                <div class="nk-toolbar">
+                    <button
+                        type="button"
+                        class="nk-btn nk-btn-outline nk-btn-auto"
+                        wire:click="refreshDomains"
+                        wire:loading.attr="disabled"
+                        wire:target="refreshDomains"
+                        @disabled($refreshDisabled)
+                        title="Re-check availability of your favourites and recent results (once an hour)"
+                    >
+                        <x-filament::icon icon="heroicon-m-arrow-path" class="nk-btn-icon" wire:loading.class="nk-spin" wire:target="refreshDomains" />
+                        {{ $this->refreshLabel() }}
+                    </button>
+                    <a href="{{ route('domainSearch.index') }}" class="nk-btn nk-btn-primary nk-btn-auto">
+                        <x-filament::icon icon="heroicon-m-sparkles" class="nk-btn-icon" />
+                        Open Domain Generator
+                    </a>
+                </div>
+            </section>
 
-                <x-filament::button
-                    tag="a"
-                    :href="route('domainSearch.index')"
-                    size="lg"
-                    icon="heroicon-m-sparkles"
-                >
-                    Open Domain Generator
-                </x-filament::button>
+            <div class="nk-row">
+                <div class="nk-tabs" role="tablist" aria-label="Show">
+                    <button type="button" role="tab" wire:click="setTab('favorites')" aria-selected="{{ $tab === 'favorites' ? 'true' : 'false' }}" @class(['nk-tab', 'nk-tab-with-count', 'is-active' => $tab === 'favorites'])>
+                        Favourites <span class="nk-tab-count">{{ $counts['favorites'] }}</span>
+                    </button>
+                    <button type="button" role="tab" wire:click="setTab('searches')" aria-selected="{{ $tab === 'searches' ? 'true' : 'false' }}" @class(['nk-tab', 'nk-tab-with-count', 'is-active' => $tab === 'searches'])>
+                        Recent searches <span class="nk-tab-count">{{ $counts['searches'] }}</span>
+                    </button>
+                </div>
+                <label class="nk-search">
+                    <x-filament::icon icon="heroicon-m-magnifying-glass" />
+                    <input type="search" class="nk-input" wire:model.live.debounce.300ms="term" placeholder="{{ $tab === 'favorites' ? 'Search favourites' : 'Search your searches' }}" aria-label="Search">
+                </label>
             </div>
-        </section>
 
-        <div class="mt-6">
-            @livewire(\App\UserPortal\Widgets\UserRecentDomainSearchesWidget::class)
-        </div>
-
-        <div class="mt-6">
-            @livewire(\App\UserPortal\Widgets\UserFavoriteDomainsWidget::class)
+            @if ($tab === 'favorites')
+                @php $favorites = $this->favorites; @endphp
+                @if ($favorites->isEmpty())
+                    <section class="nk-card nk-empty">
+                        <x-filament::icon icon="heroicon-o-star" class="nk-empty-icon" />
+                        @if ($term !== '')
+                            <p class="nk-strong">No favourites match “{{ $term }}”</p>
+                        @else
+                            <p class="nk-strong">No favourite domains yet</p>
+                            <p class="nk-muted nk-mt-1">Star a domain in the Domain Generator and it will be kept here.</p>
+                        @endif
+                    </section>
+                @else
+                    <section class="nk-card nk-card-flush nk-scroll">
+                        <table class="nk-table nk-table-padded">
+                            <thead>
+                                <tr>
+                                    <th>Domain</th>
+                                    <th>Status</th>
+                                    <th>Last checked</th>
+                                    <th>Saved</th>
+                                    <th class="nk-right"><span class="sr-only">Actions</span></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach ($favorites as $favorite)
+                                    @php
+                                        $status = $favorite->is_premium ? 'premium' : ($favorite->is_available === null ? 'unknown' : ($favorite->is_available ? 'available' : 'taken'));
+                                    @endphp
+                                    <tr wire:key="fav-{{ $favorite->id }}">
+                                        <td class="nk-strong nk-domain">{{ $favorite->domain }}</td>
+                                        <td><span class="nk-badge nk-status-{{ $status }}">{{ $statusLabels[$status] }}</span></td>
+                                        <td class="nk-nowrap" title="{{ $favorite->checked_at?->copy()->timezone($tz)->format('M j, Y g:i a') }}">{{ $favorite->checked_at?->diffForHumans() ?? '—' }}</td>
+                                        <td class="nk-nowrap">{{ $favorite->created_at?->copy()->timezone($tz)->format('M j, Y') }}</td>
+                                        <td>
+                                            <div class="nk-row-actions">
+                                                @if ($status !== 'taken')
+                                                    <a href="{{ $buyUrl($favorite->domain) }}" target="_blank" rel="noopener" class="nk-btn nk-btn-outline nk-btn-sm nk-btn-auto">
+                                                        Buy
+                                                        <x-filament::icon icon="heroicon-m-arrow-top-right-on-square" class="nk-btn-icon" />
+                                                    </a>
+                                                @endif
+                                                <button type="button" class="nk-icon-btn nk-icon-btn-danger" wire:click="removeFavorite({{ $favorite->id }})" wire:confirm="Remove {{ $favorite->domain }} from your favourites?" aria-label="Remove from favourites" title="Remove from favourites">
+                                                    <x-filament::icon icon="heroicon-m-x-mark" />
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </tbody>
+                        </table>
+                    </section>
+                    @if ($favorites->hasPages())
+                        <x-filament::pagination :paginator="$favorites" />
+                    @endif
+                @endif
+            @else
+                @php $searches = $this->searches; @endphp
+                @if ($searches->isEmpty())
+                    <section class="nk-card nk-empty">
+                        <x-filament::icon icon="heroicon-o-magnifying-glass" class="nk-empty-icon" />
+                        @if ($term !== '')
+                            <p class="nk-strong">No searches match “{{ $term }}”</p>
+                        @else
+                            <p class="nk-strong">No domain searches yet</p>
+                            <p class="nk-muted nk-mt-1">Open the Domain Generator to run your first one.</p>
+                        @endif
+                    </section>
+                @else
+                    <section class="nk-card nk-card-flush">
+                        <ul class="nk-list">
+                            @foreach ($searches as $search)
+                                @php
+                                    $resultRows = $this->resultRowsFor($search);
+                                    $available = collect($resultRows)->filter(fn ($row) => \App\UserPortal\Pages\Domains::statusOf($row) === 'available')->count();
+                                    $url = \App\UserPortal\Pages\Domains::getUrl(['search' => $search->id], panel: 'user');
+                                @endphp
+                                <li wire:key="search-{{ $search->id }}" class="nk-list-item">
+                                    <a href="{{ $url }}" class="nk-list-main">
+                                        <span class="nk-kind-icon nk-kind-domains"><x-filament::icon icon="heroicon-o-magnifying-glass" /></span>
+                                        <span class="nk-feed-body">
+                                            <span class="nk-feed-title nk-truncate-line" title="{{ $search->prompt }}">{{ $search->prompt }}</span>
+                                            <span class="nk-feed-detail">
+                                                {{ count($resultRows) }} {{ count($resultRows) === 1 ? 'domain' : 'domains' }}
+                                                @if ($available > 0) · <span class="nk-pos">{{ $available }} available</span> @endif
+                                                · {{ $search->created_at?->copy()->timezone($tz)->format('M j, Y g:i a') }}
+                                            </span>
+                                        </span>
+                                    </a>
+                                    <div class="nk-row-actions">
+                                        <a href="{{ $url }}" class="nk-btn nk-btn-outline nk-btn-sm nk-btn-auto">View results</a>
+                                        <button type="button" class="nk-icon-btn nk-icon-btn-danger" wire:click="deleteSearch({{ $search->id }})" wire:confirm="Delete this search and its stored results?" aria-label="Delete search" title="Delete search">
+                                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" /></svg>
+                                        </button>
+                                    </div>
+                                </li>
+                            @endforeach
+                        </ul>
+                    </section>
+                    @if ($searches->hasPages())
+                        <x-filament::pagination :paginator="$searches" />
+                    @endif
+                @endif
+            @endif
         </div>
     @endif
 </x-filament-panels::page>
