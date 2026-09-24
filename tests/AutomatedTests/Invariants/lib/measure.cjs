@@ -246,7 +246,9 @@ function targetPoints({ sel }) {
     return { box: { x: br.left, y: br.top, w: br.width, h: br.height }, rows: rows.map((rr) => ({ cy: (rr.top + rr.bot) / 2, words: rr.words.map((w) => ({ t: w.t, l: w.l, r: w.r, cy: (w.t0 + w.b) / 2 })) })) };
 }
 
-const norm = (s) => s.normalize('NFKC').replace(/[­-]+$/g, '-').replace(/[­]/g, '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').toLowerCase();
+// Hyphen variants (U+00AD soft hyphen read back from a substitute font's
+// hyphen glyph, U+2010/2011) and plain '-' pair as the same word.
+const norm = (s) => s.normalize('NFKC').replace(/[\u00ad\u2010\u2011-]/g, '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').toLowerCase();
 
 /** LCS-align two word lists by text. */
 function align(a, b) {

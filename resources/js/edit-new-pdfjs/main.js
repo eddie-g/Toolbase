@@ -19,6 +19,7 @@
  */
 
 import * as pdfjsLib from 'pdfjs-dist';
+import { captureEditorLayoutSnapshot } from './editor-layout-snapshot.js';
 import workerSrc from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import {
     PDFViewer,
@@ -19573,7 +19574,7 @@ function syncAnnotationBoxToPersistedAnnotations(box, options = {}) {
         // and ordinary wrapping now that its text element can be measured.
         applyPromotedOverlayDisplayHorizontalFit(box);
         const refreshed = buildAnnotationFromBox(box, annotation);
-        if (refreshed) upsertPersistedAnnotation(refreshed);
+        if (refreshed) upsertPersistedAnnotation(withEditorLayoutSnapshot(box, refreshed));
         // The live box already reflects both upserts above. Keep its page
         // layer on the same revision so the next passive scroll does not
         // discard and reconstruct the DOM that the user just edited.
@@ -19685,6 +19686,47 @@ function syncDirtyBoxesToPersistedAnnotations(options = {}) {
     ).forEach((box) => syncAnnotationBoxToPersistedAnnotations(box, options));
 }
 
+// An edited promoted block carries a snapshot of what the editor shows
+// (words, positions, styles) so the download draws exactly that; see
+// editor-layout-snapshot.js. A box still being edited keeps its last snapshot.
+function withEditorLayoutSnapshot(box, annotation) {
+    if (!annotation || !box?.classList?.contains('is-promoted-source-block')) return annotation;
+    if (box.classList.contains('is-editing')) return annotation;
+    // Only a block the export re-draws needs it (edited, restyled or moved).
+    const changed = ['promotedDirty', 'styleDirty', 'movedTextOverlay', 'userForcedRichText']
+        .some((key) => boolish(annotation[key]));
+    if (!changed) {
+        if (!annotation.editorLayout) return annotation;
+        const { editorLayout: _unused, ...rest } = annotation;
+        return rest;
+    }
+    const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
+    const viewport = Number.isFinite(pageIndex) && pageIndex >= 0 ? pdfViewer.getPageView(pageIndex)?.viewport : null;
+    const layer = box.parentElement;
+    const scale = Number.parseFloat(layer?.dataset?.scale || '') || 0;
+    let snapshot = null;
+    if (viewport && layer && scale > 0) {
+        try {
+            snapshot = captureEditorLayoutSnapshot(box, annotation, {
+                textElement: selectedBoxTextElement(box),
+                layerRect: layer.getBoundingClientRect(),
+                viewport,
+                scale,
+                toPdfPoint: (x, y) => viewportPointToPdfPoint(x, y, viewport, scale),
+            });
+        } catch (error) {
+            console.warn('editor layout snapshot failed', error);
+            snapshot = null;
+        }
+    }
+    if (snapshot) return { ...annotation, editorLayout: snapshot };
+    if (annotation.editorLayout) {
+        const { editorLayout: _stale, ...rest } = annotation;
+        return rest;
+    }
+    return annotation;
+}
+
 function syncRenderedPersistedOverlayBoxesToPersistedAnnotations() {
     document.querySelectorAll('.enpv-annotation-box.is-persisted-overlay').forEach((box) => {
         const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
@@ -19696,7 +19738,7 @@ function syncRenderedPersistedOverlayBoxesToPersistedAnnotations() {
             return;
         }
         const annotation = buildAnnotationFromBox(box, existing);
-        if (annotation) upsertPersistedAnnotation(annotation);
+        if (annotation) upsertPersistedAnnotation(withEditorLayoutSnapshot(box, annotation));
     });
     // This sweep serializes the already-rendered DOM; every mounted layer is
     // therefore current at the resulting revision and must not be rebuilt by

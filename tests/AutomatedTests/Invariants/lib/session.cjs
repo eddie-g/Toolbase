@@ -28,6 +28,7 @@ const TOL = {
     styleColour: 48,           // I7 style: max per-channel colour difference (0-255)
     styleSizePt: 0.6,          // I7 style: font size difference
     styleRowPt: 2.5,           // I7 style: row placement (floor; also 45% of the font size)
+    stylePosPt: 1.0,           // I7 style: word x / baseline vs the editor
     exportRowOriginPt: 0.5,    // I7 every row of the edited block: first-glyph x, baseline, and x of the words before the edit point
     inkPixels: 6,              // I6 leftover pixels at the old place
     renderedDarkPixels: 12,    // I6 the moved text renders (dark pixels at the new place)
@@ -801,7 +802,32 @@ class Session {
         const originBad = res.rowOriginBad || [];
         const data = { ...res, baseline: base, edited, untouchedChanged: res.untouchedChanged.slice(0, 12), extraLines: res.extraLines.slice(0, 12), textMatch: textBad ? false : res.textMatch, rowOriginBad: originBad.slice(0, 12), rowGeometry: (res.rowGeometry || []).slice(0, 40) };
         this.geometry = { rows: (res.rowGeometry || []).length, edited: (res.rowGeometry || []).filter((r) => r.edited).length, bad: originBad.length, maxAbsDx: Math.max(0, ...(res.rowGeometry || []).filter((r) => !r.missing).map((r) => Math.abs(r.dx))), maxAbsDy: Math.max(0, ...(res.rowGeometry || []).filter((r) => !r.missing).map((r) => Math.abs(r.dy))), maxAbsPrefixDx: Math.max(0, ...(res.rowGeometry || []).filter((r) => r.edited).map((r) => Math.abs(r.prefixMaxDx || 0))) };
-        const style = editorStyled && !editorStyled.error ? this.styleFidelity(editorStyled.words, F.stylewords(edited, this.pageNo, [n.x - 2, n.y - 2, n.x + n.w + 2, n.y + n.h + 2]).words) : null;
+        // Read the download over where the editor's words are (a block whose
+        // rows overflow its box still shows them), plus a margin.
+        let styleRect = [n.x - 2, n.y - 2, n.x + n.w + 2, n.y + n.h + 2];
+        if (editorStyled && !editorStyled.error && editorStyled.words.length) {
+            const ws = editorStyled.words;
+            const pad = Math.max(...ws.map((w) => w.size)) * 1.2;
+            styleRect = [Math.min(styleRect[0], ...ws.map((w) => w.x)) - 2, Math.min(styleRect[1], ...ws.map((w) => w.base - w.size)) - 2,
+                Math.max(styleRect[2], ...ws.map((w) => w.x + w.size * w.t.length)) + 2, Math.max(styleRect[3], ...ws.map((w) => w.base + pad * 0.4)) + 2];
+        }
+        // Words the download still draws from the PDF's own glyphs (same text,
+        // same place as in the untouched download) are the source, not a
+        // re-stamp; the editor's drift over them is I1's business (NK_68).
+        let style = null;
+        if (editorStyled && !editorStyled.error) {
+            const key = (w) => `${M.norm(w.t)}@${Math.round(w.x * 20)}:${Math.round(w.base * 20)}`;
+            const untouched = new Set(F.stylewords(base, this.pageNo, styleRect).words.map(key));
+            const drawn = F.stylewords(edited, this.pageNo, styleRect).words;
+            const restamped = drawn.filter((w) => !untouched.has(key(w)));
+            const source = drawn.filter((w) => untouched.has(key(w)));
+            // Editor words over the kept source glyphs are left out too.
+            const sourceKeys = new Set(source.map((w) => M.norm(w.t)));
+            const nearSource = (e) => source.some((w) => M.norm(w.t) === M.norm(e.t) && Math.abs(w.x - e.x) < Math.max(3, e.size) && Math.abs(w.base - e.base) < e.size * 0.5);
+            const editorWords = editorStyled.words.filter((e) => !(sourceKeys.has(M.norm(e.t)) && nearSource(e)));
+            style = this.styleFidelity(editorWords, restamped);
+            style.keptSourceWords = source.length;
+        }
         if (style) {
             data.style = style;
             this.styleStats = { matched: style.matched, words: style.editorWords, bad: style.bad.length };
@@ -811,10 +837,27 @@ class Session {
             const w = style.bad[0];
             await this.violate('I7', step, this.stepIndex, `download style: ${style.bad.length}/${style.matched} words differ from the editor (${kinds.join(', ')}); e.g. "${w.t}": ${w.what.map((k) => `${k} ${JSON.stringify(w.editor[k])}→${JSON.stringify(w.pdf[k])}`).join(', ')}`, { ...data, styleKinds: kinds.join('+') });
         }
-        if (res.pageCountChanged || res.untouchedChanged.length || res.extraLines.length || textBad || res.colourLost.length || originBad.length) {
-            const worst = originBad.filter((r) => !r.missing).sort((a, b) => Math.max(Math.abs(b.dx), Math.abs(b.dy), Math.abs(b.prefixMaxDx || 0)) - Math.max(Math.abs(a.dx), Math.abs(a.dy), Math.abs(a.prefixMaxDx || 0)))[0];
-            const originMsg = originBad.length ? `, ${originBad.length} block rows off their origin${worst ? ` (row ${worst.row}${worst.edited ? ' edited' : ''}: dx ${worst.dx}pt, dy ${worst.dy}pt, prefix dx ${worst.prefixMaxDx ?? '-'}pt)` : ' (row missing)'}` : '';
-            await this.violate('I7', step, this.stepIndex, `download: ${res.untouchedChanged.length}/${res.untouchedLines} untouched rows changed, ${res.extraLines.length} extra rows, edited text ${textBad ? 'MISMATCH' : 'ok'}, ${res.colourLost.length} colour losses${originMsg}`, data);
+        // When the edited block was compared word by word with the editor
+        // (style check above: colour, weight, size, row and x/baseline), that
+        // is the reference; row origin and leading-span colour vs the ORIGINAL
+        // PDF no longer apply to a block the user re-laid out or recoloured.
+        const editorIsReference = Boolean(style && style.matched >= Math.max(1, style.editorWords * 0.8));
+        if (editorIsReference) {
+            data.rowOriginBadVsSource = originBad.slice(0, 12);
+            data.colourLostVsSource = res.colourLost.slice(0, 12);
+        }
+        const originCheck = editorIsReference ? [] : originBad;
+        // The word check found (nearly) every editor word: the block-area text
+        // comparison, which also catches neighbours' words, is not needed.
+        const textCheckBad = textBad && !editorIsReference;
+        if (!textCheckBad && data.textMatch === false) data.textMatch = null;
+        const colourCheck = editorIsReference ? [] : res.colourLost;
+        data.rowOriginBad = originCheck.slice(0, 12);
+        data.colourLost = colourCheck.slice(0, 12);
+        if (res.pageCountChanged || res.untouchedChanged.length || res.extraLines.length || textCheckBad || colourCheck.length || originCheck.length) {
+            const worst = originCheck.filter((r) => !r.missing).sort((a, b) => Math.max(Math.abs(b.dx), Math.abs(b.dy), Math.abs(b.prefixMaxDx || 0)) - Math.max(Math.abs(a.dx), Math.abs(a.dy), Math.abs(a.prefixMaxDx || 0)))[0];
+            const originMsg = originCheck.length ? `, ${originCheck.length} block rows off their origin${worst ? ` (row ${worst.row}${worst.edited ? ' edited' : ''}: dx ${worst.dx}pt, dy ${worst.dy}pt, prefix dx ${worst.prefixMaxDx ?? '-'}pt)` : ' (row missing)'}` : '';
+            await this.violate('I7', step, this.stepIndex, `download: ${res.untouchedChanged.length}/${res.untouchedLines} untouched rows changed, ${res.extraLines.length} extra rows, edited text ${textCheckBad ? 'MISMATCH' : 'ok'}, ${colourCheck.length} colour losses${originMsg}`, data);
         }
     }
 
@@ -822,27 +865,72 @@ class Session {
      *  colour/bold/italic/size differences and a word whose row placement
      *  (baseline offset from the block's first paired word) moved. */
     styleFidelity(editorWords, pdfWords) {
-        const pairs = M.align(editorWords, pdfWords);
+        // Pair each editor word with the nearest unused download word of the
+        // same text (repeated tokens such as bullets or "the" must not pair
+        // across rows), then compare style and place.
+        const used = new Set();
+        const pairs = [];
+        const byText = new Map();
+        pdfWords.forEach((q, i) => {
+            const k = M.norm(q.t);
+            if (!byText.has(k)) byText.set(k, []);
+            byText.get(k).push(i);
+        });
+        for (const e of editorWords) {
+            const candidates = (byText.get(M.norm(e.t)) || []).filter((i) => !used.has(i));
+            if (!candidates.length) continue;
+            let best = candidates[0]; let bestD = Infinity;
+            for (const i of candidates) {
+                const q = pdfWords[i];
+                const d = Math.hypot(q.x - e.x, q.base - e.base);
+                if (d < bestD) { bestD = d; best = i; }
+            }
+            // A same-text word far away is a different word (a stray "x" or
+            // "the" elsewhere on the row), not this one; the character count
+            // below still reports text that is really missing.
+            if (bestD > Math.max(12, e.size * 3)) continue;
+            used.add(best);
+            pairs.push([e, pdfWords[best]]);
+        }
         const bad = [];
         const dist = (a, b) => {
             const p = (h) => [1, 3, 5].map((i) => Number.parseInt(String(h || '#000000').slice(i, i + 2), 16) || 0);
             const [x, y] = [p(a), p(b)];
             return Math.max(...x.map((v, i) => Math.abs(v - y[i])));
         };
-        const [e0, p0] = pairs[0] || [];
+        const shifts = pairs.map(([e, q]) => q.base - e.base).sort((a, b) => a - b);
+        const medianShift = shifts.length ? shifts[Math.floor(shifts.length / 2)] : 0;
         for (const [e, q] of pairs) {
             const what = [];
             if (dist(e.color, q.color) > TOL.styleColour) what.push('color');
             if (e.bold !== q.bold) what.push('bold');
             if (e.italic !== q.italic) what.push('italic');
             if (Math.abs(e.size - q.size) > TOL.styleSizePt) what.push('size');
-            const rowShift = (q.base - p0.base) - (e.base - e0.base);
+            const rowShift = (q.base - e.base) - medianShift;
             if (Math.abs(rowShift) > Math.max(TOL.styleRowPt, e.size * 0.45)) what.push('row');
+            // Absolute place: the download draws the word where the editor showed it.
+            const dxPt = q.x - e.x; const dyPt = q.base - e.base;
+            if (Math.abs(dxPt) > TOL.stylePosPt || Math.abs(dyPt) > TOL.stylePosPt) what.push('pos');
             if (what.length) {
-                bad.push({ t: e.t, what, rowShift: r2(rowShift), editor: { color: e.color, bold: e.bold, italic: e.italic, size: r2(e.size), row: r2(e.base - e0.base) }, pdf: { color: q.color, bold: q.bold, italic: q.italic, size: r2(q.size), row: r2(q.base - p0.base), font: q.font } });
+                bad.push({ t: e.t, what, rowShift: r2(rowShift), dxPt: r2(dxPt), dyPt: r2(dyPt), editor: { color: e.color, bold: e.bold, italic: e.italic, size: r2(e.size), x: r2(e.x), base: r2(e.base) }, pdf: { color: q.color, bold: q.bold, italic: q.italic, size: r2(q.size), x: r2(q.x), base: r2(q.base), font: q.font } });
             }
         }
-        return { editorWords: editorWords.length, pdfWords: pdfWords.length, matched: pairs.length, bad: bad.slice(0, 20) };
+        // Text the editor shows that the download does not draw at all,
+        // counted in characters (adjacent pieces may merge into one word).
+        const count = (words) => {
+            const m = new Map();
+            for (const ch of words.map((w) => M.norm(w.t)).join('')) m.set(ch, (m.get(ch) || 0) + 1);
+            return m;
+        };
+        const have = count(pdfWords);
+        let missingChars = 0; let totalChars = 0;
+        for (const [ch, n] of count(editorWords)) { totalChars += n; missingChars += Math.max(0, n - (have.get(ch) || 0)); }
+        const missing = missingChars;
+        if (missingChars > Math.max(1, totalChars * 0.02)) {
+            const paired = new Set(pairs.map(([e]) => e));
+            bad.unshift({ t: editorWords.filter((e) => !paired.has(e)).slice(0, 6).map((e) => e.t).join(' '), what: ['missing'], missingChars, editor: {}, pdf: {} });
+        }
+        return { editorWords: editorWords.length, pdfWords: pdfWords.length, matched: pairs.length, missing, bad: bad.slice(0, 20) };
     }
 
     // ------------------------------------------------------------------ I4

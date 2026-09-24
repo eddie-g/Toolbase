@@ -286,8 +286,12 @@ def cmd_exportdiff(base, edited, spec_path):
         order = lambda l: (round((l['bbox'][1] + l['bbox'][3]) / 4), l['bbox'][0])
         el = sorted([l for l in E[tpage - 1] if now and _hits(l['bbox'], [now], pad=-0.5)], key=order)
         bl = sorted([l for l in B[tpage - 1] if orig and _hits(l['bbox'], [orig], pad=-0.5)], key=order)
-        got = WS.sub('', ''.join(l['text'] for l in el))
-        want = WS.sub('', spec.get('editor_text') or '')
+        # Hyphens are compared as absent: a substitute font may map its hyphen
+        # glyph to U+00AD (read back as a soft hyphen), and a row-end soft
+        # hyphen is drawn as '-' in the download but kept as U+00AD in the editor.
+        dehyphen = lambda t: re.sub(r'[-\u2010\u2011]', '', WS.sub('', t))
+        got = dehyphen(''.join(l['text'] for l in el))
+        want = dehyphen(spec.get('editor_text') or '')
         res['editedText'] = got[:400]; res['editorText'] = want[:400]
         res['textMatch'] = got == want
         if not res['textMatch']:
@@ -339,7 +343,7 @@ def cmd_stylewords(pdf, pno, rect):
                 for ch in s['chars']:
                     c = ch['c']
                     r = fitz.Rect(ch['bbox']) * rot
-                    if not c.strip() or c == '\u00ad':
+                    if not c.strip():
                         if cur:
                             out.append(cur)
                             cur = None
@@ -352,7 +356,14 @@ def cmd_stylewords(pdf, pno, rect):
                         continue
                     if cur is None:
                         origin = fitz.Point(ch['origin']) * rot
-                        cur = {'t': '', 'x': r.x0, 'base': origin.y, 'size': round(s['size'], 2),
+                        # Vertical size from the glyph box: a horizontally
+                        # fitted run reports sqrt(sx)*size as its 'size'.
+                        vsize = s['size']
+                        asc, desc = float(s.get('ascender') or 0), float(s.get('descender') or 0)
+                        sb = fitz.Rect(s['bbox']) * rot
+                        if asc - desc > 0.2 and sb.height > 0:
+                            vsize = sb.height / (asc - desc)
+                        cur = {'t': '', 'x': r.x0, 'base': origin.y, 'size': round(vsize, 2),
                                'color': '#%06x' % s['color'], 'bold': bold, 'italic': italic, 'font': font}
                     cur['t'] += c
             if cur:

@@ -8674,6 +8674,199 @@ def draw_text_using_exact_source_spans(
     return True
 
 
+EDITOR_LAYOUT_VERSION = 1
+_EDITOR_LAYOUT_INVISIBLE_RE = re.compile(r"[\s\u00ad\u200b-\u200d\u2060\ufeff]+")
+# Per-word horizontal fit of the substitute font to the width the editor
+# drew: a font a little wider/narrower than the browser's is squeezed or
+# stretched into place; beyond this the word keeps its natural width.
+EDITOR_LAYOUT_MAX_WORD_SCALE = 0.2
+
+
+def _editor_layout_guard_matches(ann: Dict[str, Any], guard: Any) -> bool:
+    """The snapshot was taken from these annotation fields; any later change
+    (a restyle from the toolbar, an edit on another client) makes it stale."""
+    if not isinstance(guard, dict):
+        return False
+    # The request converts empty strings to null (Laravel's
+    # ConvertEmptyStringsToNull), so null and "" are the same value here.
+    as_str = lambda value: "" if value is None else str(value)
+    norm_text = lambda value: as_str(value).replace("\r\n", "\n").replace("\r", "\n")
+    if norm_text(guard.get("text")) != norm_text(ann.get("text")):
+        return False
+    for key in ("fontFamily", "textColor", "fontWeight", "fontStyle"):
+        if str(guard.get(key) or "").strip().lower() != str(ann.get(key) or "").strip().lower():
+            return False
+    try:
+        if abs(float(guard.get("fontSize") or 0) - float(ann.get("fontSize") or 0)) > 0.01:
+            return False
+    except (TypeError, ValueError):
+        return False
+    runs = ann.get("richTextRuns") if isinstance(ann.get("richTextRuns"), list) else []
+    expected = [
+        [
+            as_str(run.get("text")),
+            as_str(run.get("color")),
+            as_str(run.get("fontWeight")),
+            as_str(run.get("fontStyle")),
+            round(float(run.get("fontSize") or 0), 3),
+            as_str(run.get("fontFamily")),
+            bool(run.get("underline")),
+            bool(run.get("strikeout")),
+        ]
+        for run in runs
+        if isinstance(run, dict) and str(run.get("type") or "text") != "break"
+    ]
+    got = guard.get("runs") if isinstance(guard.get("runs"), list) else []
+    if len(got) != len(expected):
+        return False
+    for mine, theirs in zip(got, expected):
+        if not isinstance(mine, list) or len(mine) != 8:
+            return False
+        mine = [as_str(mine[0]), as_str(mine[1]), as_str(mine[2]), as_str(mine[3]), round(float(mine[4] or 0), 3), as_str(mine[5]), bool(mine[6]), bool(mine[7])]
+        if mine != theirs:
+            return False
+    return True
+
+
+def editor_layout_for_annotation(page: fitz.Page, ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The editor's snapshot of an edited promoted block when it can be drawn
+    as-is (Asana 1218832511648724), else None and the block takes the old path."""
+    if str(ann.get("type") or "").lower() != "text" or not _boolish(ann.get("promotedFromExtraction")):
+        return None
+    if int(page.rotation or 0) % 360 or float(ann.get("rotation") or 0) % 360:
+        return None
+    # A row re-stamped by a row-local edit carries its own slice of the
+    # block's snapshot (see split_row_local_promoted_edit).
+    row_layout = ann.get("__editorLayoutRow")
+    if isinstance(row_layout, dict):
+        return row_layout
+    layout = ann.get("editorLayout")
+    if not isinstance(layout, dict) or layout.get("v") != EDITOR_LAYOUT_VERSION:
+        return None
+    changed = any(_boolish(ann.get(key)) for key in ("promotedDirty", "styleDirty", "movedTextOverlay", "userForcedRichText"))
+    if not changed:
+        return None
+    if not _boolish(ann.get("__editorLayoutValid")):
+        return None
+    rows = layout.get("rows")
+    if not isinstance(rows, list) or not rows:
+        return None
+    try:
+        float(layout.get("pdfX"))
+        float(layout.get("pdfY"))
+    except (TypeError, ValueError):
+        return None
+    drawn = "".join(
+        str(word.get("t") or "")
+        for row in rows if isinstance(row, dict)
+        for word in (row.get("words") or []) if isinstance(word, dict)
+    )
+    # Same characters, in any order: a word on its own baseline (a
+    # superscript, a bold run) sorts into its own row of the snapshot.
+    if sorted(_EDITOR_LAYOUT_INVISIBLE_RE.sub("", drawn)) != sorted(_EDITOR_LAYOUT_INVISIBLE_RE.sub("", str(ann.get("text") or ""))):
+        return None
+    return layout
+
+
+def draw_editor_layout(page: fitz.Page, ann: Dict[str, Any], layout: Dict[str, Any]) -> bool:
+    """Draw every word of the snapshot at its own x and baseline, in its own
+    font, size and colour. The source glyphs were already masked."""
+    page_height = page_coordinate_rect(page).height
+    try:
+        dx = float(ann.get("pdfX")) - float(layout.get("pdfX"))
+        dy = float(ann.get("pdfY")) - float(layout.get("pdfY"))
+    except (TypeError, ValueError):
+        return False
+    opacity = normalized_opacity(ann.get("opacity", 1.0) or 1.0)
+    fonts: Dict[str, Tuple[str, fitz.Font]] = {}
+    for row in layout.get("rows") or []:
+        words = [word for word in (row.get("words") or []) if isinstance(word, dict) and str(word.get("t") or "")]
+        underline_runs: list[tuple[float, float, float, float, Tuple[float, float, float]]] = []
+        strike_runs: list[tuple[float, float, float, float, Tuple[float, float, float]]] = []
+        for index, word in enumerate(words):
+            text = soft_hyphens_as_drawn(str(word.get("t")), row_ends_at_text_end=index == len(words) - 1)
+            if not text.strip():
+                continue
+            try:
+                size = float(word.get("s") or 0) or float(ann.get("fontSize") or 12)
+                x = float(word.get("x")) + dx
+                baseline = page_height - (float(word.get("b")) + dy)
+                target_width = float(word.get("w") or 0)
+            except (TypeError, ValueError):
+                continue
+            family = str(word.get("ff") or "") or str(ann.get("fontFamily") or "")
+            word_ann = dict(ann)
+            word_ann["fontFamily"] = family or "Helvetica"
+            word_ann["fontSourceName"] = str(word.get("fs") or "") or word_ann["fontFamily"]
+            word_ann["fontWeight"] = str(word.get("fw") or "400")
+            word_ann["fontStyle"] = "italic" if word.get("it") else "normal"
+            word_ann["textColor"] = str(word.get("c") or "#000000")
+            word_ann["text"] = text
+            cache_key = "|".join((word_ann["fontFamily"], word_ann["fontSourceName"], word_ann["fontWeight"], word_ann["fontStyle"], text))
+            resolved = fonts.get(cache_key)
+            if resolved is None:
+                fontfile = resolve_text_fontfile_with_coverage(word_ann, text)
+                if fontfile:
+                    fontname = resolve_text_font_resource_name(word_ann, fontfile)
+                    page.insert_font(fontname=fontname, fontfile=fontfile)
+                    resolved = (fontname, fitz.Font(fontfile=fontfile))
+                else:
+                    fontname = resolve_text_fontname(word_ann)
+                    resolved = (fontname, fitz.Font(fontname))
+                fonts[cache_key] = resolved
+            fontname, font = resolved
+            natural = float(font.text_length(text, fontsize=size))
+            scale_x = 1.0
+            if target_width > 0 and natural > 0 and len(text.strip()) > 1:
+                ratio = target_width / natural
+                if abs(ratio - 1.0) <= EDITOR_LAYOUT_MAX_WORD_SCALE:
+                    scale_x = ratio
+            morph = (
+                (fitz.Point(x, baseline), fitz.Matrix(scale_x, 0.0, 0.0, 1.0, 0.0, 0.0))
+                if abs(scale_x - 1.0) > 0.002 else None
+            )
+            color = hex_to_rgb(word_ann["textColor"])
+            page.insert_text(
+                fitz.Point(x, baseline),
+                text,
+                fontsize=size,
+                fontname=fontname,
+                color=color,
+                overlay=True,
+                fill_opacity=opacity,
+                stroke_opacity=opacity,
+                morph=morph,
+            )
+            drawn_width = natural * scale_x
+            for flag, runs_out in (("u", underline_runs), ("st", strike_runs)):
+                if not word.get(flag):
+                    continue
+                if runs_out and runs_out[-1][4] == color and abs(runs_out[-1][2] - baseline) < 0.5 and abs(runs_out[-1][3] - size) < 0.01:
+                    runs_out[-1] = (runs_out[-1][0], x + drawn_width, runs_out[-1][2], size, color)
+                else:
+                    runs_out.append((x, x + drawn_width, baseline, size, color))
+        for x0, x1, baseline, size, color in underline_runs:
+            underline_y = baseline + max(0.5, size * 0.08)
+            draw_rotated_line(page, fitz.Point(x0, underline_y), fitz.Point(x1, underline_y), color=color, width=max(0.5, size * 0.04), opacity=opacity, morph=None)
+        for x0, x1, baseline, size, color in strike_runs:
+            draw_strikeout_line(page, x0, baseline, x1 - x0, size, color, opacity, None)
+    return True
+
+
+def annotation_needs_source_mask_prepass(ann: Dict[str, Any]) -> bool:
+    kind = (ann.get("type") or "").lower()
+    return (
+        is_pdfjs_visible_overlay_text(ann)
+        or is_guided_lease_text_field(ann)
+        or (
+            kind == "text"
+            and bool(ann.get("promotedFromExtraction"))
+            and bool(ann.get("promotedDirty"))
+            and not bool(ann.get("skipPromotedSourceErase"))
+        )
+    )
+
+
 def resolve_text_fontname(ann: Dict[str, Any]) -> str:
     family = normalize_font_family(ann.get("fontFamily"))
     variants = PDF_FONT_VARIANTS.get(family, PDF_FONT_VARIANTS["Helvetica"])
@@ -12114,6 +12307,54 @@ def _pad_promoted_appended_rows(ann: Dict[str, Any]) -> Dict[str, Any]:
     return padded
 
 
+def _editor_layout_row_slice(
+    ann: Dict[str, Any],
+    row: List[float],
+    child: Dict[str, Any],
+    page_height: float,
+) -> Optional[Dict[str, Any]]:
+    """Snapshot words of one re-stamped row, in absolute PDF units, or None
+    when the block has no valid snapshot or the words do not spell the row."""
+    layout = ann.get("editorLayout")
+    if not _boolish(ann.get("__editorLayoutValid")) or not isinstance(layout, dict):
+        return None
+    try:
+        dx = float(ann.get("pdfX")) - float(layout.get("pdfX"))
+        dy = float(ann.get("pdfY")) - float(layout.get("pdfY"))
+        start_x = float(child.get("pdfX"))
+        top, bottom = float(row[1]), float(row[3])
+    except (TypeError, ValueError):
+        return None
+    words = []
+    for layout_row in layout.get("rows") or []:
+        for word in layout_row.get("words") or []:
+            if not isinstance(word, dict):
+                continue
+            try:
+                x = float(word.get("x")) + dx
+                baseline = float(word.get("b")) + dy
+            except (TypeError, ValueError):
+                continue
+            baseline_top_down = page_height - baseline
+            if not (top - 1.0 <= baseline_top_down <= bottom + 1.0):
+                continue
+            if x < start_x - 0.5:
+                continue
+            words.append({**word, "x": x, "b": baseline})
+    if not words:
+        return None
+    drawn = "".join(str(word.get("t") or "") for word in words)
+    if sorted(_EDITOR_LAYOUT_INVISIBLE_RE.sub("", drawn)) != sorted(_EDITOR_LAYOUT_INVISIBLE_RE.sub("", str(child.get("text") or ""))):
+        return None
+    words.sort(key=lambda word: word["x"])
+    return {
+        "v": EDITOR_LAYOUT_VERSION,
+        "pdfX": float(child.get("pdfX")),
+        "pdfY": float(child.get("pdfY")),
+        "rows": [{"words": words}],
+    }
+
+
 def split_row_local_promoted_edit(ann: Dict[str, Any]) -> List[Dict[str, Any]]:
     """NK_8131: export a row-local paragraph edit as one annotation per
     changed row. Only those rows are masked and re-stamped; every untouched
@@ -12203,6 +12444,14 @@ def split_row_local_promoted_edit(ann: Dict[str, Any]) -> List[Dict[str, Any]]:
                 and within_row(float(run.get("topPx") or 0.0) / runs_scale, float(run.get("bottomPx") or 0.0) / runs_scale, row)
             ])
         _narrow_row_edit_to_changed_spans(child, row, text_lines[index], source_text_lines[index], runs_scale)
+        # The block's own snapshot does not describe one row; hand the row
+        # the snapshot words it re-stamps (baseline inside the row, from the
+        # re-stamp's x on), so it lands where the editor showed it.
+        child.pop("editorLayout", None)
+        child.pop("__editorLayoutValid", None)
+        row_slice = _editor_layout_row_slice(ann, row, child, page_height)
+        if row_slice is not None:
+            child["__editorLayoutRow"] = row_slice
         rows.append(child)
     return rows
 
@@ -12472,7 +12721,20 @@ def _drop_mid_row_soft_hyphens(ann: Any) -> Any:
 
 
 def apply_annotations(pdf_path: str, annotations: list) -> None:
+    # Snapshot guards are checked on the request as the editor sent it: the
+    # normalisation below may rewrite text (soft hyphens) or runs.
+    valid_layout_ids = {
+        str(ann.get("id"))
+        for ann in annotations
+        if isinstance(ann, dict)
+        and isinstance(ann.get("editorLayout"), dict)
+        and ann["editorLayout"].get("v") == EDITOR_LAYOUT_VERSION
+        and _editor_layout_guard_matches(ann, ann["editorLayout"].get("guard"))
+    }
     annotations = normalize_annotations_for_pdf_export(annotations)
+    for ann in annotations:
+        if isinstance(ann, dict) and str(ann.get("id")) in valid_layout_ids:
+            ann["__editorLayoutValid"] = True
     annotations = [_drop_mid_row_soft_hyphens(ann) for ann in annotations]
     annotations = [row for ann in annotations for row in split_row_local_promoted_edit(ann)]
     annotations = sorted(annotations, key=annotation_layer_order)
@@ -12538,18 +12800,7 @@ def apply_annotations(pdf_path: str, annotations: list) -> None:
             # later annotation mask from trimming text drawn by an earlier text
             # annotation on the same page.
             for ann in anns:
-                kind = (ann.get("type") or "").lower()
-                needs_source_mask = (
-                    is_pdfjs_visible_overlay_text(ann)
-                    or is_guided_lease_text_field(ann)
-                    or (
-                        kind == "text"
-                        and bool(ann.get("promotedFromExtraction"))
-                        and bool(ann.get("promotedDirty"))
-                        and not bool(ann.get("skipPromotedSourceErase"))
-                    )
-                )
-                if needs_source_mask:
+                if annotation_needs_source_mask_prepass(ann):
                     draw_text(page, ann, mask_only=True)
 
             for ann in anns:
@@ -12561,6 +12812,14 @@ def apply_annotations(pdf_path: str, annotations: list) -> None:
                 elif kind == "eraser":
                     draw_eraser(page, ann)
                 elif kind == "text":
+                    # An edited promoted block with the editor's own layout
+                    # snapshot is drawn exactly as the editor showed it.
+                    editor_layout = editor_layout_for_annotation(page, ann)
+                    if editor_layout is not None:
+                        if not annotation_needs_source_mask_prepass(ann):
+                            draw_text(page, ann, mask_only=True)
+                        if draw_editor_layout(page, ann, editor_layout):
+                            continue
                     draw_text(page, ann, source_masks_already_drawn=True)
                 elif kind == "signature":
                     draw_signature(page, ann)

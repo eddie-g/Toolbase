@@ -2729,6 +2729,73 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
         uniform = dict(ann, richTextRuns=[dict(run, color="#000000") if run.get("type") == "text" else run for run in ann["richTextRuns"]])
         self.assertFalse(self.module._rich_runs_have_mixed_styles(uniform))
 
+    def _snapshot_paragraph(self):
+        runs = [
+            {"type": "text", "text": "reason for the change. ", "color": "#000000", "fontWeight": "400", "fontStyle": "normal", "fontSize": 11, "fontFamily": "Helvetica"},
+            {"type": "text", "text": "yesd", "color": "#e72323", "fontWeight": "400", "fontStyle": "normal", "fontSize": 11, "fontFamily": "Helvetica"},
+            {"type": "break"},
+            {"type": "text", "text": "", "color": "#000000", "fontWeight": "400", "fontStyle": "normal", "fontSize": 11, "fontFamily": "Helvetica"},
+        ]
+        ann = {
+            "id": "promoted_1_13", "type": "text", "pageIndex": 0,
+            "promotedFromExtraction": True, "promotedDirty": True, "styleDirty": True,
+            "text": "reason for the change. yesd", "fontFamily": "Helvetica", "fontSize": 11,
+            "textColor": "#000000", "fontWeight": "400", "fontStyle": "normal",
+            "pdfX": 100.0, "pdfY": 600.0, "pdfWidth": 300.0, "pdfHeight": 14.0,
+            "richTextRuns": runs,
+        }
+        words = [("reason", 100.0, 34.0, "#000000"), ("for", 137.0, 15.0, "#000000"), ("the", 155.0, 16.0, "#000000"),
+                 ("change.", 174.0, 40.0, "#000000"), ("yesd", 217.0, 23.0, "#e72323")]
+        guard = {"text": ann["text"], "fontFamily": "Helvetica", "fontSize": 11, "textColor": "#000000",
+                 "fontWeight": "400", "fontStyle": "normal",
+                 # the request turns the empty run text into null
+                 "runs": [[r.get("text") or None, r["color"], "400", "normal", 11, "Helvetica", False, False]
+                          for r in runs if r["type"] != "break"]}
+        ann["editorLayout"] = {"v": 1, "pdfX": 100.0, "pdfY": 600.0, "guard": guard, "rows": [{"b": 603.0, "words": [
+            {"t": t, "x": x, "b": 603.0, "w": w, "s": 11, "ff": "Helvetica", "fs": "Helvetica", "fw": "400", "it": False, "c": c, "u": False, "st": False}
+            for t, x, w, c in words]}]}
+        return ann
+
+    def test_editor_layout_snapshot_draws_each_word_where_the_editor_showed_it(self):
+        ann = self._snapshot_paragraph()
+        doc = fitz.open()
+        page = doc.new_page(width=612, height=792)
+        self.assertTrue(self.module._editor_layout_guard_matches(ann, ann["editorLayout"]["guard"]))
+        ann["__editorLayoutValid"] = True
+        layout = self.module.editor_layout_for_annotation(page, ann)
+        self.assertIsNotNone(layout)
+        self.assertTrue(self.module.draw_editor_layout(page, ann, layout))
+        def first_char(page_, ch):
+            # the extractor prefixes a synthesized space to a span after a gap
+            for block in page_.get_text("rawdict")["blocks"]:
+                for line in block.get("lines", []):
+                    for span in line["spans"]:
+                        for char in span["chars"]:
+                            if char["c"] == ch:
+                                return span, char
+            return None, None
+        yesd, y_char = first_char(page, "y")
+        self.assertEqual(yesd["color"], 0xE72323)
+        self.assertAlmostEqual(y_char["origin"][0], 217.0, places=1)
+        self.assertAlmostEqual(y_char["origin"][1], 792 - 603.0, places=1)
+        # moved since the snapshot: every word follows the box
+        moved = dict(ann, pdfX=110.0, pdfY=590.0)
+        page2 = doc.new_page(width=612, height=792)
+        self.module.draw_editor_layout(page2, moved, layout)
+        _span2, y_char2 = first_char(page2, "y")
+        self.assertAlmostEqual(y_char2["origin"][0], 227.0, places=1)
+        self.assertAlmostEqual(y_char2["origin"][1], 792 - 593.0, places=1)
+
+    def test_stale_editor_layout_snapshot_is_ignored(self):
+        ann = self._snapshot_paragraph()
+        recoloured = dict(ann, richTextRuns=[dict(run, color="#1f6feb") if run.get("text") == "yesd" else run for run in ann["richTextRuns"]])
+        self.assertFalse(self.module._editor_layout_guard_matches(recoloured, ann["editorLayout"]["guard"]))
+        page = fitz.open().new_page(width=612, height=792)
+        untouched = dict(ann, promotedDirty=False, styleDirty=False, __editorLayoutValid=True)
+        self.assertIsNone(self.module.editor_layout_for_annotation(page, untouched))
+        missing_word = dict(ann, text="reason for the change. yesd extra", __editorLayoutValid=True)
+        self.assertIsNone(self.module.editor_layout_for_annotation(page, missing_word))
+
     def test_mid_row_soft_hyphen_is_dropped_from_an_edited_paragraph(self):
         ann = {
             "type": "text", "promotedFromExtraction": True, "promotedDirty": True,

@@ -91,8 +91,11 @@ function locus(v) {
         case 'I6': return d.notRendered ? 'moved text not rendered' : 'mask: leftover glyph pixels';
         case 'I7': if (d.styleKinds) {
                 const k = d.styleKinds.split('+');
+                if (k.includes('missing')) return 'exporter style: editor words missing from the download';
                 if (k.includes('row')) return 'exporter style: row placement (empty row / break lost)';
-                return `exporter style: ${k.filter((x) => x !== 'row').sort().join('+')} differs from editor`;
+                const styleKinds = k.filter((x) => x !== 'row' && x !== 'pos');
+                if (!styleKinds.length) return 'exporter style: word position differs from editor';
+                return `exporter style: ${styleKinds.sort().join('+')} differs from editor`;
             }
             if (d.pageCountChanged) return 'exporter: page count';
             if ((d.rowOriginBad || []).length) return 'exporter edited-row origin';
