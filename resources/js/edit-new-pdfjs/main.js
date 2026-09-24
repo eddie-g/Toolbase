@@ -15329,17 +15329,22 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
         const runPadX = symbolRun
             ? Math.max(padX, Math.min(7, runHeight * 0.26))
             : padX;
+        // Monospaced (Courier) carets and underscores ink outside the
+        // text-layer line box; a tight vertical pad left their tips behind
+        // after a move (doc 8409, promoted_2_1).
         const padY = symbolRun
             ? Math.max(2.5, Math.min(5, runHeight * 0.22))
-            : Math.max(0.75, Math.min(2.5, runHeight * 0.16));
+            : (!preserveHorizontalCanvasRules
+                ? Math.max(2.5, Math.min(6, runHeight * 0.3))
+                : Math.max(0.75, Math.min(2.5, runHeight * 0.16)));
         // The padding may reach past the block's own source rect: a glyph at
         // the block's edge (a list bullet) antialiases outside it, and the
         // clamp left a sliver of it on the canvas after a move (NK_59).
         runRects.push(alignMaskRunRectToFilledSourceCell({
             left: Math.max(rect.left - runPadX, leftPx - runPadX),
-            top: Number.isFinite(topPx) ? Math.max(rect.top, topPx - padY) : rect.top,
+            top: Number.isFinite(topPx) ? Math.max(rect.top - padY, topPx - padY) : rect.top,
             right: Math.min(rect.left + rect.width + runPadX, rightPx + runPadX),
-            bottom: Number.isFinite(bottomPx) ? Math.min(rect.top + rect.height, bottomPx + padY) : rect.top + rect.height,
+            bottom: Number.isFinite(bottomPx) ? Math.min(rect.top + rect.height + padY, bottomPx + padY) : rect.top + rect.height,
         }, rect, pageDiv));
     }
     const cutRects = [
