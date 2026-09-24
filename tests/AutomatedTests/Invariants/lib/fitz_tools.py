@@ -36,7 +36,11 @@ def _words(page):
                         continue
                     r = fitz.Rect(ch['bbox']) * rot
                     if cur is None:
-                        cur = {'t': '', 'x': r.x0, 'r': r.x1, 'y': r.y0, 'bot': r.y1, 'size': round(s['size'], 2),
+                        # Baseline (glyph origin): font ascent/descent metrics differ
+                        # between the PDF font and the browser's, so box centres are
+                        # not comparable across them; baselines are.
+                        origin = fitz.Point(ch['origin']) * rot
+                        cur = {'t': '', 'x': r.x0, 'r': r.x1, 'y': r.y0, 'bot': r.y1, 'base': origin.y, 'size': round(s['size'], 2),
                                'font': s['font'], 'color': '#%06x' % s['color']}
                     cur['t'] += c
                     cur['x'] = min(cur['x'], r.x0); cur['r'] = max(cur['r'], r.x1)
@@ -44,7 +48,7 @@ def _words(page):
             if cur:
                 out.append(cur)
     for w in out:
-        for k in ('x', 'r', 'y', 'bot'):
+        for k in ('x', 'r', 'y', 'bot', 'base'):
             w[k] = round(w[k], 2)
     return out
 

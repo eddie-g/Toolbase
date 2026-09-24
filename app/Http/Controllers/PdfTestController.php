@@ -3034,7 +3034,15 @@ PYTHON;
             foreach ($lineEntries as $entry) {
                 $last = count($visualLines) - 1;
                 if ($last >= 0 && $this->promotedLineVerticalOverlapRatio($visualLines[$last]['bbox'], $entry['bbox']) >= 0.55) {
-                    $visualLines[$last]['text'] = trim($visualLines[$last]['text'] . ' ' . $entry['text']);
+                    // Join the pieces of one visual row left to right: the
+                    // top-then-x sort above put a marker whose top is a hair
+                    // lower ("5." at 437 vs the item at 436, ds156) after the
+                    // item text, so the editor drew it at the row end.
+                    $parts = $visualLines[$last]['parts'] ?? [['text' => $visualLines[$last]['text'], 'x' => (float) $visualLines[$last]['bbox'][0]]];
+                    $parts[] = ['text' => $entry['text'], 'x' => (float) $entry['bbox'][0]];
+                    usort($parts, static fn (array $a, array $b): int => $a['x'] <=> $b['x']);
+                    $visualLines[$last]['parts'] = $parts;
+                    $visualLines[$last]['text'] = trim(implode(' ', array_map(static fn (array $part): string => trim((string) $part['text']), $parts)));
                     $visualLines[$last]['bbox'] = [
                         min((float) $visualLines[$last]['bbox'][0], (float) $entry['bbox'][0]),
                         min((float) $visualLines[$last]['bbox'][1], (float) $entry['bbox'][1]),

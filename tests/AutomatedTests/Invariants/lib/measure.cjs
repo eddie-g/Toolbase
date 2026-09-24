@@ -8,6 +8,20 @@
 
 /** In-page: per-word rects. arg = { sel, mode: 'box'|'pdf', rect?: {x,y,w,h} page-relative px for mode 'pdf' }. */
 function pageWords({ sel, mode, rect }) {
+    // Chrome places an inline text box's top at baseline - font ascent; the
+    // canvas reports that ascent for the resolved font (cached per font).
+    const ascentCache = new Map();
+    const ctx2d = document.createElement('canvas').getContext('2d');
+    const fontAscentPx = (st) => {
+        if (!st || !ctx2d) return NaN;
+        const font = `${st.fontStyle} ${st.fontWeight} ${st.fontSize} ${st.fontFamily}`;
+        if (!ascentCache.has(font)) {
+            ctx2d.font = font;
+            const m = ctx2d.measureText('Hg');
+            ascentCache.set(font, Number.isFinite(m.fontBoundingBoxAscent) ? m.fontBoundingBoxAscent : NaN);
+        }
+        return ascentCache.get(font);
+    };
     const box = document.querySelector(sel);
     if (!box) return { error: 'no box' };
     const pageDiv = box.closest('.page');
@@ -45,7 +59,10 @@ function pageWords({ sel, mode, rect }) {
                     const cx = (rc.left + rc.right) / 2; const cy = (rc.top + rc.bottom) / 2;
                     if (cx < area.left - 3 || cx > area.right + 3 || cy < area.top - 3 || cy > area.bottom + 3) continue;
                 }
-                chars.push({ ch, node: nodeIdx, l: rc.left, t: rc.top, r: rc.right, b: rc.bottom });
+                // Baseline = content-area top + the font's ascent (what Chrome
+                // uses for an inline text box), so it compares with the PDF's
+                // glyph origin whatever font the editor resolved.
+                chars.push({ ch, node: nodeIdx, l: rc.left, t: rc.top, r: rc.right, b: rc.bottom, base: rc.top + fontAscentPx(st) });
             }
             chars.push({ ch: ' ', node: nodeIdx, soft: true });
         }
@@ -63,7 +80,7 @@ function pageWords({ sel, mode, rect }) {
             if (lineChange || (softBreak && gap > 0.18 * h)) flush();
         }
         softBreak = false;
-        if (!cur) cur = { t: '', l: c.l, top: c.t, r: c.r, bot: c.b, lastR: c.r, lastT: c.t, lastB: c.b };
+        if (!cur) cur = { t: '', l: c.l, top: c.t, r: c.r, bot: c.b, base: c.base, lastR: c.r, lastT: c.t, lastB: c.b };
         cur.t += c.ch; cur.l = Math.min(cur.l, c.l); cur.r = Math.max(cur.r, c.r); cur.top = Math.min(cur.top, c.t); cur.bot = Math.max(cur.bot, c.b);
         cur.lastR = c.r; cur.lastT = c.t; cur.lastB = c.b;
     }
@@ -73,7 +90,7 @@ function pageWords({ sel, mode, rect }) {
         scale,
         box: { x: +(br.left - pr.left).toFixed(2), y: +(br.top - pr.top).toFixed(2), w: +br.width.toFixed(2), h: +br.height.toFixed(2) },
         page: { x: pr.left, y: pr.top, w: pr.width, h: pr.height },
-        words: words.map((w) => ({ t: w.t, x: +(w.l - pr.left).toFixed(2), r: +(w.r - pr.left).toFixed(2), y: +(w.top - pr.top).toFixed(2), bot: +(w.bot - pr.top).toFixed(2) })),
+        words: words.map((w) => ({ t: w.t, x: +(w.l - pr.left).toFixed(2), r: +(w.r - pr.left).toFixed(2), y: +(w.top - pr.top).toFixed(2), bot: +(w.bot - pr.top).toFixed(2), base: Number.isFinite(w.base) ? +(w.base - pr.top).toFixed(2) : null })),
     };
 }
 
@@ -197,7 +214,9 @@ function compare(ref, got, scale, thresholdPx) {
     const detail = [];
     for (const [p, q] of pairs) {
         const dx = q.x - p.x;
-        const dy = (q.y + q.bot) / 2 - (p.y + p.bot) / 2;
+        const dy = Number.isFinite(p.base) && Number.isFinite(q.base)
+            ? q.base - p.base
+            : (q.y + q.bot) / 2 - (p.y + p.bot) / 2;
         const dw = (q.r - q.x) - (p.r - p.x);
         if (Math.abs(dx) > Math.abs(maxDx)) maxDx = dx;
         if (Math.abs(dy) > Math.abs(maxDy)) maxDy = dy;

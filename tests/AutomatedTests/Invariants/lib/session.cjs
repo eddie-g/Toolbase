@@ -142,7 +142,7 @@ class Session {
     /** PDF reference words for the pristine block, in page px. */
     pdfRefWords() {
         const s = this.scale;
-        const ws = this.pdfWords.map((w) => ({ t: w.t, x: w.x * s, r: w.r * s, y: w.y * s, bot: w.bot * s }));
+        const ws = this.pdfWords.map((w) => ({ t: w.t, x: w.x * s, r: w.r * s, y: w.y * s, bot: w.bot * s, base: Number.isFinite(w.base) ? w.base * s : null }));
         M.assignRows(ws);
         return ws;
     }
@@ -279,7 +279,13 @@ class Session {
     async enter(step, silent = false) {
         const page = this.page;
         const before = await this.words('box');
-        const ref = this.pristine ? this.pdfRefWords() : before.words;
+        // What the user sees before opening: the box's own DOM text only once
+        // it paints (a persisted overlay); otherwise the PDF canvas. An idle
+        // source handle's DOM text is invisible and sits on its own font's
+        // baseline, which produced false "moved on open" reports.
+        const paints = await page.evaluate((sel) => document.querySelector(sel)?.classList.contains('is-persisted-overlay') === true, this.sel());
+        const usePdfRef = this.pristine || !paints;
+        const ref = usePdfRef ? this.pdfRefWords() : before.words;
         this.openRef = { words: before.words, box: await this.box(), persisted: await H.persisted(page, this.id), saves: page.__saves.length, dirty: false, text: (await this.text()).text };
         if (step.via === 'click') {
             const pt = await this.resolve(step.at || { kind: 'mid', row: 0.3, word: 0.4 });
@@ -296,7 +302,7 @@ class Session {
         }
         if (silent) return;
         const edit = await this.words('box');
-        this.checkOpen(step, ref, edit.words, this.pristine ? 'pdf' : 'display');
+        this.checkOpen(step, ref, edit.words, usePdfRef ? 'pdf' : 'display');
     }
 
     checkOpen(step, ref, got, refKind) {
