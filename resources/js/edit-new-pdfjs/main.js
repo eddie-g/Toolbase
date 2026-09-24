@@ -6469,6 +6469,8 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     return shouldPersistPdfjsAnnotation(annotation) ? annotation : null;
 }
 
+const SOURCE_SPAN_OWNER_MAX_DISTANCE = 12;
+
 function findPersistedAnnotationForSpan(pageIndex, currentRect, text, originalText, consume = false, sourceUid = '') {
     const candidates = annotationBoxesByPage.get(pageIndex) || [];
     const targetText = normalizeComparableText(text);
@@ -6487,11 +6489,19 @@ function findPersistedAnnotationForSpan(pageIndex, currentRect, text, originalTe
         // row's source editor was handed the highlight's id and the next move
         // or edit wrote a text annotation over the highlight (NK_25).
         if (String(annotation.type || 'text').toLowerCase() !== 'text') continue;
+        // A pasted copy or a free text box owns no source text.
+        if (PASTED_ANNOTATION_ID.test(String(annotation.id || ''))) continue;
+        if (boolish(annotation.userCreated) && !String(annotation.pdfjsSourceText || '').trim()) continue;
         const anchorUid = String(annotation.pdfjsAnchorUid || '').trim();
         const currentScore = scorePdfRectDistance(currentRect, annotationCurrentPdfBox(annotation) || annotation._originalPdfBox || null);
         const baselineScore = scorePdfRectDistance(currentRect, annotationBaselinePdfBox(annotation) || annotation._originalBox || null);
         const geometryScore = Math.min(currentScore, baselineScore);
         const uidMatches = targetUid && anchorUid && anchorUid === targetUid;
+        // Same words elsewhere are not this span: without its own uid an
+        // overlay owns a span only where it is or where its source was. A
+        // moved "Repair" 46pt away claimed the table's other "Repair" labels,
+        // which then got no box at all (doc 8699).
+        if (!uidMatches && Math.min(currentScore, baselineScore) > SOURCE_SPAN_OWNER_MAX_DISTANCE) continue;
         const uidMismatches = targetUid && anchorUid && anchorUid !== targetUid;
         const textMatches = [annotation.text, annotation.originalText, annotation.pdfjsSourceText]
             .map((value) => normalizeComparableText(value))
