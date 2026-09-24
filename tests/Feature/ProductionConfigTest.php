@@ -149,7 +149,7 @@ class ProductionConfigTest extends TestCase
             'RESEND_API_KEY' => ['services.resend.key' => ''],
             'STRIPE_WEBHOOK_SECRET' => ['services.stripe.webhook_secret' => null],
             'APP_KEY' => ['app.key' => ''],
-            'NAMECHEAP_API_KEY' => ['services.domain_lookup' => 'namecheap', 'services.namecheap.api_key' => ''],
+            'NAMECHEAP_API_KEY' => ['services.domain_lookup' => 'namecheap', 'services.namecheap.api_user' => 'an-api-user', 'services.namecheap.api_key' => ''],
         ];
         foreach ($cases as $variable => $override) {
             $this->useValidProductionConfig();

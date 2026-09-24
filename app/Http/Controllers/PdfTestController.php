@@ -32,6 +32,23 @@ class PdfTestController extends Controller
     protected ?array $testsOverlayEditorColumns = null;
     protected ?bool $hasPdfStateAnnotationDebugColumn = null;
 
+    /**
+     * A {document} in the route is only served to whoever may open it
+     * (App\Services\DocumentAccess), before validation or anything else runs:
+     * the same rule DocumentController applies to its own routes.
+     */
+    public function __construct()
+    {
+        $this->middleware(function (Request $request, \Closure $next) {
+            $routeDocument = $request->route('document');
+            if ($routeDocument instanceof Document) {
+                app(\App\Services\DocumentAccess::class)->authorize($request, $routeDocument);
+            }
+
+            return $next($request);
+        });
+    }
+
     private function currentWebUserId(): ?int
     {
         $userId = Auth::guard('web')->id();

@@ -22,7 +22,11 @@ class FortifyServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // The forgot-password form answers the same for every address.
+        $this->app->bind(
+            \Laravel\Fortify\Contracts\FailedPasswordResetLinkRequestResponse::class,
+            \App\Http\Responses\QuietPasswordResetLinkResponse::class
+        );
     }
 
     /**

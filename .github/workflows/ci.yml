@@ -1,0 +1,201 @@
+name: CI
+
+# Every pull request and every push to dev or main. Make "PHP", "Editor (JS)"
+# and "Python" required checks on both branches (see docs/ci.md).
+on:
+  pull_request:
+  push:
+    branches: [dev, main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PHP_VERSION: '8.5'
+  NODE_VERSION: '24'
+  PYTHON_VERSION: '3.12'
+
+jobs:
+  php:
+    name: PHP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-root-password
+          MYSQL_DATABASE: testing
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-root-password"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PHP ${{ env.PHP_VERSION }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          extensions: mbstring, xml, curl, zip, bcmath, intl, gd, imagick, redis, igbinary, pdo_mysql, pdo_sqlite, sqlite3
+          coverage: none
+          tools: composer:v2
+
+      - name: What the PDF code shells out to
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qpdf poppler-utils tesseract-ocr whois default-mysql-client \
+            libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
+            fonts-liberation fonts-dejavu-core fonts-freefont-ttf fonts-noto-core
+
+      - name: Composer cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/composer/files
+          key: composer-${{ hashFiles('composer.lock') }}
+          restore-keys: composer-
+
+      - run: composer install --no-interaction --no-progress --prefer-dist
+
+      - name: Python ${{ env.PYTHON_VERSION }} with the production requirements
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: python/requirements-prod.txt
+      - run: pip install --disable-pip-version-check -r python/requirements-prod.txt
+
+      # Feature tests render pages, and the pages read the Vite manifest.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Environment
+        run: |
+          cat > .env <<ENV
+          APP_NAME=Netkit
+          APP_ENV=testing
+          APP_KEY=
+          APP_DEBUG=true
+          APP_URL=http://localhost
+          DB_CONNECTION=mysql
+          DB_HOST=127.0.0.1
+          DB_PORT=3306
+          DB_DATABASE=testing
+          DB_USERNAME=root
+          DB_PASSWORD=ci-root-password
+          REDIS_HOST=127.0.0.1
+          REDIS_PORT=6379
+          PYTHON_BINARY=$(which python)
+          ENV
+          php artisan key:generate --force
+          php artisan about --only=environment
+
+      - name: Every migration runs on an empty database
+        run: php artisan migrate --force --database=mysql
+
+      - name: PHPUnit
+        run: php artisan test
+
+      - name: Laravel log (on failure)
+        if: failure()
+        run: tail -n 200 storage/logs/laravel.log || true
+
+  js:
+    name: Editor (JS)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Unit tests (node --test)
+        run: npm run test:unit
+      # Also enforces the bundle budget (scripts/check-bundle-budget.mjs).
+      - run: npm run build
+      - name: The build a deploy should use
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-build-${{ github.sha }}
+          path: public/build
+          if-no-files-found: error
+          retention-days: 14
+
+  python:
+    name: Python
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: python/requirements-prod.txt
+      - run: pip install --disable-pip-version-check -r python/requirements-prod.txt
+      - name: Fonts the exporter falls back to
+        run: sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends fonts-liberation fonts-dejavu-core fonts-freefont-ttf fonts-noto-core
+      # From the repository root: the exporter opens its fonts by relative path.
+      - name: Unit tests
+        run: python -m unittest discover -s python/test_helpers -p "test_*.py"
+      # The exporter run on a fixture PDF and its output measured. No browser.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Exporter regressions
+        run: |
+          node tests/OverlayEditor/run_promoted_single_span_title_regression.cjs
+          node tests/OverlayEditor/run_pdfjs_moved_source_title_regression.cjs
+      - name: Every script PHP calls can import what it needs
+        run: python docker/check-python-imports.py "$PWD"
+
+  audit:
+    name: Dependency audits
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Reports, does not block: there are known advisories to work through
+    # first (docs/ci.md). Make it required once it is clean.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+          coverage: none
+          tools: composer:v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: composer audit
+        id: composer
+        shell: bash   # pipefail: the audit's exit status, not tee's
+        run: composer audit --locked --format=plain 2>&1 | tee composer-audit.txt
+        continue-on-error: true
+      - name: npm audit (what ships, not the build tools)
+        id: npm
+        shell: bash
+        run: npm audit --omit=dev 2>&1 | tee npm-audit.txt
+        continue-on-error: true
+      - name: Summary
+        run: |
+          {
+            echo "### composer audit: ${{ steps.composer.outcome }}"; echo '```'; tail -n 60 composer-audit.txt; echo '```'
+            echo "### npm audit --omit=dev: ${{ steps.npm.outcome }}"; echo '```'; tail -n 40 npm-audit.txt; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "${{ steps.composer.outcome }}" = success ] && [ "${{ steps.npm.outcome }}" = success ]

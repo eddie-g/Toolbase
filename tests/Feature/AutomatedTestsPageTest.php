@@ -950,7 +950,9 @@ class AutomatedTestsPageTest extends TestCase
             ->assertJsonPath('suite.stories.0.task_gid', '1218255634880763');
 
         $tests = $response->json('suite.tests');
-        $this->assertCount(25, $tests, 'The existing-text story specifies 25 cases');
+        // The story specified 25 cases; regression cases have been added since.
+        $count = count($tests);
+        $this->assertGreaterThanOrEqual(25, $count, 'The existing-text story specifies 25 cases');
 
         foreach ($tests as $test) {
             $this->assertSame('existing-text', $test['story']);
@@ -959,7 +961,7 @@ class AutomatedTestsPageTest extends TestCase
         // Mirrored from a real Asana task, so every case carries its subtask
         // gid and no two cases may point at the same subtask.
         $gids = array_column($tests, 'gid');
-        $this->assertCount(25, array_filter($gids), 'Every existing-text case carries its Asana subtask gid');
+        $this->assertCount($count, array_filter($gids), 'Every existing-text case carries its Asana subtask gid');
         $this->assertSame(array_unique($gids), $gids, 'Two existing-text cases point at the same Asana subtask');
 
         // Every case has an editor half and a download half, each its own
@@ -972,7 +974,7 @@ class AutomatedTestsPageTest extends TestCase
             $halves[] = $test['components']['editor']['gid'];
             $halves[] = $test['components']['download']['gid'];
         }
-        $this->assertCount(50, array_filter($halves), 'Every A and B half carries its Asana task gid');
+        $this->assertCount($count * 2, array_filter($halves), 'Every A and B half carries its Asana task gid');
         $this->assertSame(array_unique($halves), $halves, 'Two halves point at the same Asana task');
 
         // Every kind of change to existing text needs coverage, or the suite
@@ -994,7 +996,8 @@ class AutomatedTestsPageTest extends TestCase
             fn (array $test) => $test['automated'] === true,
         ));
 
-        $this->assertCount(25, $automated, 'Every specified existing-text case is automated');
+        $this->assertCount(count($catalogue['suite']['tests']), $automated, 'Every specified existing-text case is automated');
+        $this->assertGreaterThanOrEqual(25, count($automated));
 
         $runner = (string) file_get_contents(base_path('tests/AutomatedTests/SourceText/run_source_text_tests.cjs'));
 
