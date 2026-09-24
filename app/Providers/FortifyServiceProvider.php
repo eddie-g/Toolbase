@@ -60,10 +60,14 @@ class FortifyServiceProvider extends ServiceProvider
                 ], 429, $headers);
             };
 
+            // A load test signs thousands of accounts in from a handful of
+            // addresses (tests/Load). The multiplier is ignored in production.
+            $scale = app()->environment('production') ? 1 : max(1, (int) config('security.login_throttle_scale', 1));
+
             return [
-                Limit::perMinute(5)->by($email.'|'.$ip)->response($lockedOut),
-                Limit::perHour(20)->by('login-email:'.sha1($email))->response($lockedOut),
-                Limit::perHour(50)->by('login-ip:'.$ip)->response($lockedOut),
+                Limit::perMinute(5 * $scale)->by($email.'|'.$ip)->response($lockedOut),
+                Limit::perHour(20 * $scale)->by('login-email:'.sha1($email))->response($lockedOut),
+                Limit::perHour(50 * $scale)->by('login-ip:'.$ip)->response($lockedOut),
             ];
         });
 

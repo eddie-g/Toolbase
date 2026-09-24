@@ -44,6 +44,7 @@ Thumbs.db
 !/tests/OverlayEditor/fixtures/
 /tests/OverlayEditor/fixtures/*
 !/tests/OverlayEditor/fixtures/ast_sci_data_tables_sample.pdf
+!/tests/Load/
 !/tests/AutomatedTests/
 /tests/AutomatedTests/*
 !/tests/AutomatedTests/Signature/
