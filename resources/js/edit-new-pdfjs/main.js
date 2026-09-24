@@ -23045,9 +23045,16 @@ function promotedSourceBlockLooksLikeParagraph(annotation, groups) {
     if (formLabelCount > 0 && formLabelCount / lineTexts.length >= 0.25) return false;
 
     const continuationLineCount = lineTexts.slice(1).filter((text) => /^[a-z(]/.test(text)).length;
-    return wordCount >= 18
+    // A short sentence wrapped inside a table cell (doc 8699: "Order new
+    // broken seal ring in kitchen faucet caused faucet / to be loose") has
+    // too few words and no punctuation for the prose test, yet every row
+    // after the first continues the previous one mid-sentence.
+    const wrapsMidSentence = continuationLineCount === lineTexts.length - 1
+        && lineTexts.slice(0, -1).every((text) => !/[.!?:;]$/.test(text))
+        && wordCount >= 6;
+    return wrapsMidSentence || (wordCount >= 18
         && sentencePunctuationCount >= 2
-        && (lineTexts.length >= 3 || continuationLineCount >= 1);
+        && (lineTexts.length >= 3 || continuationLineCount >= 1));
 }
 
 function dominantPromotedSourceSpan(spans, fallback = null) {

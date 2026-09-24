@@ -756,6 +756,37 @@ class ExtractPdfPyMuPdfTests(unittest.TestCase):
         self.assertEqual([line["block_num"] for line in page_lines], [0, 1, 2, 2])
         self.assertEqual([word["block_num"] for word in page_words], [0, 1, 2, 2, 2])
 
+    def test_split_on_table_rule_hidden_by_blank_separator_rows(self):
+        # doc 8699: three stacked table cells were merged with blank separator
+        # rows whose synthetic bboxes straddle the row rules (418.7, 453.7).
+        lines = [
+            "Clean Stove, Dishwasher, Fridge, Microwave", "",
+            "Order new broken seal ring in kitchen faucet caused faucet", "to be loose", "",
+            "Painted hallway, upstairs, and areas new washing machine",
+        ]
+        bboxes = [
+            [160.8, 403.0, 360.0, 412.0], [160.8, 416.9, 160.8, 425.9],
+            [160.8, 425.9, 427.7, 434.9], [160.8, 438.5, 210.6, 447.5],
+            [160.8, 452.4, 160.8, 461.4], [160.8, 461.4, 426.8, 470.4],
+        ]
+        block = {
+            "block_num": 22, "font": "DejaVuSans", "font_size": 9, "font_weight": 400,
+            "bold": False, "italic": False, "hex_color": "#1f2937",
+            "text": "\n".join(lines), "text_lines": lines, "line_bboxes": bboxes,
+            "left": 160.8, "top": 403.0, "width": 266.9, "height": 67.4,
+            "spans": [
+                {"text": text, "bbox": bbox, "font": "DejaVuSans", "font_size": 9, "bold": False, "italic": False}
+                for text, bbox in zip(lines, bboxes) if text
+            ],
+        }
+        rules = [(155.0, 440.0, y, 0.75) for y in (395.3, 418.7, 453.7, 477.1)]
+        parts = self.module._split_block_on_horizontal_barriers(block, horizontal_lines=rules)
+        self.assertEqual([part["text_lines"] for part in parts], [
+            ["Clean Stove, Dishwasher, Fridge, Microwave"],
+            ["Order new broken seal ring in kitchen faucet caused faucet", "to be loose"],
+            ["Painted hallway, upstairs, and areas new washing machine"],
+        ])
+
     def test_split_block_on_horizontal_barriers_and_heading_label(self):
         block = {
             "block_num": 2,

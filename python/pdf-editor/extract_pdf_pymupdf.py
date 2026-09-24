@@ -2972,18 +2972,30 @@ def _split_block_on_horizontal_barriers(block, horizontal_lines=None):
     segments = []
     current_segment = [0]
     split_detected = False
+    # Blank separator rows (added when stacked fragments were merged) carry
+    # synthetic bboxes that can straddle a table rule, hiding it from the
+    # row-pair test (doc 8699: three table cells merged into one block).
+    # Compare each text row with the previous TEXT row; a separator left at
+    # the end of a segment is dropped at the split.
+    previous_text_index = 0 if text_lines[0].strip() else None
 
     for index in range(1, len(text_lines)):
-        if _rects_have_horizontal_barrier(
-            _effective_line_rect(line_bboxes[index - 1], 'upper'),
+        if not text_lines[index].strip():
+            current_segment.append(index)
+            continue
+        if previous_text_index is not None and _rects_have_horizontal_barrier(
+            _effective_line_rect(line_bboxes[previous_text_index], 'upper'),
             _effective_line_rect(line_bboxes[index], 'lower'),
             horizontal_lines,
         ):
+            while len(current_segment) > 1 and not text_lines[current_segment[-1]].strip():
+                current_segment.pop()
             segments.append(current_segment)
             current_segment = [index]
             split_detected = True
         else:
             current_segment.append(index)
+        previous_text_index = index
 
     if current_segment:
         segments.append(current_segment)
