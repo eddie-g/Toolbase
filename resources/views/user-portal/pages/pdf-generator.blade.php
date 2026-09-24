@@ -25,16 +25,91 @@
     <div class="nk-page">
 
         {{-- Call to action --}}
-        <section class="nk-card nk-row">
+        {{-- Upload straight from the portal: posts to documents.store (same
+             quota, probe and duplicate-name rules as the editor's own
+             upload) and opens the new document in the editor. --}}
+        <section
+            class="nk-card nk-row nk-upload-card"
+            x-data="nkPdfUpload({
+                action: @js(route('documents.store')),
+                token: @js(csrf_token()),
+                maxKb: @js((int) config('pdf_editor.uploads.max_kb', 20480)),
+                returnTo: @js(route('filament.user.pages.pdf-generator')),
+            })"
+            x-on:dragover.prevent="dragging = true"
+            x-on:dragleave.prevent="dragging = false"
+            x-on:drop.prevent="dragging = false; pick($event.dataTransfer.files)"
+            x-bind:class="{ 'is-dragging': dragging }"
+        >
             <div>
                 <h3 class="nk-heading">Create or edit a PDF</h3>
-                <p class="nk-muted nk-mt-1">Upload a file or start a blank one, then edit, fill, sign, split or convert it.</p>
+                <p class="nk-muted nk-mt-1">Upload a PDF (or drop one here) to edit, fill, sign, split or convert it, or start a blank one in the editor.</p>
+                <p class="nk-small nk-mt-1" x-show="busy" x-cloak>Uploading <span x-text="fileName"></span>…</p>
+                <p class="nk-error nk-mt-1" x-show="error" x-text="error" x-cloak role="alert"></p>
+                <div class="nk-upload-dup nk-mt-2" x-show="duplicate" x-cloak>
+                    <p class="nk-small" x-text="duplicate?.message"></p>
+                    <div class="nk-toolbar nk-mt-2">
+                        <a class="nk-btn nk-btn-outline nk-btn-auto" x-bind:href="duplicate?.existing_url">Open existing</a>
+                        <button type="button" class="nk-btn nk-btn-primary nk-btn-auto" x-on:click="send(true)">Upload a copy</button>
+                        <button type="button" class="nk-btn nk-btn-outline nk-btn-auto" x-on:click="reset()">Cancel</button>
+                    </div>
+                </div>
             </div>
-            <a href="{{ route('documents.index') }}" class="nk-btn nk-btn-primary nk-btn-auto">
-                <x-filament::icon icon="heroicon-m-document-plus" class="nk-btn-icon" />
-                Open PDF editor
-            </a>
+            <div class="nk-toolbar">
+                <input type="file" accept="application/pdf,.pdf" x-ref="file" class="nk-visually-hidden" x-on:change="pick($event.target.files)" aria-label="Choose a PDF to upload">
+                <button type="button" class="nk-btn nk-btn-primary nk-btn-auto" x-on:click="$refs.file.click()" x-bind:disabled="busy">
+                    <x-filament::icon icon="heroicon-m-arrow-up-tray" class="nk-btn-icon" />
+                    <span x-text="busy ? 'Uploading…' : 'Upload PDF'">Upload PDF</span>
+                </button>
+                <a href="{{ route('documents.index') }}" class="nk-btn nk-btn-outline nk-btn-auto">
+                    <x-filament::icon icon="heroicon-m-document-plus" class="nk-btn-icon" />
+                    Open PDF editor
+                </a>
+            </div>
         </section>
+        <script>
+            window.nkPdfUpload = window.nkPdfUpload || ((cfg) => ({
+                busy: false, dragging: false, error: '', duplicate: null, file: null, fileName: '',
+                reset() { this.busy = false; this.error = ''; this.duplicate = null; this.file = null; this.fileName = ''; if (this.$refs.file) this.$refs.file.value = ''; },
+                pick(files) {
+                    const file = files && files[0];
+                    if (!file) return;
+                    this.reset();
+                    if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') { this.error = 'That file is not a PDF.'; return; }
+                    if (file.size > cfg.maxKb * 1024) { this.error = `That PDF is larger than ${Math.round(cfg.maxKb / 1024)} MB.`; return; }
+                    this.file = file; this.fileName = file.name;
+                    this.send(false);
+                },
+                async send(allowDuplicate) {
+                    if (!this.file) return;
+                    this.busy = true; this.error = ''; this.duplicate = null;
+                    const body = new FormData();
+                    body.append('_token', cfg.token);
+                    body.append('document', this.file);
+                    if (allowDuplicate) body.append('allow_duplicate_name', '1');
+                    try {
+                        const res = await fetch(cfg.action, { method: 'POST', body, headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'same-origin' });
+                        // Success redirects to the editor; fetch follows it.
+                        const match = res.ok && res.redirected ? res.url.match(/\/documents\/(\d+)\//) : null;
+                        if (match) {
+                            const url = new URL(`/documents/${match[1]}/edit-new`, window.location.origin);
+                            url.searchParams.set('pdfjs', '1');
+                            url.searchParams.set('from', 'admin');
+                            url.searchParams.set('return_to', cfg.returnTo);
+                            window.location.assign(url.toString());
+                            return;
+                        }
+                        const data = await res.json().catch(() => ({}));
+                        this.busy = false;
+                        if (res.status === 409 && data.duplicate_name) { this.duplicate = data; return; }
+                        this.error = data?.errors?.document?.[0] || data?.message || 'The upload failed. Please try again.';
+                    } catch (e) {
+                        this.busy = false;
+                        this.error = 'The upload failed. Check your connection and try again.';
+                    }
+                },
+            }));
+        </script>
 
         {{-- This month's usage --}}
         <section class="nk-usage">
