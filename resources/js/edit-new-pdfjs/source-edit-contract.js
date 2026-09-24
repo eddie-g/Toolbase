@@ -714,6 +714,26 @@ export function promotedSourceLayoutCompatibleTextEdit(currentText, sourceText) 
     return changed;
 }
 
+// NK_8131: a text edit that keeps every captured row. Each row of an open
+// promoted paragraph is its own fixed source line (white-space: pre, gap
+// spans of fixed width), so typing, deleting or replacing a word inside one
+// row only moves the rest of that row. Releasing the whole scaffold into
+// natural flow for such an edit re-spaced and re-pitched every other row.
+// Rows must stay rows: same row count and the same blank (paragraph gap)
+// rows; a joined, split or emptied row takes the natural-flow path.
+export function promotedSourceRowLocalTextEdit(currentText, sourceText, appendedRows = 0) {
+    const current = String(currentText ?? '').replace(/\r\n?/g, '\n').split('\n');
+    const source = String(sourceText ?? '').replace(/\r\n?/g, '\n').split('\n');
+    // NK_59: a last row that outgrew the box continues on rows the editor
+    // appended under it (`appendedRows`, never blank). Any other change in
+    // the row count is the user's own Enter or join: a reflow.
+    const extra = Math.max(0, Math.floor(Number(appendedRows) || 0));
+    if (current.length < 2 || current.length !== source.length + extra) return false;
+    return current.every((row, index) => (index < source.length
+        ? Boolean(row.trim()) === Boolean(source[index].trim())
+        : Boolean(row.trim())));
+}
+
 // PDF extraction frequently gives a list marker (for example, a bullet) a
 // larger glyph box than the paragraph that follows it. The marker must not
 // become the paragraph's root font size: doing so turns every ordinary run

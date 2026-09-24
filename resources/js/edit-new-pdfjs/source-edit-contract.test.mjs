@@ -17,6 +17,7 @@ import {
     pdfjsSourceOverlayShouldUseSourceBoxInEditMode,
     pdfjsTextCoversPromotedFallback,
     promotedSourceLayoutCompatibleTextEdit,
+    promotedSourceRowLocalTextEdit,
     promotedSourceBlockUsesMonospacedTypography,
     promotedTextEditFlags,
     reconcileRichTextRunWhitespace,
@@ -828,4 +829,28 @@ test('collapsePromotedParagraphPlainText keeps Enter as a hard break and drops s
     assert.equal(collapsePromotedParagraphPlainText('new\n\u200b\n\u200bcustomers'), 'new\n\ncustomers');
     assert.equal(collapsePromotedParagraphPlainText('new\n\u200b\n\u200b\n\u200bcustomers'), 'new\n\ncustomers');
     assert.equal(collapsePromotedParagraphPlainText(''), '');
+});
+
+test('NK_8131: a word edited inside its row keeps the captured rows', () => {
+    const source = 'The present installment\nquadrant. It does not cover any of the other quadrants\nthat future installments';
+    // typed, replaced longer, replaced shorter: still three rows
+    assert.equal(promotedSourceRowLocalTextEdit(source.replace('other', 'otxher'), source), true);
+    assert.equal(promotedSourceRowLocalTextEdit(source.replace('other', 'otherish'), source), true);
+    assert.equal(promotedSourceRowLocalTextEdit(source.replace('other', 'oth'), source), true);
+    // a joined, split or emptied row is a reflow
+    assert.equal(promotedSourceRowLocalTextEdit(source.replace('installment\n', 'installment '), source), false);
+    assert.equal(promotedSourceRowLocalTextEdit(source.replace('It does', 'It\ndoes'), source), false);
+    assert.equal(promotedSourceRowLocalTextEdit('The present installment\n \nthat future installments', source), false);
+    // a single row is not a paragraph scaffold
+    assert.equal(promotedSourceRowLocalTextEdit('one row', 'one rows'), false);
+});
+
+test('NK_59: rows the editor appended under an overflowing last row stay row-local', () => {
+    const source = 'The present installment\nquadrant. It does not cover\nthat future installments';
+    const grown = 'The present installment\nquadrant. It does not cover\nthat future\ninstallments';
+    assert.equal(promotedSourceRowLocalTextEdit(grown, source, 1), true);
+    // without the editor's count the same text is the user's own Enter
+    assert.equal(promotedSourceRowLocalTextEdit(grown, source), false);
+    // an appended row is never blank
+    assert.equal(promotedSourceRowLocalTextEdit(`${source}\n `, source, 1), false);
 });

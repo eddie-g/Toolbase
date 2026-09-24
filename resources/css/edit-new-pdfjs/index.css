@@ -4298,6 +4298,13 @@ body.enpv-body .pdfViewer .page > .annotationLayer .enpv-removed-pdf-link {
     color: transparent !important;
     -webkit-text-fill-color: transparent !important;
 }
+/* A row-end soft hyphen (U+00AD) is painted as '-' in the PDF, but the
+   browser only draws it where it breaks a line itself. While the captured
+   row scaffold is active, draw it so the row keeps its hyphen and width. */
+.enpv-edit-source-line[data-source-span-line="1"] .enpv-edit-soft-hyphen::before,
+.enpv-text-content .enpv-kept-soft-hyphen::before {
+    content: "-";
+}
 .enpv-edit-gap[data-source-span-gap="1"][style*="--enpv-source-gap-width"] {
     display: inline-block;
     width: var(--enpv-source-gap-width);

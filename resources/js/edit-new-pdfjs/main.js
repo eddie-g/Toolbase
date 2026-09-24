@@ -95,6 +95,7 @@ import {
     pdfjsSourceOverlayShouldUseSourceBoxInEditMode,
     pdfjsTextCoversPromotedFallback,
     promotedSourceLayoutCompatibleTextEdit,
+    promotedSourceRowLocalTextEdit,
     promotedSourceBlockUsesMonospacedTypography,
     promotedTextEditFlags,
     reconcileRichTextRunWhitespace,
@@ -322,6 +323,19 @@ function richTextRunsCarryAuthoredStyle(runs, annotation) {
 function textElementHasAuthoredInlineStyles(textElement) {
     if (!textElement) return false;
     return Array.from(textElement.querySelectorAll('[style]')).some((element) => {
+        const style = element.style;
+        return Boolean(style.fontWeight || style.fontStyle || style.textDecorationLine
+            || style.textDecoration || style.color || style.fontSize || style.fontFamily
+            || style.backgroundColor);
+    });
+}
+
+// The row scaffold's own runs carry the source face inline (font-family,
+// weight, colour). Only styling authored inside them counts as a change.
+function sourceScaffoldHasAuthoredInlineStyles(textElement) {
+    if (!textElement) return false;
+    return Array.from(textElement.querySelectorAll('[style]')).some((element) => {
+        if (element.matches('.enpv-edit-run, .enpv-edit-gap, .enpv-edit-source-line, .enpv-edit-line-break')) return false;
         const style = element.style;
         return Boolean(style.fontWeight || style.fontStyle || style.textDecorationLine
             || style.textDecoration || style.color || style.fontSize || style.fontFamily
@@ -4222,7 +4236,10 @@ function promotedOverlayKeepsSourceBlockGeometry(annotation) {
     const rawSource = String(annotation.pdfjsSourceText || annotation.originalText || '');
     const source = normalizeComparableText(rawSource);
     const isCleanSourceText = Boolean(source && normalizeComparableText(text) === source);
-    const isCompatibleSubstitution = promotedSourceLayoutCompatibleTextEdit(text, rawSource);
+    const isCompatibleSubstitution = promotedSourceLayoutCompatibleTextEdit(text, rawSource)
+        // NK_8131: a word typed, deleted or replaced inside its row kept the
+        // captured rows live; the rebuilt overlay must keep them too.
+        || promotedSourceRowLocalTextEdit(text, rawSource, annotation.promotedAppendedRows);
     // Rich markup normally owns layout. A compatible substitution is the one
     // exception: older builds generated uniform rich spans merely by releasing
     // the source scaffold, so restoring source geometry also repairs those
@@ -4330,6 +4347,20 @@ function settleFreePositionedBoxTransform(box, scale = null) {
     box.dataset.dyPts = '0';
     removeAnnBoxSourceMasks(box);
     return true;
+}
+
+// A dragged promoted block keeps its saved (extraction) height, so its saved
+// rect must be the extraction rect moved by the drag. The DOM box is the
+// taller pdf.js box around the rows; pairing its bottom with the shorter
+// saved height dropped the paragraph by the difference (2.83pt on every
+// Isartor paragraph) after a reload.
+function promotedMovedPdfY(box, annotation, pdfRect) {
+    const baseDomY = Number.parseFloat(box?.dataset?.baseBboxY || '');
+    const pageHeight = Number(annotation?.sourcePageHeight ?? annotation?.pdfjsSourcePageHeight ?? box?.dataset?.basePageHeight);
+    const top = Number(annotation?.sourceBlockTop);
+    const height = Number(annotation?.sourceBlockHeight);
+    if (![baseDomY, pageHeight, top, height].every(Number.isFinite) || !(height > 0)) return pdfRect.y;
+    return (pageHeight - top - height) + (pdfRect.y - baseDomY);
 }
 
 function textContentForBox(box) {
@@ -6282,6 +6313,11 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         richTextVersion: richTextRuns.length ? 2 : undefined,
         pdfjsRichTextHtmlScale: richTextHtml && !richTextRuns.length ? String(scale) : undefined,
         pdfjsVisualLines: shouldPersistVisualLines ? visualLines : undefined,
+        // NK_59: rows appended under an overflowing last row (row-local edit).
+        promotedAppendedRows: (() => {
+            const appended = box.querySelectorAll('.enpv-text-content [data-source-span-line="1"][data-source-added-row="1"]').length;
+            return appended > 0 ? appended : undefined;
+        })(),
         originalText: String(existingAnnotation?.originalText || originalTextForBox(box) || sourceText),
         pdfX: pdfRect.x,
         // A reloaded block's DOM box can sit a row gap off its saved origin
@@ -6290,7 +6326,7 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
             && Number.isFinite(Number(existingAnnotation?.pdfY))
             && Math.abs(pdfRect.y - Number(existingAnnotation.pdfY)) < (styleOnlyOnSourceRows ? 6 : 3))
             ? Number(existingAnnotation.pdfY)
-            : pdfRect.y,
+            : (keepPromotedVerticalMetrics ? promotedMovedPdfY(box, existingAnnotation, pdfRect) : pdfRect.y),
         pdfWidth: pdfRect.w,
         pdfHeight: keepPromotedVerticalMetrics ? Number(existingAnnotation.pdfHeight) : pdfRect.h,
         fontSize: fontSizePts,
@@ -8949,6 +8985,106 @@ function sourceRunTextWithSyntheticGaps(items, start = 0, end = items.length) {
     return normalizeSourceRunText(output);
 }
 
+// A list marker that opens a captured row ("•", "1.", "a)"). Its PDF.js run
+// width is the PDF's advance for the glyph, which rarely matches the advance
+// the editor font draws; the gap after it is therefore measured from the
+// marker's rendered width so the item text starts at its captured left.
+const SOURCE_LIST_MARKER_RUN_RE = /^(?:[\u2022\u2023\u2043\u2219\u25aa\u25ab\u25a0\u25a1\u25cf\u25e6\u00b7\u2013\u2014*]|(?:\d{1,3}|[A-Za-z]|[ivxIVX]{1,5})[.)])$/u;
+
+function sourceRunTextIsListMarker(value) {
+    return SOURCE_LIST_MARKER_RUN_RE.test(String(value || '').trim());
+}
+
+// True for the first run of a captured row when that run is a list marker.
+function sourceRunIsLeadingListMarker(run) {
+    if (!run || run.nodeType !== Node.ELEMENT_NODE) return false;
+    if (run.getAttribute('data-source-span-run') !== '1') return false;
+    if (!sourceRunTextIsListMarker(run.textContent)) return false;
+    return run.parentElement?.querySelector('[data-source-span-run="1"]') === run;
+}
+
+// After the scaffold is released on the first keystroke, a hanging indent,
+// the gap after a list marker and a kept row's end hyphen stay drawn at their
+// captured geometry. Once the user types into one of them it is ordinary text
+// again.
+function releaseMutatedFixedSourceLayoutNodes(tc) {
+    if (!tc) return;
+    tc.querySelectorAll('[data-source-fixed-gap]').forEach((gap) => {
+        if (String(gap.textContent || '') === gap.getAttribute('data-source-fixed-gap')) return;
+        gap.style.removeProperty('display');
+        gap.style.removeProperty('width');
+        gap.style.removeProperty('white-space');
+        gap.removeAttribute('data-source-fixed-gap');
+        removeEmptyStyleAttribute(gap);
+    });
+    tc.querySelectorAll('.enpv-kept-soft-hyphen').forEach((hyphen) => {
+        if (String(hyphen.textContent || '') === '\u00ad') return;
+        hyphen.classList.remove('enpv-kept-soft-hyphen');
+        if (!hyphen.getAttribute('class')) hyphen.removeAttribute('class');
+    });
+}
+
+/**
+ * A source gap (`.enpv-edit-gap`) is a fixed-width inline-block holding the
+ * PDF's space between two runs. Chrome puts the caret inside it for a click
+ * at either side of the boundary, so typed characters land in the gap and
+ * are drawn over the next word instead of pushing it along (NK_59). Move any
+ * non-space text out of the gap into the run it was typed against (the next
+ * run when typed after the gap's spaces, the previous one when typed before
+ * them), give the gap back its own spaces and keep the caret after the moved
+ * text. The row then holds an ordinary run edit, which the row-local path
+ * lays out by shifting only what follows the caret.
+ */
+function evacuateTypedTextFromSourceGaps(tc) {
+    if (!tc) return false;
+    let moved = false;
+    tc.querySelectorAll('.enpv-edit-gap[data-source-span-gap]').forEach((gap) => {
+        if (gap.hasAttribute('data-source-fixed-gap')) return;
+        const text = String(gap.textContent || '');
+        if (!/\S/u.test(text)) return;
+        const leading = text.match(/^\s*/u)[0];
+        const trailing = text.match(/\s*$/u)[0];
+        const typed = text.slice(leading.length, text.length - trailing.length);
+        const spaces = Math.max(1, Number(gap.getAttribute('data-source-span-gap-spaces')) || (leading.length + trailing.length) || 1);
+        const isRun = (element) => Boolean(element?.classList?.contains('enpv-edit-run'));
+        const previousRun = isRun(gap.previousElementSibling) ? gap.previousElementSibling : null;
+        const nextRun = isRun(gap.nextElementSibling) ? gap.nextElementSibling : null;
+        // Home, the arrow keys and a click in the margin put the caret
+        // anywhere inside a row's hanging indent or the gap after its list
+        // marker. Text typed there belongs to the item's text, never to the
+        // marker and never to the indent itself (usage U1).
+        let intoNext = leading.length >= trailing.length;
+        if (!previousRun || sourceRunIsLeadingListMarker(previousRun)) intoNext = true;
+        if (!nextRun) intoNext = false;
+        const neighbour = intoNext ? nextRun : previousRun;
+        if (!neighbour) return;
+        const walker = document.createTreeWalker(neighbour, NodeFilter.SHOW_TEXT);
+        let target = null;
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (intoNext) { target = node; break; }
+            target = node;
+        }
+        if (!target) {
+            target = document.createTextNode('');
+            if (intoNext) neighbour.insertBefore(target, neighbour.firstChild);
+            else neighbour.appendChild(target);
+        }
+        const caretOffset = intoNext ? typed.length : target.nodeValue.length + typed.length;
+        target.nodeValue = intoNext ? typed + target.nodeValue : target.nodeValue + typed;
+        gap.textContent = ' '.repeat(spaces);
+        const selection = window.getSelection();
+        if (selection) {
+            const range = document.createRange();
+            range.setStart(target, caretOffset);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+        moved = true;
+    });
+    return moved;
+}
+
 function remapSourceRunItemsForCurrentText(items, currentText) {
     const normalizedCurrent = normalizeSourceRunText(currentText);
     if (!normalizedCurrent) return items;
@@ -8968,18 +9104,28 @@ function remapSourceRunItemsForCurrentText(items, currentText) {
     };
 
     if (items.length >= 2) {
+        // The trim() below drops the space that separates the changed run
+        // from its neighbour. PDF.js often measures no gap there (the space
+        // glyph belongs to one of the runs), so without the flag the rebuilt
+        // row reads "Inother" / "[2]ISO" after a reload.
+        const keepBoundarySpace = (nextItems, index, whitespace) => {
+            if (whitespace && nextItems?.[index]) nextItems[index].canonicalSpaceBefore = true;
+            return nextItems;
+        };
         const suffix = sourceRunTextWithSyntheticGaps(items, 1);
         if (suffix && normalizedCurrent.endsWith(suffix)) {
-            const changedPrefix = normalizedCurrent.slice(0, normalizedCurrent.length - suffix.length).trim();
+            const rawPrefix = normalizedCurrent.slice(0, normalizedCurrent.length - suffix.length);
+            const changedPrefix = rawPrefix.trim();
             const nextItems = applyChangedText(cloneItems(), 0, changedPrefix);
-            if (nextItems) return nextItems;
+            if (nextItems) return keepBoundarySpace(nextItems, 1, /\s$/u.test(rawPrefix));
         }
 
         const prefix = sourceRunTextWithSyntheticGaps(items, 0, items.length - 1);
         if (prefix && normalizedCurrent.startsWith(prefix)) {
-            const changedSuffix = normalizedCurrent.slice(prefix.length).trim();
+            const rawSuffix = normalizedCurrent.slice(prefix.length);
+            const changedSuffix = rawSuffix.trim();
             const nextItems = applyChangedText(cloneItems(), items.length - 1, changedSuffix);
-            if (nextItems) return nextItems;
+            if (nextItems) return keepBoundarySpace(nextItems, items.length - 1, /^\s/u.test(rawSuffix));
         }
 
         if (items.length === 2) {
@@ -8987,7 +9133,7 @@ function remapSourceRunItemsForCurrentText(items, currentText) {
             if (match) {
                 const nextItems = cloneItems();
                 if (applyChangedText(nextItems, 0, match[1]) && applyChangedText(nextItems, 1, match[2])) {
-                    return nextItems;
+                    return keepBoundarySpace(nextItems, 1, true);
                 }
             }
         }
@@ -9066,7 +9212,10 @@ function realignSourceRunTextsToCanonical(items, canonicalText) {
         let matched = 0;
         while (ci < canonical.length && matched < nonSpace.length) {
             if (canonical[ci] !== ' ') {
-                if (canonical[ci] !== nonSpace[matched]) return false;
+                // PDF.js paints a row-end soft hyphen as '-'. Keep the
+                // canonical U+00AD in the run so a flatten round-trips.
+                if (canonical[ci] !== nonSpace[matched]
+                    && !(canonical[ci] === '\u00ad' && nonSpace[matched] === '-')) return false;
                 matched += 1;
             }
             ci += 1;
@@ -9483,9 +9632,14 @@ function splitSourceRunItemsAtColorBoundaries(box, items) {
             const before = text.slice(0, at);
             const after = text.slice(at + span.text.length);
             const replacement = [];
-            if (before) replacement.push({ ...piece, text: before, rightPx: span.leftPx });
+            // The whole PDF.js run may have been colored by the extraction
+            // span it starts with ("[2] ISO 19005-1 ..." matched the red
+            // "[2]" span). The text around the colored span keeps the
+            // block's own color, not the lead-in's.
+            const surroundingColor = piece.textColor === span.color ? '' : piece.textColor;
+            if (before) replacement.push({ ...piece, text: before, rightPx: span.leftPx, textColor: surroundingColor });
             replacement.push({ ...piece, text: span.text, leftPx: span.leftPx, rightPx: span.rightPx, textColor: span.color });
-            if (after) replacement.push({ ...piece, text: after, leftPx: span.rightPx });
+            if (after) replacement.push({ ...piece, text: after, leftPx: span.rightPx, textColor: surroundingColor });
             pieces = pieces.slice(0, index).concat(replacement, pieces.slice(index + 1));
             consumed.add(span);
         }
@@ -9671,7 +9825,8 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
     const currentText = rawCurrentText.replace(/\s+/g, ' ').trim();
     reconstructed = reconstructed.replace(/\s+/g, ' ').trim();
     if (currentText && currentText !== reconstructed) {
-        const whitespaceOnlySourceDifference = currentText.replace(/\s+/g, '') === reconstructed.replace(/\s+/g, '');
+        const foldSoftHyphen = (value) => value.replace(/\u00ad/g, '-').replace(/\s+/g, '');
+        const whitespaceOnlySourceDifference = foldSoftHyphen(currentText) === foldSoftHyphen(reconstructed);
         if (!whitespaceOnlySourceDifference) {
             items = remapSourceRunItemsForCurrentText(items, currentText)
                 || remapSourceRunItemsForCurrentTextLines(items, rawCurrentText, groupSourceRunItemsIntoLines);
@@ -9755,7 +9910,18 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
         let prev = null;
         for (const item of line.runs) {
             if (prev) {
-                let gapHtml = buildGapSpan(Math.max(0, Number(item.leftPx) - Number(prev.rightPx)), item);
+                let gapPx = Math.max(0, Number(item.leftPx) - Number(prev.rightPx));
+                if (prev === line.runs[0] && sourceRunTextIsListMarker(prev.text)) {
+                    // Start the item text at its captured left even though the
+                    // editor font draws the marker wider than PDF.js measured
+                    // it (Isartor "•": 8.9px in PDF.js, 13.8px in Verdana at
+                    // 253%, which pushed every bulleted row ~5px right).
+                    const markerWidthPx = measureSourceRunTextWidthPx(String(prev.text || '').trim(), prev);
+                    if (markerWidthPx > 0) {
+                        gapPx = Math.max(0, Number(item.leftPx) - Number(prev.leftPx) - markerWidthPx);
+                    }
+                }
+                let gapHtml = buildGapSpan(gapPx, item);
                 if (gapHtml && item.canonicalSpaceBefore === false) {
                     // Canonical text has NO space here (e.g. mid-word run
                     // split "PAYMENT|S"): drop the geometric gap so flatten
@@ -9811,7 +9977,17 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
                 String(item.semanticFontStyle || item.fontStyle || 'normal'),
             );
             const pdfFontName = escapeHtmlForSpanEdit(String(item.pdfjsFontName || ''));
-            html += `<span class="enpv-edit-run" data-source-span-run="1" data-source-semantic-font-weight="${semanticWeight}" data-source-semantic-font-style="${semanticStyle}" data-source-pdf-font-name="${pdfFontName}"${styleAttr}>${escapeHtmlForSpanEdit(String(item.text || ''))}</span>`;
+            // A row-end soft hyphen is painted as '-' by the PDF, but the
+            // browser only draws U+00AD where IT breaks the line, never before
+            // the scaffold's own row break. Draw it (CSS ::before) so the row
+            // keeps its hyphen and its captured width instead of being
+            // stretched by the glyph fit to cover a missing glyph.
+            const runText = String(item.text || '');
+            const softHyphenTail = /\u00ad$/u.test(runText) ? '\u00ad' : '';
+            const runHtml = softHyphenTail
+                ? `${escapeHtmlForSpanEdit(runText.slice(0, -1))}<span class="enpv-edit-soft-hyphen">${softHyphenTail}</span>`
+                : escapeHtmlForSpanEdit(runText);
+            html += `<span class="enpv-edit-run" data-source-span-run="1" data-source-semantic-font-weight="${semanticWeight}" data-source-semantic-font-style="${semanticStyle}" data-source-pdf-font-name="${pdfFontName}"${styleAttr}>${runHtml}</span>`;
             prev = item;
         }
         if (wrapCapturedLines) html += '</span>';
@@ -9866,11 +10042,412 @@ function promotedSourceBlockEditKeepsExactLayout(box) {
         || box.dataset.userForcedRichText === '1'
         || box.dataset.userSizedTextBox === '1') return false;
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+    // Words pushed to the next row by an earlier keystroke go back first, so
+    // an undone edit compares equal to the source again (NK_59).
+    const scaffoldText = selectedBoxTextElement(box);
+    if (scaffoldText) {
+        pullBackPushedRowWords(Array.from(scaffoldText.querySelectorAll('[data-source-span-line="1"]')));
+        removeEmptyAddedPromotedSourceRows(scaffoldText);
+        syncAddedPromotedSourceRowsHeight(box, scaffoldText);
+    }
     const currentText = flattenedTextFromSourceSpanMarkup(box).replace(/\r\n?/g, '\n');
     const immutableText = String(existing?.pdfjsSourceText || existing?.originalText || '')
         .replace(/\r\n?/g, '\n');
-    return currentText === immutableText
-        || promotedSourceLayoutCompatibleTextEdit(currentText, immutableText);
+    if (currentText === immutableText
+        || promotedSourceLayoutCompatibleTextEdit(currentText, immutableText)) {
+        // An undone row edit gets its row's own spacing back (NK_8131).
+        resetPromotedSourceScaffoldRowFit(box);
+        return true;
+    }
+    const appendedRows = scaffoldText
+        ? scaffoldText.querySelectorAll('[data-source-span-line="1"][data-source-added-row="1"]').length
+        : 0;
+    return promotedSourceRowLocalTextEdit(currentText, immutableText, appendedRows)
+        && fitPromotedSourceScaffoldRowsToBox(box);
+}
+
+// NK_8131: a row-local edit keeps the captured row scaffold while every row
+// still fits the paragraph's box. A row that a longer word pushes past the
+// box first tightens its own word spaces slightly (at most 15% of a space,
+// the way a justified PDF row absorbs it; half a space read as cramped), then
+// hands its last words down to the next row (NK_59). Only an overflowing
+// last row takes the natural-flow path. Rows that fit are never touched, and
+// a row that fits again (the edit was undone) gets its words and spacing
+// back exactly.
+const PROMOTED_SOURCE_ROW_MIN_SPACE_RATIO = 0.15;
+
+function promotedSourceScaffoldLineInk(line) {
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let right = -Infinity;
+    let left = Infinity;
+    let spaces = 0;
+    let spaceWidth = 0;
+    let pendingSpaces = 0;
+    let seenInk = false;
+    let node;
+    while ((node = walker.nextNode())) {
+        if (node.parentElement?.closest?.('[data-enpv-caret-marker="1"]')) continue;
+        const inGap = Boolean(node.parentElement?.closest?.('[data-source-span-gap="1"]'));
+        const value = String(node.nodeValue || '');
+        for (let i = 0; i < value.length; i += 1) {
+            const ch = value[i];
+            if (ch === ' ') {
+                if (inGap) continue;
+                if (seenInk) pendingSpaces += 1;
+                if (!spaceWidth) {
+                    range.setStart(node, i);
+                    range.setEnd(node, i + 1);
+                    spaceWidth = range.getBoundingClientRect().width || 0;
+                }
+                continue;
+            }
+            if (/\s/u.test(ch)) continue;
+            range.setStart(node, i);
+            range.setEnd(node, i + 1);
+            const rect = range.getBoundingClientRect();
+            if (rect.width > 0) {
+                right = Math.max(right, rect.right);
+                left = Math.min(left, rect.left);
+            }
+            seenInk = true;
+            spaces += pendingSpaces;
+            pendingSpaces = 0;
+        }
+    }
+    return { right, left, spaces, spaceWidth };
+}
+
+function resetPromotedSourceScaffoldRowFit(box) {
+    const tc = selectedBoxTextElement(box);
+    const lines = tc ? Array.from(tc.querySelectorAll('[data-source-span-line="1"]')) : [];
+    lines.forEach((line) => line.style.removeProperty('word-spacing'));
+    return lines;
+}
+
+// Tighten one row's word spaces (by at most 15% of a space) until its ink ends
+// inside `limit`. Returns whether the row fits.
+function tightenPromotedSourceScaffoldRow(line, boxLimit) {
+    line.style.removeProperty('word-spacing');
+    const ink = promotedSourceScaffoldLineInk(line);
+    // A row may reach as far as the PDF's own row did: a justified row's end
+    // hyphen or punctuation often hangs a little past the paragraph's box.
+    const ownWidth = Number(line.dataset.sourceTargetWidth);
+    const limit = Number.isFinite(ownWidth) && ownWidth > 0 && Number.isFinite(ink.left)
+        ? Math.max(boxLimit, ink.left + ownWidth + 1)
+        : boxLimit;
+    if (!(ink.right > limit)) return true;
+    const overflow = ink.right - limit;
+    if (!(ink.spaces > 0) || !(ink.spaceWidth > 0)) return false;
+    const perSpace = overflow / ink.spaces;
+    if (perSpace > ink.spaceWidth * PROMOTED_SOURCE_ROW_MIN_SPACE_RATIO) return false;
+    // word-spacing is in the line's own (untransformed) px; the captured
+    // glyph alignment scales the row, so calibrate once and correct.
+    line.style.wordSpacing = `${-perSpace}px`;
+    const achieved = ink.right - promotedSourceScaffoldLineInk(line).right;
+    const ratio = achieved > 0 ? (overflow + 0.25) / achieved : 1;
+    line.style.wordSpacing = `${-(perSpace * ratio)}px`;
+    if (!(promotedSourceScaffoldLineInk(line).right > limit)) return true;
+    line.style.removeProperty('word-spacing');
+    return false;
+}
+
+// Text nodes of a scaffold row's runs, in order (gaps and the caret marker
+// excluded): the only text a pushed word may be cut from or joined to.
+function promotedSourceScaffoldRowRunTextNodes(line) {
+    const nodes = [];
+    line.querySelectorAll('[data-source-span-run="1"]').forEach((run) => {
+        const walker = document.createTreeWalker(run, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (node.parentElement?.closest?.('[data-enpv-caret-marker="1"]')) continue;
+            nodes.push(node);
+        }
+    });
+    return nodes;
+}
+
+// Words pushed from the end of a row onto the start of the next one, per row,
+// in push order. Runtime only: the saved text already holds the result.
+const promotedSourcePushedRowWords = new WeakMap();
+
+function selectionFocusIn(nodes) {
+    const selection = window.getSelection();
+    if (!selection || !selection.rangeCount || !selection.isCollapsed) return null;
+    const index = nodes.indexOf(selection.focusNode);
+    return index >= 0 ? { index, offset: selection.focusOffset } : null;
+}
+
+function placeCaret(node, offset) {
+    const selection = window.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.setStart(node, Math.max(0, Math.min(offset, node.nodeValue.length)));
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+}
+
+// Move the last word of `line` onto the start of `next`. A word split by a
+// soft hyphen at the row end ("stan-" + "dard.") joins its other half.
+function pushLastWordToNextRow(line, next) {
+    const nodes = promotedSourceScaffoldRowRunTextNodes(line);
+    const targets = promotedSourceScaffoldRowRunTextNodes(next);
+    if (!nodes.length || !targets.length) return false;
+    const text = nodes.map((node) => node.nodeValue).join('');
+    const trimmed = text.replace(/\s+$/u, '');
+    const start = trimmed.search(/\S+$/u);
+    // Keep at least one word on the row.
+    if (start <= 0 || !/\S/u.test(trimmed.slice(0, start))) return false;
+    const token = trimmed.slice(start);
+    const joined = token.endsWith('­');
+    // Onto an empty (appended) row the word goes without a trailing space.
+    const targetIsEmpty = !/\S/u.test(targets.map((node) => node.nodeValue).join(''));
+    const insert = joined ? token.slice(0, -1) : (targetIsEmpty ? token : `${token} `);
+    // Locate the cut in node coordinates.
+    let offset = start;
+    let cutIndex = 0;
+    while (cutIndex < nodes.length - 1 && offset >= nodes[cutIndex].nodeValue.length) {
+        offset -= nodes[cutIndex].nodeValue.length;
+        cutIndex += 1;
+    }
+    const focus = selectionFocusIn(nodes);
+    let caretInToken = null;
+    if (focus) {
+        let absolute = focus.offset;
+        for (let i = 0; i < focus.index; i += 1) absolute += nodes[i].nodeValue.length;
+        if (absolute > start) caretInToken = Math.min(absolute - start, insert.length);
+    }
+    // A word that starts its own run (the PDF set it apart with a gap) is
+    // lifted out whole: its run, everything after it on the row and the gap
+    // before it. Pulling it back re-inserts the very same elements, so an
+    // undone edit restores the row exactly and no orphaned gap is left at the
+    // row end (it would be saved as trailing spaces).
+    const startRun = nodes[cutIndex].parentElement?.closest?.('[data-source-span-run="1"]');
+    const startsRun = startRun
+        && offset === 0
+        && promotedSourceScaffoldRowRunTextNodes(line).find((node) => startRun.contains(node)) === nodes[cutIndex];
+    let removed = null;
+    if (startsRun) {
+        removed = [];
+        let lead = startRun.previousSibling;
+        while (lead && lead.nodeType === Node.ELEMENT_NODE && lead.matches('[data-source-span-gap="1"]')) {
+            removed.unshift(lead);
+            lead = lead.previousSibling;
+        }
+        for (let node = startRun; node;) {
+            const following = node.nextSibling;
+            removed.push(node);
+            node = following;
+        }
+        removed.forEach((node) => node.remove());
+    } else {
+        const range = document.createRange();
+        range.setStart(nodes[cutIndex], offset);
+        const last = nodes[nodes.length - 1];
+        range.setEnd(last, last.nodeValue.length);
+        range.deleteContents();
+        line.querySelectorAll('.enpv-edit-soft-hyphen, .enpv-kept-soft-hyphen').forEach((span) => {
+            if (!span.textContent) span.remove();
+        });
+        // A run the cut emptied (e.g. one holding only the end hyphen) and
+        // any gap left dangling at the row end go too.
+        for (let lastChild = line.lastChild; lastChild;) {
+            const isEmptyRun = lastChild.nodeType === Node.ELEMENT_NODE
+                && lastChild.matches('[data-source-span-run="1"]') && !lastChild.textContent;
+            const isGap = lastChild.nodeType === Node.ELEMENT_NODE && lastChild.matches('[data-source-span-gap="1"]');
+            if (!isEmptyRun && !isGap) break;
+            const previous = lastChild.previousSibling;
+            lastChild.remove();
+            lastChild = previous;
+        }
+    }
+    // Drop the trailing space the cut leaves on the row.
+    const remaining = promotedSourceScaffoldRowRunTextNodes(line);
+    const tail = remaining[remaining.length - 1];
+    let trimmedTail = '';
+    if (tail) {
+        // deleteData, not a nodeValue assignment: assigning resets a caret
+        // that sits in this node to offset 0.
+        const trailing = tail.nodeValue.length - tail.nodeValue.replace(/\s+$/u, '').length;
+        if (trailing > 0) {
+            trimmedTail = tail.nodeValue.slice(tail.nodeValue.length - trailing);
+            tail.deleteData(tail.nodeValue.length - trailing, trailing);
+        }
+    }
+    targets[0].insertData(0, insert);
+    if (caretInToken !== null) placeCaret(targets[0], caretInToken);
+    const pushed = promotedSourcePushedRowWords.get(line) || [];
+    pushed.push({ token, insert, removed, trimmed: trimmedTail });
+    promotedSourcePushedRowWords.set(line, pushed);
+    return true;
+}
+
+// Undo every push (last pushed first) so each fit starts from the rows as
+// the user left them. All or nothing: when any pushed word was since edited
+// (the caret travels with a pushed word, so Backspace can eat it), nothing
+// is pulled back and the bookkeeping is dropped. A partial pull-back later
+// re-appended stale copies of edited words and duplicated text.
+function pullBackPushedRowWords(lines) {
+    const intact = lines.every((line, i) => {
+        const pushed = promotedSourcePushedRowWords.get(line);
+        if (!pushed || !pushed.length) return true;
+        const head = promotedSourceScaffoldRowRunTextNodes(lines[i + 1] || document.createElement('span'))[0];
+        const expected = pushed.slice().reverse().map((entry) => entry.insert).join('');
+        return Boolean(head) && head.nodeValue.startsWith(expected);
+    });
+    if (!intact) {
+        lines.forEach((line) => promotedSourcePushedRowWords.delete(line));
+        return;
+    }
+    for (let i = lines.length - 2; i >= 0; i -= 1) {
+        const pushed = promotedSourcePushedRowWords.get(lines[i]);
+        if (!pushed || !pushed.length) continue;
+        while (pushed.length) {
+            const { token, insert, removed, trimmed } = pushed[pushed.length - 1];
+            const targets = promotedSourceScaffoldRowRunTextNodes(lines[i + 1]);
+            const head = targets[0];
+            if (!head || !head.nodeValue.startsWith(insert)) {
+                pushed.length = 0;
+                break;
+            }
+            const focus = selectionFocusIn(targets);
+            const caretInInsert = focus && focus.index === 0 && focus.offset <= insert.length ? focus.offset : null;
+            head.deleteData(0, insert.length);
+            const nodes = promotedSourceScaffoldRowRunTextNodes(lines[i]);
+            const tail = nodes[nodes.length - 1];
+            if (tail && trimmed) tail.appendData(trimmed);
+            if (removed && removed.length) {
+                // Put the lifted run, its gap and the rest of the row back.
+                removed.forEach((node) => lines[i].appendChild(node));
+                if (caretInInsert !== null) {
+                    const back = promotedSourceScaffoldRowRunTextNodes(lines[i]);
+                    const first = back.find((node) => removed.some((el) => el.contains(node)));
+                    if (first) placeCaret(first, caretInInsert);
+                }
+                pushed.pop();
+                continue;
+            }
+            if (!tail) { pushed.length = 0; break; }
+            // The space that separated the word came back with `trimmed`.
+            const separator = trimmed ? '' : ' ';
+            const at = tail.nodeValue.length + separator.length;
+            if (token.endsWith('­')) {
+                // Give the row end back its drawn soft hyphen (see
+                // .enpv-edit-soft-hyphen): a bare U+00AD before the row
+                // break is not painted.
+                tail.appendData(`${separator}${token.slice(0, -1)}`);
+                const hyphen = document.createElement('span');
+                hyphen.className = 'enpv-edit-soft-hyphen';
+                hyphen.textContent = '­';
+                tail.parentNode.insertBefore(hyphen, tail.nextSibling);
+            } else {
+                tail.appendData(`${separator}${token}`);
+            }
+            if (caretInInsert !== null) placeCaret(tail, at + caretInInsert);
+            pushed.pop();
+        }
+        promotedSourcePushedRowWords.delete(lines[i]);
+    }
+}
+
+// Growing a paragraph by a row when its LAST row overflows. Off until the
+// cascade survives deleting through pushed words (a trial run duplicated
+// text on Backspace); an overflowing last row takes the natural-flow path.
+const PROMOTED_SOURCE_APPEND_ROWS = false;
+
+// A row appended under the last one when the last row outgrows the box
+// (NK_59): same indent, face and pitch as the row above it, no captured PDF
+// geometry of its own. Removed again once it is empty.
+function appendPromotedSourceScaffoldRow(tc, lastLine) {
+    const lineBreak = Array.from(tc.querySelectorAll('[data-source-span-line-break="1"]')).pop();
+    const newBreak = lineBreak ? lineBreak.cloneNode(true) : Object.assign(document.createElement('span'), {
+        className: 'enpv-edit-line-break',
+        textContent: '\n',
+    });
+    newBreak.setAttribute('data-source-span-line-break', '1');
+    newBreak.setAttribute('data-source-added-row', '1');
+    const newLine = lastLine.cloneNode(false);
+    newLine.removeAttribute('data-source-target-width');
+    ['sourceGlyphLeft', 'sourceGlyphRight', 'sourceGlyphTop', 'sourceGlyphBottom'].forEach((key) => delete newLine.dataset[key]);
+    newLine.setAttribute('data-source-added-row', '1');
+    newLine.style.removeProperty('word-spacing');
+    const leadingGap = lastLine.firstElementChild?.matches?.('[data-source-span-gap="1"]') ? lastLine.firstElementChild : null;
+    if (leadingGap) newLine.appendChild(leadingGap.cloneNode(true));
+    const runs = lastLine.querySelectorAll('[data-source-span-run="1"]');
+    const templateRun = runs[runs.length - 1];
+    const run = templateRun ? templateRun.cloneNode(false) : document.createElement('span');
+    if (!templateRun) run.setAttribute('data-source-span-run', '1');
+    run.appendChild(document.createTextNode(''));
+    newLine.appendChild(run);
+    lastLine.after(newBreak, newLine);
+    return newLine;
+}
+
+// Drop appended rows that no word needs any more (the edit was undone).
+function removeEmptyAddedPromotedSourceRows(tc) {
+    Array.from(tc.querySelectorAll('[data-source-span-line="1"][data-source-added-row="1"]')).reverse().forEach((line) => {
+        if (/\S/u.test(promotedSourceScaffoldRowRunTextNodes(line).map((node) => node.nodeValue).join(''))) return;
+        const previous = line.previousSibling;
+        if (previous?.nodeType === Node.ELEMENT_NODE && previous.matches('[data-source-span-line-break="1"]')) previous.remove();
+        line.remove();
+    });
+}
+
+// Grow (or restore) the open box by the rows appended under its last row.
+function syncAddedPromotedSourceRowsHeight(box, tc) {
+    const added = tc.querySelectorAll('[data-source-span-line="1"][data-source-added-row="1"]').length;
+    if (!box.dataset.sourceRowsBaseHeight) {
+        if (!added) return;
+        box.dataset.sourceRowsBaseHeight = String(box.getBoundingClientRect().height);
+    }
+    const base = Number(box.dataset.sourceRowsBaseHeight) || 0;
+    const lines = tc.querySelectorAll('[data-source-span-line="1"]');
+    const pitch = lines.length >= 2
+        ? lines[1].getBoundingClientRect().top - lines[0].getBoundingClientRect().top
+        : lines[0]?.getBoundingClientRect().height || 0;
+    if (added > 0 && pitch > 0) {
+        box.style.height = `${(base + added * pitch).toFixed(2)}px`;
+    } else {
+        box.style.height = `${base.toFixed(2)}px`;
+        delete box.dataset.sourceRowsBaseHeight;
+    }
+}
+
+function fitPromotedSourceScaffoldRowsToBox(box) {
+    const tc = selectedBoxTextElement(box);
+    let lines = resetPromotedSourceScaffoldRowFit(box);
+    if (!tc || !lines.length) return false;
+    pullBackPushedRowWords(lines);
+    removeEmptyAddedPromotedSourceRows(tc);
+    lines = Array.from(tc.querySelectorAll('[data-source-span-line="1"]'));
+    const limit = tc.getBoundingClientRect().right + 1;
+    let fits = true;
+    for (let i = 0; i < lines.length; i += 1) {
+        if (tightenPromotedSourceScaffoldRow(lines[i], limit)) continue;
+        // NK_59: a row pushed past the box hands its last words to the next
+        // row (and so on down) instead of re-flowing the whole paragraph.
+        // The last row gets a new row under it, like a paragraph growing.
+        let next = lines[i + 1];
+        if (!next && PROMOTED_SOURCE_APPEND_ROWS && lines.length < 60) {
+            next = appendPromotedSourceScaffoldRow(tc, lines[i]);
+            lines.push(next);
+        }
+        let rowFits = false;
+        if (next && promotedSourceScaffoldRowRunTextNodes(next).length) {
+            for (let guard = 0; guard < 40 && !rowFits; guard += 1) {
+                if (!pushLastWordToNextRow(lines[i], next)) break;
+                rowFits = tightenPromotedSourceScaffoldRow(lines[i], limit);
+            }
+        }
+        if (!rowFits) { fits = false; break; }
+    }
+    if (!fits) {
+        pullBackPushedRowWords(lines);
+        removeEmptyAddedPromotedSourceRows(tc);
+        Array.from(tc.querySelectorAll('[data-source-span-line="1"]')).forEach((line) => line.style.removeProperty('word-spacing'));
+    }
+    syncAddedPromotedSourceRowsHeight(box, tc);
+    return fits;
 }
 
 function clearSourceFidelitySpanEditMarkup(box) {
@@ -10132,9 +10709,20 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
             // falls back to the gap's start and the next character lands on
             // the previous word ("based inL") (NK_38).
             const caretMarker = gap.querySelector('[data-enpv-caret-marker="1"]');
+            // Rows that survive the release keep their hanging indent and the
+            // gap after a list marker at the captured width. A count of
+            // natural spaces put the indented rows of Isartor promoted_2_14
+            // 19px right of the PDF and pulled "Atomic:" 20px left.
+            const capturedGapWidth = String(gap.style.getPropertyValue('--enpv-source-gap-width') || '').trim();
+            const keepsCapturedGapWidth = keepsCapturedRows
+                && !userMutatedGap
+                && !caretMarker
+                && Boolean(capturedGapWidth)
+                && (atLineStart || sourceRunIsLeadingListMarker(prev));
             if (!userMutatedGap
                 && !atLineStart
                 && !caretMarker
+                && !keepsCapturedGapWidth
                 && options.attachCanonicalGapsToFollowingRun === true
                 && next?.nodeType === Node.ELEMENT_NODE
                 && next.getAttribute?.('data-source-span-run') === '1') {
@@ -10163,6 +10751,12 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
             gap.removeAttribute('data-source-span-gap-spaces');
             gap.classList.remove('enpv-edit-gap');
             gap.style.removeProperty('--enpv-source-gap-width');
+            if (keepsCapturedGapWidth) {
+                gap.style.display = 'inline-block';
+                gap.style.width = capturedGapWidth;
+                gap.style.whiteSpace = 'pre';
+                gap.setAttribute('data-source-fixed-gap', String(gap.textContent || ''));
+            }
             removeEmptyStyleAttribute(gap);
         });
         tc.querySelectorAll('[data-source-span-line-break="1"]').forEach((separator) => {
@@ -10174,6 +10768,13 @@ function normalizeSourceSpanMarkupForNaturalFlow(box, options = {}) {
                     ? capturedSourceLineSeparatorText(separator)
                     : (separator.textContent || ''),
             ));
+        });
+        tc.querySelectorAll('.enpv-edit-soft-hyphen').forEach((hyphen) => {
+            hyphen.classList.remove('enpv-edit-soft-hyphen');
+            // A kept row still ends where the PDF breaks it, so it keeps the
+            // PDF's visible hyphen; a rejoined paragraph must not.
+            if (keepsCapturedRows) hyphen.classList.add('enpv-kept-soft-hyphen');
+            if (!hyphen.getAttribute('class')) hyphen.removeAttribute('class');
         });
         tc.querySelectorAll('[data-source-span-run="1"]').forEach((run) => {
             run.removeAttribute('data-source-span-run');
@@ -10434,6 +11035,96 @@ function clearPromotedSourceBlockEditLayout(box) {
     clearPromotedSourceBlockEditHorizontalFit(box);
 }
 
+// Vertical shift that puts a captured source row's dominant editable run on
+// the baseline of the PDF.js text-layer span it was captured from. Both
+// baselines are measured off their own resolved fonts (see
+// textBoxBaselineOffsetPx), so identical fonts reduce to the rect-top
+// alignment while a fallback-font text layer no longer drags the row down.
+// Returns null when no source span can be found (callers keep the top fit).
+function promotedSourceLineBaselineShiftPx(layerEl, runRects, sourceRect) {
+    if (!layerEl || !Array.isArray(runRects) || !runRects.length || !sourceRect) return null;
+    const fontSizeOf = (element) => Number.parseFloat(window.getComputedStyle(element).fontSize || '') || 0;
+    let main = null;
+    for (const entry of runRects) {
+        if (!String(entry.run.textContent || '').replace(/\u00ad/g, '').trim()) continue;
+        const size = fontSizeOf(entry.run);
+        const width = entry.rect.right - entry.rect.left;
+        if (!main || size > main.size + 0.25 || (Math.abs(size - main.size) <= 0.25 && width > main.width)) {
+            main = { ...entry, size, width };
+        }
+    }
+    if (!main) return null;
+    let source = null;
+    layerEl.querySelectorAll('span').forEach((span) => {
+        if (span.children.length || !String(span.textContent || '').trim()) return;
+        const rect = trimmedTextRangeClientRect(span);
+        if (!rect) return;
+        const overlapX = Math.min(rect.right, sourceRect.right) - Math.max(rect.left, sourceRect.left);
+        const overlapY = Math.min(rect.bottom, sourceRect.bottom) - Math.max(rect.top, sourceRect.top);
+        if (!(overlapX > 0) || !(overlapY >= rect.height * 0.5)) return;
+        const size = fontSizeOf(span);
+        const width = rect.right - rect.left;
+        if (!source || size > source.size + 0.25 || (Math.abs(size - source.size) <= 0.25 && width > source.width)) {
+            source = { span, rect, size, width };
+        }
+    });
+    if (!source) return null;
+    const sourceOffset = textBoxBaselineOffsetPx(source.span, source.span.textContent);
+    const editorOffset = textBoxBaselineOffsetPx(main.run, main.run.textContent);
+    if (!Number.isFinite(sourceOffset) || !Number.isFinite(editorOffset)) return null;
+    const sourceBaseline = source.rect.top + sourceOffset;
+    const editorBaseline = main.rect.top + editorOffset;
+    // Superscripts/subscripts ("Isartor¹"): the scaffold offsets a smaller
+    // run by the difference of text-layer span TOPS, which for a smaller
+    // size in a fallback family is not the baseline difference (the "1"
+    // sat 3.2pt too low). Re-seat each such run on its own span's baseline,
+    // relative to the row's dominant run.
+    for (const entry of runRects) {
+        if (entry.run === main.run) continue;
+        const text = String(entry.run.textContent || '').trim();
+        const size = fontSizeOf(entry.run);
+        if (!text || !(Math.abs(size - main.size) > 0.25)) continue;
+        const matches = [];
+        layerEl.querySelectorAll('span').forEach((span) => {
+            if (span.children.length || String(span.textContent || '').trim() !== text) return;
+            const rect = trimmedTextRangeClientRect(span);
+            if (!rect) return;
+            const overlapX = Math.min(rect.right, sourceRect.right) - Math.max(rect.left, sourceRect.left);
+            const overlapY = Math.min(rect.bottom, sourceRect.bottom) - Math.max(rect.top, sourceRect.top);
+            if (overlapX > 0 && overlapY > 0) matches.push({ span, rect });
+        });
+        if (matches.length !== 1) continue;
+        const spanOffset = textBoxBaselineOffsetPx(matches[0].span, text);
+        const runOffset = textBoxBaselineOffsetPx(entry.run, text);
+        if (!Number.isFinite(spanOffset) || !Number.isFinite(runOffset)) continue;
+        const wanted = (matches[0].rect.top + spanOffset) - sourceBaseline;
+        const current = (entry.rect.top + runOffset) - editorBaseline;
+        const correction = wanted - current;
+        if (!(Math.abs(correction) > 0.35)) continue;
+        const currentTop = Number.parseFloat(entry.run.style.top || '') || 0;
+        entry.run.style.position = 'relative';
+        entry.run.style.top = `${(currentTop + correction).toFixed(2)}px`;
+    }
+    return sourceBaseline - editorBaseline;
+}
+
+// NK_8131: how much wider (positive) the run's captured source text renders
+// than its edited text, measured with the run's own computed face.
+let sourceRunMeasureContext = null;
+function sourceRunTextWidthDeltaPx(run, sourceText, currentText) {
+    try {
+        sourceRunMeasureContext = sourceRunMeasureContext
+            || document.createElement('canvas').getContext('2d');
+        if (!sourceRunMeasureContext) return 0;
+        const cs = window.getComputedStyle(run);
+        sourceRunMeasureContext.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+        return sourceRunMeasureContext.measureText(sourceText).width
+            - sourceRunMeasureContext.measureText(currentText).width;
+    } catch (_) {
+        return 0;
+    }
+}
+
 function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
     if (!box || !tc) return false;
     const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
@@ -10477,6 +11168,11 @@ function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
         }
     }
     let aligned = 0;
+    const alignedScales = [];
+    const editedLines = [];
+    tc.querySelectorAll('[data-source-span-line="1"]').forEach((line) => {
+        line.style.removeProperty('word-spacing');
+    });
 
     tc.querySelectorAll('[data-source-span-line="1"]').forEach((line) => {
         const glyphLeft = Number.parseFloat(line.dataset.sourceGlyphLeft || '');
@@ -10489,6 +11185,18 @@ function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
         line.style.removeProperty('transform');
         line.style.removeProperty('transform-origin');
         const rects = [];
+        const runRects = [];
+        // Left edge of the row's whole text. When words were prepended to a
+        // captured run (a word pushed down from the previous row, text typed
+        // at the row start) the unchanged source substring is only the scale
+        // probe: the row itself must still start at the PDF row's left.
+        let anchorLeft = Infinity;
+        // NK_8131: a row whose text was edited inside a run cannot be measured
+        // against its captured width (the new text is legitimately wider or
+        // narrower). Its scale comes from the width its source text renders
+        // at (below); its left and baseline are anchored like any other row.
+        let editedInsideRun = false;
+        let editedSourceWidthDelta = 0;
         line.querySelectorAll('[data-source-span-run="1"]').forEach((run) => {
             try {
                 const range = document.createRange();
@@ -10497,6 +11205,11 @@ function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
                     readElementRuntimeState(run, 'sourceAlignmentText')
                     ?? currentText,
                 );
+                if (sourceText && currentText !== sourceText
+                    && !currentText.startsWith(sourceText) && !currentText.endsWith(sourceText)) {
+                    editedInsideRun = true;
+                    editedSourceWidthDelta += sourceRunTextWidthDeltaPx(run, sourceText, currentText);
+                }
                 // When the user appends/prepends within a captured row, use
                 // the unchanged source substring as the scale probe and apply
                 // that correction to the whole run. Measuring the complete
@@ -10513,9 +11226,31 @@ function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
                 } else {
                     range.selectNodeContents(run);
                 }
-                const rect = range.getBoundingClientRect();
+                let rect = range.getBoundingClientRect();
                 range.detach?.();
-                if (rect.width > 0 && rect.height > 0) rects.push(rect);
+                try {
+                    const whole = document.createRange();
+                    whole.selectNodeContents(run);
+                    const wholeRect = whole.getBoundingClientRect();
+                    if (wholeRect.width > 0 && wholeRect.height > 0) anchorLeft = Math.min(anchorLeft, wholeRect.left);
+                } catch (_) { /* keep the probe's left */ }
+                // The drawn row-end hyphen is a ::before box, not text.
+                const drawnHyphen = run.querySelector('.enpv-edit-soft-hyphen');
+                const hyphenRect = drawnHyphen?.getBoundingClientRect?.();
+                if (hyphenRect && hyphenRect.width > 0 && hyphenRect.right > rect.right) {
+                    rect = {
+                        left: rect.width > 0 ? rect.left : hyphenRect.left,
+                        right: hyphenRect.right,
+                        top: rect.height > 0 ? rect.top : hyphenRect.top,
+                        bottom: rect.height > 0 ? rect.bottom : hyphenRect.bottom,
+                        width: hyphenRect.right - (rect.width > 0 ? rect.left : hyphenRect.left),
+                        height: rect.height > 0 ? rect.height : hyphenRect.height,
+                    };
+                }
+                if (rect.width > 0 && rect.height > 0) {
+                    rects.push(rect);
+                    runRects.push({ run, rect });
+                }
             } catch (_) { /* skip an unmeasurable run */ }
         });
         if (!rects.length) return;
@@ -10534,6 +11269,34 @@ function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
         const currentWidth = current.right - current.left;
         const targetWidth = target.right - target.left;
         if (!(currentWidth > 0) || !(targetWidth > 0)) return;
+        current.anchorLeft = Number.isFinite(anchorLeft) ? Math.min(anchorLeft, current.left) : current.left;
+        // Seat the row on the PDF baseline, not on the text-layer rect top:
+        // the text layer draws in a generic fallback family whose ascent is
+        // not the embedded font's, so equal rect tops put every Verdana row
+        // ~0.9pt below its canvas glyphs (Isartor, 190%: +2.4px).
+        const baselineDy = promotedSourceLineBaselineShiftPx(layerEl, runRects, {
+            left: target.left - visualSourceOffset.left,
+            right: target.right - visualSourceOffset.left,
+            top: target.top - visualSourceOffset.top,
+            bottom: target.bottom - visualSourceOffset.top,
+        });
+        const dy = Number.isFinite(baselineDy)
+            ? baselineDy + visualSourceOffset.top
+            : target.top - current.top;
+        // The PDF's own width of this row, in client px: how far the row may
+        // reach before it counts as overflowing (NK_59 row fit).
+        if (Number.isFinite(targetWidth) && targetWidth > 0) line.dataset.sourceTargetWidth = targetWidth.toFixed(3);
+        if (editedInsideRun) {
+            editedLines.push({
+                line,
+                current,
+                dy,
+                target,
+                sourceWidth: currentWidth + editedSourceWidthDelta,
+                targetWidth,
+            });
+            return;
+        }
         const scaleX = targetWidth / currentWidth;
         // Refuse obviously stale/corrupt capture data, while retaining the
         // legitimate width corrections PDF.js applies when its DOM font
@@ -10551,12 +11314,34 @@ function alignPromotedSourceEditGlyphsToCapturedRanges(box, tc) {
         if (!(scaleX >= minScaleX && scaleX <= maxScaleX)) return;
         const lineRect = line.getBoundingClientRect();
         const originLeft = lineRect.left;
-        const dx = target.left - (originLeft + (scaleX * (current.left - originLeft)));
-        const dy = target.top - current.top;
+        const dx = target.left - (originLeft + (scaleX * (current.anchorLeft - originLeft)));
         line.style.transformOrigin = '0 0';
         line.style.transform = `translate(${dx.toFixed(3)}px, ${dy.toFixed(3)}px) scaleX(${scaleX.toFixed(6)})`;
+        alignedScales.push(scaleX);
         aligned += 1;
     });
+    if (editedLines.length) {
+        const sorted = alignedScales.slice().sort((a, b) => a - b);
+        const capturedScaleX = Number.parseFloat(box.dataset.sourceTransformScaleX || '');
+        const blockScaleX = sorted.length
+            ? sorted[Math.floor(sorted.length / 2)]
+            : (Number.isFinite(capturedScaleX) && capturedScaleX > 0 ? capturedScaleX : 1);
+        editedLines.forEach(({ line, current, dy, target, sourceWidth, targetWidth }) => {
+            // The row's own correction: its captured width over the width its
+            // SOURCE text renders at, so the unedited words land where the
+            // live edit left them. Fall back to the block's typical scale.
+            const ownScaleX = sourceWidth > 0 ? targetWidth / sourceWidth : 0;
+            const scaleX = ownScaleX > 0 && Math.abs(ownScaleX - blockScaleX) <= blockScaleX * 0.1
+                ? ownScaleX
+                : blockScaleX;
+            const originLeft = line.getBoundingClientRect().left;
+            const dx = target.left - (originLeft + (scaleX * ((current.anchorLeft ?? current.left) - originLeft)));
+            line.style.transformOrigin = '0 0';
+            line.style.transform = `translate(${dx.toFixed(3)}px, ${dy.toFixed(3)}px) scaleX(${scaleX.toFixed(6)})`;
+            aligned += 1;
+        });
+        fitPromotedSourceScaffoldRowsToBox(box);
+    }
     if (aligned > 0) {
         box.dataset.sourceSpanGlyphAligned = '1';
         return true;
@@ -11386,10 +12171,81 @@ function prepareBoxForLiveResize(box) {
     fitRichTextBoxToContent(box);
 }
 
+// Enter inserts "\n" plus a zero-width space that keeps an empty new row
+// visible. One Backspace after the break (or one Delete before it) must remove
+// the whole break, not just the invisible anchor, or the user presses a key and
+// nothing happens while the paragraph stays split (usage U1).
+function deleteAuthoredHardLineBreak(target, backward) {
+    const selection = window.getSelection();
+    if (!target || !selection?.rangeCount || !selection.isCollapsed) return false;
+    const caret = selection.getRangeAt(0);
+    if (!target.contains(caret.startContainer)) return false;
+    const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) nodes.push(node);
+    // Resolve the caret to (node index, offset) in text-node coordinates.
+    let index = -1;
+    let offset = 0;
+    if (caret.startContainer.nodeType === Node.TEXT_NODE) {
+        index = nodes.indexOf(caret.startContainer);
+        offset = caret.startOffset;
+    } else {
+        const probe = document.createRange();
+        for (let i = 0; i < nodes.length; i += 1) {
+            probe.selectNode(nodes[i]);
+            if (probe.compareBoundaryPoints(Range.START_TO_START, caret) >= 0) {
+                index = i;
+                offset = 0;
+                break;
+            }
+        }
+        if (index < 0 && nodes.length) {
+            index = nodes.length - 1;
+            offset = nodes[index].nodeValue.length;
+        }
+    }
+    if (index < 0) return false;
+    // Collect up to two characters on the requested side of the caret.
+    const picked = [];
+    let i = index;
+    let o = offset;
+    while (picked.length < 2 && i >= 0 && i < nodes.length) {
+        const value = nodes[i].nodeValue;
+        if (backward) {
+            if (o > 0) { o -= 1; picked.unshift({ node: nodes[i], offset: o, ch: value[o] }); continue; }
+            i -= 1;
+            o = i >= 0 ? nodes[i].nodeValue.length : 0;
+        } else {
+            if (o < value.length) { picked.push({ node: nodes[i], offset: o, ch: value[o] }); o += 1; continue; }
+            i += 1;
+            o = 0;
+        }
+    }
+    const pair = picked.map((entry) => entry.ch).join('');
+    // "\n" + anchor is the break itself; Delete with the caret between the
+    // break and its anchor ("\n|" + anchor + "\n") removes the same break.
+    if (picked.length < 2 || (pair !== '\n\u200b' && !(!backward && pair === '\u200b\n'))) return false;
+    const range = document.createRange();
+    range.setStart(picked[0].node, picked[0].offset);
+    range.setEnd(picked[1].node, picked[1].offset + 1);
+    range.deleteContents();
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    return true;
+}
+
 function onTextContentBeforeInput(ev) {
     const box = ev.currentTarget?.closest?.('.enpv-annotation-box');
     if (!box) return;
     const inputType = String(ev.inputType || '');
+    if ((inputType === 'deleteContentBackward' || inputType === 'deleteContentForward')
+        && deleteAuthoredHardLineBreak(ev.currentTarget, inputType === 'deleteContentBackward')) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        ev.currentTarget.dispatchEvent(new InputEvent('input', { bubbles: true, inputType }));
+        return;
+    }
     if (inputType === 'insertParagraph' || inputType === 'insertLineBreak') {
         if (editorModeForBox(box) === 'source') {
             promoteBoxToRichTextMode(box, 'newline');
@@ -12728,10 +13584,35 @@ function createShapeOverlayBox(annotation, pageIndex, viewport, scale, allowInte
     return { box, rect };
 }
 
+// A moved promoted block saves the extraction rect moved by the drag (see
+// promotedMovedPdfY). Its overlay is the pdf.js box around those rows, which
+// sits above the extraction rect by the same inset as at the source, so the
+// reloaded rows land where the drag left them (and where the download draws
+// them). The render-time annotation carries the DOM box as sourceBlock*, so
+// the extraction rect is read from the saved annotation.
+function promotedMovedOverlayDomPdfBox(annotation, currentPdfBox) {
+    if (!currentPdfBox || !isPromotedExtractionAnnotation(annotation)) return currentPdfBox;
+    if (!boolish(annotation.movedTextOverlay)) return currentPdfBox;
+    const stored = persistedAnnotationsById.get(String(annotation.id || '')) || annotation;
+    const base = annotationBaselinePdfBox(annotation);
+    const pageHeight = Number(annotation.sourcePageHeight ?? annotation.pdfjsSourcePageHeight);
+    const extractionTop = Number(stored.sourceBlockTop);
+    const extractionHeight = Number(stored.sourceBlockHeight);
+    if (!base || ![pageHeight, extractionTop, extractionHeight].every(Number.isFinite)) return currentPdfBox;
+    if (Math.abs(currentPdfBox.h - extractionHeight) > 0.5) return currentPdfBox;
+    const currentTop = pageHeight - currentPdfBox.y - currentPdfBox.h;
+    const baseTop = pageHeight - base.y - base.h;
+    const domTop = currentTop + (baseTop - extractionTop);
+    return { ...currentPdfBox, y: pageHeight - domTop - base.h, h: base.h };
+}
+
 function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editModeOn) {
     normalizePdfjsSourceBackedTextFlags(annotation);
     annotation = refreshPdfjsAnnotationFromCurrentSource(annotation, pageIndex, viewport, scale);
-    const currentPdfBox = annotationCurrentPdfBox(annotation) || annotation._originalPdfBox;
+    const currentPdfBox = promotedMovedOverlayDomPdfBox(
+        annotation,
+        annotationCurrentPdfBox(annotation) || annotation._originalPdfBox,
+    );
     if (!currentPdfBox) return null;
     const rect = pdfRectToCanvasRect(currentPdfBox, viewport, scale);
     if (!rect || rect.width <= 0 || rect.height <= 0) return null;
@@ -14438,7 +15319,9 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
             : rect.height;
         const symbolRun = item.inlineSymbol === true
             || isPdfInlineSymbolText(item.text || '')
-            || /symbol/i.test(String(item.pdfjsFontName || ''));
+            || /symbol/i.test(String(item.pdfjsFontName || ''))
+            // A lone list bullet's round ink overhangs its text-layer box.
+            || /^\s*[\u2022\u25CF\u25AA\u25E6\u2023\u2219\u00B7\u25A0\u25A1]\s*$/u.test(String(item.text || ''));
         // A legacy Symbol-font registered mark is painted wider than its DOM
         // Range bbox (the leftover right arc looks like a standalone `)`).
         // Expand only those source runs; ordinary neighbouring text retains
@@ -14449,10 +15332,13 @@ function applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv = null) {
         const padY = symbolRun
             ? Math.max(2.5, Math.min(5, runHeight * 0.22))
             : Math.max(0.75, Math.min(2.5, runHeight * 0.16));
+        // The padding may reach past the block's own source rect: a glyph at
+        // the block's edge (a list bullet) antialiases outside it, and the
+        // clamp left a sliver of it on the canvas after a move (NK_59).
         runRects.push(alignMaskRunRectToFilledSourceCell({
-            left: Math.max(rect.left, leftPx - runPadX),
+            left: Math.max(rect.left - runPadX, leftPx - runPadX),
             top: Number.isFinite(topPx) ? Math.max(rect.top, topPx - padY) : rect.top,
-            right: Math.min(rect.left + rect.width, rightPx + runPadX),
+            right: Math.min(rect.left + rect.width + runPadX, rightPx + runPadX),
             bottom: Number.isFinite(bottomPx) ? Math.min(rect.top + rect.height, bottomPx + padY) : rect.top + rect.height,
         }, rect, pageDiv));
     }
@@ -22036,7 +22922,13 @@ function normalizePromotedSourceOwnershipText(value) {
     // is a rendering artifact, not a separate source row. Collapse adjacent
     // duplicate words for ownership matching only, then ignore whitespace as
     // before; the stored/editor text is never modified.
-    return normalizeVisualLineComparableText(value)
+    // A hyphenated row ends in a soft hyphen (U+00AD) in the extraction
+    // text, while PDF.js exposes the painted glyph as a hyphen-minus. Treat
+    // them as the same character, or every hyphenated row fails the text
+    // test, drops out of its promoted block and survives as a separate
+    // source handle nested inside it (Isartor promoted_3_8 lost its first
+    // row and opened as unscaffolded plain text).
+    return normalizeVisualLineComparableText(String(value ?? '').replace(/\u00ad/g, '-'))
         .replace(/\b([a-z0-9]+)(?:\s+\1\b)+/gi, '$1')
         .replace(/\s+/g, '');
 }
@@ -26370,6 +27262,8 @@ function onTextContentInput(ev) {
     const tc = ev.currentTarget;
     const box = tc.closest('.enpv-annotation-box');
     if (box) {
+        if (!ev.isComposing) evacuateTypedTextFromSourceGaps(tc);
+        releaseMutatedFixedSourceLayoutNodes(tc);
         if (box.dataset.preserveDistributedLeaderSpacing === '1') {
             const currentText = String(tc.textContent || '');
             const stillDistributedLeader = !/[\r\n]/.test(currentText)
@@ -26652,7 +27546,11 @@ function beginEditMode(box, options = {}) {
                 delete box.dataset.sourceSpanGlyphAligned;
                 delete box.dataset.promotedSourceBlockEditEntryLayout;
                 box.dataset.inlineStyleAuthored = '1';
-                rescaleRichTextInlineStylesForAnnotation(tc, existing, scale);
+                // NK_56: the runs are PDF points and were just rendered at
+                // this scale. Rescaling them again multiplied every size by
+                // renderScale / the legacy HTML capture scale (1.058 on a
+                // horizontally scaled Verdana run), and the commit saved the
+                // grown size, so each edit session enlarged the paragraph.
             }
         }
         const editingText = isSimplePromotedParagraph
@@ -26785,8 +27683,18 @@ function endEditMode(box) {
     if (!box) return;
     const tc = box.querySelector('.enpv-text-content');
     const isSimplePromotedParagraph = box.dataset.promotedParagraphFlow === '1';
-    const preservesExactSourceLayout = box.dataset.preserveExactSourceLayoutEdit === '1'
-        && box.dataset.sourceSpanEditActive === '1';
+    // Opened and closed without a change (or only with edits the row scaffold
+    // absorbed) is a strict visual no-op: keep the per-row scaffold as the
+    // display markup. Flattening it here dropped a moved paragraph into
+    // natural flow — gaps became spaces and full rows wrapped (NK_59,
+    // promoted_2_15 moved, clicked into and out of).
+    const preservesExactSourceLayout = box.dataset.sourceSpanEditActive === '1'
+        && (box.dataset.preserveExactSourceLayoutEdit === '1'
+            || (box.dataset.userForcedRichText !== '1'
+                && box.classList.contains('is-promoted-source-block')
+                && box.dataset.naturalTextFlow !== '1'
+                && !sourceScaffoldHasAuthoredInlineStyles(tc)
+                && promotedSourceBlockEditKeepsExactLayout(box)));
     if (tc) {
         if (box.dataset.promotedParagraphFlow === '1'
             && box.dataset.pendingEdit !== '1'
@@ -26798,7 +27706,9 @@ function endEditMode(box) {
             tc.textContent = editBaselineForTextElement(tc);
         }
         if (box.dataset.sourceSpanEditActive === '1'
-            && (box.dataset.editorMode === 'rich' || box.dataset.userForcedRichText === '1')) {
+            && (preservesExactSourceLayout
+                || box.dataset.editorMode === 'rich'
+                || box.dataset.userForcedRichText === '1')) {
             // Synthetic multi-line span markup is WYSIWYG scaffolding only.
             // Flatten gap spans (line indents dropped, intra-line gaps become
             // a single space) so the committed text stays canonical, then —
@@ -27118,8 +28028,81 @@ function onResizeHandlePointerDown(ev) {
     if (!box.classList.contains('is-selected')) {
         selectAnnBox(box);
     }
-    prepareBoxForLiveResize(box);
+    // While a text box is open for editing its side handles sit on top of
+    // the first / last glyph of the middle row, so a user clicking at the
+    // start or end of a line lands on a handle. Only turn the box into a
+    // user-sized box once the pointer really drags; a plain click places
+    // the caret where the user clicked instead.
+    const deferPrepare = box.classList.contains('is-editing')
+        && !isImageBacked && !isShape && !isField
+        && !!box.querySelector('.enpv-text-content');
+    if (!deferPrepare) prepareBoxForLiveResize(box);
     beginResize(box, handle.dataset.edge, ev);
+    if (deferPrepare && resizeState?.box === box) resizeState.pendingPrepare = true;
+}
+
+const RESIZE_HANDLE_CLICK_SLOP_PX = 3;
+
+function startDeferredLiveResize(state) {
+    const { box, layer } = state;
+    state.pendingPrepare = false;
+    prepareBoxForLiveResize(box);
+    state.startLeft = parseFloat(box.style.left) || 0;
+    state.startTop = parseFloat(box.style.top) || 0;
+    state.startWidth = parseFloat(box.style.width) || box.offsetWidth;
+    state.startHeight = parseFloat(box.style.height) || box.offsetHeight;
+    state.minHeight = minTextResizeHeightPx(box);
+    state.textCollisionLimits = collisionLimitsForTextBoxResize(box, layer, {
+        left: state.startLeft,
+        top: state.startTop,
+        width: state.startWidth,
+        height: state.startHeight,
+    });
+}
+
+function caretRangeAtClientPoint(clientX, clientY) {
+    if (typeof document.caretRangeFromPoint === 'function') {
+        return document.caretRangeFromPoint(clientX, clientY);
+    }
+    if (typeof document.caretPositionFromPoint === 'function') {
+        const position = document.caretPositionFromPoint(clientX, clientY);
+        if (!position?.offsetNode) return null;
+        const range = document.createRange();
+        range.setStart(position.offsetNode, position.offset);
+        range.collapse(true);
+        return range;
+    }
+    return null;
+}
+
+function placeCaretFromResizeHandleClick(box, clientX, clientY) {
+    const textContent = box?.querySelector?.('.enpv-text-content');
+    if (!textContent || !textContent.isContentEditable) return;
+    const handles = Array.from(box.querySelectorAll(':scope > .enpv-resize-handle'));
+    const previous = handles.map((handle) => handle.style.pointerEvents);
+    handles.forEach((handle) => { handle.style.pointerEvents = 'none'; });
+    let range = null;
+    try {
+        range = caretRangeAtClientPoint(clientX, clientY);
+        if (!range || !textContent.contains(range.startContainer)) {
+            // The handle overhangs the box edge: retry just inside the text.
+            const rect = textContent.getBoundingClientRect();
+            const x = Math.min(rect.right - 1, Math.max(rect.left + 1, clientX));
+            const y = Math.min(rect.bottom - 1, Math.max(rect.top + 1, clientY));
+            range = caretRangeAtClientPoint(x, y);
+        }
+    } catch (_) {
+        range = null;
+    } finally {
+        handles.forEach((handle, index) => { handle.style.pointerEvents = previous[index]; });
+    }
+    try { textContent.focus({ preventScroll: true }); } catch (_) { textContent.focus(); }
+    if (!range || !textContent.contains(range.startContainer)) return;
+    const selection = window.getSelection();
+    if (!selection) return;
+    range.collapse(true);
+    selection.removeAllRanges();
+    selection.addRange(range);
 }
 
 function beginResize(box, edge, ev) {
@@ -27167,6 +28150,11 @@ function beginResize(box, edge, ev) {
 
 function onResizePointerMove(ev) {
     if (!resizeState) return;
+    if (resizeState.pendingPrepare) {
+        const travelled = Math.hypot(ev.clientX - resizeState.startClientX, ev.clientY - resizeState.startClientY);
+        if (travelled < RESIZE_HANDLE_CLICK_SLOP_PX) return;
+        startDeferredLiveResize(resizeState);
+    }
     const { box, edge, startClientX, startClientY,
             startLeft, startTop, startWidth, startHeight } = resizeState;
     const dx = ev.clientX - startClientX;
@@ -27317,14 +28305,22 @@ function onResizePointerMove(ev) {
     resizeState.endHeight = h;
 }
 
-function onResizePointerUp() {
+function onResizePointerUp(ev) {
     if (!resizeState) return;
     document.body.classList.remove('enpv-resizing');
     const { box, edge, startLeft, startTop, startWidth, startHeight,
-            endLeft, endTop, endWidth, endHeight } = resizeState;
+            endLeft, endTop, endWidth, endHeight, pendingPrepare } = resizeState;
     window.removeEventListener('pointermove', onResizePointerMove);
     resizeState = null;
     positionAnnMenuOver(box);
+    if (pendingPrepare) {
+        // A click (no drag) on a side handle of the open text box: the user
+        // aimed at the first / last glyph under it.
+        if (ev?.type === 'pointerup' && Number.isFinite(ev.clientX) && Number.isFinite(ev.clientY)) {
+            placeCaretFromResizeHandleClick(box, ev.clientX, ev.clientY);
+        }
+        return;
+    }
     if (endLeft == null) return; // no movement
     if (Math.abs(endLeft - startLeft) < 0.5
         && Math.abs(endTop - startTop) < 0.5
@@ -28747,6 +29743,21 @@ afbFont?.addEventListener('change', () => {
 });
 afbSize?.addEventListener('input', () => {
     setFormatBarSizeLabel(sliderValueToFontPt(afbSize.value));
+});
+// Arrow keys on the size slider step one whole point. The slider maps to
+// rounded points on an exponential curve, so one native step (45 -> 46 is
+// 10.04 -> 10.37pt) rounded back to the current size and the format bar
+// re-synced the slider to it: the keyboard could never leave 10pt.
+afbSize?.addEventListener('keydown', (event) => {
+    const step = { ArrowRight: 1, ArrowUp: 1, ArrowLeft: -1, ArrowDown: -1 }[event.key];
+    if (!step || event.altKey || event.ctrlKey || event.metaKey) return;
+    event.preventDefault();
+    const minPt = sliderValueToFontPt(0);
+    const maxPt = sliderValueToFontPt(100);
+    const pt = Math.max(minPt, Math.min(maxPt, sliderValueToFontPt(afbSize.value) + step));
+    afbSize.value = String(fontPtToSliderValue(pt));
+    setFormatBarSizeLabel(pt);
+    applyFontSizeToSelectedBox(pt);
 });
 afbSize?.addEventListener('change', () => {
     const pt = sliderValueToFontPt(afbSize.value);
@@ -31248,6 +32259,12 @@ if (window.__enpvPdfjsInitialLoadStarted) {
                 syncRotatedPageSnapshot,
                 // Read-only view of the persisted annotations for the QA suites.
                 persistedAnnotation: (id) => cloneForHistory(persistedAnnotationsById.get(String(id)) || null),
+                // Words the open paragraph has pushed to its next rows (NK_59), per row.
+                pushedRowWords: (id) => {
+                    const tc = document.querySelector(`.enpv-annotation-box[data-annotation-id="${id}"] .enpv-text-content`);
+                    return tc ? Array.from(tc.querySelectorAll('[data-source-span-line="1"]'))
+                        .map((line) => (promotedSourcePushedRowWords.get(line) || []).map((entry) => entry.token)) : null;
+                },
             };
         } catch (err) {
             console.error(err);
