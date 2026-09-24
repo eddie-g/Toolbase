@@ -15469,6 +15469,13 @@ function attachSourceMaskForBox(box) {
         applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv);
         scheduleMovedOverlayRunMaskRefresh(mask, box, rect, pageDiv);
         applyMovedSourceVisibilityForBox(box);
+    } else if (box.classList.contains('is-promoted-source-block')) {
+        // A promoted block can span table rows (doc 8699 promoted_1_22): one
+        // block-sized patch in one sampled colour painted over the striped
+        // row fill and the faint row rules between them. Cover only the
+        // source runs, each in the colour sampled under it.
+        applyMovedOverlayRunMaskSegments(mask, box, rect, pageDiv);
+        scheduleMovedOverlayRunMaskRefresh(mask, box, rect, pageDiv);
     } else {
         scheduleRuleAwareMaskRefresh(mask, rect, pageDiv, { minRectWidth: 18 });
     }
