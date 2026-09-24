@@ -1,0 +1,32 @@
+{
+ "page": 3,
+ "touched": [
+  [
+   16.22,
+   175.98,
+   585.88,
+   248.87
+  ],
+  [
+   16.22,
+   175.98,
+   585.88,
+   248.87
+  ]
+ ],
+ "block_now": [
+  18.22,
+  177.98,
+  583.88,
+  246.87
+ ],
+ "block_orig": [
+  18.22,
+  177.98,
+  583.88,
+  246.87
+ ],
+ "editor_text": "5. If you check “Legal Alien Not Allowed to Work” or “Other,” you must provide a document from a U.S. Federal, State, or local government agency that explains why you need a Social Security number and that you meet all the requirements for the government benefit. NOTE: Most agencies do not require that you have a Social Security number. 123 Contact us to see if your reason qualifies for a Social Security number.",
+ "pos_tol": 0.5,
+ "row_tol": 0.5
+}

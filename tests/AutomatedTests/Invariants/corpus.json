@@ -1,0 +1,613 @@
+{
+ "generated_by": "pick_corpus.py",
+ "coverage": {
+  "justified": 4,
+  "list": 13,
+  "hanging_indent": 17,
+  "table": 17,
+  "multi_column": 4,
+  "form": 6,
+  "subset_fonts": 14,
+  "embedded_fonts": 17,
+  "soft_hyphen": 3,
+  "superscript": 3,
+  "rotated": 0,
+  "scanned": 0,
+  "mixed_fonts": 14,
+  "coloured_text": 17
+ },
+ "pdfs": [
+  {
+   "path": "/home/wolf/Netkit/tests/OverlayEditor/drylab.pdf",
+   "name": "drylab.pdf",
+   "source_doc_id": null,
+   "size": 1377202,
+   "pages": 3,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "justified",
+    "mixed_fonts",
+    "multi_column",
+    "soft_hyphen",
+    "subset_fonts"
+   ],
+   "stats": {
+    "text_chars": 5717,
+    "fonts": 5,
+    "justified_blocks": 1,
+    "list_rows": 0,
+    "hanging_blocks": 0,
+    "superscript_spans": 0,
+    "soft_hyphens": 3,
+    "grid_pages": 0,
+    "multi_col_pages": 2,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/isartor_source.pdf",
+   "name": "source.pdf",
+   "source_doc_id": null,
+   "size": 249730,
+   "pages": 20,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "hanging_indent",
+    "justified",
+    "list",
+    "mixed_fonts",
+    "soft_hyphen",
+    "subset_fonts",
+    "superscript",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 33852,
+    "fonts": 9,
+    "justified_blocks": 1,
+    "list_rows": 21,
+    "hanging_blocks": 260,
+    "superscript_spans": 2,
+    "soft_hyphens": 48,
+    "grid_pages": 20,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/ss-5.pdf",
+   "name": "ss-5.pdf",
+   "source_doc_id": null,
+   "size": 153041,
+   "pages": 5,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "form",
+    "hanging_indent",
+    "justified",
+    "list",
+    "mixed_fonts",
+    "multi_column",
+    "subset_fonts",
+    "superscript",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 15216,
+    "fonts": 5,
+    "justified_blocks": 3,
+    "list_rows": 19,
+    "hanging_blocks": 7,
+    "superscript_spans": 2,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 1,
+    "scanned_pages": 0
+   },
+   "quick": true
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/d8409_c4611_courier.pdf",
+   "name": "d8409_c4611_courier.pdf",
+   "source_doc_id": null,
+   "size": 88226,
+   "pages": 4,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "hanging_indent",
+    "list",
+    "mixed_fonts",
+    "subset_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 3257,
+    "fonts": 8,
+    "justified_blocks": 0,
+    "list_rows": 17,
+    "hanging_blocks": 26,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 2,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/11206_Clean_Modern_Guided.pdf",
+   "name": "Clean Modern Guided.pdf",
+   "source_doc_id": 4320,
+   "size": 11206,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "form",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 222,
+    "fonts": 1,
+    "justified_blocks": 0,
+    "list_rows": 0,
+    "hanging_blocks": 0,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/5878_Bold_Red_Guided.pdf",
+   "name": "Bold Red Guided.pdf",
+   "source_doc_id": 4354,
+   "size": 5878,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "hanging_indent"
+   ],
+   "stats": {
+    "text_chars": 295,
+    "fonts": 1,
+    "justified_blocks": 0,
+    "list_rows": 0,
+    "hanging_blocks": 7,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 0,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/108322_Lease_Extension.pdf",
+   "name": "Lease Extension.pdf",
+   "source_doc_id": 4248,
+   "size": 108322,
+   "pages": 1,
+   "classes": [
+    "embedded_fonts",
+    "form",
+    "hanging_indent",
+    "list"
+   ],
+   "stats": {
+    "text_chars": 1368,
+    "fonts": 2,
+    "justified_blocks": 0,
+    "list_rows": 4,
+    "hanging_blocks": 5,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 0,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/225108_NDA_Agreement.pdf",
+   "name": "NDA Agreement.pdf",
+   "source_doc_id": 4209,
+   "size": 225108,
+   "pages": 3,
+   "classes": [
+    "embedded_fonts",
+    "list",
+    "mixed_fonts"
+   ],
+   "stats": {
+    "text_chars": 7325,
+    "fonts": 3,
+    "justified_blocks": 0,
+    "list_rows": 14,
+    "hanging_blocks": 0,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 0,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/623493_ds156_e.pdf",
+   "name": "ds156_e.pdf",
+   "source_doc_id": 4196,
+   "size": 623493,
+   "pages": 4,
+   "classes": [
+    "form",
+    "hanging_indent",
+    "justified",
+    "list",
+    "mixed_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 12038,
+    "fonts": 6,
+    "justified_blocks": 5,
+    "list_rows": 41,
+    "hanging_blocks": 17,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 3,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/9506_Classic_Newsletter.pdf",
+   "name": "Classic Newsletter.pdf",
+   "source_doc_id": 4223,
+   "size": 9506,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "form",
+    "hanging_indent",
+    "list",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 555,
+    "fonts": 0,
+    "justified_blocks": 0,
+    "list_rows": 3,
+    "hanging_blocks": 1,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/136793_doc2994_page1.pdf",
+   "name": "doc2994_page1.pdf",
+   "source_doc_id": 3003,
+   "size": 136793,
+   "pages": 1,
+   "classes": [
+    "embedded_fonts",
+    "list",
+    "mixed_fonts",
+    "multi_column",
+    "subset_fonts",
+    "superscript",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 4530,
+    "fonts": 7,
+    "justified_blocks": 0,
+    "list_rows": 9,
+    "hanging_blocks": 0,
+    "superscript_spans": 1,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 1,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/53629_Modern_Digest.pdf",
+   "name": "Modern Digest.pdf",
+   "source_doc_id": 4233,
+   "size": 53629,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "form",
+    "list",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 546,
+    "fonts": 1,
+    "justified_blocks": 0,
+    "list_rows": 3,
+    "hanging_blocks": 0,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/14190_Security_Deposit_Return_-_6702_Honey_Harvest_Lane.pdf",
+   "name": "Security Deposit Return - 6702 Honey Harvest Lane.pdf",
+   "source_doc_id": 8699,
+   "size": 14190,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "hanging_indent",
+    "subset_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 964,
+    "fonts": 2,
+    "justified_blocks": 0,
+    "list_rows": 0,
+    "hanging_blocks": 2,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/103294_emma-vaccine.pdf",
+   "name": "emma-vaccine.pdf",
+   "source_doc_id": 5302,
+   "size": 103294,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "hanging_indent",
+    "mixed_fonts",
+    "multi_column",
+    "subset_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 880,
+    "fonts": 4,
+    "justified_blocks": 0,
+    "list_rows": 0,
+    "hanging_blocks": 3,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 1,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/161413_Table-Examples_split.pdf",
+   "name": "Table-Examples_split.pdf",
+   "source_doc_id": 6967,
+   "size": 161413,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "hanging_indent",
+    "mixed_fonts",
+    "subset_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 586,
+    "fonts": 6,
+    "justified_blocks": 0,
+    "list_rows": 0,
+    "hanging_blocks": 1,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/547694_Heirship_Affidavit_Filled_out.pdf",
+   "name": "Heirship_Affidavit_Filled_out.pdf",
+   "source_doc_id": 4377,
+   "size": 547694,
+   "pages": 7,
+   "classes": [
+    "embedded_fonts",
+    "hanging_indent",
+    "list",
+    "mixed_fonts",
+    "subset_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 14898,
+    "fonts": 5,
+    "justified_blocks": 0,
+    "list_rows": 8,
+    "hanging_blocks": 10,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 2,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/758873_c4611_sample_explain_split.pdf",
+   "name": "c4611_sample_explain_split.pdf",
+   "source_doc_id": 7150,
+   "size": 758873,
+   "pages": 2,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "hanging_indent",
+    "list",
+    "mixed_fonts",
+    "soft_hyphen",
+    "subset_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 1392,
+    "fonts": 12,
+    "justified_blocks": 0,
+    "list_rows": 10,
+    "hanging_blocks": 16,
+    "superscript_spans": 0,
+    "soft_hyphens": 1,
+    "grid_pages": 1,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/5880_Invoice_INV-2026-001.pdf",
+   "name": "Invoice INV-2026-001.pdf",
+   "source_doc_id": 4206,
+   "size": 5880,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "hanging_indent"
+   ],
+   "stats": {
+    "text_chars": 295,
+    "fonts": 1,
+    "justified_blocks": 0,
+    "list_rows": 0,
+    "hanging_blocks": 7,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 0,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/18225_invoice_704732717.pdf",
+   "name": "invoice_704732717.pdf",
+   "source_doc_id": 2862,
+   "size": 18225,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "hanging_indent",
+    "subset_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 525,
+    "fonts": 2,
+    "justified_blocks": 0,
+    "list_rows": 0,
+    "hanging_blocks": 6,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/149568_st_explore_425082_1788814232549.pdf",
+   "name": "st_explore_425082_1788814232549.pdf",
+   "source_doc_id": 7205,
+   "size": 149568,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "hanging_indent",
+    "list",
+    "mixed_fonts",
+    "subset_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 487,
+    "fonts": 3,
+    "justified_blocks": 0,
+    "list_rows": 2,
+    "hanging_blocks": 2,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/165015_FieldExperience_IntentForm_Spr23_2_.pdf",
+   "name": "FieldExperience_IntentForm_Spr23 (2).pdf",
+   "source_doc_id": 6878,
+   "size": 165015,
+   "pages": 1,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "hanging_indent",
+    "list",
+    "mixed_fonts",
+    "subset_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 1054,
+    "fonts": 7,
+    "justified_blocks": 0,
+    "list_rows": 2,
+    "hanging_blocks": 3,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  },
+  {
+   "path": "/home/wolf/Netkit/tests/AutomatedTests/Invariants/corpus/113465_ast_sci_data_tables_sample.pdf",
+   "name": "ast_sci_data_tables_sample.pdf",
+   "source_doc_id": 5021,
+   "size": 113465,
+   "pages": 2,
+   "classes": [
+    "coloured_text",
+    "embedded_fonts",
+    "hanging_indent",
+    "mixed_fonts",
+    "subset_fonts",
+    "table"
+   ],
+   "stats": {
+    "text_chars": 4448,
+    "fonts": 8,
+    "justified_blocks": 0,
+    "list_rows": 0,
+    "hanging_blocks": 3,
+    "superscript_spans": 0,
+    "soft_hyphens": 0,
+    "grid_pages": 1,
+    "multi_col_pages": 0,
+    "scanned_pages": 0
+   }
+  }
+ ]
+}

@@ -77,6 +77,9 @@ Thumbs.db
 !/tests/AutomatedTests/Password/
 /tests/AutomatedTests/Password/*
 !/tests/AutomatedTests/Password/run_password_tests.cjs
+!/tests/AutomatedTests/Invariants/
+/tests/AutomatedTests/Invariants/results/
+/tests/AutomatedTests/Invariants/corpus/
 !/tests/Feature/
 /tests/Feature/*
 !/tests/Feature/PdfPasswordProtectionTest.php
@@ -99,3 +102,4 @@ Thumbs.db
 /tmp/
 python/pdf-editor/__pycache__/
 public/page_*.pdf
+/tests/AutomatedTests/Invariants/**/__pycache__/
