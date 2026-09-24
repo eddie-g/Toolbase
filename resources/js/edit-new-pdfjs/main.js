@@ -4208,6 +4208,10 @@ const SOURCE_BINDING_FIELDS = [
     'pdfjsSourceOccurrence', 'pdfjsSourcePageHeight', 'sourceMaskX', 'sourceMaskY', 'sourceMaskW', 'sourceMaskH',
     'pdfjsSourceMaskX', 'pdfjsSourceMaskY', 'pdfjsSourceMaskW', 'pdfjsSourceMaskH',
     'promotedSourceKey', 'promotedFromExtraction', 'movedTextOverlay', 'sourceLineBBoxes', 'sourceTextLines',
+    // A copy of a promoted paragraph: its source block geometry snapped the
+    // copy back onto the original on the next load.
+    'sourceBlockLeft', 'sourceBlockTop', 'sourceBlockWidth', 'sourceBlockHeight', 'sourcePageHeight',
+    'sourceSpans', 'promotedSourcePage', 'promotedSourceBlockNum',
 ];
 
 function stripSourceBindingFromPastedAnnotation(annotation) {
@@ -5920,7 +5924,7 @@ function snapPdfRectToViewportEdges(pdfRect, viewport, scale) {
     };
 }
 
-function buildAnnotationFromBox(box, existingAnnotation = null) {
+function buildAnnotationFromBox(box, existingAnnotation = null, options = {}) {
     if (!box) return null;
     const layer = box.parentElement;
     const pageIndex = Number.parseInt(box.dataset.pageIndex || '-1', 10);
@@ -6466,6 +6470,9 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     copySourceSpanMetricsToAnnotation(annotation, box);
     if (isStandaloneUserTextBox) stripUserCreatedPdfjsSourceMetadata(annotation);
 
+    // An untouched source row is not worth persisting, but the clipboard still
+    // needs its full description.
+    if (options.keepUnchanged === true) return annotation;
     return shouldPersistPdfjsAnnotation(annotation) ? annotation : null;
 }
 
@@ -12347,6 +12354,25 @@ function insertHardLineBreakIntoContentEditable(target) {
 
 function insertPlainTextIntoContentEditable(target, text) {
     if (!target || !text) return false;
+    const lines = String(text).split('\n');
+    if (lines.length > 1) {
+        // A pasted line break is the same edit as pressing Enter. Handing the
+        // whole multi-line string to insertText instead split the PDF row
+        // scaffold into sibling row spans with no break between them: the
+        // editor showed separate rows, but the saved text (and the download)
+        // ran them together ("LINE1LINE2LINE3").
+        lines.forEach((line, index) => {
+            if (index > 0 && insertHardLineBreakIntoContentEditable(target)) {
+                target.dispatchEvent(new InputEvent('input', {
+                    bubbles: true,
+                    inputType: 'insertLineBreak',
+                    data: '\n',
+                }));
+            }
+            if (line) insertPlainTextIntoContentEditable(target, line);
+        });
+        return true;
+    }
     target.focus();
     if (document.queryCommandSupported?.('insertText') && document.execCommand('insertText', false, text)) {
         return true;
@@ -12388,7 +12414,11 @@ function onTextContentPaste(ev) {
     if (editorModeForBox(box) === 'source' && /\n/.test(text)) {
         promoteBoxToRichTextMode(box, 'plain-text-paste');
     }
-    if (isUserCreatedTextBox(box, persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null)) {
+    // Only an empty new text box takes the default size from a paste. A box
+    // that already has text keeps its own size: pasting a word into a pasted
+    // copy of 9pt PDF text used to re-size the whole box to 12pt.
+    if (isUserCreatedTextBox(box, persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null)
+        && !userCreatedBoxHasText(box)) {
         forcePastedUserTextToDefaultSize(box);
     }
     insertPlainTextIntoContentEditable(ev.currentTarget, text);
@@ -23997,7 +24027,12 @@ function renderAnnotationBoxLayer(pageIndex) {
         const allowInteraction = editModeOn || (addTextModeOn && isUserCreatedTextAnnotation(annotation));
         const rendered = createPersistedOverlayBox(annotation, pageIndex, viewport, scale, allowInteraction);
         if (!rendered) continue;
-        persistedOverlayRects.push(rendered.maskRect || rendered.rect);
+        // A free text box (a pasted copy, Add Text) masks nothing: the PDF
+        // text under it is still drawn and still needs its own box. Claiming
+        // its rect removed the ORIGINAL's box the moment a copy was pasted
+        // 12px over it (row or paragraph), leaving it unselectable.
+        const freeTextOverlay = !rendered.mask && isUserCreatedTextAnnotation(annotation);
+        if (!freeTextOverlay) persistedOverlayRects.push(rendered.maskRect || rendered.rect);
         if (cleanPromotedSourceText(annotation)) {
             hideCleanPromotedFallbackTextLayerSpan(annotation, pageIndex, viewport, scale);
             window.requestAnimationFrame(() => hideCleanPromotedFallbackTextLayerSpan(annotation, pageIndex, viewport, scale));
@@ -27114,6 +27149,14 @@ function removeUserCreatedTextBox(box, options = {}) {
 
 let annotationClipboardSnapshot = null;
 
+// A native copy/cut (words selected in a box being edited, page text, a
+// panel field) replaces what the user has on the clipboard; a later Ctrl+V on
+// the page must not paste an older annotation copy instead. The annotation
+// copy cancels its keydown, so it never reaches these listeners.
+['copy', 'cut'].forEach((type) => document.addEventListener(type, () => {
+    annotationClipboardSnapshot = null;
+}, { capture: true }));
+
 function activeElementAcceptsNativeClipboard() {
     return elementAcceptsNativeClipboard(document.activeElement);
 }
@@ -27123,15 +27166,41 @@ function windowHasSelectedText() {
     return Boolean(selection && !selection.isCollapsed && String(selection.toString() || '').length > 0);
 }
 
+/*
+ * An untouched PDF row is drawn by the canvas; its box carries the generic
+ * text-layer family ("sans-serif") and names the real face only in
+ * dataset.sourceFontFamily. A copy has no canvas glyphs under it, so it must
+ * name that face itself, the way carrySourceFaceIntoPromotedBox does for a
+ * restyled row, or it is drawn (and downloaded) in the browser's sans.
+ */
+function carrySourceFaceIntoClipboardAnnotation(annotation, box) {
+    if (!annotation || !box || annotation.fontSourceName || boolish(annotation.forceEmbeddedFont)) return;
+    const current = parseCssFontFamily(annotation.fontFamily || '').toLowerCase();
+    if (!GENERIC_CSS_FONT_FAMILIES.has(current)) return;
+    const sourceName = box.dataset.sourceFontFamily || sourceSpanRunsForBox(box)[0]?.pdfjsFontName || '';
+    if (GENERIC_CSS_FONT_FAMILIES.has(String(sourceName).trim().toLowerCase())) return;
+    const embedded = embeddedFontOptionForValue(sourceName);
+    if (!embedded) return;
+    annotation.fontFamily = embedded.pickerValue || embedded.cleanName;
+    annotation.fontSourceName = embedded.cleanName;
+    annotation.forceEmbeddedFont = true;
+    annotation.pdfjsForceEmbeddedFont = true;
+}
+
 function snapshotAnnotationBoxForClipboard(box) {
     if (!box || isAnnBoxLocked(box)) return null;
     const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
-    const annotation = buildAnnotationFromBox(box, existing) || existing;
+    // keepUnchanged: an untouched PDF row has no persisted annotation, and
+    // buildAnnotationFromBox drops one that still matches its source. The copy
+    // then failed silently and Ctrl+V pasted the PREVIOUS copy (doc 8699).
+    const annotation = buildAnnotationFromBox(box, existing, { keepUnchanged: true }) || existing;
     if (!annotation) return null;
     const annotationType = String(box.dataset.annotationType || annotation.type || 'text').toLowerCase();
     if (annotationType !== 'text' && annotationType !== 'shape' && annotationType !== 'signature') return null;
+    const copied = cloneForHistory(annotation);
+    if (annotationType === 'text') carrySourceFaceIntoClipboardAnnotation(copied, box);
     return {
-        annotation: cloneForHistory(annotation),
+        annotation: copied,
         annotationType,
     };
 }
@@ -27139,15 +27208,54 @@ function snapshotAnnotationBoxForClipboard(box) {
 function copySelectedAnnotationToClipboard() {
     const box = findSelectedBox();
     const snapshot = snapshotAnnotationBoxForClipboard(box);
-    if (!snapshot) return false;
+    if (!snapshot) {
+        // Never leave an older copy behind for Ctrl+V to paste in place of
+        // the box the user just tried to copy.
+        if (box) {
+            annotationClipboardSnapshot = null;
+            setStatus(isAnnBoxLocked(box) ? 'Annotation is locked.' : 'This item cannot be copied.', true);
+        }
+        return false;
+    }
     annotationClipboardSnapshot = snapshot;
+    // Also put the words on the system clipboard, so pasting inside a text
+    // box or into another app gives this box's text, not an older one.
+    const plainText = snapshot.annotationType === 'text' ? String(snapshot.annotation.text || '') : '';
+    if (plainText.trim()) {
+        try {
+            navigator.clipboard?.writeText?.(plainText)?.catch?.(() => {});
+        } catch (_) { /* clipboard not available: the in-editor copy still works */ }
+    }
     setStatus('Annotation copied.');
     return true;
 }
 
+// Ctrl+C with only a caret in the box being edited copies nothing natively,
+// which left the previous annotation copy for the next Ctrl+V. It copies the
+// box being edited instead.
+function caretOnlyInSelectedEditingBox() {
+    if (windowHasSelectedText()) return false;
+    const editingBox = document.activeElement?.closest?.('.enpv-annotation-box.is-editing') || null;
+    return Boolean(editingBox && editingBox === findSelectedBox());
+}
+
+function pageIndexIsInView(pageIndex) {
+    const pageDiv = pdfViewer.getPageView(pageIndex)?.div;
+    const viewerRect = container?.getBoundingClientRect?.();
+    const pageRect = pageDiv?.getBoundingClientRect?.();
+    if (!viewerRect || !pageRect) return false;
+    return pageRect.bottom > viewerRect.top + 1 && pageRect.top < viewerRect.bottom - 1;
+}
+
 function annotationClipboardTargetPageIndex(snapshot) {
+    // Paste where the user is looking: the selected box's page while it is on
+    // screen, else the current page. The pasted copy stays selected, so after
+    // scrolling to another page Ctrl+V used to land back on the old page.
     const selected = findSelectedBox();
     const selectedPage = Number.parseInt(selected?.dataset?.pageIndex || '', 10);
+    if (Number.isFinite(selectedPage) && selectedPage >= 0 && pageIndexIsInView(selectedPage)) return selectedPage;
+    const currentPage = Number(pdfViewer?.currentPageNumber) - 1;
+    if (Number.isFinite(currentPage) && currentPage >= 0 && currentPage < (pdfViewer?.pagesCount || 0)) return currentPage;
     if (Number.isFinite(selectedPage) && selectedPage >= 0) return selectedPage;
     const snapshotPage = Number.parseInt(snapshot?.annotation?.pageIndex ?? '', 10);
     if (Number.isFinite(snapshotPage) && snapshotPage >= 0) return snapshotPage;
@@ -27165,14 +27273,29 @@ function pageSizePtsForIndex(pageIndex) {
 function pasteAnnotationClipboard() {
     const snapshot = annotationClipboardSnapshot;
     if (!snapshot?.annotation) return false;
+    const pasted = pasteAnnotationSnapshot(snapshot, annotationClipboardTargetPageIndex(snapshot));
+    if (!pasted) return false;
+    // The next Ctrl+V lands offset from this copy, not on top of it.
+    annotationClipboardSnapshot = {
+        annotation: cloneForHistory(pasted),
+        annotationType: snapshot.annotationType,
+    };
+    return true;
+}
+
+// Places a copy of `snapshot` 12px down-right of it on `pageIndex`, selects
+// it and returns the new annotation. Shared by Ctrl+V and the menu's
+// Duplicate, so both make the same free, restyle-able copy.
+function pasteAnnotationSnapshot(snapshot, pageIndex) {
+    if (!snapshot?.annotation) return null;
     const source = cloneForHistory(snapshot.annotation);
-    const pageIndex = annotationClipboardTargetPageIndex(snapshot);
     const pageSize = pageSizePtsForIndex(pageIndex);
-    if (!pageSize) return false;
+    if (!pageSize) return null;
 
     const width = Math.max(1, Number(source.pdfWidth) || Number(source.pdfjsSourceW) || 60);
     const height = Math.max(1, Number(source.pdfHeight) || Number(source.pdfjsSourceH) || 18);
-    const offsetPts = 12 / Math.max(pageSize.scale, 0.0001);
+    // A cut box comes back where it was; a copy lands offset from its source.
+    const offsetPts = snapshot.cut ? 0 : 12 / Math.max(pageSize.scale, 0.0001);
     const rawX = (Number(source.pdfX) || 0) + offsetPts;
     const rawY = (Number(source.pdfY) || 0) - offsetPts;
     const pdfX = Math.max(0, Math.min(rawX, Math.max(0, pageSize.width - width)));
@@ -27234,13 +27357,12 @@ function pasteAnnotationClipboard() {
     renderAnnotationBoxLayer(pageIndex);
     const copyBox = pdfViewer.getPageView(pageIndex)?.div
         ?.querySelector(`.enpv-annotation-box[data-annotation-id="${cssEscape(normalized.id)}"]`) || null;
-    if (copyBox) selectAnnBox(copyBox);
-    annotationClipboardSnapshot = {
-        annotation: cloneForHistory(normalized),
-        annotationType: snapshot.annotationType,
-    };
+    if (copyBox) {
+        selectAnnBox(copyBox);
+        copyBox.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    }
     markManualSaveNeeded();
-    return true;
+    return normalized;
 }
 
 function deleteAnnBox(box, options = {}) {
@@ -27353,6 +27475,15 @@ function copyAnnBox(box) {
         if (copyBox) selectAnnBox(copyBox);
         markManualSaveNeeded();
         return;
+    }
+    // Duplicate a text box the way Ctrl+C / Ctrl+V does. The DOM clone below
+    // kept the generic text-layer font of an untouched row, was not a free
+    // text box (so the original row or paragraph lost its box on the next
+    // load) and could not duplicate an untouched row at all on reload.
+    const textSnapshot = snapshotAnnotationBoxForClipboard(box);
+    if (textSnapshot?.annotationType === 'text') {
+        const boxPageIndex = Number.parseInt(box.dataset.pageIndex || '0', 10) || 0;
+        if (pasteAnnotationSnapshot(textSnapshot, boxPageIndex)) return;
     }
     pushHistorySnapshot('copy annotation');
     const copy = document.createElement('div');
@@ -29789,6 +29920,11 @@ window.addEventListener('keydown', (ev) => {
     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key === 'a') {
         const active = document.activeElement;
         const activeEditor = active?.closest?.('.enpv-text-content');
+        // A focused text field (hyperlink URL, layer name, ...) keeps its own
+        // select-all. While a box was being edited, Ctrl+A in the hyperlink
+        // field selected the whole paragraph instead, and the Ctrl+X or
+        // Delete that followed erased it.
+        if (!activeEditor && activeElementAcceptsNativeClipboard()) return;
         const activeEditorBox = activeEditor?.closest?.('.enpv-annotation-box') || null;
         const selectedBox = findSelectedBox();
         const targetBox = activeEditorBox
@@ -29814,8 +29950,28 @@ window.addEventListener('keydown', (ev) => {
         return;
     }
     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key === 'c') {
-        if (activeElementAcceptsNativeClipboard() || windowHasSelectedText()) return;
+        if ((activeElementAcceptsNativeClipboard() || windowHasSelectedText())
+            && !caretOnlyInSelectedEditingBox()) return;
         if (copySelectedAnnotationToClipboard()) ev.preventDefault();
+        return;
+    }
+    if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key === 'x') {
+        // Cut a selected (not editing) box: copy it, then delete it. Text
+        // being edited, text fields and page text selections keep the
+        // browser's own cut.
+        if (activeElementAcceptsNativeClipboard() || windowHasSelectedText()) return;
+        const box = findSelectedBox();
+        if (!box || box.classList.contains('is-editing') || dragState) return;
+        ev.preventDefault();
+        if (isAnnBoxLocked(box)) {
+            setStatus('Annotation is locked.', true);
+            return;
+        }
+        // Never delete what could not be copied.
+        if (!copySelectedAnnotationToClipboard()) return;
+        annotationClipboardSnapshot = { ...annotationClipboardSnapshot, cut: true };
+        deleteAnnBox(box);
+        setStatus('Annotation cut.');
         return;
     }
     if ((ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey && key === 'v') {
