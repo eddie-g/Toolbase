@@ -2706,6 +2706,29 @@ class ApplyAnnotationsDirectNewPdfjsTests(unittest.TestCase):
         self.assertEqual(child["sourceLineBBoxes"][0][0], child["pdfX"])
         self.assertEqual(child["text"], "you have a Social Security number. 123 Contact us to see if your reason qualifies for a")
 
+    def test_restyled_paragraph_with_a_coloured_word_is_drawn_from_its_runs(self):
+        # SS-5 p1 promoted_1_13: "yesd" coloured red plus an Enter-made empty
+        # row. The editor rewrote sourceTextLines to the edited rows, so the
+        # exact-row path took over and painted every row black.
+        rows = ["reason for the change. yesd", None, "citizenship or current"]
+        ann = {
+            "promotedFromExtraction": True, "promotedDirty": True, "styleDirty": True,
+            "promotedReflowEnabled": True,
+            "text": "reason for the change. yesd\n\ncitizenship or current",
+            "sourceTextLines": rows,
+            "sourceLineBBoxes": [[18, 480, 300, 492], [18, 493, 18, 505], [18, 506, 200, 518]],
+            "richTextRuns": [
+                {"type": "text", "text": "reason for the change. ", "color": "#000000"},
+                {"type": "text", "text": "yesd", "color": "#e72323"},
+                {"type": "break"}, {"type": "break"},
+                {"type": "text", "text": "citizenship or current", "color": "#000000"},
+            ],
+        }
+        self.assertTrue(self.module._rich_runs_have_mixed_styles(ann))
+        self.assertFalse(self.module.should_preserve_promoted_source_lines(ann, ann["text"]))
+        uniform = dict(ann, richTextRuns=[dict(run, color="#000000") if run.get("type") == "text" else run for run in ann["richTextRuns"]])
+        self.assertFalse(self.module._rich_runs_have_mixed_styles(uniform))
+
     def test_mid_row_soft_hyphen_is_dropped_from_an_edited_paragraph(self):
         ann = {
             "type": "text", "promotedFromExtraction": True, "promotedDirty": True,

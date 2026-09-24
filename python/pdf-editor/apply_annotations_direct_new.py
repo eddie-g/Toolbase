@@ -3734,6 +3734,32 @@ def _text_lines_follow_source_rows(text_lines: List[str], raw_source_lines: Any)
     return matched >= len(candidate_lines) - 1
 
 
+def _rich_runs_have_mixed_styles(ann: Dict[str, Any]) -> bool:
+    """True when the saved text runs differ in colour, weight, style, size,
+    family or decoration (the user styled part of the block)."""
+    runs = ann.get("richTextRuns")
+    if not isinstance(runs, list):
+        return False
+    keys = set()
+    for run in runs:
+        if not isinstance(run, dict) or str(run.get("type") or "text") != "text":
+            continue
+        if not str(run.get("text") or "").strip():
+            continue
+        keys.add((
+            str(run.get("color") or "").strip().lower(),
+            str(run.get("fontWeight") or "").strip().lower(),
+            str(run.get("fontStyle") or "").strip().lower(),
+            str(run.get("fontSize") or "").strip(),
+            str(run.get("fontFamily") or "").strip().lower(),
+            bool(run.get("underline")),
+            bool(run.get("strikeout")),
+        ))
+        if len(keys) > 1:
+            return True
+    return False
+
+
 def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> bool:
     if not bool(ann.get("promotedFromExtraction")):
         return False
@@ -3757,6 +3783,13 @@ def should_preserve_promoted_source_lines(ann: Dict[str, Any], text: str) -> boo
 
     if source_line_count <= 0:
         return True
+
+    # The exact-row path paints each row in the PDF span's own style, so a
+    # word the user coloured inside a restyled paragraph came out black and
+    # an Enter-made empty row vanished (SS-5 p1 promoted_1_13 "yesd"). Runs
+    # that carry more than one style are drawn from the runs instead.
+    if _boolish(ann.get("styleDirty")) and _rich_runs_have_mixed_styles(ann):
+        return False
 
     # A paragraph the editor has re-flowed into prose no longer carries the
     # PDF's rows in its text: its newlines are the user's own paragraph
