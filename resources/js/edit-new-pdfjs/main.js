@@ -19690,10 +19690,20 @@ function syncDirtyBoxesToPersistedAnnotations(options = {}) {
 // (words, positions, styles) so the download draws exactly that; see
 // editor-layout-snapshot.js. A box still being edited keeps its last snapshot.
 function withEditorLayoutSnapshot(box, annotation) {
-    if (!annotation || !box?.classList?.contains('is-promoted-source-block')) return annotation;
+    if (!annotation || !box) return annotation;
+    const isPromotedBlock = box.classList.contains('is-promoted-source-block');
+    // A pdf.js source row/cell/heading saved as an overlay (stage 2).
+    const isSourceTextOverlay = !isPromotedBlock
+        && String(annotation.type || 'text') === 'text'
+        && typeof annotation.pdfjsSourceText === 'string'
+        && annotation.pdfjsSourceText.trim() !== ''
+        && !boolish(annotation.userCreated)
+        && box.classList.contains('is-persisted-overlay');
+    if (!isPromotedBlock && !isSourceTextOverlay) return annotation;
     if (box.classList.contains('is-editing')) return annotation;
-    // Only a block the export re-draws needs it (edited, restyled or moved).
-    const changed = ['promotedDirty', 'styleDirty', 'movedTextOverlay', 'userForcedRichText']
+    // Only a block the export re-draws needs it (edited, restyled or moved);
+    // a saved source overlay is always re-drawn.
+    const changed = isSourceTextOverlay || ['promotedDirty', 'styleDirty', 'movedTextOverlay', 'userForcedRichText']
         .some((key) => boolish(annotation[key]));
     if (!changed) {
         if (!annotation.editorLayout) return annotation;

@@ -8731,7 +8731,14 @@ def _editor_layout_guard_matches(ann: Dict[str, Any], guard: Any) -> bool:
 def editor_layout_for_annotation(page: fitz.Page, ann: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     """The editor's snapshot of an edited promoted block when it can be drawn
     as-is (Asana 1218832511648724), else None and the block takes the old path."""
-    if str(ann.get("type") or "").lower() != "text" or not _boolish(ann.get("promotedFromExtraction")):
+    if str(ann.get("type") or "").lower() != "text":
+        return None
+    promoted = _boolish(ann.get("promotedFromExtraction"))
+    # Stage 2: a pdf.js source row / cell / heading saved as an overlay.
+    source_overlay = not promoted and is_pdfjs_visible_overlay_text(ann)
+    if not promoted and not source_overlay:
+        return None
+    if source_overlay and is_redundant_pdfjs_source_overlay(ann):
         return None
     if int(page.rotation or 0) % 360 or float(ann.get("rotation") or 0) % 360:
         return None
@@ -8743,7 +8750,7 @@ def editor_layout_for_annotation(page: fitz.Page, ann: Dict[str, Any]) -> Option
     layout = ann.get("editorLayout")
     if not isinstance(layout, dict) or layout.get("v") != EDITOR_LAYOUT_VERSION:
         return None
-    changed = any(_boolish(ann.get(key)) for key in ("promotedDirty", "styleDirty", "movedTextOverlay", "userForcedRichText"))
+    changed = source_overlay or any(_boolish(ann.get(key)) for key in ("promotedDirty", "styleDirty", "movedTextOverlay", "userForcedRichText"))
     if not changed:
         return None
     if not _boolish(ann.get("__editorLayoutValid")):

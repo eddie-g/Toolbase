@@ -95,10 +95,15 @@ export function captureEditorLayoutSnapshot(box, annotation, ctx) {
         const semanticWeight = element.closest?.('[data-source-semantic-font-weight]')?.dataset?.sourceSemanticFontWeight || '';
         const semanticStyle = element.closest?.('[data-source-semantic-font-style]')?.dataset?.sourceSemanticFontStyle || '';
         const cssWeight = Number.parseInt(computed.fontWeight, 10) || 400;
+        // A bold/italic face (Helvetica-Bold) draws bold/italic whatever the
+        // CSS weight/style says; the snapshot records what is on screen.
+        const boldFace = /bold|black|heavy|semibold|demi/i.test(firstFamily);
+        const italicFace = /italic|oblique/i.test(firstFamily);
         const weight = cssWeight >= 600 || inlineStyle(element, 'fontWeight')
-            ? cssWeight
-            : Math.max(cssWeight, Number.parseInt(semanticWeight, 10) || 0);
+            ? Math.max(cssWeight, boldFace ? 700 : 0)
+            : Math.max(cssWeight, Number.parseInt(semanticWeight, 10) || 0, boldFace ? 700 : 0);
         const italic = /italic|oblique/.test(computed.fontStyle)
+            || italicFace
             || (!inlineStyle(element, 'fontStyle') && /italic|oblique/.test(semanticStyle));
         const decoration = decorations(element);
         // pdf.js runtime faces (g_d0_f1) are not font names the exporter knows.

@@ -125,15 +125,18 @@ function styledWords({ sel }) {
         return '';
     };
     const semantic = (el, key) => el.closest?.(`[data-source-semantic-font-${key}]`)?.dataset?.[key === 'weight' ? 'sourceSemanticFontWeight' : 'sourceSemanticFontStyle'] || '';
+    // A bold/italic face (Helvetica-Bold) draws bold/italic whatever the CSS says.
     const visualBold = (el, st) => {
         if (Number.parseInt(st.fontWeight, 10) >= 600) return true;
+        if (/bold|black|heavy|semibold|demi/i.test(st.fontFamily.split(',')[0])) return true;
         if (explicit(el, 'fontWeight')) return false;
-        return Number.parseInt(semantic(el, 'weight'), 10) >= 600 || /bold|black|heavy|semibold|demi/i.test(st.fontFamily.split(',')[0]);
+        return Number.parseInt(semantic(el, 'weight'), 10) >= 600;
     };
     const visualItalic = (el, st) => {
         if (/italic|oblique/.test(st.fontStyle)) return true;
+        if (/italic|oblique/i.test(st.fontFamily.split(',')[0])) return true;
         if (explicit(el, 'fontStyle')) return false;
-        return /italic|oblique/.test(semantic(el, 'style')) || /italic|oblique/i.test(st.fontFamily.split(',')[0]);
+        return /italic|oblique/.test(semantic(el, 'style'));
     };
     const words = []; let cur = null;
     const flush = () => { if (cur) { words.push(cur); cur = null; } };
@@ -150,9 +153,13 @@ function styledWords({ sel }) {
             const r = document.createRange(); r.setStart(n, i); r.setEnd(n, i + 1);
             const rc = Array.from(r.getClientRects()).find((x) => x.width > 0 || x.height > 0);
             if (!rc) continue;
+            // A word the editor wraps (at a hyphen, no space) continues on
+            // the next row: that is a new word, as it is in the PDF.
+            const charBase = (rc.top + ascent(st) - pr.top) / scale;
+            if (cur && Math.abs(charBase - cur.base) > (Number.parseFloat(st.fontSize) / scale) * 0.5) flush();
             if (!cur) {
                 cur = {
-                    t: '', x: (rc.left - pr.left) / scale, base: (rc.top + ascent(st) - pr.top) / scale,
+                    t: '', x: (rc.left - pr.left) / scale, base: charBase,
                     size: Number.parseFloat(st.fontSize) / scale, color: hex(st.color),
                     bold: visualBold(parent, st), italic: visualItalic(parent, st),
                 };
