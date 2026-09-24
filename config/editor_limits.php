@@ -45,6 +45,7 @@ return [
     'routes' => [
         'documents.store' => 'upload',
         'documents.createBlank' => 'upload',
+        'documents.createFromGeneratedImage' => 'upload',
         'documents.createAi' => 'upload',
         'documents.createFromTemplate' => 'upload',
         'documents.createSimpleInvoice' => 'upload',

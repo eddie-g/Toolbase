@@ -13,10 +13,15 @@
     $btnSecondary = "inline-flex items-center justify-center gap-2 rounded-lg border border-zinc-200 bg-white px-4 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300 dark:hover:bg-zinc-800";
     $input = "w-full rounded-lg border border-zinc-200 bg-white px-3.5 py-2.5 text-sm text-zinc-900 placeholder-zinc-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-50 dark:placeholder-zinc-500";
 @endphp
-    <div x-data="logoGenerator()" x-effect="if (outputFormat === 'vector' && logoMode === 'icon_text') logoMode = 'icon_only'" class="space-y-6">
+    <div x-data="logoGenerator()" x-effect="if (outputFormat === 'vector' && logoMode === 'icon_text') logoMode = 'icon_only'">
+
+        {{-- On wide screens the settings column runs the full height on the
+             left and the prompt sits above the results on the right. The source
+             order (prompt, settings, results) is the phone order. --}}
+        <div class="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)] lg:grid-rows-[auto_1fr] xl:grid-cols-[320px_minmax(0,1fr)]">
 
         {{-- Prompt --}}
-        <div class="{{ $card }} p-5 sm:p-6">
+        <div class="{{ $card }} p-5 sm:p-6 lg:col-start-2 lg:row-start-1">
             <div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div class="flex items-center gap-3">
                     <h2 class="text-base font-semibold text-zinc-900 dark:text-zinc-50" x-text="workMode === 'logo' ? 'Vector logo' : 'Raster image'"></h2>
@@ -83,9 +88,8 @@
             </div>
         </div>
 
-        <div class="grid gap-6 lg:grid-cols-[300px_minmax(0,1fr)] xl:grid-cols-[320px_minmax(0,1fr)]">
             {{-- Settings column --}}
-            <aside class="space-y-4">
+            <aside class="space-y-4 lg:col-start-1 lg:row-span-2 lg:row-start-1">
 
                 {{-- Model --}}
                 <div class="{{ $card }} p-4">
@@ -292,7 +296,7 @@
             </aside>
 
             {{-- Results column --}}
-            <div class="min-w-0">
+            <div class="min-w-0 lg:col-start-2 lg:row-start-2">
                 <div x-show="error" x-cloak class="mb-6 rounded-xl border border-red-200 bg-red-50 p-4 dark:border-red-500/30 dark:bg-red-500/10">
                     <div class="flex items-start gap-3">
                         <svg class="mt-0.5 h-5 w-5 text-red-600 dark:text-red-400" fill="currentColor" viewBox="0 0 20 20">

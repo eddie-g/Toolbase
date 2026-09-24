@@ -10,6 +10,10 @@ Artisan::command('inspire', function () {
 
 Schedule::command('logos:redact-base64')->dailyAt('23:55');
 
+// Generated images deleted from the portal stay in its Trash for 30 days
+// (AiLogoRequest::TRASH_DAYS), then their files are removed for good.
+Schedule::command('logos:purge-trash')->dailyAt('04:10')->withoutOverlapping()->onOneServer();
+
 // Documents of visitors without an account, once their lifetime is over and
 // nobody can open them any more (config pdf_editor.guests).
 Schedule::command('documents:prune-guests')

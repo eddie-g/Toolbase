@@ -5,13 +5,22 @@ namespace App\UserPortal\Pages;
 use App\Models\AiDomainRequest;
 use App\Models\SavedDomain;
 use App\Services\NamecheapClient;
-use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Filament\Pages\Page;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\Cache;
+use Livewire\Attributes\Url;
+use Livewire\WithPagination;
 
+/**
+ * The account's domains: favourites and recent searches (tabs), a search's
+ * results at ?search=<id>, and a refresh of every domain's availability once
+ * an hour. Styled with the portal's nk-* classes (user-portal.css).
+ */
 class Domains extends Page
 {
+    use WithPagination;
+
     private const REFRESH_COOLDOWN_KEY_PREFIX = 'saved-domains:refresh:user:';
 
     protected static ?string $title = 'Domains';
@@ -24,15 +33,103 @@ class Domains extends Page
 
     protected static string $view = 'user-portal.pages.domains';
 
-    protected function getHeaderActions(): array
+    private const PER_PAGE = 10;
+
+    #[Url(as: 'tab', except: 'favorites')]
+    public string $tab = 'favorites';
+
+    #[Url(as: 'q', except: '')]
+    public string $term = '';
+
+    public function mount(): void
+    {
+        if (!in_array($this->tab, ['favorites', 'searches'], true)) {
+            $this->tab = 'favorites';
+        }
+    }
+
+    public function setTab(string $tab): void
+    {
+        $this->tab = $tab === 'searches' ? 'searches' : 'favorites';
+        $this->term = '';
+        $this->resetPage('page');
+    }
+
+    public function updatedTerm(): void
+    {
+        $this->resetPage('page');
+    }
+
+    public function removeFavorite(int $id): void
+    {
+        $deleted = SavedDomain::query()->where('user_id', auth()->id())->whereKey($id)->delete();
+
+        if ($deleted) {
+            Notification::make()->title('Removed from favourites')->success()->send();
+        }
+    }
+
+    public function deleteSearch(int $id): void
+    {
+        $deleted = AiDomainRequest::query()->where('user_id', auth()->id())->whereKey($id)->delete();
+
+        if ($deleted) {
+            Notification::make()->title('Search deleted')->success()->send();
+        }
+    }
+
+    public function getFavoritesProperty(): LengthAwarePaginator
+    {
+        return SavedDomain::query()
+            ->where('user_id', auth()->id())
+            ->when($this->term !== '', fn ($q) => $q->where('domain', 'like', '%' . $this->term . '%'))
+            ->latest()
+            ->paginate(self::PER_PAGE);
+    }
+
+    public function getSearchesProperty(): LengthAwarePaginator
+    {
+        return AiDomainRequest::query()
+            ->where('user_id', auth()->id())
+            ->when($this->term !== '', fn ($q) => $q->where('prompt', 'like', '%' . $this->term . '%'))
+            ->latest()
+            ->paginate(self::PER_PAGE);
+    }
+
+    /** @return array{favorites: int, searches: int} */
+    public function getCountsProperty(): array
     {
         return [
-            Action::make('refreshDomains')
-                ->label(fn (): string => $this->refreshDomainsLabel())
-                ->icon('heroicon-o-arrow-path')
-                ->disabled(fn (): bool => $this->refreshDomainsDisabled())
-                ->action('refreshDomains'),
+            'favorites' => SavedDomain::query()->where('user_id', auth()->id())->count(),
+            'searches' => AiDomainRequest::query()->where('user_id', auth()->id())->count(),
         ];
+    }
+
+    /**
+     * A result row's state, as the page shows it: available to register,
+     * premium (for sale at a price), taken, or not checked yet.
+     */
+    public static function statusOf(array $row): string
+    {
+        $available = ($row['available'] ?? $row['is_available'] ?? null);
+        $premium = !empty($row['for_sale']) || !empty($row['premium']) || !empty($row['is_premium']);
+
+        return match (true) {
+            $premium => 'premium',
+            $available === true => 'available',
+            $available === false => 'taken',
+            default => 'unknown',
+        };
+    }
+
+    public function refreshLabel(): string
+    {
+        return $this->refreshDomainsLabel();
+    }
+
+    public function refreshDisabled(): bool
+    {
+        return $this->refreshDomainsDisabled();
     }
 
     public function refreshDomains(): void
@@ -159,26 +256,26 @@ class Domains extends Page
     {
         $user = auth()->user();
         if (!$user) {
-            return 'Refresh Domains';
+            return 'Refresh availability';
         }
 
         $nextAllowedAt = Cache::get(self::REFRESH_COOLDOWN_KEY_PREFIX . $user->id);
         if (!$nextAllowedAt) {
-            return 'Refresh Domains';
+            return 'Refresh availability';
         }
 
         try {
             $next = \Illuminate\Support\Carbon::parse((string) $nextAllowedAt);
         } catch (\Throwable $e) {
-            return 'Refresh Domains';
+            return 'Refresh availability';
         }
 
         if (now()->gte($next)) {
             Cache::forget(self::REFRESH_COOLDOWN_KEY_PREFIX . $user->id);
-            return 'Refresh Domains';
+            return 'Refresh availability';
         }
 
-        return 'Refresh in ' . now()->diffForHumans($next, true, false, 2);
+        return 'Refresh in ' . now()->diffForHumans($next, true, false, 1);
     }
 
     private function refreshDomainsDisabled(): bool

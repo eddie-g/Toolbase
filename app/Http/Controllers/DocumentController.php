@@ -15,6 +15,7 @@ use App\Services\DocumentPreviews;
 use App\Services\DocumentProcessing;
 use App\Services\PdfUploadProbe;
 use App\Services\UploadQuota;
+use App\Models\AiLogoRequest;
 use App\Support\BlankPdf;
 use App\Services\PythonRunner;
 use App\Models\DocumentConversion;
@@ -5658,6 +5659,71 @@ class DocumentController extends Controller
         return redirect()
             ->route('documents.editPdfjs', $document)
             ->with('status', 'Blank PDF created. You can now add text, images and annotations.');
+    }
+
+    /**
+     * "Open in editor" on a generated image (portal Images page): the image
+     * on a one-page PDF of its own proportions, opened in the PDF editor.
+     * Counts as an upload, like a blank PDF does.
+     */
+    public function createFromGeneratedImage(Request $request, AiLogoRequest $logoRequest, int $index)
+    {
+        $user = $request->user();
+        abort_unless($user && (int) $logoRequest->user_id === (int) $user->id, 403);
+        abort_if($logoRequest->isImageHidden($index), 404);
+
+        $url = array_values((array) $logoRequest->image_urls)[$index] ?? null;
+        $path = is_string($url) ? (string) parse_url($url, PHP_URL_PATH) : '';
+        $source = str_starts_with($path, '/storage/')
+            ? Storage::disk('public')->path(substr($path, strlen('/storage/')))
+            : null;
+        if (!$source || !is_file($source)) {
+            return back()->withErrors(['image' => 'This image is not stored on Netkit, so it cannot be opened in the editor.']);
+        }
+
+        if ($response = $this->consumeMonthlyUploadQuota($request)) {
+            return $response;
+        }
+
+        $storedRelative = 'documents/' . Str::uuid()->toString() . '.pdf';
+        Storage::makeDirectory('documents');
+        $storedFull = Storage::path($storedRelative);
+
+        $result = $this->python()->run([
+            $this->resolvePythonBinaryForPdfEditor('fitz'),
+            base_path('python/pdf-editor/image_to_pdf.py'),
+            $source,
+            $storedFull,
+        ], ['label' => 'image_to_pdf']);
+        if (!$result->ok() || !is_file($storedFull)) {
+            app(UploadQuota::class)->refund();
+            Log::error('Generated image to PDF failed', [
+                'logo_request_id' => $logoRequest->id,
+                'index' => $index,
+                'output' => $result->stderrTail() ?: $result->output,
+            ]);
+
+            return back()->withErrors(['image' => 'The image could not be turned into a PDF. Please try again.']);
+        }
+
+        $name = trim((string) ($logoRequest->imageMeta($index)['name'] ?? $logoRequest->domain ?? '')) ?: 'Generated image';
+        $document = Document::create([
+            ...$this->documentOwnershipPayload(),
+            'original_name' => $this->normalizeUploadedDocumentName($name . '.pdf'),
+            'path' => $storedRelative,
+            'original_backup_path' => $this->createOriginalBackup($storedRelative),
+            'mime_type' => 'application/pdf',
+            'size_bytes' => filesize($storedFull),
+        ]);
+
+        $this->rememberSessionAccessibleDocument($request, $document);
+
+        return redirect()->route('documents.editNew', [
+            'document' => $document,
+            'pdfjs' => 1,
+            'from' => 'admin',
+            'return_to' => route('filament.user.pages.image-generator'),
+        ]);
     }
 
     public function createFromTemplate(Request $request)
@@ -14031,6 +14097,9 @@ class DocumentController extends Controller
                     'provider_error' => $providerError,
                     'conversion_charge_usd' => $conversionQuote['charge_usd'],
                     'conversion_transactions' => $conversionQuote['transactions'],
+                    // What was actually debited (null when nothing was): the
+                    // portal shows this amount, never the quote.
+                    'billing_transaction_id' => $billing['transaction_id'] ?? null,
                     'page_count' => $conversionQuote['page_count'],
                 ],
                 'document_id' => $document->id,
@@ -14264,6 +14333,9 @@ class DocumentController extends Controller
                     'provider_error' => $providerError,
                     'conversion_charge_usd' => $conversionQuote['charge_usd'],
                     'conversion_transactions' => $conversionQuote['transactions'],
+                    // What was actually debited (null when nothing was): the
+                    // portal shows this amount, never the quote.
+                    'billing_transaction_id' => $billing['transaction_id'] ?? null,
                     'page_count' => $conversionQuote['page_count'],
                 ],
                 'document_id' => $document->id,

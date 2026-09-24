@@ -127,6 +127,10 @@ class LogoShowcase
             if (! is_string($url) || $url === '' || $url === '[base64-omitted]') {
                 continue;
             }
+            // In the owner's trash, or deleted for good.
+            if ($logo->isImageHidden((int) $idx)) {
+                continue;
+            }
             $parsed = parse_url($url);
             if (isset($parsed['host'], $parsed['path'])) {
                 $url = $parsed['path'];
