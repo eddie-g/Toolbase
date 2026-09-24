@@ -298,6 +298,27 @@ function setRemovedPdfLinkRectsForBox(box, rects) {
 
 // True when the content carries formatting the user authored on part of the
 // text (bold, italic, underline, colour, size or family on a span).
+/** True when at least one text run differs in style from the annotation's base. */
+function richTextRunsCarryAuthoredStyle(runs, annotation) {
+    const textRuns = (runs || []).filter((run) => run && typeof run === 'object' && run.type !== 'break' && String(run.text || '') !== '');
+    if (!textRuns.length) return false;
+    const base = {
+        weight: isBoldCssWeight(annotation?.fontWeight) ? '700' : '400',
+        style: String(annotation?.fontStyle || 'normal').toLowerCase() === 'italic' ? 'italic' : 'normal',
+        color: cssColorToHex(annotation?.textColor || annotation?.color || '#000000', '#000000'),
+        underline: boolish(annotation?.underline),
+        strikeout: boolish(annotation?.strikeout),
+    };
+    return textRuns.some((run) => (
+        (isBoldCssWeight(run.fontWeight) ? '700' : '400') !== base.weight
+        || (String(run.fontStyle || 'normal').toLowerCase() === 'italic' ? 'italic' : 'normal') !== base.style
+        || (run.color && cssColorToHex(run.color, base.color) !== base.color)
+        || boolish(run.underline) !== base.underline
+        || boolish(run.strikeout) !== base.strikeout
+        || Boolean(run.linkUrl)
+    ));
+}
+
 function textElementHasAuthoredInlineStyles(textElement) {
     if (!textElement) return false;
     return Array.from(textElement.querySelectorAll('[style]')).some((element) => {
@@ -5161,6 +5182,26 @@ function pushHistorySnapshot(_label = '') {
     updateHistoryButtons();
 }
 
+/*
+ * AE5-4: committing a box that was styled inline while in edit mode pushed a
+ * snapshot identical to the state after the commit (the inline style had
+ * already pushed its own and synced the box), so the first Undo did nothing.
+ * Push the pre-commit state only when the commit changes something.
+ */
+function syncBoxAndPushHistoryIfChanged(box) {
+    if (applyingHistory) {
+        syncAnnotationBoxToPersistedAnnotations(box);
+        return;
+    }
+    const before = captureHistorySnapshot();
+    syncAnnotationBoxToPersistedAnnotations(box);
+    if (JSON.stringify(before) === JSON.stringify(captureHistorySnapshot())) return;
+    undoStack.push(before);
+    if (undoStack.length > MAX_HISTORY_DEPTH) undoStack.shift();
+    redoStack.length = 0;
+    updateHistoryButtons();
+}
+
 function restoreHistorySnapshot(snapshot) {
     applyingHistory = true;
     try {
@@ -5238,6 +5279,36 @@ function isRedundantPdfjsSourceOverlay(annotation) {
     const current = annotationCurrentPdfBox(annotation);
     if (!baseline || !current) return !shouldPersistPdfjsAnnotation(annotation);
     return pdfRectsNearlyEqual(current, baseline, 3.0);
+}
+
+/*
+ * AE1-6: a multi-line promoted paragraph stays in the persisted map even when
+ * it is back at its origin (isRedundantPdfjsSourceOverlay keeps it for undo),
+ * so a paragraph dragged away and back was still exported: the exporter
+ * redacted the embedded glyphs and redrew them in the bundled face. This is
+ * the same text + geometry test, applied only to what is sent for a download.
+ */
+function isUnchangedPromotedParagraph(annotation) {
+    if (!annotation || String(annotation.type || '').toLowerCase() !== 'text') return false;
+    if (!(isPromotedExtractionAnnotation(annotation) && promotedSourceBlockHasMultipleLines(annotation))) return false;
+    if (!boolish(annotation.savedTextOverlay) || boolish(annotation.pdfjsDeleted)) return false;
+    if (boolish(annotation.styleDirty) || boolish(annotation.userForcedRichText) || boolish(annotation.promotedDirty)) return false;
+    if (boolish(annotation.userSizedTextBox) || boolish(annotation.promotedReflowEnabled)) return false;
+    if (Array.isArray(annotation.richTextRuns) && annotation.richTextRuns.length) return false;
+    if (String(annotation.richTextHtml || '').trim()) return false;
+    const sameText = normalizeComparableText(annotation.text) === normalizeComparableText(
+        annotation.pdfjsSourceText || annotation.originalText || '',
+    );
+    if (!sameText) return false;
+    const baseline = annotationBaselinePdfBox(annotation);
+    const current = annotationCurrentPdfBox(annotation);
+    if (!baseline || !current) return false;
+    // The moved overlay re-measures the block's height from its rows, so
+    // only the origin has to match exactly; the size may differ by a row gap.
+    return Math.abs(current.x - baseline.x) <= 0.5
+        && Math.abs(current.y - baseline.y) <= 0.5
+        && Math.abs(current.w - baseline.w) <= Math.max(3, baseline.w * 0.05)
+        && Math.abs(current.h - baseline.h) <= Math.max(3, baseline.h * 0.05);
 }
 
 function pdfjsSourceBoxesMatch(left, right) {
@@ -6082,17 +6153,22 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         ? canonicalRichTextHtmlFromRuns(richTextRuns)
         : authoredRichTextHtml;
     const visualLines = tc ? readVisualLinesFromBox(tc) : [];
-    const shouldPersistVisualLines = box.dataset.promotedParagraphFlow !== '1'
+    // AE3-7: a style-promoted paragraph's rows are the browser's own
+    // wrap of the embedded face; the exporter, which lays it out with the
+    // bundled substitute, needs them to break the same rows.
+    const shouldPersistVisualLines = (
+        box.dataset.promotedParagraphFlow !== '1'
+        || box.dataset.styleDirty === '1'
+        || box.dataset.userSizedTextBox === '1'
+        || box.dataset.promotedReflowEnabled === '1'
+        || Boolean(promotedEditFlags?.promotedDirty)
+    )
         && box.dataset.sourceSpanEditActive !== '1'
         && visualLines.length > 1
         && normalizeVisualLineComparableText(visualLines.join(' ')) === normalizeVisualLineComparableText(textValue);
     const sourceTextColor = existingAnnotation?.pdfjsSourceTextColor || box.dataset.sourceTextColor || '';
-    const preferSourceColor = sourceTextColor
-        && box.dataset.styleDirty !== '1'
-        && !boolish(existingAnnotation?.styleDirty)
-        && box.dataset.userForcedRichText !== '1'
-        && !boolish(existingAnnotation?.userForcedRichText)
-        && String(box.dataset.editorMode || existingAnnotation?.pdfjsEditorMode || '') !== 'rich';
+    const textColorExplicit = annotationTextColorIsExplicit(existingAnnotation, box);
+    const preferSourceColor = sourceTextColor && !textColorExplicit;
     const existingSourceMask = annotationSourceMaskPdfBox(existingAnnotation);
     const sourceGeometryMoved = !pdfRectsNearlyEqual(pdfRect, baseRect, 3.0)
         && !(existingSourceMask && pdfRectsNearlyEqual(pdfRect, existingSourceMask, 3.0));
@@ -6162,11 +6238,29 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
     // the DOM here compounds bloat on every commit — the reloaded overlay
     // then renders with wider line pitch than the original block. Keep the
     // extraction-derived metrics unless the user actually resized the box.
+    // AE4-7 / AE5-5: a whole-box style (or a reload after one) changes no
+    // row, so the block keeps the PDF's pitch and height instead of the
+    // flow editor's 1.2em line box.
+    const styleOnlyOnSourceRows = box.dataset.styleDirty === '1'
+        && annotationTextFollowsSourceRows({ ...(existingAnnotation || {}), text: textValue });
     const keepPromotedVerticalMetrics = isPromotedExtractionAnnotation(existingAnnotation)
         && box.dataset.pendingResize !== '1'
         && box.dataset.userSizedTextBox !== '1'
-        && box.dataset.styleDirty !== '1'
+        && (box.dataset.styleDirty !== '1' || styleOnlyOnSourceRows)
         && Number(existingAnnotation?.lineHeight) > 0;
+    // AE5-5: a reloaded, previously narrowed paragraph has no live paragraph
+    // pitch (the flow editor is not installed) and its rehydrated
+    // userSizedTextBox flag blocks keepPromotedVerticalMetrics, so the line
+    // height fell to the container's 1.2em default and the download's rows
+    // came out cramped. Nothing was resized or re-flowed in this session, so
+    // the saved pitch stands.
+    const keepReloadedPromotedLineHeight = isPromotedExtractionAnnotation(existingAnnotation)
+        && box.dataset.pendingResize !== '1'
+        && box.dataset.promotedParagraphFlow !== '1'
+        && box.dataset.sourceSpanEditActive !== '1'
+        && Number(existingAnnotation?.lineHeight) > 0
+        && Number(existingAnnotation?.fontSize) > 0
+        && Math.abs(Number(existingAnnotation.fontSize) - fontSizePts) < 0.25;
     const promotedParagraphLineHeightPx = Number.isFinite(livePromotedParagraphLineHeightPx)
         && livePromotedParagraphLineHeightPx > 0
         ? livePromotedParagraphLineHeightPx
@@ -6190,9 +6284,11 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         pdfjsVisualLines: shouldPersistVisualLines ? visualLines : undefined,
         originalText: String(existingAnnotation?.originalText || originalTextForBox(box) || sourceText),
         pdfX: pdfRect.x,
+        // A reloaded block's DOM box can sit a row gap off its saved origin
+        // without anything having moved; a real drag moves it much further.
         pdfY: (keepPromotedVerticalMetrics
             && Number.isFinite(Number(existingAnnotation?.pdfY))
-            && Math.abs(pdfRect.y - Number(existingAnnotation.pdfY)) < 3)
+            && Math.abs(pdfRect.y - Number(existingAnnotation.pdfY)) < (styleOnlyOnSourceRows ? 6 : 3))
             ? Number(existingAnnotation.pdfY)
             : pdfRect.y,
         pdfWidth: pdfRect.w,
@@ -6201,7 +6297,7 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         requestedFontSize: fontSizePts,
         lineHeight: promotedParagraphLineHeightPts > 0
             ? promotedParagraphLineHeightPts
-            : keepPromotedVerticalMetrics
+            : keepPromotedVerticalMetrics || keepReloadedPromotedLineHeight
             ? Number(existingAnnotation.lineHeight)
             : (Number.isFinite(lineHeightPx) && scale > 0 ? (lineHeightPx / scale) : (Number(existingAnnotation?.lineHeight) || undefined)),
         fontFamily: annotationFontFamily,
@@ -6239,6 +6335,7 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         opacity,
         textColor,
         color: textColor,
+        textColorExplicit: textColorExplicit || undefined,
         backgroundColor,
         underline,
         strikeout,
@@ -6276,7 +6373,9 @@ function buildAnnotationFromBox(box, existingAnnotation = null) {
         promotedReflowEnabled: displayMarkupTextOverride == null
             && isPromotedSourceBox
             && (box.dataset.promotedReflowEnabled === '1'
-                || box.dataset.naturalTextFlow === '1'
+                // A reloaded rich paragraph is flagged naturalTextFlow, but
+                // while its text still reads row by row nothing has reflowed.
+                || (box.dataset.naturalTextFlow === '1' && !styleOnlyOnSourceRows)
                 || boolish(existingAnnotation?.promotedReflowEnabled)),
         promotedDirty: isPromotedSourceBox
             && promotedEditFlags.promotedDirty,
@@ -6814,12 +6913,25 @@ function computePageForegroundColor(pageDiv, rect, fallback = '#000000') {
         }
     }
     if (!buckets.size) return fallback || '';
-    let bestKey = null;
     let bestScore = -1;
+    for (const score of buckets.values()) bestScore = Math.max(bestScore, score);
+    if (bestScore <= 0) return fallback || '';
+    // AE1-1: at small zooms most sampled pixels of a glyph are antialiasing
+    // and subpixel fringes, which sit between the ink and the background
+    // (a black row voted blue, an orange one pale yellow). The ink is the
+    // bucket farthest from the background among those that carry real
+    // weight, so choose that instead of the most frequent one.
+    let bestKey = null;
+    let bestDistance = -1;
+    let bestKeyScore = -1;
     for (const [key, score] of buckets.entries()) {
-        if (score > bestScore) {
+        if (score < bestScore * 0.3) continue;
+        const [r, g, b] = key.split(',').map((part) => Number.parseInt(part, 10) || 0);
+        const distance = Math.hypot(r - background.r, g - background.g, b - background.b);
+        if (distance > bestDistance + 0.5 || (Math.abs(distance - bestDistance) <= 0.5 && score > bestKeyScore)) {
             bestKey = key;
-            bestScore = score;
+            bestDistance = distance;
+            bestKeyScore = score;
         }
     }
     if (!bestKey) return fallback || '';
@@ -7315,6 +7427,23 @@ function shouldDropInheritedMovedSourceBackground(annotation = null, box = null)
     return true;
 }
 
+/*
+ * AE3-2 / AE4-4: the document's own text colour (sampled into
+ * pdfjsSourceTextColor / dataset.sourceTextColor) used to be dropped as soon as
+ * a row was styleDirty for any reason — a family or size change turned orange
+ * text black. Only a colour the user chose (textColorExplicit, set by the
+ * colour controls) may replace the source colour. Older saves have no flag:
+ * a dirty annotation carrying a non-black colour is taken as chosen.
+ */
+function annotationTextColorIsExplicit(annotation, box = null) {
+    if (box?.dataset?.textColorExplicit === '1') return true;
+    if (!annotation) return false;
+    if (boolish(annotation.textColorExplicit)) return true;
+    const saved = cssColorToHex(annotation.textColor || annotation.color || '', '');
+    return (boolish(annotation.styleDirty) || boolish(annotation.userForcedRichText))
+        && saved !== '' && saved !== '#000000';
+}
+
 function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = null) {
     if (!box) return;
     const fontSizePts = Number(annotation?.fontSize ?? annotation?.requestedFontSize ?? box.dataset.fontSizePts);
@@ -7379,11 +7508,10 @@ function applyAnnotationTypographyToBox(box, annotation, scale, sourceStyle = nu
         (preferDocumentTypography ? documentFontStyle : null)
         || annotation?.fontStyle || sourceStyle?.fontStyle || 'normal',
     ));
-    const preferSourceColor = !boolish(annotation?.styleDirty)
-        && !boolish(annotation?.userForcedRichText)
-        && String(annotation?.pdfjsEditorMode || '') !== 'rich';
+    const sourceColor = annotation?.pdfjsSourceTextColor || box.dataset.sourceTextColor || '';
+    const preferSourceColor = sourceColor && !annotationTextColorIsExplicit(annotation, box);
     const color = cssColorToHex(
-        (preferSourceColor && annotation?.pdfjsSourceTextColor)
+        (preferSourceColor && sourceColor)
         || annotation?.textColor
         || annotation?.color
         || annotation?.pdfjsSourceTextColor
@@ -8678,9 +8806,89 @@ function unicodeSafeCssFontFamily(value) {
 // default serif, which looks wildly different from e.g. Calibri. With the
 // generic appended, an unloadable "Calibri-BoldItalic" still renders as
 // synthetic bold-italic sans-serif.
+/*
+ * AE3-1: the Font picker's values are one word ("PlayfairDisplay", "BebasNeue")
+ * while public/fonts/editor/editor-fonts.css declares the faces under their
+ * real names ("Playfair Display"). Each picker option carries the declared
+ * stack in its inline style, so a value is mapped through it before it is used
+ * as a CSS family; otherwise Chrome finds no such face and falls back to the
+ * generic, which wraps and measures differently from the exported face.
+ */
+let pickerCssFontFamilies = null;
+
+function pickerCssFontFamily(value) {
+    const key = normalizeFontKey(value);
+    if (!key) return '';
+    if (!pickerCssFontFamilies) {
+        const map = new Map();
+        document.querySelectorAll('#afb-font option[value]').forEach((option) => {
+            const stack = String(option.style?.fontFamily || '').trim();
+            if (stack) map.set(normalizeFontKey(option.value), stack);
+        });
+        // The picker may not be in the DOM yet on the first call; cache once it is.
+        if (map.size) pickerCssFontFamilies = map;
+        else return '';
+    }
+    return pickerCssFontFamilies.get(key) || '';
+}
+
+/*
+ * AE2-6: a pdf.js runtime face is a subset registered at weight 400 even when
+ * its outlines are bold (MontserratThin_700wght). A glyph the subset lacks (an
+ * accented letter typed into the heading) fell to the generic sans at 400, so
+ * it showed thin beside the bold glyphs while the download drew it bold. Give
+ * the run the bundled family of the same name as a fallback, ask for the
+ * semantic weight, and turn synthesis off so the runtime face's own bold
+ * outlines are not emboldened again.
+ */
+function bundledFallbackFamilyForRuntimeFace(embedded) {
+    if (!embedded) return '';
+    const key = normalizeFontKey(stripPdfFontSubsetPrefix(embedded.cleanName || embedded.family || ''));
+    if (!key) return '';
+    let best = '';
+    let stack = '';
+    document.querySelectorAll('#afb-font option[value]').forEach((option) => {
+        const optionKey = normalizeFontKey(option.value);
+        // Only the bundled (Google) families: a document face is itself a subset.
+        if (!optionKey || option.dataset.pdfjsEmbeddedFont || option.dataset.pdfjsDynamic) return;
+        if (key.startsWith(optionKey) && optionKey.length > best.length && option.style?.fontFamily) {
+            best = optionKey;
+            stack = String(option.style.fontFamily).trim();
+        }
+    });
+    return stack;
+}
+
+function sourceRunFontStyleParts(item) {
+    const fontFamily = String(item?.fontFamily || '').trim();
+    const parts = [];
+    const embedded = fontFamily ? embeddedFontOptionForValue(fontFamily) : null;
+    const semanticWeight = Number.parseInt(item?.semanticFontWeight || '', 10);
+    const renderWeight = sourceRunRenderFontWeight(item);
+    const fallback = Number.isFinite(semanticWeight) && semanticWeight >= 600 && !isBoldCssWeight(renderWeight)
+        ? bundledFallbackFamilyForRuntimeFace(embedded)
+        : '';
+    if (fontFamily) {
+        const chain = cssFontFamilyWithGenericFallback(fontFamily);
+        // Put the bundled family before the generic the chain ends with.
+        parts.push(`font-family:${fallback
+            ? chain.replace(/,\s*(sans-serif|serif|monospace|cursive|fantasy|system-ui)\s*$/, `, ${fallback}`)
+            : chain}`);
+    }
+    if (fallback) {
+        parts.push(`font-weight:${semanticWeight}`);
+        parts.push('font-synthesis:none');
+    } else {
+        parts.push(`font-weight:${renderWeight}`);
+    }
+    return parts;
+}
+
 function cssFontFamilyWithGenericFallback(value) {
     const raw = String(value || '').trim();
     if (!raw || raw.includes(',')) return cssQuoteFontFamily(raw);
+    const pickerStack = pickerCssFontFamily(raw);
+    if (pickerStack && !embeddedFontOptionForValue(raw)) return pickerStack;
     const lower = raw.replace(/["']/g, '').toLowerCase();
     // Match the PDF writer's TrebuchetMS substitute. Document fonts expose a
     // loaded Verdana face; without this alias Chrome falls back to serif and
@@ -9566,12 +9774,7 @@ function applySourceFidelitySpanEditMarkup(box, options = {}) {
                 // Preserve the leading indentation of this line.
                 html += buildGapSpan(Math.max(0, Number(item.leftPx) - paragraphMinLeftPx), item);
             }
-            const styleParts = [];
-            const fontFamily = String(item.fontFamily || '').trim();
-            if (fontFamily) {
-                styleParts.push(`font-family:${cssFontFamilyWithGenericFallback(fontFamily)}`);
-            }
-            styleParts.push(`font-weight:${sourceRunRenderFontWeight(item)}`);
+            const styleParts = sourceRunFontStyleParts(item);
             // Always emit font-style: a run that is upright must override an
             // italic box-level --enpv-font-style, not inherit it.
             styleParts.push(`font-style:${sourceRunRenderFontStyle(item)}`);
@@ -9741,6 +9944,28 @@ function promotedSourceLineBreakCounts(annotation, lineCount) {
         ? annotation.sourceLineBBoxes
         : [];
     return sourceVisualLineBreakCounts(boxes, lineCount);
+}
+
+/*
+ * AE2-4: mirror of the exporter's _text_lines_follow_source_rows. A saved
+ * paragraph whose text still reads row by row like the captured block (an
+ * edited word changes at most one row) exports on the PDF's own rows, and
+ * that depends on the "\n" between them. Hydration used to collapse those
+ * breaks into spaces for every reflow-enabled block, so the next autosave
+ * sent one line and the download re-wrapped the paragraph after a reload.
+ */
+function annotationTextFollowsSourceRows(annotation) {
+    if (!annotation || boolish(annotation.userSizedTextBox)) return false;
+    const comparable = (value) => normalizeComparableText(String(value || ''));
+    const textLines = String(annotation.text || '').replace(/\r\n?/g, '\n').split('\n')
+        .map((line) => comparable(line)).filter(Boolean);
+    if (textLines.length < 2) return false;
+    const sourceLines = [annotation.sourceTextLines, annotation.pdfjsVisualLines]
+        .find((lines) => Array.isArray(lines) && lines.length > 1);
+    if (!sourceLines) return false;
+    const rows = new Set(sourceLines.map((line) => comparable(line)).filter(Boolean));
+    const matched = textLines.filter((line) => rows.has(line)).length;
+    return matched >= textLines.length - 1;
 }
 
 function collapsePromotedExtractionVisualBreaks(box, annotationOverride = null) {
@@ -12620,7 +12845,7 @@ function createPersistedOverlayBox(annotation, pageIndex, viewport, scale, editM
         });
     }
     appendViewportRotatedContent(box, tc, viewport, displayRect);
-    if (box.dataset.promotedReflowEnabled === '1') {
+    if (box.dataset.promotedReflowEnabled === '1' && !annotationTextFollowsSourceRows(annotation)) {
         collapsePromotedExtractionVisualBreaks(box, annotation);
     }
     const keepsPromotedBlockGeometry = restoresPromotedSourceGeometry
@@ -18328,7 +18553,7 @@ function createAnnotationBoxFromSpan(spanEl) {
     if (matchedAnnotation?.fontFamily) box.style.setProperty('--enpv-font-family', matchedAnnotation.fontFamily);
     if (Number(matchedAnnotation?.fontSize) > 0) box.dataset.fontSizePts = String(Number(matchedAnnotation.fontSize));
     const matchedTextColor = cssColorToHex(
-        (!boolish(matchedAnnotation?.styleDirty) && (matchedAnnotation?.pdfjsSourceTextColor || box.dataset.sourceTextColor))
+        (!annotationTextColorIsExplicit(matchedAnnotation, box) && (matchedAnnotation?.pdfjsSourceTextColor || box.dataset.sourceTextColor))
         || matchedAnnotation?.textColor
         || matchedAnnotation?.color
         || '#000000',
@@ -22142,6 +22367,17 @@ function fitSimplePromotedParagraphWrap(box, annotation) {
     if (!box || box.dataset.promotedParagraphFlow !== '1') return 0;
     const content = selectedBoxTextElement(box);
     if (!content) return 0;
+    // AE5-1: this tracking only compensates browser-vs-PDF metric drift at
+    // the paragraph's captured width. A narrowed or re-flowed box cannot
+    // reproduce the captured rows, and forcing them drove the letter
+    // spacing to the -8% clamp (a visibly condensed paragraph the download
+    // never shows). Such a box wraps at normal tracking.
+    const clearTracking = () => {
+        content.style.letterSpacing = '';
+        delete box.dataset.promotedParagraphLetterSpacingPx;
+        return 0;
+    };
+    if (box.dataset.userSizedTextBox === '1' || box.dataset.promotedReflowEnabled === '1') return clearTracking();
     const sourceLines = simplePromotedParagraphSourceLineTexts(annotation);
     if (sourceLines.length < 2) return 0;
     const sourceText = logicalParagraphFlowText(sourceLines.join(' '));
@@ -22176,12 +22412,11 @@ function fitSimplePromotedParagraphWrap(box, annotation) {
         constraints += 1;
     }
     if (!constraints) return 0;
-    let letterSpacingPx;
-    if (lowerBound <= upperBound) {
-        letterSpacingPx = Math.min(upperBound, Math.max(lowerBound, 0));
-    } else {
-        letterSpacingPx = upperBound;
-    }
+    // Inconsistent constraints mean the captured breaks cannot be
+    // reproduced at this width; leave the tracking alone rather than
+    // squeezing to the clamp.
+    if (lowerBound > upperBound) return clearTracking();
+    let letterSpacingPx = Math.min(upperBound, Math.max(lowerBound, 0));
     const fontSizePx = Number.parseFloat(style.fontSize || '') || 12;
     letterSpacingPx = Math.max(-fontSizePx * 0.08, Math.min(fontSizePx * 0.04, letterSpacingPx));
     if (!Number.isFinite(letterSpacingPx)) return 0;
@@ -22349,7 +22584,7 @@ function createPromotedSourceBlockHandle(annotation, pageIndex, viewport, scale,
         ));
     }
     box.appendChild(tc);
-    if (box.dataset.promotedReflowEnabled === '1') {
+    if (box.dataset.promotedReflowEnabled === '1' && !annotationTextFollowsSourceRows(annotation)) {
         collapsePromotedExtractionVisualBreaks(box, annotation);
     }
     const persistedRichMode = annotation.userForcedRichText === true
@@ -23663,6 +23898,21 @@ function stripPdfFontSubsetPrefix(value) {
     return String(value || '').trim().replace(/^[A-Z]{6}\+/i, '');
 }
 
+/*
+ * AE3-6: an extracted face also registered its bare family name ("Montserrat",
+ * "Lato") as a lookup key, so choosing the Google "Montserrat" option resolved
+ * to the document's 5-glyph Montserrat-Thin subset and the editor drew a
+ * hairline / fallback mix while the download used bundled Montserrat. A
+ * family name the picker offers as a bundled font must keep meaning that.
+ */
+function pickerOffersBundledFamily(name) {
+    const key = normalizeFontKey(name);
+    if (!key) return false;
+    return Array.from(document.querySelectorAll('#afb-font option[value]')).some((option) => (
+        !option.dataset.pdfjsEmbeddedFont && !option.dataset.pdfjsDynamic && normalizeFontKey(option.value) === key
+    ));
+}
+
 function registerEmbeddedFontMetadata(font) {
     const cleanName = String(font?.clean_name || font?.name || '').trim();
     const filePath = String(font?.file_path || '').trim();
@@ -23683,7 +23933,7 @@ function registerEmbeddedFontMetadata(font) {
     };
     [
         metadata.cleanName,
-        metadata.family,
+        pickerOffersBundledFamily(metadata.family) ? '' : metadata.family,
         metadata.pdfFontName,
         metadata.pdfFontName.includes('+') ? metadata.pdfFontName.split('+').slice(1).join('+') : '',
     ].forEach((candidate) => {
@@ -23733,7 +23983,7 @@ function registerPdfjsRuntimeFontMetadata(fontObject, faceName = '') {
     [
         metadata.cssFamily,
         metadata.cleanName,
-        metadata.family,
+        pickerOffersBundledFamily(metadata.family) ? '' : metadata.family,
         metadata.pdfFontName,
         stripPdfFontSubsetPrefix(metadata.pdfFontName),
     ].forEach((candidate, index) => {
@@ -24023,6 +24273,11 @@ function ensureFormatBarFontOption(value) {
     const existing = formatBarAvailableOptions(afbFont)
         .find((option) => option.value.toLowerCase() === normalized.toLowerCase());
     if (existing) return existing.value;
+    // A run styled through the picker computes to the declared family
+    // ("Open Sans"); show it as the option that declares it (AE3-1).
+    const declared = formatBarAvailableOptions(afbFont)
+        .find((option) => normalizeFontKey(parseCssFontFamily(option.style?.fontFamily || '')) === normalizeFontKey(normalized));
+    if (declared) return declared.value;
 
     const option = document.createElement('option');
     option.value = normalized;
@@ -24034,7 +24289,9 @@ function ensureFormatBarFontOption(value) {
 
 function hideAnnotationFormatBar() {
     annFormatBar?.classList.remove('is-visible');
+    document.body.classList.remove('enpv-text-panel-open');
 }
+
 
 function positionAnnotationFormatBarUnderMenu(box = null) {
     if (!annFormatBar || !annFormatBar.classList.contains('is-visible')) return;
@@ -24262,6 +24519,9 @@ function updateAnnotationFormatBarForBox(box) {
     }
     closeNotesPanel();
     annFormatBar.classList.add('is-visible');
+    document.body.classList.add('enpv-text-panel-open');
+    // NK_46: the page must not move when the drawer opens; the viewer can
+    // be scrolled under the drawer by the user (AE1-2).
     requestAnimationFrame(() => positionAnnotationFormatBarUnderMenu(box));
 }
 
@@ -24423,6 +24683,76 @@ function ensureNaturalTextLineHeight(box) {
     return lineHeightPx;
 }
 
+const GENERIC_CSS_FONT_FAMILIES = new Set(['', 'sans-serif', 'serif', 'monospace', 'cursive', 'fantasy', 'system-ui']);
+
+/*
+ * AE4-1 / AE3-3 / AE4-4: a pdf.js source row is built with the text layer's
+ * CSS family ("sans-serif"); its real face only lives in dataset.sourceFontFamily.
+ * Promoting the row for a whole-box style change (bold, italic, size, colour,
+ * background) used to keep that generic family, so the editor drew the row in
+ * the browser's sans (wider than the source face: it wrapped over the row
+ * below) and the exporter matched "sans-serif" + weight against the document's
+ * faces, landing on an unrelated family or the base-14 Helvetica. Name the
+ * source face on the box instead, the way choosing it in the Font picker does,
+ * so only the weight, slant, size or colour changes.
+ */
+function carrySourceFaceIntoPromotedBox(box) {
+    if (!box || box.dataset.forceEmbeddedFont === '1' || box.dataset.fontSourceName) return;
+    const current = parseCssFontFamily(box.dataset.fontFamilyValue || box.style.getPropertyValue('--enpv-font-family')).toLowerCase();
+    if (!GENERIC_CSS_FONT_FAMILIES.has(current)) return;
+    const sourceName = box.dataset.sourceFontFamily || sourceSpanRunsForBox(box)[0]?.pdfjsFontName || '';
+    if (GENERIC_CSS_FONT_FAMILIES.has(String(sourceName).trim().toLowerCase())) return;
+    const embedded = embeddedFontOptionForValue(sourceName);
+    if (!embedded) return;
+    box.dataset.fontFamilyValue = embedded.pickerValue || embedded.cleanName;
+    box.dataset.fontSourceName = embedded.cleanName;
+    box.dataset.forceEmbeddedFont = '1';
+    box.style.setProperty('--enpv-font-family', cssFontFamilyWithGenericFallback(embedded.cssFamily));
+}
+
+/** A source box that came from one text row (no second row top among its runs). */
+function isSingleRowSourceBox(box) {
+    if (!box || box.classList.contains('is-promoted-source-block') || box.dataset.promotedParagraphFlow === '1') return false;
+    const runs = sourceSpanRunsForBox(box);
+    if (!runs.length) return false;
+    const tops = new Set(runs.map((run) => Math.round(Number(run.topPx) || 0)));
+    return tops.size === 1;
+}
+
+/*
+ * AE4-1: the exporter keeps an unresized source row on one line and fits the
+ * face into the row's width, so a bold or italic row comes out slightly
+ * smaller rather than wrapped. Do the same in the editor: measure the restyled
+ * row at its source size and shrink the type until it fits the box, instead of
+ * letting it wrap onto the row below. Toggling the style off measures again
+ * from the source size, so the row grows back.
+ */
+function fitSingleRowFontToBoxWidth(box) {
+    if (!isSingleRowSourceBox(box) || box.dataset.userSizedTextBox === '1' || box.dataset.userFontSize === '1') return false;
+    const tc = selectedBoxTextElement(box);
+    const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '') || 0;
+    const basePx = Number.parseFloat(box.dataset.sourceFontSizePx || '') || 0;
+    if (!tc || !(scale > 0) || !(basePx > 0)) return false;
+    const runsScale = Number.parseFloat(box.dataset.sourceSpanRunsScale || '') || scale;
+    const baseAtScale = basePx * (scale / runsScale);
+    box.style.setProperty('--enpv-font-size', `${baseAtScale}px`);
+    // Measured in the DOM, not on a canvas: a synthetic bold on the PDF.js
+    // face widens the rendered glyphs, which measureText does not report.
+    const previousWhiteSpace = tc.style.whiteSpace;
+    tc.style.whiteSpace = 'nowrap';
+    const range = document.createRange();
+    range.selectNodeContents(tc);
+    const contentWidth = range.getBoundingClientRect().width;
+    tc.style.whiteSpace = previousWhiteSpace;
+    const boxWidth = Number.parseFloat(box.style.width || '') || box.getBoundingClientRect().width || 0;
+    if (!(contentWidth > 0) || !(boxWidth > 0)) return false;
+    const ratio = Math.min(1, boxWidth / contentWidth);
+    const fittedPx = Math.max(baseAtScale * 0.6, baseAtScale * ratio);
+    box.style.setProperty('--enpv-font-size', `${fittedPx}px`);
+    box.dataset.fontSizePts = String(Math.round((fittedPx / scale) * 100) / 100);
+    return ratio < 0.995;
+}
+
 function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     const box = findSelectedBox();
     if (!box || typeof mutator !== 'function') return;
@@ -24435,6 +24765,7 @@ function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     pushHistorySnapshot(historyLabel || 'change annotation style');
     if (options.promote !== false) {
         promoteBoxToRichTextMode(box, options.reason || historyLabel || 'style');
+        if (options.reason !== 'font-family') carrySourceFaceIntoPromotedBox(box);
     }
     if (options.naturalFlow === true) {
         normalizeSourceSpanMarkupForNaturalFlow(box, {
@@ -24444,6 +24775,7 @@ function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     mutator(box);
     stripInlineStylePropertiesFromBox(box, options.stripInlineProps);
     stripInlineFormatsFromBox(box, options.stripInlineFormats);
+    const fitsRowFont = options.reason === 'font-weight' || options.reason === 'font-style';
     fitTextBoxAfterStyleMutation(box, options);
     box.dataset.styleDirty = '1';
     box.dataset.pendingEdit = '1';
@@ -24451,7 +24783,8 @@ function applyStyleToSelectedBox(historyLabel, mutator, options = {}) {
     syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
     // The sync above reveals the committed overlay, so a box that was still a
     // hidden source handle can only be measured and fitted now.
-    if (fitTextBoxAfterStyleMutation(box, options)) {
+    const rowFontChanged = fitsRowFont && fitSingleRowFontToBoxWidth(box);
+    if (fitTextBoxAfterStyleMutation(box, options) || rowFontChanged) {
         syncAnnotationBoxToPersistedAnnotations(box, { preserveEditMode: true });
     }
     refitStyledBoxWhenFontsSettle(box, options);
@@ -24485,7 +24818,7 @@ function applyFontFamilyToSelectedBox(fontFamily) {
         fitOptions: { allowShrink: true, fitWidth: false },
     };
     if (applyInlineStyleToSelectedText('change selected text font', (span, box) => {
-        span.style.fontFamily = unicodeSafeCssFontFamily(cssFamily);
+        span.style.fontFamily = (!embedded && pickerCssFontFamily(normalized)) || unicodeSafeCssFontFamily(cssFamily);
         if (embedded && box) {
             if (embedded.pdfFontName) {
                 span.dataset.sourcePdfFontName = embedded.pdfFontName;
@@ -24555,6 +24888,19 @@ function applyFontFamilyToSelectedBox(fontFamily) {
             delete box.dataset.fontSourceName;
             delete box.dataset.forceEmbeddedFont;
         }
+        // AE3-5: preserveLineHeight skips ensureNaturalTextLineHeight, and the
+        // box's variable was the source size (a 1.0 pitch), so the re-set
+        // paragraph collapsed to 12pt rows and shrank. The captured row pitch
+        // (16.8pt) is what the family swap must keep.
+        if (!applySourceRowPitchForUnchangedTypography(box)) {
+            const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1;
+            const existing = persistedAnnotationsById.get(String(box.dataset.annotationId || '')) || null;
+            const savedPitch = Number(existing?.lineHeight);
+            const fontPts = Number.parseFloat(box.dataset.fontSizePts || '') || Number(existing?.fontSize) || 0;
+            if (savedPitch > 0 && fontPts > 0 && savedPitch >= fontPts * 1.05) {
+                box.style.setProperty('--enpv-line-height', `${savedPitch * scale}px`);
+            }
+        }
     }, { reason: 'font-family', stripInlineProps: ['font-family'], ...reflowOptions });
 }
 
@@ -24578,6 +24924,7 @@ function applyFontSizeToSelectedBox(fontSizePts) {
         const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1;
         const normalized = Math.max(1, Math.min(300, Math.round(pt * 10) / 10));
         box.dataset.fontSizePts = String(normalized);
+        box.dataset.userFontSize = '1';
         box.style.setProperty('--enpv-font-size', `${normalized * scale}px`);
         box.style.setProperty('--enpv-line-height', `${normalized * scale * 1.2}px`);
     }, { reason: 'font-size', naturalFlow: true, stripInlineProps: ['font-size', 'line-height'], fitOptions: { allowShrink: true, fitWidth: false } });
@@ -24586,6 +24933,7 @@ function applyFontSizeToSelectedBox(fontSizePts) {
 function applyTextColorToWholeAnnotationBox(box, color) {
     if (!box) return;
     const normalized = cssColorToHex(color, '#000000');
+    box.dataset.textColorExplicit = '1';
     box.style.setProperty('--enpv-text-color', normalized);
     const tc = selectedBoxTextElement(box);
     if (!tc) return;
@@ -24695,6 +25043,7 @@ function previewTextColorOnSelectedBox(color) {
     const normalized = cssColorToHex(color, '#000000');
     if (box.dataset.editorMode !== 'rich') {
         promoteBoxToRichTextMode(box, 'text-color');
+        carrySourceFaceIntoPromotedBox(box);
     }
     applyTextColorToWholeAnnotationBox(box, normalized);
     box.dataset.styleDirty = '1';
@@ -24707,6 +25056,7 @@ function previewBackgroundColorOnSelectedBox(color) {
     const normalized = cssColorToHex(color, '#ffffff');
     if (box.dataset.editorMode !== 'rich') {
         promoteBoxToRichTextMode(box, 'background-color');
+        carrySourceFaceIntoPromotedBox(box);
     }
     box.dataset.backgroundColor = normalized;
     box.style.setProperty('--enpv-bg-color', normalized);
@@ -25342,16 +25692,73 @@ function applyInlineStyleToSelectedText(historyLabel, mutator, options = {}) {
         finishInlineTextStyleMutation(box, nextRange, options);
         return true;
     }
-    const wrapper = document.createElement(options.wrapperTag === 'a' ? 'a' : 'span');
-    mutator(wrapper, box);
-    const fragment = range.extractContents();
-    // A whole-paragraph selection can contain source spans with an explicit
-    // regular/normal style. A bold/italic wrapper cannot override those child
-    // declarations through inheritance, so normalize the selected fragment's
-    // requested property before applying the new uniform selection style.
-    if (format) stripFormatFromFragment(fragment, format);
-    wrapper.appendChild(fragment);
-    range.insertNode(wrapper);
+    const wrapperTag = options.wrapperTag === 'a' ? 'a' : 'span';
+    const wrapSubRange = (subRange) => {
+        const wrapper = document.createElement(wrapperTag);
+        mutator(wrapper, box);
+        const fragment = subRange.extractContents();
+        // A whole-paragraph selection can contain source spans with an explicit
+        // regular/normal style. A bold/italic wrapper cannot override those child
+        // declarations through inheritance, so normalize the selected fragment's
+        // requested property before applying the new uniform selection style.
+        if (format) stripFormatFromFragment(fragment, format);
+        wrapper.appendChild(fragment);
+        // A range that reaches a row boundary pulls whole source-run spans
+        // into the wrapper. Their own inline declarations (a run's
+        // text-decoration-line: none) would beat the wrapper's, and the
+        // serialiser reads each text node's nearest element, so repeat the
+        // requested properties on every element the wrapper now contains.
+        const requested = Array.from(wrapper.style).map((name) => [name, wrapper.style.getPropertyValue(name)]);
+        if (requested.length) {
+            wrapper.querySelectorAll('*').forEach((element) => {
+                if (!(element instanceof HTMLElement)) return;
+                requested.forEach(([name, value]) => element.style.setProperty(name, value));
+            });
+        }
+        subRange.insertNode(wrapper);
+        return wrapper;
+    };
+    // AE4-6 / AE3-8: a selection that crosses a source row boundary must not
+    // be wrapped in one span. extractContents would split both
+    // .enpv-edit-source-line elements and put the row break inside the
+    // wrapper; the serialiser then could not match the run stream to the
+    // text and the style never reached the download. Wrap each row's part
+    // in its own span inside its own line element instead.
+    const lineOf = (node) => (node?.nodeType === Node.ELEMENT_NODE ? node : node?.parentElement)
+        ?.closest?.('.enpv-edit-source-line') || null;
+    const startLine = lineOf(range.startContainer);
+    const endLine = lineOf(range.endContainer);
+    if (startLine && endLine && startLine !== endLine && tc.contains(startLine) && tc.contains(endLine)) {
+        const lines = Array.from(tc.querySelectorAll('.enpv-edit-source-line'));
+        const startIndex = lines.indexOf(startLine);
+        const endIndex = lines.indexOf(endLine);
+        if (startIndex >= 0 && endIndex > startIndex) {
+            const wrappers = [];
+            const first = document.createRange();
+            first.setStart(range.startContainer, range.startOffset);
+            first.setEnd(startLine, startLine.childNodes.length);
+            const last = document.createRange();
+            last.setStart(endLine, 0);
+            last.setEnd(range.endContainer, range.endOffset);
+            const middle = lines.slice(startIndex + 1, endIndex).map((line) => {
+                const whole = document.createRange();
+                whole.selectNodeContents(line);
+                return whole;
+            });
+            // Wrap from the end so earlier offsets stay valid.
+            if (!last.collapsed) wrappers.unshift(wrapSubRange(last));
+            middle.reverse().forEach((whole) => { if (!whole.collapsed) wrappers.unshift(wrapSubRange(whole)); });
+            if (!first.collapsed) wrappers.unshift(wrapSubRange(first));
+            if (wrappers.length) {
+                const spanning = document.createRange();
+                spanning.setStartBefore(wrappers[0]);
+                spanning.setEndAfter(wrappers[wrappers.length - 1]);
+                finishInlineTextStyleMutation(box, spanning, options);
+                return true;
+            }
+        }
+    }
+    const wrapper = wrapSubRange(range);
     range.selectNodeContents(wrapper);
     finishInlineTextStyleMutation(box, range, options);
     return true;
@@ -26230,6 +26637,24 @@ function beginEditMode(box, options = {}) {
         let isSimplePromotedParagraph = isPromotedSourceBlock
             && !isPreformattedPromotedBlock
             && !prefersExactPromotedSourceLayout;
+        // AE4-5 / AE5-3: the first edit styled words on the exact source
+        // scaffold and saved them as runs with row breaks. The flowing
+        // one-span editor would rebuild the surface from plain text and lose
+        // both, so a block whose saved runs carry a style is edited as the
+        // rich overlay it already renders as (runs, breaks and styles kept).
+        if (isSimplePromotedParagraph
+            && box.dataset.promotedParagraphFlow !== '1'
+            && richTextRunsCarryAuthoredStyle(existing?.richTextRuns, existing)) {
+            const scale = Number.parseFloat(box.parentElement?.dataset?.scale || '1') || 1;
+            if (renderRichTextRunsIntoElement(tc, existing.richTextRuns, scale, existing.text || '')) {
+                isSimplePromotedParagraph = false;
+                clearSourceFidelitySpanState(box);
+                delete box.dataset.sourceSpanGlyphAligned;
+                delete box.dataset.promotedSourceBlockEditEntryLayout;
+                box.dataset.inlineStyleAuthored = '1';
+                rescaleRichTextInlineStylesForAnnotation(tc, existing, scale);
+            }
+        }
         const editingText = isSimplePromotedParagraph
             ? simplePromotedParagraphText(existing, originalText)
             : originalText;
@@ -26470,9 +26895,10 @@ function commitUserCreatedTextBoxAndKeepSelected(box) {
         return true;
     }
     if (box.classList.contains('is-editing') || box.dataset.pendingEdit === '1' || box.dataset.pendingResize === '1') {
-        pushHistorySnapshot('commit text annotation edit');
+        syncBoxAndPushHistoryIfChanged(box);
+    } else {
+        syncAnnotationBoxToPersistedAnnotations(box);
     }
-    syncAnnotationBoxToPersistedAnnotations(box);
     if (!box.isConnected) return true;
     selectedAnnBoxUid = box.dataset.uid || null;
     selectedAnnBoxIsEditing = false;
@@ -26500,9 +26926,10 @@ function deselectAnnBox(options = {}) {
             return;
         }
         if (cur.classList.contains('is-editing') || cur.dataset.pendingEdit === '1' || cur.dataset.pendingResize === '1') {
-            pushHistorySnapshot('commit annotation edit');
+            syncBoxAndPushHistoryIfChanged(cur);
+        } else {
+            syncAnnotationBoxToPersistedAnnotations(cur);
         }
-        syncAnnotationBoxToPersistedAnnotations(cur);
     }
     if (annMenu) annMenu.hidden = true;
     hideAnnotationFormatBar();
@@ -28758,6 +29185,7 @@ async function buildPdfjsDownloadPayload() {
     syncRenderedPersistedOverlayBoxesToPersistedAnnotations();
     const sessionAnnotationsPayload = Array.from(persistedAnnotationsById.values())
         .filter((annotation) => !isRedundantPdfjsSourceOverlay(annotation))
+        .filter((annotation) => !isUnchangedPromotedParagraph(annotation))
         .filter((annotation) => boolish(annotation.pdfjsDeleted) || !isSuppressedStalePdfjsOverlay(annotation))
         .map((annotation) => stripTransientAnnotationFields(annotation))
         .filter((annotation) => shouldIncludeInPdfjsSessionPayload(annotation))
@@ -30818,6 +31246,8 @@ if (window.__enpvPdfjsInitialLoadStarted) {
                 linkService,
                 captureFlatPageRotationSnapshot,
                 syncRotatedPageSnapshot,
+                // Read-only view of the persisted annotations for the QA suites.
+                persistedAnnotation: (id) => cloneForHistory(persistedAnnotationsById.get(String(id)) || null),
             };
         } catch (err) {
             console.error(err);

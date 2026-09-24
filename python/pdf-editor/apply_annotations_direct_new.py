@@ -846,9 +846,29 @@ def clamp_page_index(value: Any, page_count: int) -> Optional[int]:
     return idx
 
 
+def source_color_to_hex(value: Any, fallback: str = "") -> str:
+    """The extraction stores span colours as PyMuPDF integers (16755002, or
+    the same digits as a string). Turn those into "#rrggbb"; pass hex through.
+    AE1-4: a moved paragraph's orange run came out black because the integer
+    reached hex_to_rgb as an 8-digit string."""
+    if isinstance(value, bool):
+        return fallback
+    if isinstance(value, int):
+        return f"#{(value >> 16) & 0xFF:02x}{(value >> 8) & 0xFF:02x}{value & 0xFF:02x}"
+    text = str(value or "").strip()
+    if text.isdigit() and not (len(text) == 6 and text.startswith("#")):
+        try:
+            return source_color_to_hex(int(text), fallback)
+        except ValueError:
+            return fallback
+    return text or fallback
+
+
 def hex_to_rgb(value: Any) -> Tuple[float, float, float]:
     if not value:
         return (0.0, 0.0, 0.0)
+    if isinstance(value, int) or str(value).strip().isdigit():
+        value = source_color_to_hex(value)
     text = str(value).strip().lstrip("#")
     if len(text) != 6:
         return (0.0, 0.0, 0.0)
@@ -1699,6 +1719,55 @@ def pdfjs_source_text_needs_redaction(ann: Dict[str, Any]) -> bool:
     return pdfjs_source_edit_requires_redaction(ann)
 
 
+def _bridge_redacted_word_gaps(
+    target_rects: list[fitz.Rect],
+    page_words: list,
+) -> list[fitz.Rect]:
+    """AE2-5 / AE3-9: page.get_text("words") never covers the spaces between
+    words, and MuPDF only removes glyphs whose box intersects a redaction
+    rect, so every edited or deleted row left its original " " glyphs in the
+    text layer (copy and search saw ghost whitespace). Return the gaps between
+    consecutive target words on one row, when no other word sits in them."""
+    gaps: list[fitz.Rect] = []
+    rows: list[list[fitz.Rect]] = []
+    for rect in sorted(target_rects, key=lambda r: (r.y0, r.x0)):
+        for row in rows:
+            anchor = row[0]
+            overlap = min(anchor.y1, rect.y1) - max(anchor.y0, rect.y0)
+            if overlap >= 0.6 * min(anchor.height, rect.height):
+                row.append(rect)
+                break
+        else:
+            rows.append([rect])
+    others = []
+    for w in page_words:
+        try:
+            others.append(fitz.Rect(float(w[0]), float(w[1]), float(w[2]), float(w[3])))
+        except Exception:
+            continue
+    for row in rows:
+        row.sort(key=lambda r: r.x0)
+        for left, right in zip(row, row[1:]):
+            gap = right.x0 - left.x1
+            height = max(left.height, right.height)
+            if gap <= 0.2 or gap > 1.5 * height:
+                continue
+            gap_rect = fitz.Rect(left.x1, max(left.y0, right.y0), right.x0, min(left.y1, right.y1))
+            if gap_rect.is_empty:
+                continue
+            # Another word inside the gap means the two targets are not
+            # neighbours on this row (a collateral word between them).
+            if any(
+                not (other & gap_rect).is_empty
+                and (other & gap_rect).width > 0.5
+                and not other.intersects(left) and not other.intersects(right)
+                for other in others
+            ):
+                continue
+            gaps.append(gap_rect)
+    return gaps
+
+
 def redact_pdfjs_source_text(page: fitz.Page, ann: Dict[str, Any], source_rect: fitz.Rect, fill: tuple[float, float, float]) -> bool:
     if source_rect is None or source_rect.is_empty:
         return False
@@ -1732,6 +1801,7 @@ def redact_pdfjs_source_text(page: fitz.Page, ann: Dict[str, Any], source_rect: 
                 matched_any = True
         if not matched_any:
             tightened_rects.append(rect)
+    tightened_rects.extend(_bridge_redacted_word_gaps(tightened_rects, page_words))
     added = False
     for rect in tightened_rects:
         rect = fitz.Rect(rect) & page_coordinate_rect(page)
@@ -2709,6 +2779,11 @@ def redact_pdfjs_source_text_for_export(page: fitz.Page, ann: Dict[str, Any]) ->
     # boundary, so a whole-rect fallback remains scoped to this edited block.
     if not target_entries:
         target_entries = [(fitz.Rect(source_rect), None)]
+    else:
+        target_entries.extend(
+            (gap_rect, None)
+            for gap_rect in _bridge_redacted_word_gaps([entry[0] for entry in target_entries], page_words)
+        )
 
     # A large heading can fully engulf a small target's default glyph box,
     # leaving no default-box strip to redact. In that one geometry, map the
@@ -3288,7 +3363,20 @@ def resolve_pdfjs_visible_overlay_typography(page: fitz.Page, ann: Dict[str, Any
         # baseline discovered above, but draw with the bundled Unicode-safe
         # annotation font.
         resolved["pdfjsAvoidEmbeddedSourceFont"] = True
-        resolved["fontFamily"] = normalize_font_family(ann.get("fontFamily") or "Helvetica") or "Helvetica"
+        # AE1-3 / NK_28: a source row's own family is "sans-serif" (the text
+        # layer's CSS), which normalised to Helvetica and drew every moved
+        # Lato row in Arimo, whose wider glyphs were then fitted row by row
+        # at 11.35–12pt. The bundled sibling of the source face (Lato) keeps
+        # the metrics, so the rows keep their size.
+        requested_family = str(ann.get("fontFamily") or "").strip()
+        generic_family = requested_family.lower() in {"", "sans-serif", "serif", "monospace", "cursive", "fantasy", "system-ui"}
+        substitute = resolve_substitute_font_entry(source_font, ann) if generic_family and source_font else None
+        resolved["fontFamily"] = (
+            (substitute.get("family") if substitute and substitute.get("family") else None)
+            or (source_family if generic_family and source_family else None)
+            or normalize_font_family(requested_family or "Helvetica")
+            or "Helvetica"
+        )
     try:
         source_size = float(best_span.get("size") or 0.0)
     except Exception:
@@ -3858,7 +3946,13 @@ def build_annotation_htmlbox_css(ann: Dict[str, Any], font_size: float, opacity:
     font_weight = resolve_annotation_font_weight(ann)
     font_style = resolve_annotation_font_style(ann)
     text_align = str(ann.get("textAlign") or "left").strip().lower()
-    text_decoration = "underline" if resolve_annotation_underline(ann) else "none"
+    decoration_tokens = [
+        token for token, active in (
+            ("underline", resolve_annotation_underline(ann)),
+            ("line-through", resolve_annotation_strikeout(ann)),
+        ) if active
+    ]
+    text_decoration = " ".join(decoration_tokens) or "none"
     font_family = css_font_family(ann.get("fontFamily"))
     text_color = str(ann.get("textColor") or "#000000").strip() or "#000000"
     # The htmlbox path renders text only — the background rectangle is drawn
@@ -4184,6 +4278,12 @@ class _RichTextTextNodeCounter(HTMLParser):
 _RICH_TEXT_BLOCK_TAGS = {"div", "p", "li", "ul", "ol"}
 
 
+def _rich_text_words_compare_text(value: Any) -> str:
+    """Whitespace-insensitive form of _normalize_rich_text_compare_text (a
+    forced row break after "Oscar-" adds a space the text does not have)."""
+    return "".join(_normalize_rich_text_compare_text(value).split())
+
+
 def _normalize_rich_text_compare_text(value: Any) -> str:
     normalized = sanitize_pdf_text(value).replace("\r\n", "\n").replace("\r", "\n")
     normalized = re.sub(r"[ \t]+\n", "\n", normalized)
@@ -4278,6 +4378,10 @@ def _apply_inline_style_state(state: Dict[str, Any], style_value: str) -> Dict[s
                 next_state["underline"] = True
             elif "none" in compact_value:
                 next_state["underline"] = False
+            if "line-through" in compact_value:
+                next_state["strikeout"] = True
+            elif "none" in compact_value:
+                next_state["strikeout"] = False
         elif prop == "color":
             normalized_color = normalize_css_color(value)
             if normalized_color:
@@ -4449,6 +4553,8 @@ class _RichTextLayoutParser(HTMLParser):
             next_state["font_weight"] = "700"
         elif lower_tag == "u":
             next_state["underline"] = True
+        elif lower_tag in {"s", "strike", "del"}:
+            next_state["strikeout"] = True
 
         attrs_map = {str(name or "").strip().lower(): str(value or "") for name, value in attrs}
         if lower_tag == "a":
@@ -4494,6 +4600,7 @@ def _rich_text_base_style(ann: Dict[str, Any]) -> Dict[str, Any]:
         "font_style": resolve_annotation_font_style(ann),
         "color": normalize_css_color(ann.get("textColor")) or str(ann.get("textColor") or "#000000"),
         "underline": bool(resolve_annotation_underline(ann)),
+        "strikeout": bool(resolve_annotation_strikeout(ann)),
         "link_url": None,
         "span_rotation": 0.0,
         "documentId": ann.get("documentId"),
@@ -4566,6 +4673,8 @@ def _structured_rich_text_layout_ops(ann: Dict[str, Any]) -> list[Dict[str, Any]
             style["color"] = color
         if "underline" in raw_run:
             style["underline"] = _boolish(raw_run.get("underline"))
+        if "strikeout" in raw_run:
+            style["strikeout"] = _boolish(raw_run.get("strikeout"))
         style["link_url"] = normalize_hyperlink_destination(
             raw_run.get("linkUrl") or raw_run.get("link_url") or ""
         ) or None
@@ -4818,7 +4927,10 @@ def _apply_pdfjs_visual_line_breaks(
     for index, (ch, op_index) in enumerate(chars):
         if index in cut_set:
             flush()
-            out.append({"type": "break"})
+            # A measured row end that coincides with a hard break in the runs
+            # is one break, not two (an empty row doubled the pitch, AE5-2).
+            if ops[op_index].get("type") != "break" and not (out and out[-1].get("type") == "break"):
+                out.append({"type": "break"})
             drop_ws = True
         if ops[op_index].get("type") == "break":
             flush()
@@ -4889,6 +5001,7 @@ def wrap_rich_text_layout_ops(
             "font_style": entry.get("font_style"),
             "color": entry.get("color"),
             "underline": bool(entry.get("underline")),
+            "strikeout": bool(entry.get("strikeout")),
             "underline_is_current_style": True,
             "link_url": normalize_hyperlink_destination(entry.get("link_url") or "") or None,
             "span_rotation": entry.get("span_rotation") or 0.0,
@@ -4940,7 +5053,13 @@ def build_wrapped_rich_text_span_layout(
 
     rendered_text = _rich_text_layout_ops_to_text(ops)
     if _normalize_rich_text_compare_text(rendered_text) != _normalize_rich_text_compare_text(ann.get("text") or ""):
-        return []
+        # The caller may have forced the editor's row breaks into the ops
+        # (_apply_pdfjs_visual_line_breaks, NK_37): their text then has a
+        # newline where the annotation text has a space. That is the same
+        # text, and rejecting it here threw away every bold / colour run of a
+        # resized paragraph (document 7978, promoted_2_1) and drew it plain.
+        if _rich_text_words_compare_text(rendered_text) != _rich_text_words_compare_text(ann.get("text") or ""):
+            return []
 
     wrapped_lines = wrap_rich_text_layout_ops(ops, wrap_width if wrap_width else available_width)
     if not wrapped_lines:
@@ -4948,7 +5067,8 @@ def build_wrapped_rich_text_span_layout(
 
     font_cache: Dict[tuple[Any, ...], fitz.Font] = {}
     base_font_size = max(0.5, float(ann.get("fontSize") or 12.0))
-    base_line_height = max(float(line_height or 0.0), base_font_size * 1.18)
+    explicit_line_height = float(line_height or 0.0) > 0
+    base_line_height = float(line_height) if explicit_line_height else base_font_size * 1.18
     line_metrics: list[Dict[str, float]] = []
     for line_runs in wrapped_lines:
         if not line_runs:
@@ -4971,7 +5091,7 @@ def build_wrapped_rich_text_span_layout(
             desired_height = max(
                 glyph_height,
                 float(run.get("line_height") or 0.0),
-                run_size * 1.18,
+                base_line_height * (run_size / base_font_size) if explicit_line_height else run_size * 1.18,
             )
             half_leading = max(0.0, desired_height - glyph_height) / 2.0
             run_metrics.append((half_leading + glyph_ascent, half_leading + glyph_descent, desired_height))
@@ -5066,6 +5186,7 @@ class _RichTextUniformStyleInspector(HTMLParser):
             "font_style": "normal",
             "font_weight": "400",
             "underline": False,
+            "strikeout": False,
         }]
 
     def _append_newline(self) -> None:
@@ -5085,6 +5206,8 @@ class _RichTextUniformStyleInspector(HTMLParser):
             next_state["font_weight"] = "700"
         elif lower_tag == "u":
             next_state["underline"] = True
+        elif lower_tag in {"s", "strike", "del"}:
+            next_state["strikeout"] = True
 
         attrs_map = {str(name or "").strip().lower(): str(value or "") for name, value in attrs}
         next_state = _apply_inline_style_state(next_state, attrs_map.get("style", ""))
@@ -5146,6 +5269,7 @@ def resolve_uniform_rich_text_styles(ann: Dict[str, Any], text: str) -> Dict[str
     )
     all_bold = all(is_bold_weight(segment.get("font_weight")) for segment in segments)
     all_underline = all(bool(segment.get("underline")) for segment in segments)
+    all_strikeout = all(bool(segment.get("strikeout")) for segment in segments)
 
     result: Dict[str, Any] = {}
     if all_italic:
@@ -5154,6 +5278,8 @@ def resolve_uniform_rich_text_styles(ann: Dict[str, Any], text: str) -> Dict[str
         result["font_weight"] = "700"
     if all_underline:
         result["underline"] = True
+    if all_strikeout:
+        result["strikeout"] = True
     return result
 
 
@@ -5241,6 +5367,41 @@ def resolve_annotation_font_weight(ann: Dict[str, Any]) -> str:
             return "700"
 
     return font_weight
+
+
+# AE4-3: strikeout was applied in the editor and saved on the annotation and
+# its runs, but this writer only ever read `underline`; the download drew the
+# text without the line. The ratio matches new_annotation_writer (NK_7).
+STRIKEOUT_BASELINE_RATIO = 0.28
+
+
+def resolve_annotation_strikeout(ann: Dict[str, Any]) -> bool:
+    if bool(ann.get("strikeout")):
+        return True
+
+    text = str(ann.get("text") or "")
+    uniform_styles = resolve_uniform_rich_text_styles(ann, text)
+    if bool(uniform_styles.get("strikeout")):
+        return True
+
+    rich_html = str(ann.get("richTextHtml") or "").strip().lower()
+    if rich_html and has_single_run_rich_text(ann, text):
+        return "line-through" in rich_html.replace(" ", "")
+
+    return False
+
+
+def draw_strikeout_line(page, draw_x, baseline_y, width, size, color, opacity, morph) -> None:
+    strike_y = baseline_y - max(0.5, size * STRIKEOUT_BASELINE_RATIO)
+    draw_rotated_line(
+        page,
+        fitz.Point(draw_x, strike_y),
+        fitz.Point(draw_x + width, strike_y),
+        color=color,
+        width=max(0.5, size * 0.06),
+        opacity=opacity,
+        morph=morph,
+    )
 
 
 def resolve_annotation_underline(ann: Dict[str, Any]) -> bool:
@@ -5986,6 +6147,63 @@ def normalize_exact_source_line_layout(
         active_raw_boxes = list(raw_boxes)
     elif (
         bool(ann.get("promotedDirty"))
+        and len(normalized_text_lines) > len(raw_boxes)
+        and _boolish(ann.get("userSizedTextBox")) is False
+    ):
+        # AE5-2: one or more user breaks (Enter) gave the text MORE lines than
+        # captured rows. Returning [] here abandoned the exact rows and the
+        # wrapped layout re-broke a fitted row and overran the block below.
+        # Align greedily: a line that matches (or starts) the next captured row
+        # keeps that row's box; a line the user broke off gets a synthetic box
+        # one row pitch below, and every later row shifts by that pitch.
+        aligned_texts: list[str] = []
+        aligned_boxes: list[Any] = []
+        pitch = 0.0
+        if len(raw_boxes) >= 2:
+            try:
+                pitch = float(raw_boxes[1][1]) - float(raw_boxes[0][1])
+            except Exception:
+                pitch = 0.0
+        if pitch <= 0 and raw_boxes:
+            try:
+                pitch = (float(raw_boxes[0][3]) - float(raw_boxes[0][1])) * 1.2
+            except Exception:
+                pitch = 0.0
+        compare_row = lambda value: " ".join(str(value or "").split()).lower()
+        source_rows = [compare_row(line) for line in source_lines]
+        box_index = 0
+        shift = 0.0
+        for line in normalized_text_lines:
+            line_text = str(line or "")
+            key = compare_row(line_text)
+            source_key = source_rows[box_index] if box_index < len(source_rows) else ""
+            takes_captured_row = box_index < len(raw_boxes) and (
+                not source_key
+                or key == source_key
+                or (key and source_key.startswith(key))
+                or (key and key.startswith(source_key))
+            )
+            if takes_captured_row:
+                box = list(raw_boxes[box_index])
+                box_index += 1
+            elif aligned_boxes:
+                previous = aligned_boxes[-1]
+                box = [previous[0], float(previous[1]) + pitch, previous[2], float(previous[3]) + pitch]
+                shift += pitch
+                # A line that is the rest of the captured row it was split
+                # from consumes that row too.
+                if box_index < len(source_rows) and key and source_rows[box_index].endswith(key):
+                    box_index += 1
+            else:
+                box = list(raw_boxes[0])
+            if shift and takes_captured_row:
+                box = [box[0], float(box[1]) + shift, box[2], float(box[3]) + shift]
+            aligned_texts.append(line_text)
+            aligned_boxes.append(box)
+        line_texts = aligned_texts
+        active_raw_boxes = aligned_boxes
+    elif (
+        bool(ann.get("promotedDirty"))
         and len(normalized_text_lines) > 1
         and len(normalized_text_lines) <= len(raw_boxes)
     ):
@@ -6096,6 +6314,7 @@ def normalize_exact_source_line_layout(
     annotation_font_weight = resolve_annotation_font_weight(ann)
     annotation_font_style = resolve_annotation_font_style(ann)
     annotation_underline = resolve_annotation_underline(ann)
+    annotation_strikeout = resolve_annotation_strikeout(ann)
     dominant_source_color = None
     dominant_source_font_family = None
     dominant_source_font_weight = None
@@ -6136,12 +6355,13 @@ def normalize_exact_source_line_layout(
                 "font_size": float(span.get("fontSize") or span.get("font_size") or font_size or 0),
                 "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
                 "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
-                "color": str(
+                "color": source_color_to_hex(
                     (span.get("hex_color") if span.get("hex_color") is not None else span.get("color"))
                     or ann.get("textColor")
                     or "#000000"
                 ),
                 "underline": bool(span.get("underline")),
+                "strikeout": bool(span.get("strikeout")),
                 "rotation": span.get("rotation"),
                 "direction": span.get("direction"),
             })
@@ -6397,6 +6617,7 @@ def normalize_exact_source_line_layout(
                 "font_style": annotation_font_style if force_annotation_font_style else (dominant_span.get("font_style") or dominant_span.get("fontStyle") or annotation_font_style),
                 "color": annotation_text_color if force_annotation_text_color else (dominant_span.get("color") or annotation_text_color),
                 "underline": annotation_underline if force_annotation_underline else any(bool(span.get("underline")) for span in line_spans),
+                "strikeout": annotation_strikeout or any(bool(span.get("strikeout")) for span in line_spans),
             }
         if translate_x != 0.0 or translate_y != 0.0:
             rect = fitz.Rect(
@@ -6423,6 +6644,7 @@ def normalize_exact_source_line_layout(
             "font_style": line_style.get("font_style") or annotation_font_style,
             "color": line_style.get("color") or annotation_text_color,
             "underline": bool(line_style.get("underline")) if line_style else annotation_underline,
+            "strikeout": bool(line_style.get("strikeout")) if line_style else annotation_strikeout,
         })
 
     return layout
@@ -6633,6 +6855,7 @@ def normalize_exact_source_span_layout(
     source_lines = raw_source_lines if isinstance(raw_source_lines, list) else []
     if not isinstance(source_spans, list) or not source_spans:
         return []
+    box_style = whole_box_style_overrides(ann)
 
     # Source spans are geometry/typography hints, never replacement text.
     # Extraction can repeat an operator-boundary word even though the
@@ -6864,10 +7087,11 @@ def normalize_exact_source_span_layout(
                 or "Helvetica"
             ),
             "font_size": float(span.get("fontSize") or span.get("font_size") or font_size or 0),
-            "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
-            "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
-            "color": _normalize_color(span.get("hex_color") if span.get("hex_color") is not None else span.get("color"), str(ann.get("textColor") or "#000000")),
+            "font_weight": box_style.get("font_weight") or str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
+            "font_style": box_style.get("font_style") or str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+            "color": box_style.get("color") or _normalize_color(span.get("hex_color") if span.get("hex_color") is not None else span.get("color"), str(ann.get("textColor") or "#000000")),
             "underline": bool(span.get("underline")),
+            "strikeout": bool(span.get("strikeout")),
             "span_rotation": infer_exact_source_rotation(span.get("rotation"), span.get("direction"), rect),
         })
 
@@ -7024,6 +7248,7 @@ def _style_run_signature(style: Dict[str, Any]) -> tuple[Any, ...]:
         str(style.get("font_style") or ""),
         str(style.get("color") or ""),
         bool(style.get("underline")),
+        bool(style.get("strikeout")),
         str(style.get("link_url") or ""),
         normalize_quarter_turn_degrees(style.get("span_rotation")),
     )
@@ -7041,6 +7266,7 @@ def _resolve_style_run_font(
         "fontStyle": style.get("font_style"),
         "textColor": style.get("color"),
         "underline": style.get("underline"),
+        "strikeout": style.get("strikeout"),
         "documentId": style.get("documentId"),
         "__documentId": style.get("__documentId"),
         "promotedFromExtraction": style.get("promotedFromExtraction"),
@@ -7196,6 +7422,7 @@ def _map_source_styles_onto_saved_text(
             "font_style": span.get("font_style") or base_style.get("font_style"),
             "color": span.get("color") or base_style.get("color"),
             "underline": bool(span.get("underline")) if span.get("underline") is not None else bool(base_style.get("underline")),
+            "strikeout": bool(span.get("strikeout")) if span.get("strikeout") is not None else bool(base_style.get("strikeout")),
             "span_rotation": span.get("span_rotation") or base_style.get("span_rotation") or 0.0,
             "documentId": base_style.get("documentId"),
             "__documentId": base_style.get("__documentId"),
@@ -7331,7 +7558,7 @@ def _rich_text_runs_per_line_for_dirty_promoted(
         for key in (
             "font_family", "font_source_name", "font_size", "line_height",
             "font_family_explicit", "font_size_explicit", "line_height_explicit",
-            "font_weight", "font_style", "underline", "color",
+            "font_weight", "font_style", "underline", "strikeout", "color",
             "link_url",
         ):
             value = op.get(key)
@@ -7419,10 +7646,37 @@ def _match_source_span_face_for_style(
     return exact_match or weight_only_match or style_only_match
 
 
+def whole_box_style_overrides(ann: Dict[str, Any]) -> Dict[str, Any]:
+    """AE4-2: bold, italic or a colour applied to a WHOLE promoted paragraph is
+    saved on the annotation only (no rich runs), and the captured source spans'
+    own weight / colour used to win, so the download ignored the change. A
+    style-dirty annotation's requested weight, slant and chosen colour override
+    the spans; a colour-only change leaves a bold lead-in alone."""
+    if not (_boolish(ann.get("styleDirty")) or _boolish(ann.get("userForcedRichText"))):
+        return {}
+    overrides: Dict[str, Any] = {}
+    reason = str(ann.get("richTextPromotionReason") or "").strip().lower()
+    weight = str(ann.get("fontWeight") or "").strip()
+    if weight and (is_bold_weight(weight) or reason == "font-weight"):
+        overrides["font_weight"] = "700" if is_bold_weight(weight) else "400"
+    style = str(ann.get("fontStyle") or "").strip().lower()
+    if style and (is_italic_style(style) or reason == "font-style"):
+        overrides["font_style"] = style if is_italic_style(style) else "normal"
+    color = source_color_to_hex(ann.get("textColor") or "", "")
+    source_color = source_color_to_hex(ann.get("pdfjsSourceTextColor") or "", "")
+    if color and (
+        _boolish(ann.get("textColorExplicit"))
+        or (color.lower() not in {"#000000", source_color.lower()} and reason in {"text-color", "font-weight", "font-style", "font-size", "font-family", "underline", "strikeout", "background-color"})
+    ):
+        overrides["color"] = color
+    return overrides
+
+
 def _source_face_spans_for_annotation(ann: Dict[str, Any]) -> list[Dict[str, Any]]:
     source_spans = ann.get("sourceSpans")
     if not isinstance(source_spans, list):
         return []
+    box_style = whole_box_style_overrides(ann)
 
     faces: list[Dict[str, Any]] = []
     for span in source_spans:
@@ -7448,8 +7702,8 @@ def _source_face_spans_for_annotation(ann: Dict[str, Any]) -> list[Dict[str, Any
             "font_family": font_family or font_source_name,
             "font_source_name": font_source_name or font_family,
             "font_size": float(span.get("fontSize") or span.get("font_size") or ann.get("fontSize") or 12),
-            "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
-            "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
+            "font_weight": box_style.get("font_weight") or str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
+            "font_style": box_style.get("font_style") or str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
         })
     return faces
 
@@ -7527,6 +7781,7 @@ def build_dirty_promoted_style_mapped_span_layout(
     ann: Dict[str, Any],
     text: str,
     line_layout: list[Dict[str, Any]],
+    current_rect: Optional[fitz.Rect] = None,
 ) -> list[Dict[str, Any]]:
     if not bool(ann.get("promotedFromExtraction")):
         return []
@@ -7625,8 +7880,9 @@ def build_dirty_promoted_style_mapped_span_layout(
             "font_size": float(span.get("fontSize") or span.get("font_size") or ann.get("fontSize") or 12),
             "font_weight": str(span.get("fontWeight") or span.get("font_weight") or ann.get("fontWeight") or "400"),
             "font_style": str(span.get("fontStyle") or span.get("font_style") or ann.get("fontStyle") or "normal"),
-            "color": str(span.get("hex_color") or span.get("color") or ann.get("textColor") or "#000000"),
+            "color": source_color_to_hex(span.get("hex_color") or span.get("color") or ann.get("textColor") or "#000000"),
             "underline": bool(span.get("underline")),
+            "strikeout": bool(span.get("strikeout")),
             "span_rotation": infer_exact_source_rotation(span.get("rotation"), span.get("direction"), rect),
         })
 
@@ -7666,6 +7922,14 @@ def build_dirty_promoted_style_mapped_span_layout(
     # intended per-run formatting, so when it's present and multi-run we
     # honour it directly.
     rich_text_runs_per_line = _rich_text_runs_per_line_for_dirty_promoted(ann)
+    # AE2-1: an edited row used to be fitted into its ORIGINAL glyph bbox (a
+    # lengthened last row came out at 7.9pt), although the editor lets it run
+    # to the block's right edge. The column is what the row may use.
+    column_right = max(
+        [float(entry["rect"].x1) for entry in line_layout if isinstance(entry.get("rect"), fitz.Rect)]
+        + ([float(current_rect.x1)] if isinstance(current_rect, fitz.Rect) and not current_rect.is_empty else [])
+        or [0.0]
+    )
     mapped_layout: list[Dict[str, Any]] = []
     for index, line_entry in enumerate(line_layout):
         line_rect = line_entry.get("rect")
@@ -7687,6 +7951,7 @@ def build_dirty_promoted_style_mapped_span_layout(
             "font_style": line_entry.get("font_style") or ann.get("fontStyle") or "normal",
             "color": line_entry.get("color") or ann.get("textColor") or "#000000",
             "underline": bool(line_entry.get("underline")) if line_entry.get("underline") is not None else bool(ann.get("underline")),
+            "strikeout": bool(line_entry.get("strikeout")) if line_entry.get("strikeout") is not None else bool(ann.get("strikeout")),
             "span_rotation": line_entry.get("rotation") or 0.0,
             "documentId": ann.get("documentId"),
             "__documentId": ann.get("__documentId"),
@@ -7787,6 +8052,14 @@ def build_dirty_promoted_style_mapped_span_layout(
             and _boolish(ann.get("preserveSourceTypography"))
         )
 
+        source_line_text = " ".join(
+            " ".join(_sanitize(span.get("text") or "").split()) for span in source_line_spans
+        ).strip()
+        mapped_line_text = " ".join(" ".join(_sanitize(run.get("text") or "").split()) for run in mapped_runs).strip()
+        line_text_edited = bool(source_line_spans) and mapped_line_text != source_line_text
+        if line_text_edited and column_right > float(line_rect.x1) + 0.5:
+            line_rect = fitz.Rect(line_rect.x0, line_rect.y0, column_right, line_rect.y1)
+
         spans: list[Dict[str, Any]] = []
         cursor_x = float(draw_x)
         source_position_index = 0
@@ -7802,6 +8075,14 @@ def build_dirty_promoted_style_mapped_span_layout(
                 source_span = source_line_spans[source_position_index]
                 source_position_index += 1
                 span_rect = fitz.Rect(source_span["rect"])
+                if (
+                    line_text_edited
+                    and " ".join(run_text.split()) != " ".join(_sanitize(source_span.get("text") or "").split())
+                    and source_position_index == len(source_line_spans)
+                    and column_right > float(span_rect.x1) + 0.5
+                ):
+                    # The edited run is the row's last: it may run to the column edge.
+                    span_rect = fitz.Rect(span_rect.x0, span_rect.y0, column_right, span_rect.y1)
                 span_baseline_x = source_span.get("baseline_x")
                 span_baseline_y = source_span.get("baseline_y")
                 if span_baseline_x is None:
@@ -7913,6 +8194,8 @@ def draw_text_using_exact_source_lines(
         line_ann["fontStyle"] = line_entry.get("font_style") or ann.get("fontStyle")
         if line_entry.get("underline") is not None:
             line_ann["underline"] = bool(line_entry.get("underline"))
+        if line_entry.get("strikeout") is not None:
+            line_ann["strikeout"] = bool(line_entry.get("strikeout"))
 
         line_font_size = float(line_entry.get("font_size") or font_size or 0)
         if line_font_size <= 0:
@@ -8016,6 +8299,8 @@ def draw_text_using_exact_source_lines(
                 opacity=opacity,
                 morph=line_morph,
             )
+        if resolve_annotation_strikeout(line_ann):
+            draw_strikeout_line(page, draw_x, baseline_y, text_width * scale_x, line_font_size, line_color, opacity, line_morph)
 
     return True
 
@@ -8032,6 +8317,7 @@ def draw_text_using_exact_source_spans(
         return False
 
     annotation_underline = resolve_annotation_underline(ann)
+    annotation_strikeout = resolve_annotation_strikeout(ann)
     for line_entry in lines:
         if not isinstance(line_entry, dict):
             continue
@@ -8064,6 +8350,9 @@ def draw_text_using_exact_source_spans(
             # exact-span export returns early. Per-span true still works for
             # mixed rich text when the annotation itself is not underlined.
             span_ann["underline"] = bool(span_entry.get("underline"))
+            span_ann["strikeout"] = bool(span_entry.get("strikeout")) or (
+                annotation_strikeout and not span_entry.get("underline_is_current_style")
+            )
             if (
                 inherit_annotation_underline
                 and not span_entry.get("underline_is_current_style")
@@ -8249,6 +8538,8 @@ def draw_text_using_exact_source_spans(
                     opacity=opacity,
                     morph=effective_morph,
                 )
+            if resolve_annotation_strikeout(span_ann):
+                draw_strikeout_line(page, draw_x, baseline_y, span_font.text_length(span_text, fontsize=span_font_size), span_font_size, span_color, opacity, effective_morph)
 
             link_url = normalize_hyperlink_destination(span_entry.get("link_url") or "")
             if link_url:
@@ -8324,6 +8615,20 @@ def resolve_text_fontfile(ann: Dict[str, Any]) -> Optional[str]:
     if embedded_entry:
         return embedded_entry.get("fontfile")
     family = normalize_font_family(ann.get("fontFamily"))
+    # AE1-3 / NK_28: a span whose family is only the text layer's loaded name
+    # ("g_d0_f4") or a generic normalises to Helvetica and was drawn in Arimo;
+    # its PDF face name says which bundled family keeps the metrics (Lato).
+    requested_lower = str(ann.get("fontFamily") or "").strip().lower()
+    if family == "Helvetica" and requested_lower not in {"helvetica", "arial", "arimo"}:
+        source_name = str(ann.get("fontSourceName") or ann.get("pdfjsSourceFontFamily") or "").strip()
+        # The configured metric substitute (HelveticaNeue → Inter) first, then
+        # the bundled family of the same name (Lato).
+        substitute = resolve_substitute_font_entry(source_name, ann) if source_name else None
+        if substitute and substitute.get("fontfile"):
+            return substitute.get("fontfile")
+        source_family = normalize_font_family(source_name)
+        if source_family and source_family != "Helvetica" and source_family in FONT_FILE_VARIANTS:
+            family = source_family
     variants = FONT_FILE_VARIANTS.get(family, FONT_FILE_VARIANTS["Helvetica"])
     is_bold = is_bold_weight(resolve_annotation_font_weight(ann))
     is_italic = is_italic_style(resolve_annotation_font_style(ann))
@@ -8848,6 +9153,7 @@ def rich_text_style_runs_for_exact_text(ann: Dict[str, Any], text: str) -> list[
             "font_style": entry.get("font_style"),
             "color": entry.get("color"),
             "underline": bool(entry.get("underline")),
+            "strikeout": bool(entry.get("strikeout")),
             "link_url": normalize_hyperlink_destination(entry.get("link_url") or "") or None,
         })
     return runs
@@ -8873,7 +9179,7 @@ def apply_rich_style_to_pdfjs_source_run(run: Dict[str, Any], style: Dict[str, A
     updated = dict(run)
     for key in (
         "font_family", "font_source_name", "font_weight", "font_style",
-        "color", "underline", "underline_is_current_style", "link_url",
+        "color", "underline", "strikeout", "underline_is_current_style", "link_url",
     ):
         value = style.get(key)
         if value is not None and value != "":
@@ -8982,6 +9288,13 @@ def apply_rich_styles_to_pdfjs_source_runs(
     return styled_runs or runs
 
 
+def _source_run_family(requested: Any, pdf_font_name: Any) -> str:
+    requested_family = str(requested or "").strip()
+    if requested_family.lower() not in {"", "sans-serif", "serif", "monospace", "cursive", "fantasy", "system-ui"}:
+        return requested_family
+    return normalize_font_family(str(pdf_font_name or "")) or requested_family or "Helvetica"
+
+
 def normalize_pdfjs_source_span_run_layout(
     ann: Dict[str, Any],
     text: str,
@@ -9028,12 +9341,19 @@ def normalize_pdfjs_source_span_run_layout(
             "right": right,
             "top": top,
             "bottom": bottom,
-            "font_family": str(item.get("fontFamily") or ann.get("fontFamily") or "Helvetica"),
+            # AE1-3 / NK_28: the run's family is the text layer's generic
+            # "sans-serif"; the bundled sibling of its PDF face keeps the metrics.
+            "font_family": _source_run_family(item.get("fontFamily") or ann.get("fontFamily"), item.get("pdfjsFontName")),
             "font_source_name": str(item.get("pdfjsFontName") or item.get("fontFamily") or ann.get("fontSourceName") or ann.get("fontFamily") or "Helvetica"),
             "font_size_px": font_size_px,
             "font_weight": str(item.get("fontWeight") or ann.get("fontWeight") or "400"),
             "font_style": str(item.get("fontStyle") or ann.get("fontStyle") or "normal"),
+            # AE1-4: the captured run carries the PDF's own colour of that run
+            # (an orange name inside a black paragraph); without it every run
+            # took the annotation's colour when the block was moved.
+            "color": source_color_to_hex(item.get("textColor") or item.get("color") or "", "") or None,
             "underline": _boolish(item.get("underline")),
+            "strikeout": _boolish(item.get("strikeout")),
             "canonical_space_before": _boolish(item.get("canonicalSpaceBefore")),
         })
     if len(runs) < 1:
@@ -9137,6 +9457,7 @@ def normalize_pdfjs_source_span_run_layout(
             "font_style": run["font_style"],
             "color": run.get("color") or ann.get("textColor") or "#000000",
             "underline": bool(run.get("underline")) if run.get("underline") is not None else bool(ann.get("underline")),
+            "strikeout": bool(run.get("strikeout")) if run.get("strikeout") is not None else bool(ann.get("strikeout")),
             "span_rotation": 0.0,
         })
 
@@ -10162,8 +10483,11 @@ def draw_text(
     if preserve_extracted_lines:
         if line_height <= 0:
             line_height = size * 1.2
-    else:
-        line_height = max(line_height, size * 1.18)
+    elif line_height <= 0:
+        # AE1-5: the editor sends the pitch it renders (12 for a wrapped
+        # 12pt source row); flooring it at 1.18 × size pushed the second
+        # line onto the row below. Only a missing value takes the default.
+        line_height = size * 1.18
     rect = pdfjs_visible_overlay_render_rect(page, render_ann, to_rect(page, ann))
     custom_font = None
     html_archive = None
@@ -10280,6 +10604,8 @@ def draw_text(
                     opacity=opacity,
                     morph=single_line_morph,
                 )
+            if resolve_annotation_strikeout(ann):
+                draw_strikeout_line(page, draw_x, baseline_y, draw_font.text_length(text, fontsize=size), size, color, opacity, single_line_morph)
             return
         exact_source_line_layout = normalize_exact_source_line_layout(
             render_ann,
@@ -10292,6 +10618,7 @@ def draw_text(
             render_ann,
             text,
             exact_source_line_layout,
+            current_rect=rect,
         ) if exact_source_line_layout else []
         exact_source_span_layout = normalize_exact_source_span_layout(
             render_ann,
@@ -10491,11 +10818,40 @@ def draw_text(
         # (pdfjsVisualLines); wrapping the runs again with MuPDF's metrics put
         # "Form 1040, 1040-SR," on two rows the editor showed on one (NK_37).
         rich_layout_wrap_width = rich_layout_available_width
+        # AE5-2: a paragraph the user broke with Enter carries its rows as
+        # hard breaks in `text`; when no visual rows were measured those are
+        # the editor's rows.
+        manual_text_rows = split_text_preserving_manual_line_breaks(text)
+        if (
+            not pdfjs_visual_lines
+            and len(manual_text_rows) > 1
+            and rich_layout_text_matches
+            and bool(render_ann.get("promotedFromExtraction"))
+            and (_boolish(render_ann.get("promotedDirty")) or _boolish(render_ann.get("promotedReflowEnabled")))
+        ):
+            if any(op.get("type") == "break" for op in rich_layout_ops):
+                # The runs already carry the rows; draw each row as one line
+                # and let the per-line fit condense a row the editor kept.
+                rich_layout_wrap_width = 1_000_000_000.0
+            else:
+                pdfjs_visual_lines = [str(row) for row in manual_text_rows]
         if (
             pdfjs_visual_lines
             and rich_layout_text_matches
             and not preserve_extracted_lines
-            and (_boolish(render_ann.get("userSizedTextBox")) or _pdfjs_overlay_was_resized(render_ann))
+            and (
+                _boolish(render_ann.get("userSizedTextBox"))
+                or _pdfjs_overlay_was_resized(render_ann)
+                # AE3-7: a style-promoted paragraph keeps the editor's rows too.
+                or (
+                    bool(render_ann.get("promotedFromExtraction"))
+                    and (
+                        _boolish(render_ann.get("styleDirty"))
+                        or _boolish(render_ann.get("promotedDirty"))
+                        or _boolish(render_ann.get("promotedReflowEnabled"))
+                    )
+                )
+            )
         ):
             forced_row_ops = _apply_pdfjs_visual_line_breaks(rich_layout_ops, pdfjs_visual_lines)
             if forced_row_ops:
@@ -10791,6 +11147,8 @@ def draw_text(
                     opacity=opacity,
                     morph=line_morph,
                 )
+            if resolve_annotation_strikeout(ann) and line:
+                draw_strikeout_line(page, draw_x, line_baseline_y, text_width, size, color, opacity, line_morph)
         return
 
     if mask_only:
@@ -10861,6 +11219,8 @@ def draw_text(
             opacity=opacity,
             morph=morph,
         )
+    if resolve_annotation_strikeout(ann):
+        draw_strikeout_line(page, draw_x, baseline_y, fallback_font.text_length(text, fontsize=size), size, color, opacity, morph)
 
 
 def draw_signature(page: fitz.Page, ann: Dict[str, Any]) -> None:
